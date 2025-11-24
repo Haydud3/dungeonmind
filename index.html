@@ -3,8 +3,18 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DungeonMind v13.1 | Stable Link</title>
+    <title>DungeonMind v13 | Diagnostic</title>
     
+    <script>
+        window.onerror = function(msg, url, line, col, error) {
+            const div = document.createElement('div');
+            div.style.cssText = 'position:fixed;top:0;left:0;width:100%;background:red;color:white;padding:20px;z-index:9999;font-family:monospace;white-space:pre-wrap;';
+            div.innerText = 'CRASH REPORT:\n' + msg + '\nLine: ' + line + '\n' + (error ? error.stack : '');
+            document.body.appendChild(div);
+            return false;
+        };
+    </script>
+
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     
@@ -21,6 +31,7 @@
         import { getAuth, signInWithPopup, signOut, GoogleAuthProvider, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, getDoc, onSnapshot, updateDoc, arrayUnion } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         
+        // YOUR CONFIG
         const firebaseConfig = {
             apiKey: "AIzaSyCSwJqc4aLCUG_HSEhw4KoA056Qd2y1CB4",
             authDomain: "dungeonmind-aa529.firebaseapp.com",
@@ -31,15 +42,21 @@
             measurementId: "G-Z0TEJSQ0WF"
         };
 
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
+        try {
+            const app = initializeApp(firebaseConfig);
+            const auth = getAuth(app);
+            const db = getFirestore(app);
 
-        window.fbModules = { 
-            app, auth, db, 
-            GoogleAuthProvider, signInWithPopup, signOut, 
-            doc, setDoc, getDoc, updateDoc, onSnapshot, onAuthStateChanged, arrayUnion 
-        };
+            window.fbModules = { 
+                app, auth, db, 
+                GoogleAuthProvider, signInWithPopup, signOut, 
+                doc, setDoc, getDoc, updateDoc, onSnapshot, onAuthStateChanged, arrayUnion 
+            };
+            console.log("Firebase Loaded");
+        } catch(e) {
+            console.error("Firebase Init Error", e);
+            document.body.innerHTML += `<div style='color:red;z-index:999'>Firebase Error: ${e.message}</div>`;
+        }
     </script>
 
     <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700&family=Lato:wght@400;700&family=Fira+Code:wght@400&display=swap" rel="stylesheet">
@@ -49,251 +66,4 @@
         body { font-family: 'Lato', sans-serif; background-color: var(--bg-dark); color: #e2e8f0; overflow: hidden; touch-action: manipulation; }
         h1, h2, h3, .fantasy-font { font-family: 'Cinzel', serif; }
         .mono-font { font-family: 'Fira Code', monospace; }
-        .custom-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
-        .custom-scroll::-webkit-scrollbar-track { background: #0f172a; }
-        .custom-scroll::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
-        .glass-panel { background: rgba(30, 41, 59, 0.95); border: 1px solid rgba(255, 255, 255, 0.05); }
-        input, textarea { font-size: 16px !important; }
-        .live-status { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
-        .status-online { background-color: #22c55e; box-shadow: 0 0 5px #22c55e; }
-        .fade-in { animation: fadeIn 0.5s ease-out forwards; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-    </style>
-</head>
-<body>
-    <div id="root"></div>
-
-    <script type="text/babel">
-        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-
-        const { useState, useEffect, useRef } = React;
-
-        // --- Firebase Hook (With Loading Guard) ---
-        const useFirebase = () => {
-            const [fb, setFb] = useState(null);
-            const [user, setUser] = useState(null);
-            const [isOffline, setIsOffline] = useState(false);
-            const [isLoading, setIsLoading] = useState(true);
-
-            useEffect(() => {
-                const init = async () => {
-                    let attempts = 0;
-                    while (!window.fbModules && attempts < 20) {
-                        await new Promise(r => setTimeout(r, 100));
-                        attempts++;
-                    }
-                    if (window.fbModules) {
-                        const { auth, onAuthStateChanged } = window.fbModules;
-                        onAuthStateChanged(auth, (u) => {
-                            setUser(u);
-                            setIsOffline(false);
-                            setIsLoading(false);
-                        });
-                        setFb({ ...window.fbModules, appId: 'dungeonmind' });
-                    } else {
-                        setIsOffline(true);
-                        setIsLoading(false);
-                    }
-                };
-                init();
-            }, []);
-            return { fb, user, isOffline, isLoading };
-        };
-
-        const Icon = ({ name, size = 20, className = "" }) => {
-            const iconRef = useRef(null);
-            useEffect(() => {
-                if (window.lucide) window.lucide.createIcons({ root: iconRef.current?.parentNode, nameAttr: 'data-lucide', attrs: { class: `w-${size/4} h-${size/4} ${className}` } });
-            }, [name]);
-            return <i data-lucide={name} ref={iconRef} className={className}></i>;
-        };
-
-        // --- LOBBY ---
-        const Lobby = ({ fb, user, onJoin, onOffline }) => {
-            const [code, setCode] = useState("");
-            const [status, setStatus] = useState("");
-            const [recentRooms, setRecentRooms] = useState([]);
-
-            useEffect(() => {
-                if (!user || !fb) return;
-                const fetchHistory = async () => {
-                    try {
-                        const userDoc = await fb.getDoc(fb.doc(fb.db, 'artifacts', fb.appId, 'users', user.uid));
-                        if (userDoc.exists() && userDoc.data().recent_rooms) {
-                            setRecentRooms(userDoc.data().recent_rooms.reverse().slice(0, 3));
-                        }
-                    } catch(e) { console.warn("History fetch failed", e); }
-                };
-                fetchHistory();
-            }, [user, fb]);
-
-            const saveHistory = async (roomCode) => {
-                if (!user || !fb) return;
-                try {
-                    const userRef = fb.doc(fb.db, 'artifacts', fb.appId, 'users', user.uid);
-                    await fb.setDoc(userRef, { 
-                        email: user.email,
-                        recent_rooms: fb.arrayUnion(roomCode) 
-                    }, { merge: true });
-                } catch(e) { console.error("Save history error", e); }
-            };
-
-            const handleLogin = async () => {
-                try { await fb.signInWithPopup(fb.auth, new fb.GoogleAuthProvider()); } catch(e) { alert("Login Error: " + e.message); }
-            };
-
-            const handleHost = async () => {
-                if (!user) return alert("Login required to host.");
-                setStatus("hosting");
-                try {
-                    const newCode = Math.random().toString(36).substring(2, 8).toUpperCase();
-                    const defaultData = {
-                        hostId: user.uid,
-                        campaign: { name: "New Adventure", location: "The Start", tone: "Heroic" },
-                        config: { edition: "2014", strictMode: false },
-                        players: [],
-                        journal_public: "",
-                        journal_dm: "",
-                        created: new Date().toISOString()
-                    };
-                    const docRef = fb.doc(fb.db, 'artifacts', fb.appId, 'public', 'data', 'campaigns', newCode);
-                    await fb.setDoc(docRef, defaultData);
-                    await saveHistory(newCode);
-                    onJoin(newCode, 'dm');
-                } catch (e) { setStatus(""); alert("Error: " + e.message); }
-            };
-
-            const handleJoin = async (targetCode = code) => {
-                const finalCode = targetCode.trim().toUpperCase();
-                if (finalCode.length < 4) return alert("Code too short");
-                setStatus("joining");
-                try {
-                    const docRef = fb.doc(fb.db, 'artifacts', fb.appId, 'public', 'data', 'campaigns', finalCode);
-                    const snap = await fb.getDoc(docRef);
-                    if (snap.exists()) {
-                        const data = snap.data();
-                        const role = (user && data.hostId === user.uid) ? 'dm' : 'player';
-                        await saveHistory(finalCode);
-                        onJoin(finalCode, role);
-                    } else { setStatus(""); alert("Room not found!"); }
-                } catch (e) { setStatus(""); alert("Join Error: " + e.message); }
-            };
-
-            return (
-                <div className="h-screen w-full flex items-center justify-center bg-slate-900 text-white p-6">
-                    <div className="max-w-md w-full glass-panel p-8 rounded-2xl shadow-2xl fade-in border border-slate-700">
-                        <div className="text-center mb-8">
-                            <div className="text-amber-500 mb-2 flex justify-center"><Icon name="dungeon" size={48}/></div>
-                            <h1 className="text-4xl fantasy-font text-amber-500">DungeonMind</h1>
-                        </div>
-                        {!user ? (
-                            <div className="space-y-4">
-                                <button onClick={handleLogin} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded-lg shadow-lg flex items-center justify-center gap-2"><Icon name="log-in" size={20}/> Sign In with Google</button>
-                                <div className="text-center text-xs text-slate-500">- OR -</div>
-                                <button onClick={onOffline} className="w-full bg-slate-800 border border-slate-600 hover:bg-slate-700 text-slate-300 font-bold py-3 rounded-lg">Play Offline (Local)</button>
-                            </div>
-                        ) : (
-                            <div className="space-y-6">
-                                {recentRooms.length > 0 && (
-                                    <div className="mb-4">
-                                        <div className="text-xs text-slate-500 uppercase font-bold mb-2">Recent Campaigns</div>
-                                        <div className="flex gap-2 overflow-x-auto custom-scroll pb-2">
-                                            {recentRooms.map(r => (
-                                                <button key={r} onClick={() => handleJoin(r)} className="bg-slate-800 hover:bg-slate-700 border border-slate-600 px-3 py-1 rounded text-xs font-mono text-amber-500">{r}</button>
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
-                                <div className="bg-slate-800/50 p-4 rounded-xl border border-amber-500/30 hover:bg-slate-800 transition-colors cursor-pointer" onClick={!status ? handleHost : undefined}>
-                                    <h3 className="font-bold text-amber-100 mb-1 flex items-center gap-2"><Icon name="crown" size={18}/> Host Campaign</h3>
-                                    {status === "hosting" && <div className="mt-2 text-amber-500 text-xs animate-pulse">Forging World...</div>}
-                                </div>
-                                <div className="bg-slate-800/50 p-4 rounded-xl border border-green-500/30">
-                                    <h3 className="font-bold text-green-100 mb-2 flex items-center gap-2"><Icon name="users" size={18}/> Join Campaign</h3>
-                                    <div className="flex gap-2">
-                                        <input value={code} onChange={e => setCode(e.target.value.toUpperCase())} placeholder="CODE" className="bg-slate-900 border border-slate-600 text-center font-mono text-lg tracking-widest text-white rounded-lg p-2 w-full outline-none focus:border-green-500 uppercase"/>
-                                        <button onClick={() => handleJoin()} disabled={!!status} className="bg-green-700 hover:bg-green-600 text-white font-bold px-6 rounded-lg shadow-lg">{status === "joining" ? "..." : "GO"}</button>
-                                    </div>
-                                </div>
-                                <button onClick={() => fb.signOut(fb.auth)} className="w-full text-xs text-slate-500 hover:text-slate-300">Sign Out ({user.email})</button>
-                            </div>
-                        )}
-                    </div>
-                </div>
-            );
-        };
-
-        // --- GAME SESSION ---
-        const Sidebar = ({ view, setView, role, code, showTools, setShowTools, onExit }) => (
-            <aside className="w-16 md:w-20 flex flex-col items-center bg-slate-900 border-r border-slate-800 py-4 z-20">
-                <div className="mb-2 text-amber-500"><Icon name="dungeon" size={32} /></div>
-                <div className="text-[10px] font-mono text-slate-500 mb-6 bg-slate-800 px-1 rounded select-all cursor-pointer" title="Room Code">{code}</div>
-                <nav className="flex-1 flex flex-col gap-4 w-full">
-                    {['session', 'journal', 'party', 'settings'].map(v => (
-                        <button key={v} onClick={() => setView(v)} className={`w-full py-3 flex justify-center transition-all border-l-4 ${view === v ? 'border-amber-500 bg-slate-800 text-amber-400' : 'border-transparent text-slate-500 hover:text-slate-200'}`}>
-                            <Icon name={v === 'session' ? 'scroll-text' : v === 'journal' ? 'book-open-text' : v === 'party' ? 'users' : 'settings-2'} size={24} />
-                        </button>
-                    ))}
-                </nav>
-                <button onClick={() => setShowTools(!showTools)} className={`mb-4 p-3 rounded-lg transition-colors ${showTools ? 'bg-amber-900/50 text-amber-400' : 'text-slate-500 hover:bg-slate-800'}`}><Icon name="hammer" size={20} /></button>
-                <button onClick={onExit} className="mb-4 text-red-500 hover:bg-red-900/30 p-2 rounded"><Icon name="log-out" size={20}/></button>
-            </aside>
-        );
-
-        const SessionView = ({ data, chatHistory, setChatHistory, inputText, setInputText, isListening, toggleListening, generateResponse, isLoading, role, activeChar, showTools, setShowTools, diceLog, handleDiceRoll }) => {
-            const chatEndRef = useRef(null);
-            useEffect(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), [chatHistory, isLoading]);
-            const charName = data.players?.find(p => p.id == activeChar)?.name || "Adventurer";
-
-            return (
-                <div className="flex h-full relative">
-                    <div className="flex-1 flex flex-col h-full relative">
-                        <div className="h-12 border-b border-slate-800 flex items-center justify-between px-4 bg-slate-900/90 backdrop-blur">
-                            <div className="flex gap-2 items-center">
-                                <div className="live-status status-online"></div>
-                                <span className="text-sm font-bold text-amber-500">{data.campaign?.location || "Unknown Location"}</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <div className={`text-xs px-2 py-1 rounded ${role === 'dm' ? 'bg-red-900/30 text-red-400' : 'bg-green-900/30 text-green-400'}`}>{role === 'dm' ? 'DM' : `PLAYER: ${charName}`}</div>
-                            </div>
-                        </div>
-                        <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scroll pb-32">
-                            {chatHistory.map((msg, i) => (
-                                <div key={i} className={`p-4 rounded-lg max-w-[85%] ${msg.role === 'user' ? 'bg-slate-800 ml-auto text-right' : msg.role === 'system' ? 'bg-slate-800/50 mx-auto text-center text-xs text-slate-500' : 'bg-indigo-900/20 border border-indigo-500/30 mr-auto'}`}>
-                                    <div dangerouslySetInnerHTML={{__html: msg.content.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>').replace(/\n/g, '<br/>')}} />
-                                </div>
-                            ))}
-                            {isLoading && <div className="text-center text-xs text-slate-500 animate-pulse">Thinking...</div>}
-                            <div ref={chatEndRef}/>
-                        </div>
-                        <div className="absolute bottom-0 w-full p-4 bg-slate-900 border-t border-slate-800 flex gap-2">
-                            <div className="relative flex-1">
-                                <textarea value={inputText} onChange={e => setInputText(e.target.value)} onKeyDown={e => { if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); generateResponse(); }}} placeholder={`What does ${role==='dm' ? 'the DM' : charName} do?`} className="w-full bg-slate-800 text-white rounded-lg p-3 pr-10 resize-none h-14 focus:ring-1 focus:ring-amber-500 outline-none custom-scroll"/>
-                                <button onClick={toggleListening} className={`absolute right-2 top-2 p-2 rounded-full ${isListening ? 'text-red-500' : 'text-slate-400'}`}><Icon name="mic" size={18}/></button>
-                            </div>
-                            <button onClick={() => generateResponse()} className="bg-amber-600 hover:bg-amber-500 px-4 rounded text-white"><Icon name="send" size={20}/></button>
-                        </div>
-                    </div>
-                    {showTools && (
-                        <div className="w-72 bg-slate-900 border-l border-slate-800 flex flex-col p-4 gap-4">
-                            <div className="flex justify-between items-center mb-2"><span className="fantasy-font text-amber-500">Tools</span><button onClick={() => setShowTools(false)}><Icon name="x" size={16}/></button></div>
-                            <div className="glass-panel p-4 rounded-lg mb-4 grid grid-cols-4 gap-2">
-                                {[4, 6, 8, 10, 12, 20, 100].map(d => <button key={d} onClick={() => handleDiceRoll(d)} className="bg-slate-700 text-xs py-1 rounded border border-slate-600 hover:bg-slate-600">d{d}</button>)}
-                            </div>
-                            <div className="glass-panel p-3 rounded-lg mt-auto h-40 flex flex-col">
-                                <div className="text-xs font-bold text-slate-500 uppercase mb-1">Dice Log</div>
-                                <div className="flex-1 overflow-y-auto custom-scroll text-xs space-y-1">
-                                    {diceLog.map(l => <div key={l.id} className="flex justify-between border-b border-slate-800 pb-1"><span className="text-slate-400">{l.die}</span><span className="text-amber-400 font-bold">{l.result}</span></div>)}
-                                </div>
-                            </div>
-                        </div>
-                    )}
-                </div>
-            );
-        };
-
-        const JournalView = ({ data, setData, role, updateCloud }) => (
-            <div className="max-w-6xl mx-auto p-4 md:p-8 h-full flex flex-col md:flex-row gap-4">
-                <div className="flex-1 glass-panel rounded-xl flex flex-col overflow-hidden">
-                    <div className="p-2 bg-slate-800 text-center text-xs font-bold text-green-400">PUBLIC LOG (SHARED)</div>
-                    <textarea className="flex-1 bg-transparent p-4 resize-none outline-none
+        .custom-scroll::-webkit-scrollbar { width: 6px
