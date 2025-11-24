@@ -1,0 +1,782 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2822
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\margl1440\margr1440\vieww11520\viewh8400\viewkind0
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 <!DOCTYPE html>\
+<html lang="en">\
+<head>\
+    <meta charset="UTF-8">\
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">\
+    <title>DungeonMind v14.2 | Stable</title>\
+    \
+    <!-- React & ReactDOM -->\
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>\
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>\
+    \
+    <!-- Babel -->\
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>\
+    \
+    <!-- Tailwind CSS -->\
+    <script src="https://cdn.tailwindcss.com"></script>\
+    \
+    <!-- Lucide Icons -->\
+    <script src="https://unpkg.com/lucide@latest"></script>\
+\
+    <!-- PDF.js -->\
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>\
+\
+    <!-- Firebase Modular SDKs -->\
+    <script type="module">\
+        import \{ initializeApp \} from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";\
+        import \{ getAuth, signInWithPopup, signOut, GoogleAuthProvider, onAuthStateChanged \} from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";\
+        import \{ getFirestore, doc, setDoc, getDoc, onSnapshot, collection, updateDoc, arrayUnion, arrayRemove \} from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";\
+        \
+        const firebaseConfig = \{\
+            apiKey: "AIzaSyCSwJqc4aLCUG_HSEhw4KoA056Qd2y1CB4",\
+            authDomain: "dungeonmind-aa529.firebaseapp.com",\
+            projectId: "dungeonmind-aa529",\
+            storageBucket: "dungeonmind-aa529.firebasestorage.app",\
+            messagingSenderId: "839802457564",\
+            appId: "1:839802457564:web:97aa6ea99190aa59acd319",\
+            measurementId: "G-Z0TEJSQ0WF"\
+        \};\
+\
+        const app = initializeApp(firebaseConfig);\
+        const auth = getAuth(app);\
+        const db = getFirestore(app);\
+\
+        window.fbModules = \{ \
+            app, auth, db, \
+            GoogleAuthProvider, signInWithPopup, signOut, \
+            doc, setDoc, getDoc, updateDoc, onSnapshot, onAuthStateChanged, arrayUnion, arrayRemove\
+        \};\
+    </script>\
+\
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700&family=Lato:wght@400;700&family=Fira+Code:wght@400&display=swap" rel="stylesheet">\
+\
+    <style>\
+        :root \{ --bg-dark: #0f172a; --bg-panel: #1e293b; --accent: #d97706; \}\
+        body \{ font-family: 'Lato', sans-serif; background-color: var(--bg-dark); color: #e2e8f0; overflow: hidden; touch-action: manipulation; \}\
+        h1, h2, h3, .fantasy-font \{ font-family: 'Cinzel', serif; \}\
+        .mono-font \{ font-family: 'Fira Code', monospace; \}\
+        .custom-scroll::-webkit-scrollbar \{ width: 6px; height: 6px; \}\
+        .custom-scroll::-webkit-scrollbar-track \{ background: #0f172a; \}\
+        .custom-scroll::-webkit-scrollbar-thumb \{ background: #334155; border-radius: 3px; \}\
+        .glass-panel \{ background: rgba(30, 41, 59, 0.95); border: 1px solid rgba(255, 255, 255, 0.05); \}\
+        input, textarea, select \{ font-size: 16px !important; \}\
+        @keyframes pulse-green \{ 0% \{ box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7); \} 70% \{ box-shadow: 0 0 0 10px rgba(34, 197, 94, 0); \} 100% \{ box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); \} \}\
+        .live-status \{ width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; \}\
+        .status-online \{ background-color: #22c55e; box-shadow: 0 0 5px #22c55e; \}\
+        .status-offline \{ background-color: #64748b; \}\
+        .fade-in \{ animation: fadeIn 0.5s ease-out forwards; \}\
+        @keyframes fadeIn \{ from \{ opacity: 0; transform: translateY(10px); \} to \{ opacity: 1; transform: translateY(0); \} \}\
+    </style>\
+</head>\
+<body>\
+    <div id="root"></div>\
+\
+    <script type="text/babel">\
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';\
+\
+        const \{ useState, useEffect, useRef \} = React;\
+\
+        // --- Firebase Hook ---\
+        const useFirebase = () => \{\
+            const [fb, setFb] = useState(null);\
+            const [user, setUser] = useState(null);\
+            const [isAuthReady, setIsAuthReady] = useState(false); \
+            const [isOffline, setIsOffline] = useState(false);\
+\
+            useEffect(() => \{\
+                const init = async () => \{\
+                    let attempts = 0;\
+                    while (!window.fbModules && attempts < 15) \{\
+                        await new Promise(r => setTimeout(r, 100));\
+                        attempts++;\
+                    \}\
+\
+                    if (window.fbModules) \{\
+                        const \{ auth, onAuthStateChanged \} = window.fbModules;\
+                        onAuthStateChanged(auth, (u) => \{\
+                            setUser(u);\
+                            setIsAuthReady(true);\
+                            setIsOffline(false);\
+                        \});\
+                        setFb(\{ ...window.fbModules, appId: 'dungeonmind' \});\
+                    \} else \{\
+                        setIsOffline(true);\
+                        setIsAuthReady(true);\
+                    \}\
+                \};\
+                init();\
+            \}, []);\
+\
+            return \{ fb, user, isAuthReady, isOffline \};\
+        \};\
+\
+        const Icon = (\{ name, size = 20, className = "" \}) => \{\
+            const iconRef = useRef(null);\
+            useEffect(() => \{\
+                if (window.lucide) window.lucide.createIcons(\{ root: iconRef.current?.parentNode, nameAttr: 'data-lucide', attrs: \{ class: `w-$\{size/4\} h-$\{size/4\} $\{className\}` \} \});\
+            \}, [name]);\
+            return <i data-lucide=\{name\} ref=\{iconRef\} className=\{className\}></i>;\
+        \};\
+\
+        // --- LOBBY ---\
+        const Lobby = (\{ fb, user, onJoin, onOffline \}) => \{\
+            const [code, setCode] = useState("");\
+            const [status, setStatus] = useState("");\
+            const [recents, setRecents] = useState([]);\
+\
+            useEffect(() => \{\
+                const saved = localStorage.getItem('dm_recents');\
+                if(saved) setRecents(JSON.parse(saved));\
+            \}, []);\
+\
+            const saveRecent = (code, name) => \{\
+                const newRecents = [\{code, name, date: Date.now()\}, ...recents.filter(r => r.code !== code)].slice(0, 5);\
+                setRecents(newRecents);\
+                localStorage.setItem('dm_recents', JSON.stringify(newRecents));\
+            \};\
+\
+            const handleLogin = async () => \{\
+                try \{ await fb.signInWithPopup(fb.auth, new fb.GoogleAuthProvider()); \} \
+                catch(e) \{ alert("Login Error: " + e.message); \}\
+            \};\
+\
+            const handleHost = async () => \{\
+                if (!user) return alert("Login required.");\
+                setStatus("hosting");\
+                try \{\
+                    const newCode = Math.random().toString(36).substring(2, 8).toUpperCase();\
+                    const defaultData = \{\
+                        hostId: user.uid,\
+                        hostEmail: user.email, \
+                        campaign: \{ name: "New Adventure", location: "The Start", tone: "Heroic" \},\
+                        config: \{ edition: "2014", strictMode: false \},\
+                        players: [],\
+                        activeUsers: \{ [user.uid]: user.email || "GM" \}, \
+                        bannedUsers: [],\
+                        journal_public: "",\
+                        journal_dm: "",\
+                        created: new Date().toISOString()\
+                    \};\
+                    const docRef = fb.doc(fb.db, 'artifacts', fb.appId, 'public', 'data', 'campaigns', newCode);\
+                    await fb.setDoc(docRef, defaultData);\
+                    saveRecent(newCode, "New Campaign");\
+                    \
+                    // Pass User Object\
+                    onJoin(newCode, 'dm', user);\
+                \} catch (e) \{ setStatus(""); alert("Error: " + e.message); \}\
+            \};\
+\
+            const handleJoin = async (codeToJoin = code) => \{\
+                if (!codeToJoin || codeToJoin.length < 4) return alert("Code too short");\
+                setStatus("joining");\
+                try \{\
+                    const docRef = fb.doc(fb.db, 'artifacts', fb.appId, 'public', 'data', 'campaigns', codeToJoin.toUpperCase());\
+                    const snap = await fb.getDoc(docRef);\
+                    if (snap.exists()) \{\
+                        const data = snap.data();\
+                        \
+                        if (data.bannedUsers && data.bannedUsers.includes(user.uid)) \{\
+                            setStatus("");\
+                            return alert("You have been banned from this campaign.");\
+                        \}\
+\
+                        if (user) \{\
+                            const userData = snap.data();\
+                            const currentUsers = userData.activeUsers || \{\};\
+                            await fb.updateDoc(docRef, \{\
+                                activeUsers: \{ ...currentUsers, [user.uid]: user.email || "Player" \}\
+                            \});\
+                        \}\
+                        saveRecent(codeToJoin.toUpperCase(), snap.data().campaign.name);\
+                        \
+                        // Pass User Object\
+                        onJoin(codeToJoin.toUpperCase(), 'player', user);\
+                    \} else \{ setStatus(""); alert("Room not found!"); \}\
+                \} catch (e) \{ setStatus(""); alert("Error: " + e.message); \}\
+            \};\
+\
+            return (\
+                <div className="h-screen w-full flex items-center justify-center bg-slate-900 text-white p-6">\
+                    <div className="max-w-md w-full glass-panel p-8 rounded-2xl shadow-2xl fade-in border border-slate-700 max-h-[90vh] overflow-y-auto custom-scroll">\
+                        <div className="text-center mb-8">\
+                            <div className="text-amber-500 mb-2 flex justify-center"><Icon name="dungeon" size=\{48\}/></div>\
+                            <h1 className="text-4xl fantasy-font text-amber-500">DungeonMind</h1>\
+                            <p className="text-slate-400 text-sm">Multiplayer Campaign Manager</p>\
+                        </div>\
+                        \{!user ? (\
+                            <div className="space-y-4">\
+                                <button onClick=\{handleLogin\} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded-lg shadow-lg flex items-center justify-center gap-2"><Icon name="log-in" size=\{20\}/> Sign In with Google</button>\
+                                <div className="text-center text-xs text-slate-500">- OR -</div>\
+                                <button onClick=\{onOffline\} className="w-full bg-slate-800 border border-slate-600 hover:bg-slate-700 text-slate-300 font-bold py-3 rounded-lg">Play Offline (Local)</button>\
+                            </div>\
+                        ) : (\
+                            <div className="space-y-6">\
+                                <div className="bg-slate-800/50 p-4 rounded-xl border border-amber-500/30 hover:bg-slate-800 transition-colors cursor-pointer" onClick=\{!status ? handleHost : undefined\}>\
+                                    <h3 className="font-bold text-amber-100 mb-1 flex items-center gap-2"><Icon name="crown" size=\{18\}/> Host New Campaign</h3>\
+                                    \{status === "hosting" && <div className="mt-2 text-amber-500 text-xs animate-pulse">Forging World...</div>\}\
+                                </div>\
+                                <div className="bg-slate-800/50 p-4 rounded-xl border border-green-500/30">\
+                                    <h3 className="font-bold text-green-100 mb-2 flex items-center gap-2"><Icon name="users" size=\{18\}/> Join with Code</h3>\
+                                    <div className="flex gap-2">\
+                                        <input value=\{code\} onChange=\{e => setCode(e.target.value.toUpperCase())\} placeholder="CODE" className="bg-slate-900 border border-slate-600 text-center font-mono text-lg tracking-widest text-white rounded-lg p-2 w-full outline-none focus:border-green-500 uppercase"/>\
+                                        <button onClick=\{() => handleJoin(code)\} disabled=\{!!status\} className="bg-green-700 hover:bg-green-600 text-white font-bold px-6 rounded-lg shadow-lg">\{status === "joining" ? "..." : "GO"\}</button>\
+                                    </div>\
+                                </div>\
+                                \{recents.length > 0 && (\
+                                    <div className="mt-6">\
+                                        <div className="text-xs font-bold text-slate-500 uppercase mb-2">Recent</div>\
+                                        <div className="space-y-2">\
+                                            \{recents.map(r => (\
+                                                <div key=\{r.code\} onClick=\{() => handleJoin(r.code)\} className="bg-slate-800 p-3 rounded flex justify-between items-center cursor-pointer hover:bg-slate-700 border border-slate-700">\
+                                                    <div>\
+                                                        <div className="font-bold text-sm text-slate-200">\{r.name\}</div>\
+                                                        <div className="text-[10px] font-mono text-amber-500">\{r.code\}</div>\
+                                                    </div>\
+                                                    <Icon name="chevron-right" size=\{16\} className="text-slate-500"/>\
+                                                </div>\
+                                            ))\}\
+                                        </div>\
+                                    </div>\
+                                )\}\
+                                <button onClick=\{() => fb.signOut(fb.auth)\} className="w-full text-xs text-slate-500 hover:text-slate-300 pt-4">Sign Out (\{user.email\})</button>\
+                            </div>\
+                        )\}\
+                    </div>\
+                </div>\
+            );\
+        \};\
+\
+        // --- GAME COMPONENTS ---\
+        const Sidebar = (\{ view, setView, role, code, showTools, setShowTools, onExit \}) => (\
+            <aside className="w-16 md:w-20 flex flex-col items-center bg-slate-900 border-r border-slate-800 py-4 z-20">\
+                <div className="mb-2 text-amber-500"><Icon name="dungeon" size=\{32\} /></div>\
+                <div className="text-[10px] font-mono text-slate-500 mb-6 bg-slate-800 px-1 rounded">\{code\}</div>\
+                <nav className="flex-1 flex flex-col gap-4 w-full">\
+                    \{['session', 'journal', 'party', 'settings'].map(v => (\
+                        <button key=\{v\} onClick=\{() => setView(v)\} className=\{`w-full py-3 flex justify-center transition-all border-l-4 $\{view === v ? 'border-amber-500 bg-slate-800 text-amber-400' : 'border-transparent text-slate-500 hover:text-slate-200'\}`\}>\
+                            <Icon name=\{v === 'session' ? 'scroll-text' : v === 'journal' ? 'book-open-text' : v === 'party' ? 'users' : 'settings-2'\} size=\{24\} />\
+                        </button>\
+                    ))\}\
+                </nav>\
+                <button onClick=\{() => setShowTools(!showTools)\} className=\{`mb-4 p-3 rounded-lg transition-colors $\{showTools ? 'bg-amber-900/50 text-amber-400' : 'text-slate-500 hover:bg-slate-800'\}`\}><Icon name="hammer" size=\{20\} /></button>\
+                <button onClick=\{onExit\} className="mb-4 text-red-500 hover:bg-red-900/30 p-2 rounded"><Icon name="log-out" size=\{20\}/></button>\
+            </aside>\
+        );\
+\
+        const DiceTray = (\{ diceLog, handleDiceRoll \}) => (\
+            <div className="glass-panel p-4 rounded-lg mb-4">\
+                <h3 className="text-xs font-bold text-slate-500 uppercase mb-2">Dice Roller</h3>\
+                <div className="grid grid-cols-4 gap-2 mb-3">\
+                    \{[4, 6, 8, 10, 12, 20, 100].map(d => (\
+                        <button key=\{d\} onClick=\{() => handleDiceRoll(d)\} className="bg-slate-700 hover:bg-amber-700 text-xs font-mono py-1 rounded border border-slate-600 transition-colors">d\{d\}</button>\
+                    ))\}\
+                </div>\
+                <div className="h-24 overflow-y-auto custom-scroll bg-slate-900/50 rounded p-2 font-mono text-xs space-y-1">\
+                    \{diceLog.map(log => (\
+                        <div key=\{log.id\} className="flex justify-between border-b border-slate-800 pb-1">\
+                            <span className="text-slate-400">\{log.die\}</span>\
+                            <span className=\{`font-bold $\{log.result == 20 && log.die == 'd20' ? 'text-green-400' : log.result == 1 && log.die == 'd20' ? 'text-red-400' : 'text-amber-400'\}`\}>\{log.result\}</span>\
+                        </div>\
+                    ))\}\
+                </div>\
+            </div>\
+        );\
+\
+        const JournalView = (\{ data, setData, role, updateCloud \}) => (\
+            <div className="max-w-6xl mx-auto p-4 md:p-8 h-full flex flex-col gap-4">\
+                <div className="flex justify-between items-center border-b border-slate-800 pb-2">\
+                    <h2 className="text-3xl fantasy-font text-amber-500">Chronicles</h2>\
+                    <div className="text-xs text-slate-400 flex items-center gap-2"><Icon name="brain" size=\{14\} className="text-green-400"/> AI Context</div>\
+                </div>\
+                <div className="flex-1 flex flex-col md:flex-row gap-4 min-h-0">\
+                    <div className="flex-1 flex flex-col glass-panel rounded-xl overflow-hidden">\
+                        <div className="bg-slate-800/50 p-2 text-center text-xs uppercase tracking-wider font-bold text-green-400 border-b border-slate-700">Public Log</div>\
+                        <textarea value=\{data.journal_public || ""\} onChange=\{(e) => \{ setData(\{...data, journal_public: e.target.value\}); updateCloud(\{...data, journal_public: e.target.value\}); \}\} className="w-full h-full bg-transparent p-4 text-slate-200 resize-none focus:outline-none font-sans leading-relaxed custom-scroll" placeholder="Log shared events here..."/>\
+                    </div>\
+                    \{role === 'dm' && (\
+                        <div className="flex-1 flex flex-col glass-panel rounded-xl overflow-hidden border-red-900/30 bg-red-900/5">\
+                            <div className="bg-red-900/20 p-2 text-center text-xs uppercase tracking-wider font-bold text-red-400 border-b border-red-900/30 flex justify-center gap-2"><Icon name="eye-off" size=\{14\}/> DM Secrets</div>\
+                            <textarea value=\{data.journal_dm || ""\} onChange=\{(e) => \{ setData(\{...data, journal_dm: e.target.value\}); updateCloud(\{...data, journal_dm: e.target.value\}); \}\} className="w-full h-full bg-transparent p-4 text-red-100/80 resize-none focus:outline-none font-sans leading-relaxed custom-scroll placeholder-red-900/50" placeholder="Hidden truths..."/>\
+                        </div>\
+                    )\}\
+                </div>\
+            </div>\
+        );\
+\
+        // --- FIXED SETTINGS VIEW ---\
+        const SettingsView = (\{ data, setData, apiKey, setApiKey, role, updateCloud, handlePdfUpload, clearPdf, pdfProcessing, code, user, transferDM, banPlayer, kickPlayer, unbanPlayer, aiProvider, setAiProvider \}) => \{\
+            const copyCode = () => \{ navigator.clipboard.writeText(code); alert("Copied: " + code); \};\
+            const activeUsers = data.activeUsers || \{\};\
+            const bannedUsers = data.bannedUsers || [];\
+\
+            // CRASH FIX: user might be null if this renders fast in offline mode\
+            const userId = user ? user.uid : 'offline';\
+            const userEmail = user ? user.email : 'Offline User';\
+\
+            return (\
+                <div className="max-w-3xl mx-auto p-8 overflow-y-auto h-full custom-scroll">\
+                    <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-2">\
+                        <h2 className="text-3xl fantasy-font text-amber-500">Settings</h2>\
+                    </div>\
+\
+                    <div className="glass-panel p-8 rounded-xl mb-8 flex flex-col items-center text-center border-2 border-indigo-500/30 bg-indigo-900/10 relative overflow-hidden">\
+                        <h3 className="text-xs font-bold text-indigo-300 uppercase tracking-widest mb-2">Invite Code</h3>\
+                        <div className="text-5xl font-mono font-bold text-white tracking-widest mb-4 drop-shadow-lg">\{code\}</div>\
+                        <button onClick=\{copyCode\} className="bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-2 rounded-full font-bold text-sm flex items-center gap-2 shadow-lg"><Icon name="copy" size=\{16\}/> Copy</button>\
+                    </div>\
+\
+                    \{/* DM Player Management */\}\
+                    \{role === 'dm' && (\
+                        <div className="glass-panel p-6 rounded-xl mb-6 border-l-4 border-purple-500">\
+                            <h3 className="text-lg font-bold mb-4 text-slate-200 flex items-center gap-2"><Icon name="shield-alert" size=\{18\}/> Moderation</h3>\
+                            \
+                            <div className="space-y-2 mb-6">\
+                                <div className="text-xs text-slate-400 uppercase font-bold">Active Players</div>\
+                                \{Object.entries(activeUsers).map(([uid, email]) => (\
+                                    <div key=\{uid\} className="flex justify-between items-center bg-slate-900 p-3 rounded border border-slate-700">\
+                                        <div className="text-sm truncate w-1/2">\
+                                            <span className="text-slate-200">\{email\}</span>\
+                                            \{uid === userId && <span className="ml-2 text-xs text-green-500">(You)</span>\}\
+                                        </div>\
+                                        \{uid !== userId && (\
+                                            <div className="flex gap-2">\
+                                                <button onClick=\{() => transferDM(uid)\} className="bg-purple-900 hover:bg-purple-700 text-purple-200 text-xs px-2 py-1 rounded" title="Make DM"><Icon name="crown" size=\{14\}/></button>\
+                                                <button onClick=\{() => kickPlayer(uid)\} className="bg-amber-900 hover:bg-amber-700 text-amber-200 text-xs px-2 py-1 rounded" title="Kick"><Icon name="log-out" size=\{14\}/></button>\
+                                                <button onClick=\{() => banPlayer(uid)\} className="bg-red-900 hover:bg-red-700 text-red-200 text-xs px-2 py-1 rounded" title="Ban"><Icon name="ban" size=\{14\}/></button>\
+                                            </div>\
+                                        )\}\
+                                    </div>\
+                                ))\}\
+                            </div>\
+\
+                            \{bannedUsers.length > 0 && (\
+                                <div className="space-y-2">\
+                                    <div className="text-xs text-red-400 uppercase font-bold">Banned Users</div>\
+                                    \{bannedUsers.map(uid => (\
+                                        <div key=\{uid\} className="flex justify-between items-center bg-red-950/30 p-2 rounded border border-red-900/50">\
+                                            <span className="text-xs font-mono text-red-300">\{uid.slice(0,12)\}...</span>\
+                                            <button onClick=\{() => unbanPlayer(uid)\} className="text-xs text-slate-400 hover:text-white">Unban</button>\
+                                        </div>\
+                                    ))\}\
+                                </div>\
+                            )\}\
+                        </div>\
+                    )\}\
+\
+                    <div className="glass-panel p-6 rounded-xl mb-6 border-l-4 border-amber-500">\
+                        <h3 className="text-lg font-bold mb-2 text-slate-200 flex items-center gap-2"><Icon name="bot" size=\{18\}/> AI Brain</h3>\
+                        <div className="mb-3">\
+                            <label className="text-xs text-slate-500 font-bold uppercase block mb-1">Model Provider</label>\
+                            <select value=\{aiProvider\} onChange=\{e => setAiProvider(e.target.value)\} className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-slate-200 outline-none">\
+                                <option value="gemini">Google Gemini</option>\
+                                <option value="openai">OpenAI (ChatGPT)</option>\
+                            </select>\
+                        </div>\
+                        <label className="text-xs text-slate-500 font-bold uppercase block mb-1">API Key</label>\
+                        <input type="password" value=\{apiKey\} onChange=\{e => setApiKey(e.target.value)\} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none" placeholder=\{aiProvider === 'openai' ? "sk-..." : "AIza..."\}/>\
+                    </div>\
+\
+                    \{role === 'dm' && (\
+                        <div className="space-y-6">\
+                            <div className="glass-panel p-6 rounded-xl border-l-4 border-blue-500">\
+                                <h3 className="text-lg font-bold mb-4 text-slate-200">Rules & Logic</h3>\
+                                <div className="grid md:grid-cols-2 gap-6">\
+                                    <div>\
+                                        <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Edition</label>\
+                                        <select value=\{data.config?.edition || '2014'\} onChange=\{e => \{ const nd = \{...data, config: \{...data.config, edition: e.target.value\}\}; setData(nd); updateCloud(nd); \}\} className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-slate-200 outline-none">\
+                                            <option value="2014">5e (2014)</option>\
+                                            <option value="2024">5e (2024 Revised)</option>\
+                                        </select>\
+                                    </div>\
+                                    <div>\
+                                        <label className="block text-xs font-bold text-slate-400 uppercase mb-2">AI Behavior</label>\
+                                        <button onClick=\{() => \{ const nd = \{...data, config: \{...data.config, strictMode: !data.config?.strictMode\}\}; setData(nd); updateCloud(nd); \}\} className=\{`w-full p-2 rounded text-sm font-bold border $\{data.config?.strictMode ? 'bg-green-900/50 border-green-600 text-green-400' : 'bg-slate-900 border-slate-700 text-slate-400'\}`\}>\
+                                            \{data.config?.strictMode ? "Strict (Context Only)" : "General (Context + Internet)"\}\
+                                        </button>\
+                                    </div>\
+                                </div>\
+                            </div>\
+\
+                            <div className="glass-panel p-6 rounded-xl border-l-4 border-red-500 space-y-4">\
+                                <h3 className="text-lg font-bold text-slate-200">DM Tools</h3>\
+                                <input value=\{data.campaign?.location || ""\} onChange=\{e => \{ const newData = \{...data, campaign: \{...data.campaign, location: e.target.value\}\}; setData(newData); updateCloud(newData); \}\} className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-slate-200 outline-none" placeholder="Current Location"/>\
+                                <div className="border-2 border-dashed border-slate-700 rounded p-4 text-center">\
+                                    \{!data.campaign?.pdfName ? (\
+                                        <label className="cursor-pointer block w-full"><span className="text-slate-300 font-bold">Upload PDF</span><input type="file" className="hidden" accept=".pdf" onChange=\{handlePdfUpload\}/></label>\
+                                    ) : (\
+                                        <div className="flex justify-between"><span className="text-green-400">\{data.campaign.pdfName\}</span><button onClick=\{clearPdf\}><Icon name="trash-2" size=\{16\}/></button></div>\
+                                    )\}\
+                                </div>\
+                            </div>\
+                        </div>\
+                    )\}\
+                </div>\
+            );\
+        \};\
+\
+        const PartyView = (\{ data, setData, role, activeChar, setActiveChar, updateCloud \}) => \{\
+            const updatePlayer = (idx, field, val) => \{\
+                setData(prev => \{\
+                    const newPlayers = prev.players.map((p, i) => i === idx ? \{ ...p, [field]: val \} : p);\
+                    updateCloud(\{ ...prev, players: newPlayers \});\
+                    return \{ ...prev, players: newPlayers \};\
+                \});\
+            \};\
+\
+            const addPlayer = () => \{\
+                const newP = \{ id: Date.now(), name: "New Hero", race: "Human", class: "Fighter", hp: 10, notes: "" \};\
+                const newData = \{ ...data, players: [...data.players, newP] \};\
+                setData(newData);\
+                updateCloud(newData);\
+            \};\
+\
+            const deletePlayer = (id) => \{\
+                const newData = \{ ...data, players: data.players.filter(p => p.id !== id) \};\
+                setData(newData);\
+                updateCloud(newData);\
+            \};\
+\
+            return (\
+                <div className="max-w-4xl mx-auto p-8 overflow-y-auto h-full custom-scroll">\
+                    <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-2">\
+                        <h2 className="text-3xl fantasy-font text-amber-500">Party</h2>\
+                        \{role === 'dm' && <button onClick=\{addPlayer\} className="bg-amber-600 px-3 py-1 rounded text-sm font-bold">+ Add</button>\}\
+                    </div>\
+                    <div className="grid md:grid-cols-2 gap-4">\
+                        \{data.players?.map((p, idx) => (\
+                            <div key=\{p.id\} className=\{`glass-panel p-4 rounded-xl border-l-4 relative group $\{activeChar == p.id ? 'border-green-500 bg-green-900/10' : 'border-amber-600'\}`\}>\
+                                <div className="flex justify-between mb-2">\
+                                    <input disabled=\{role !== 'dm'\} className="bg-transparent font-bold text-lg w-full outline-none" value=\{p.name\} onChange=\{e => updatePlayer(idx, 'name', e.target.value)\} placeholder="Name"/>\
+                                    \{role === 'dm' && <button onClick=\{() => deletePlayer(p.id)\} className="text-slate-600 hover:text-red-500"><Icon name="trash-2" size=\{16\}/></button>\}\
+                                    \{role === 'player' && activeChar !== p.id && <button onClick=\{() => setActiveChar(p.id)\} className="text-xs bg-slate-700 px-2 rounded">Play</button>\}\
+                                    \{activeChar == p.id && <span className="text-xs text-green-400 font-bold">YOU</span>\}\
+                                </div>\
+                                <div className="flex gap-2 mb-2">\
+                                    <input disabled=\{role !== 'dm'\} className="w-1/2 bg-slate-800/50 rounded p-1 text-sm" value=\{p.race\} placeholder="Race" onChange=\{e => updatePlayer(idx, 'race', e.target.value)\}/>\
+                                    <input disabled=\{role !== 'dm'\} className="w-1/2 bg-slate-800/50 rounded p-1 text-sm" value=\{p.class\} placeholder="Class" onChange=\{e => updatePlayer(idx, 'class', e.target.value)\}/>\
+                                </div>\
+                                <textarea disabled=\{role !== 'dm' && activeChar !== p.id\} className="w-full bg-slate-800/30 rounded p-2 text-sm h-20 resize-none" value=\{p.notes\} placeholder="Notes..." onChange=\{e => updatePlayer(idx, 'notes', e.target.value)\}/>\
+                            </div>\
+                        ))\}\
+                    </div>\
+                </div>\
+            );\
+        \};\
+\
+        const SessionView = (\{ data, chatHistory, setChatHistory, inputText, setInputText, isListening, toggleListening, generateResponse, isLoading, role, activeChar, showTools, setShowTools, diceLog, handleDiceRoll, syncState \}) => \{\
+            const chatEndRef = useRef(null);\
+            useEffect(() => chatEndRef.current?.scrollIntoView(\{ behavior: 'smooth' \}), [chatHistory, isLoading]);\
+            const charName = data.players?.find(p => p.id == activeChar)?.name || "Adventurer";\
+\
+            return (\
+                <div className="flex h-full relative">\
+                    <div className="flex-1 flex flex-col h-full relative">\
+                        <div className="h-12 border-b border-slate-800 flex items-center justify-between px-4 bg-slate-900/90 backdrop-blur">\
+                            <div className="flex gap-2 items-center">\
+                                <div className=\{`live-status $\{syncState === 'saved' ? 'status-online' : 'status-offline'\}`\}></div>\
+                                <span className="text-sm font-bold text-amber-500">\{data.campaign?.location || "Unknown Location"\}</span>\
+                            </div>\
+                            <div className="flex items-center gap-2">\
+                                \{data.config?.strictMode && <span className="text-[10px] bg-blue-900/30 text-blue-400 px-1 rounded border border-blue-800">STRICT</span>\}\
+                                <span className="text-[10px] text-slate-500">\{data.config?.edition || '2014'\}</span>\
+                                <div className=\{`text-xs px-2 py-1 rounded $\{role === 'dm' ? 'bg-red-900/30 text-red-400' : 'bg-green-900/30 text-green-400'\}`\}>\{role === 'dm' ? 'DM' : `PLAYER: $\{charName\}`\}</div>\
+                            </div>\
+                        </div>\
+                        <div ref=\{chatEndRef\} className="flex-1 overflow-y-auto custom-scroll p-4 pb-40 space-y-6">\
+                            \{chatHistory.map((msg, i) => (\
+                                <div key=\{i\} className=\{`p-4 rounded-lg max-w-[85%] $\{msg.role === 'user' ? 'bg-slate-800 ml-auto text-right' : msg.role === 'system' ? 'bg-slate-800/50 mx-auto text-center text-xs text-slate-500' : 'bg-indigo-900/20 border border-indigo-500/30 mr-auto'\}`\}>\
+                                    <div dangerouslySetInnerHTML=\{\{__html: msg.content.replace(/\\*\\*(.*?)\\*\\*/g, '<b>$1</b>').replace(/\\n/g, '<br/>')\}\} />\
+                                </div>\
+                            ))\}\
+                            \{isLoading && <div className="text-center text-xs text-slate-500 animate-pulse">Thinking...</div>\}\
+                        </div>\
+                        <div className="absolute bottom-0 w-full p-4 bg-slate-900 border-t border-slate-800 flex gap-2">\
+                            <div className="relative flex-1">\
+                                <textarea value=\{inputText\} onChange=\{e => setInputText(e.target.value)\} onKeyDown=\{e => \{ if(e.key === 'Enter' && !e.shiftKey) \{ e.preventDefault(); generateResponse(); \}\}\} placeholder=\{`What does $\{role==='dm' ? 'the DM' : charName\} do?`\} className="w-full bg-slate-800 text-white rounded-lg p-3 pr-10 resize-none h-14 focus:ring-1 focus:ring-amber-500 outline-none custom-scroll"/>\
+                                <button onClick=\{toggleListening\} className=\{`absolute right-2 top-2 p-2 rounded-full $\{isListening ? 'text-red-500' : 'text-slate-400'\}`\}><Icon name="mic" size=\{18\}/></button>\
+                            </div>\
+                            <button onClick=\{() => generateResponse()\} className="bg-amber-600 hover:bg-amber-500 px-4 rounded text-white"><Icon name="send" size=\{20\}/></button>\
+                        </div>\
+                    </div>\
+                    \{showTools && (\
+                        <div className="w-72 bg-slate-900 border-l border-slate-800 flex flex-col p-4 gap-4">\
+                            <div className="flex justify-between items-center mb-2"><span className="fantasy-font text-amber-500">Tools</span><button onClick=\{() => setShowTools(false)\}><Icon name="x" size=\{16\}/></button></div>\
+                            <DiceTray diceLog=\{diceLog\} handleDiceRoll=\{handleDiceRoll\} />\
+                        </div>\
+                    )\}\
+                </div>\
+            );\
+        \};\
+\
+        function App() \{\
+            const \{ fb, user, isAuthReady, isOffline \} = useFirebase();\
+            const [view, setView] = useState('lobby');\
+            const [modeParams, setModeParams] = useState(null);\
+\
+            // FIXED: Explicitly pass USER object to GameSession via modeParams\
+            const handleJoin = (code, role, userObj) => \{\
+                setModeParams(\{ \
+                    fb, \
+                    code, \
+                    role, \
+                    userId: userObj ? userObj.uid : 'guest', \
+                    user: userObj, // Pass full user object to fix Settings crash\
+                    isOffline: false \
+                \});\
+                setView('game');\
+            \};\
+\
+            const handleOffline = () => \{\
+                const fakeUser = \{ uid: 'local', email: 'Offline' \};\
+                setModeParams(\{ fb: null, code: 'LOCAL', role: 'dm', userId: 'local', user: fakeUser, isOffline: true \});\
+                setView('game');\
+            \};\
+\
+            const handleExit = () => \{\
+                setModeParams(null);\
+                setView('lobby');\
+            \};\
+\
+            if (!isAuthReady) return <div className="h-screen bg-slate-900 flex items-center justify-center text-white"><div className="animate-spin mr-2"><Icon name="loader-2"/></div> Connecting...</div>;\
+\
+            if (view === 'lobby') return <Lobby fb=\{fb\} user=\{user\} onJoin=\{handleJoin\} onOffline=\{handleOffline\} />;\
+\
+            return <GameSession \{...modeParams\} onExit=\{handleExit\} />;\
+        \}\
+\
+        const GameSession = (\{ fb, code, role: initialRole, userId, user, isOffline, onExit \}) => \{\
+            const DEFAULT_DATA = \{\
+                hostId: "",\
+                campaign: \{ name: "New Adventure", location: "Start", tone: "Heroic", pdfName: null, pdfText: null \},\
+                config: \{ edition: '2014', strictMode: false \},\
+                players: [],\
+                journal_public: "",\
+                journal_dm: "",\
+                activeUsers: \{\},\
+                bannedUsers: []\
+            \};\
+\
+            const [data, setData] = useState(null);\
+            const [view, setView] = useState('session');\
+            const [role, setRole] = useState(initialRole);\
+            const [activeChar, setActiveChar] = useState(null);\
+            const [chatHistory, setChatHistory] = useState([\{ role: 'system', content: `Connected to $\{code\}` \}]);\
+            const [inputText, setInputText] = useState('');\
+            const [isLoading, setIsLoading] = useState(false);\
+            const [showTools, setShowTools] = useState(false);\
+            const [isListening, setIsListening] = useState(false);\
+            const [apiKey, setApiKey] = useState('');\
+            const [aiProvider, setAiProvider] = useState('gemini'); // 'gemini' or 'openai'\
+            const [diceLog, setDiceLog] = useState([]);\
+            const [pdfProcessing, setPdfProcessing] = useState(false);\
+            const [syncState, setSyncState] = useState('init');\
+            const recognitionRef = useRef(null);\
+            const saveTimer = useRef(null);\
+\
+            useEffect(() => \{\
+                const key = localStorage.getItem(`dm_key_$\{aiProvider\}`);\
+                setApiKey(key || '');\
+            \}, [aiProvider]);\
+\
+            const updateApiKey = (val) => \{\
+                setApiKey(val);\
+                localStorage.setItem(`dm_key_$\{aiProvider\}`, val);\
+            \};\
+\
+            useEffect(() => \{\
+                if (isOffline) \{\
+                    const local = localStorage.getItem('dm_local_save');\
+                    setData(local ? JSON.parse(local) : DEFAULT_DATA);\
+                    return;\
+                \}\
+                \
+                const docRef = fb.doc(fb.db, 'artifacts', fb.appId, 'public', 'data', 'campaigns', code);\
+                const unsub = fb.onSnapshot(docRef, (snap) => \{\
+                    if (snap.exists()) \{\
+                        const d = snap.data();\
+                        if (d.bannedUsers && d.bannedUsers.includes(userId)) \{\
+                            alert("You have been banned.");\
+                            onExit();\
+                            return;\
+                        \}\
+                        if (!d.activeUsers || !d.activeUsers[userId]) \{\
+                            if (role !== 'dm') \{ \
+                                alert("You have been disconnected.");\
+                                onExit();\
+                                return;\
+                            \}\
+                        \}\
+                        setData(d);\
+                        if (d.hostId === userId) setRole('dm');\
+                        else setRole('player');\
+                        setSyncState('saved');\
+                    \} else \{ alert("Room closed."); onExit(); \}\
+                \});\
+                return () => unsub();\
+            \}, [code]);\
+\
+            const updateCloud = (newData) => \{\
+                setData(newData);\
+                if (isOffline) \{\
+                    localStorage.setItem('dm_local_save', JSON.stringify(newData));\
+                    return;\
+                \}\
+                \
+                if (saveTimer.current) clearTimeout(saveTimer.current);\
+                setSyncState('syncing');\
+                saveTimer.current = setTimeout(() => \{\
+                    const docRef = fb.doc(fb.db, 'artifacts', fb.appId, 'public', 'data', 'campaigns', code);\
+                    if (role === 'player') \{\
+                        fb.updateDoc(docRef, \{ players: newData.players, journal_public: newData.journal_public \});\
+                    \} else \{\
+                        fb.setDoc(docRef, newData, \{ merge: true \});\
+                    \}\
+                    setSyncState('saved');\
+                \}, 1000);\
+            \};\
+\
+            const transferDM = async (uid) => \{\
+                if(!confirm("Transfer DM role?")) return;\
+                const docRef = fb.doc(fb.db, 'artifacts', fb.appId, 'public', 'data', 'campaigns', code);\
+                await fb.updateDoc(docRef, \{ hostId: uid \});\
+            \};\
+\
+            const kickPlayer = async (uid) => \{\
+                const docRef = fb.doc(fb.db, 'artifacts', fb.appId, 'public', 'data', 'campaigns', code);\
+                const newActive = \{ ...data.activeUsers \};\
+                delete newActive[uid];\
+                await fb.updateDoc(docRef, \{ activeUsers: newActive \});\
+            \};\
+\
+            const banPlayer = async (uid) => \{\
+                if(!confirm("Ban User?")) return;\
+                const docRef = fb.doc(fb.db, 'artifacts', fb.appId, 'public', 'data', 'campaigns', code);\
+                const newActive = \{ ...data.activeUsers \};\
+                delete newActive[uid];\
+                await fb.updateDoc(docRef, \{ \
+                    activeUsers: newActive,\
+                    bannedUsers: fb.arrayUnion(uid) \
+                \});\
+            \};\
+\
+            const unbanPlayer = async (uid) => \{\
+                const docRef = fb.doc(fb.db, 'artifacts', fb.appId, 'public', 'data', 'campaigns', code);\
+                await fb.updateDoc(docRef, \{ bannedUsers: fb.arrayRemove(uid) \});\
+            \};\
+\
+            const generateResponse = async (override) => \{\
+                const q = override || inputText;\
+                if (!q.trim()) return;\
+                setChatHistory(p => [...p, \{ role: 'user', content: q \}]);\
+                setInputText('');\
+                setIsLoading(true);\
+\
+                const char = data.players.find(p => p.id === activeChar);\
+                const identity = role === 'dm' ? "Dungeon Master" : (char ? `$\{char.name\} ($\{char.race\})` : "Player");\
+                const secrets = role === 'dm' ? `SECRETS: $\{data.journal_dm\}\\nPDF: $\{data.campaign.pdfText ? data.campaign.pdfText.slice(0,30000) : "None"\}` : "Hide Secrets.";\
+                const instruction = data.config?.strictMode ? "STRICT: Only use provided context." : "GENERAL: Use context + internet knowledge.";\
+\
+                const prompt = `Role: DungeonMind. User: $\{identity\}. Rules: 5e ($\{data.config?.edition\}). $\{instruction\}. Context: $\{data.campaign.location\}. Log: $\{data.journal_public\}. $\{secrets\}. Party: $\{data.players.map(p=>p.name).join(', ')\}. Query: $\{q\}`;\
+\
+                try \{\
+                    if(!apiKey) throw new Error("API Key Required");\
+                    let responseText = "";\
+\
+                    if (aiProvider === 'gemini') \{\
+                        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=$\{apiKey\}`, \{ method: 'POST', headers: \{'Content-Type': 'application/json'\}, body: JSON.stringify(\{ contents: [\{ parts: [\{ text: prompt \}] \}] \}) \});\
+                        const json = await res.json();\
+                        if(json.error) throw new Error(json.error.message);\
+                        responseText = json.candidates[0].content.parts[0].text;\
+                    \} else if (aiProvider === 'openai') \{\
+                        const res = await fetch('https://api.openai.com/v1/chat/completions', \{\
+                            method: 'POST',\
+                            headers: \{ 'Content-Type': 'application/json', 'Authorization': `Bearer $\{apiKey\}` \},\
+                            body: JSON.stringify(\{\
+                                model: "gpt-4o",\
+                                messages: [\{ role: "system", content: "You are a DM Assistant." \}, \{ role: "user", content: prompt \}]\
+                            \})\
+                        \});\
+                        const json = await res.json();\
+                        if(json.error) throw new Error(json.error.message);\
+                        responseText = json.choices[0].message.content;\
+                    \}\
+\
+                    setChatHistory(p => [...p, \{ role: 'ai', content: responseText \}]);\
+                \} catch(e) \{ setChatHistory(p => [...p, \{ role: 'system', content: "Error: " + e.message \}]); \}\
+                finally \{ setIsLoading(false); \}\
+            \};\
+\
+            const handlePdfUpload = async (e) => \{\
+                const file = e.target.files[0];\
+                if (!file) return;\
+                setPdfProcessing(true);\
+                try \{\
+                    const ab = await file.arrayBuffer();\
+                    const pdf = await pdfjsLib.getDocument(\{ data: ab \}).promise;\
+                    let txt = "";\
+                    for(let i=1;i<=Math.min(pdf.numPages,50);i++) txt+=(await (await pdf.getPage(i)).getTextContent()).items.map(s=>s.str).join(' ');\
+                    const nd = \{...data, campaign: \{...data.campaign, pdfName: file.name, pdfText: txt\}\};\
+                    updateCloud(nd);\
+                \} catch(e)\{ alert("PDF Error"); \}\
+                finally \{ setPdfProcessing(false); \}\
+            \};\
+\
+            const handleDiceRoll = (d) => \{\
+                const result = Math.floor(Math.random()*d)+1;\
+                setDiceLog(p => [\{id:Date.now(), die:`d$\{d\}`, result\}, ...p].slice(0,10));\
+                generateResponse(`Roll d$\{d\}: $\{result\}`);\
+            \};\
+\
+            const toggleListening = () => \{\
+                if (!recognitionRef.current && ('webkitSpeechRecognition' in window)) \{\
+                    const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;\
+                    recognitionRef.current = new Speech();\
+                    recognitionRef.current.continuous = true;\
+                    recognitionRef.current.onresult = (e) => \{\
+                        let t = ''; for(let i=e.resultIndex;i<e.results.length;++i) if(e.results[i].isFinal) t+=e.results[i][0].transcript;\
+                        if(t) setInputText(p=>p+' '+t);\
+                    \};\
+                    recognitionRef.current.start();\
+                    setIsListening(true);\
+                \} else \{ if(isListening) \{ recognitionRef.current.stop(); setIsListening(false); \} else \{ recognitionRef.current.start(); setIsListening(true); \} \}\
+            \};\
+\
+            const clearPdf = () => \{\
+                const nd = \{...data, campaign: \{...data.campaign, pdfName: null, pdfText: null\}\};\
+                updateCloud(nd);\
+            \};\
+\
+            const handleExport = () => \{\
+                const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(data)], \{type:'application/json'\})); a.download = "Save.json"; a.click();\
+            \};\
+            const handleImport = (e) => \{\
+                const r = new FileReader(); r.onload = (ev) => setData(JSON.parse(ev.target.result)); r.readAsText(e.target.files[0]);\
+            \};\
+\
+            if (!data) return <div className="h-screen bg-slate-900 text-white flex items-center justify-center">Syncing...</div>;\
+\
+            return (\
+                <div className="flex h-screen w-full bg-slate-900 text-slate-200">\
+                    <Sidebar view=\{view\} setView=\{setView\} role=\{role\} code=\{code\} showTools=\{showTools\} setShowTools=\{setShowTools\} onExit=\{onExit\}/>\
+                    <main className="flex-1 h-full overflow-hidden relative">\
+                        \{view === 'session' && <SessionView data=\{data\} chatHistory=\{chatHistory\} setChatHistory=\{setChatHistory\} inputText=\{inputText\} setInputText=\{setInputText\} isListening=\{isListening\} toggleListening=\{toggleListening\} generateResponse=\{generateResponse\} isLoading=\{isLoading\} role=\{role\} activeChar=\{activeChar\} showTools=\{showTools\} setShowTools=\{setShowTools\} diceLog=\{diceLog\} handleDiceRoll=\{handleDiceRoll\} syncState=\{syncState\}/>\}\
+                        \{view === 'journal' && <JournalView data=\{data\} setData=\{setData\} role=\{role\} updateCloud=\{updateCloud\}/>\}\
+                        \{view === 'party' && <PartyView data=\{data\} setData=\{setData\} role=\{role\} activeChar=\{activeChar\} setActiveChar=\{setActiveChar\} updateCloud=\{updateCloud\}/>\}\
+                        \{view === 'settings' && <SettingsView data=\{data\} setData=\{setData\} apiKey=\{apiKey\} setApiKey=\{updateApiKey\} role=\{role\} updateCloud=\{updateCloud\} handlePdfUpload=\{handlePdfUpload\} clearPdf=\{clearPdf\} pdfProcessing=\{pdfProcessing\} code=\{code\} user=\{user\} transferDM=\{transferDM\} banPlayer=\{banPlayer\} kickPlayer=\{kickPlayer\} unbanPlayer=\{unbanPlayer\} aiProvider=\{aiProvider\} setAiProvider=\{setAiProvider\} handleExport=\{handleExport\} handleImport=\{handleImport\} resetApp=\{() => \{if(confirm("Reset?")) setData(\{...data, ...DEFAULT_DATA\});\}\}/>\}\
+                    </main>\
+                </div>\
+            );\
+        \};\
+\
+        const root = ReactDOM.createRoot(document.getElementById('root'));\
+        root.render(<App />);\
+    </script>\
+</body>\
+</html>}
