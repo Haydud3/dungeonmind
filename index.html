@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DungeonMind v15.2 | Fixed Loading</title>
+    <title>DungeonMind v15.3 | Stable</title>
     
     <!-- React & ReactDOM -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
@@ -79,7 +79,8 @@
     <!-- FAIL-SAFE LOADER -->
     <div id="app-loader">
         <div class="loader-spinner"></div>
-        <h2 style="margin-top: 20px; font-family: serif;">Summoning DungeonMind...</h2>
+        <h2 id="loader-text" style="margin-top: 20px; font-family: serif;">Summoning DungeonMind...</h2>
+        <p id="loader-sub" style="margin-top: 10px; font-size: 12px; color: #94a3b8;">Loading Scripts...</p>
         <button id="force-offline-btn" onclick="window.forceOffline()">Force Offline Mode</button>
     </div>
 
@@ -90,6 +91,8 @@
         setTimeout(() => {
             const btn = document.getElementById('force-offline-btn');
             if(btn) btn.style.display = 'block';
+            const sub = document.getElementById('loader-sub');
+            if(sub) sub.innerText = "Network slow? Click below.";
         }, 3000); 
 
         window.forceOffline = function() {
@@ -142,26 +145,22 @@
 
                 const init = async () => {
                     let attempts = 0;
-                    while (!window.fbModules && attempts < 30) {
+                    while (!window.fbModules && attempts < 50) { // Wait 5s
                         await new Promise(r => setTimeout(r, 100));
                         attempts++;
-                        if(window.forcedOfflineMode) { 
-                            setIsOffline(true); 
-                            setIsAuthReady(true); 
-                            return; 
-                        }
+                        if(window.forcedOfflineMode) { setIsOffline(true); setIsAuthReady(true); return; }
                     }
 
                     if (window.fbModules) {
                         const { auth, onAuthStateChanged } = window.fbModules;
                         onAuthStateChanged(auth, (u) => {
                             setUser(u);
-                            setIsAuthReady(true); // Signal ready
+                            setIsAuthReady(true);
                         });
                         setFb({ ...window.fbModules, appId: 'dungeonmind' });
                     } else {
                         setIsOffline(true);
-                        setIsAuthReady(true); // Signal ready even if offline
+                        setIsAuthReady(true);
                     }
                 };
                 init();
@@ -257,7 +256,7 @@
                         <h3 className="text-xs font-bold text-indigo-300 uppercase tracking-widest mb-2">Invite Code</h3>
                         <div className="text-5xl font-mono font-bold text-white tracking-widest mb-4 drop-shadow-lg">{code}</div>
                         <div className="flex gap-2">
-                            <button onClick={copyCode} className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-1 rounded text-sm flex items-center gap-2"><Icon name="copy" size={16}/> Copy</button>
+                            <button onClick={copyCode} className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-1 rounded text-sm flex items-center gap-2 shadow-lg"><Icon name="copy" size={16}/> Copy</button>
                             {fb && (user ? <button onClick={signOut} className="bg-slate-700 px-4 py-1 rounded text-sm">Sign Out</button> : <button onClick={signIn} className="bg-blue-600 px-4 py-1 rounded text-sm">Login</button>)}
                         </div>
                     </div>
@@ -273,6 +272,7 @@
                                     </div>
                                 ))}
                             </div>
+                            {bannedUsers.length > 0 && <div className="space-y-2"><div className="text-xs text-red-400 uppercase font-bold">Banned</div>{bannedUsers.map(uid => <div key={uid} className="flex justify-between items-center bg-red-950/30 p-2 rounded border border-red-900/50"><span className="text-xs font-mono text-red-300">{uid.slice(0,8)}...</span><button onClick={() => unbanPlayer(uid)} className="text-xs text-slate-400 hover:text-white">Unban</button></div>)}</div>}
                         </div>
                     )}
 
@@ -297,7 +297,8 @@
                                     <button onClick={() => updateConfig('strictMode', !data.config?.strictMode)} className={`w-full p-2 rounded text-sm font-bold border ${data.config?.strictMode ? 'bg-green-900/50 border-green-600 text-green-400' : 'bg-slate-900 border-slate-700 text-slate-400'}`}>{data.config?.strictMode ? "Strict" : "General"}</button>
                                 </div>
                             </div>
-                            <div className="border-2 border-dashed border-slate-700 rounded p-4 text-center">
+                            <input value={data.campaign?.location || ""} onChange={e => { const newData = {...data, campaign: {...data.campaign, location: e.target.value}}; setData(newData); updateCloud(newData); }} className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-slate-200 outline-none" placeholder="Current Location"/>
+                            <div className="border-2 border-dashed border-slate-700 rounded p-4 text-center mt-4">
                                 {pdfProcessing ? <div className="text-amber-500 animate-pulse">Processing...</div> : !data.campaign?.pdfName ? (
                                     <label className="cursor-pointer block w-full"><span className="text-slate-300 font-bold">Upload PDF</span><input type="file" className="hidden" accept=".pdf" onChange={handlePdfUpload}/></label>
                                 ) : (
@@ -344,16 +345,32 @@
             );
         };
 
-        const SessionView = ({ data, chatHistory, setChatHistory, inputText, setInputText, isListening, toggleListening, generateResponse, isLoading, role, activeChar, showTools, setShowTools, diceLog, handleDiceRoll }) => {
+        const SessionView = (props) => {
+            // SAFE DESTRUCTURING with defaults
+            const { 
+                data, chatHistory, setChatHistory, inputText, setInputText, 
+                isListening = false, toggleListening = () => {}, 
+                generateResponse, isLoading, role, activeChar, 
+                showTools, setShowTools, diceLog = [], handleDiceRoll = () => {}, syncState 
+            } = props;
+
             const chatEndRef = useRef(null);
             useEffect(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), [chatHistory, isLoading]);
             const charName = data.players?.find(p => p.id == activeChar)?.name || "Adventurer";
+
             return (
                 <div className="flex h-full relative">
                     <div className="flex-1 flex flex-col h-full relative">
                         <div className="h-12 border-b border-slate-800 flex items-center justify-between px-4 bg-slate-900/90 backdrop-blur">
-                            <span className="text-sm font-bold text-amber-500">{data.campaign?.location || "Location"}</span>
-                            <div className={`text-xs px-2 py-1 rounded ${role === 'dm' ? 'bg-red-900/30 text-red-400' : 'bg-green-900/30 text-green-400'}`}>{role === 'dm' ? 'DM' : `PLAYER: ${charName}`}</div>
+                            <div className="flex gap-2 items-center">
+                                <div className={`live-status ${syncState === 'saved' ? 'status-online' : 'status-offline'}`}></div>
+                                <span className="text-sm font-bold text-amber-500">{data.campaign?.location || "Unknown Location"}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                {data.config?.strictMode && <span className="text-[10px] bg-blue-900/30 text-blue-400 px-1 rounded border border-blue-800">STRICT</span>}
+                                <span className="text-[10px] text-slate-500">{data.config?.edition || '2014'}</span>
+                                <div className={`text-xs px-2 py-1 rounded ${role === 'dm' ? 'bg-red-900/30 text-red-400' : 'bg-green-900/30 text-green-400'}`}>{role === 'dm' ? 'DM' : `PLAYER: ${charName}`}</div>
+                            </div>
                         </div>
                         <div ref={chatEndRef} className="flex-1 overflow-y-auto custom-scroll p-4 pb-40 space-y-6">
                             {chatHistory.map((msg, i) => (
@@ -364,97 +381,51 @@
                             {isLoading && <div className="text-center text-xs text-slate-500 animate-pulse">Thinking...</div>}
                         </div>
                         <div className="absolute bottom-0 w-full p-4 bg-slate-900 border-t border-slate-800 flex gap-2">
-                            <div className="relative flex-1"><textarea value={inputText} onChange={e => setInputText(e.target.value)} onKeyDown={e => { if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); generateResponse(); }}} placeholder={`What does ${role==='dm' ? 'the DM' : charName} do?`} className="w-full bg-slate-800 text-white rounded-lg p-3 pr-10 resize-none h-14 focus:ring-1 focus:ring-amber-500 outline-none custom-scroll"/><button onClick={toggleListening} className={`absolute right-2 top-2 p-2 rounded-full ${isListening ? 'text-red-500' : 'text-slate-400'}`}><Icon name="mic" size={18}/></button></div>
+                            <div className="relative flex-1">
+                                <textarea value={inputText} onChange={e => setInputText(e.target.value)} onKeyDown={e => { if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); generateResponse(); }}} placeholder={`What does ${role==='dm' ? 'the DM' : charName} do?`} className="w-full bg-slate-800 text-white rounded-lg p-3 pr-10 resize-none h-14 focus:ring-1 focus:ring-amber-500 outline-none custom-scroll"/>
+                                <button onClick={toggleListening} className={`absolute right-2 top-2 p-2 rounded-full ${isListening ? 'text-red-500' : 'text-slate-400'}`}><Icon name="mic" size={18}/></button>
+                            </div>
                             <button onClick={() => generateResponse()} className="bg-amber-600 hover:bg-amber-500 px-4 rounded text-white"><Icon name="send" size={20}/></button>
                         </div>
                     </div>
                     {showTools && (
                         <div className="w-72 bg-slate-900 border-l border-slate-800 flex flex-col p-4 gap-4">
                             <div className="flex justify-between items-center mb-2"><span className="fantasy-font text-amber-500">Tools</span><button onClick={() => setShowTools(false)}><Icon name="x" size={16}/></button></div>
-                            <div className="glass-panel p-4 rounded-lg mb-4 grid grid-cols-4 gap-2">{[4, 6, 8, 10, 12, 20, 100].map(d => <button key={d} onClick={() => generateResponse("Roll d"+d)} className="bg-slate-700 text-xs py-1 rounded border border-slate-600 hover:bg-slate-600">d{d}</button>)}</div>
+                            <DiceTray diceLog={diceLog} handleDiceRoll={handleDiceRoll} />
                         </div>
                     )}
                 </div>
             );
         };
 
-        // --- LOBBY & APP ---
-        const Lobby = ({ fb, user, onJoin, onOffline }) => {
-            const [code, setCode] = useState("");
-            const [recents, setRecents] = useState([]);
-            useEffect(() => { const saved = localStorage.getItem('dm_recents'); if(saved) setRecents(JSON.parse(saved)); }, []);
-            
-            const saveRecent = (c, n) => {
-                const nr = [{code: c, name: n, date: Date.now()}, ...recents.filter(r => r.code !== c)].slice(0, 5);
-                setRecents(nr); localStorage.setItem('dm_recents', JSON.stringify(nr));
-            };
-            
-            const handleLogin = async () => { try { await fb.signInWithPopup(fb.auth, new fb.GoogleAuthProvider()); } catch(e) { alert(e.message); } };
-            const handleHost = async () => {
-                if(!user) return alert("Login Required");
-                const newCode = Math.random().toString(36).substring(2, 8).toUpperCase();
-                const def = { hostId: user.uid, hostEmail: user.email, campaign: { name: "New Adventure", location: "Start", tone: "Heroic" }, config: { edition: "2014", strictMode: false }, players: [], activeUsers: {[user.uid]: user.email}, bannedUsers: [], journal_public: "", journal_dm: "" };
-                await fb.setDoc(fb.doc(fb.db, 'artifacts', fb.appId, 'public', 'data', 'campaigns', newCode), def);
-                saveRecent(newCode, "New Campaign");
-                onJoin(newCode, 'dm', user);
-            };
-            const handleJoin = async (c = code) => {
-                if(c.length < 4) return alert("Code too short");
-                try {
-                    const ref = fb.doc(fb.db, 'artifacts', fb.appId, 'public', 'data', 'campaigns', c.toUpperCase());
-                    const snap = await fb.getDoc(ref);
-                    if(snap.exists()) {
-                        const d = snap.data();
-                        if(user && d.bannedUsers?.includes(user.uid)) return alert("Banned.");
-                        if(user) await fb.updateDoc(ref, { [`activeUsers.${user.uid}`]: user.email });
-                        saveRecent(c.toUpperCase(), d.campaign.name);
-                        onJoin(c.toUpperCase(), user && d.hostId === user.uid ? 'dm' : 'player', user);
-                    } else alert("Not found");
-                } catch(e){ alert(e.message); }
-            };
-
-            return (
-                <div className="h-screen flex items-center justify-center bg-slate-900 text-white p-6">
-                    <div className="max-w-md w-full glass-panel p-8 rounded-2xl shadow-2xl fade-in border border-slate-700 text-center">
-                        <h1 className="text-4xl fantasy-font text-amber-500 mb-2">DungeonMind</h1>
-                        {!user ? (
-                            <div className="space-y-4">
-                                <button onClick={handleLogin} className="w-full bg-blue-600 py-3 rounded-lg font-bold">Sign In Google</button>
-                                <button onClick={onOffline} className="w-full bg-slate-800 py-3 rounded-lg font-bold text-slate-400">Play Offline</button>
-                            </div>
-                        ) : (
-                            <div className="space-y-4">
-                                <button onClick={handleHost} className="w-full bg-amber-600 py-3 rounded-lg font-bold text-white">Host Campaign</button>
-                                <div className="flex gap-2"><input value={code} onChange={e=>setCode(e.target.value.toUpperCase())} placeholder="CODE" className="bg-slate-900 border border-slate-600 w-full p-2 rounded text-center outline-none"/><button onClick={()=>handleJoin(code)} className="bg-green-700 px-6 rounded font-bold">Join</button></div>
-                                {recents.length > 0 && <div className="text-left space-y-2 mt-4"><div className="text-xs text-slate-500 font-bold">RECENT</div>{recents.map(r => <div key={r.code} onClick={()=>handleJoin(r.code)} className="bg-slate-800 p-2 rounded text-sm cursor-pointer flex justify-between"><span>{r.name}</span><span className="text-amber-500">{r.code}</span></div>)}</div>}
-                                <button onClick={() => fb.signOut(fb.auth)} className="text-xs text-slate-500 mt-4">Sign Out</button>
-                            </div>
-                        )}
-                    </div>
-                </div>
-            );
-        };
-
-        // --- APP ---
         function App() {
             const { fb, user, isAuthReady, isOffline } = useFirebase();
             const [view, setView] = useState('lobby');
-            const [mp, setMp] = useState(null);
+            const [modeParams, setModeParams] = useState(null);
 
-            const handleJoin = (code, role, u) => { setMp({ fb, code, role, userId: u?.uid || 'guest', user: u, isOffline: false }); setView('game'); };
-            const handleOffline = () => { setMp({ fb: null, code: 'LOCAL', role: 'dm', userId: 'local', user: {uid:'local',email:'Offline'}, isOffline: true }); setView('game'); };
+            const handleJoin = (code, role, uid) => {
+                setModeParams({ fb, code, role, userId: uid, isOffline: false, user });
+                setView('game');
+            };
 
-            if(!isAuthReady) return <div className="h-screen flex items-center justify-center bg-slate-900 text-white" id="app-loader"><div className="loader-spinner"></div></div>;
-            if(view === 'lobby') return <Lobby fb={fb} user={user} onJoin={handleJoin} onOffline={handleOffline}/>;
+            const handleOffline = () => {
+                setModeParams({ fb: null, code: 'LOCAL', role: 'dm', userId: 'local', user: {uid:'local',email:'Offline'}, isOffline: true });
+                setView('game');
+            };
+
+            const handleExit = () => {
+                setModeParams(null);
+                setView('lobby');
+            };
+
+            if (!isAuthReady) return <div className="h-screen bg-slate-900 flex items-center justify-center text-white" id="app-loader"><div className="loader-spinner"></div></div>;
+
+            if (view === 'lobby') return <Lobby fb={fb} user={user} onJoin={handleJoin} onOffline={handleOffline} />;
+
             return (
-                <div className="flex h-screen w-full bg-slate-900 text-slate-200">
-                    <Sidebar view={view} setView={setView} role={mp.role} code={mp.code} showTools={mp.showTools} setShowTools={v=>setMp({...mp, showTools: v})} onExit={()=>setView('lobby')}/>
-                    <main className="flex-1 h-full overflow-hidden relative">
-                        <ErrorBoundary>
-                            <GameSession {...mp} onExit={()=>setView('lobby')}/>
-                        </ErrorBoundary>
-                    </main>
-                </div>
+                <ErrorBoundary>
+                    <GameSession {...modeParams} onExit={handleExit} />
+                </ErrorBoundary>
             );
         }
 
@@ -471,6 +442,11 @@
             const [apiKey, setApiKey] = useState('');
             const [aiProvider, setAiProvider] = useState('gemini');
             const [pdfProcessing, setPdfProcessing] = useState(false);
+            const [showTools, setShowTools] = useState(false);
+            const [isListening, setIsListening] = useState(false);
+            const [diceLog, setDiceLog] = useState([]);
+            const [syncState, setSyncState] = useState('init');
+            
             const saveTimer = useRef(null);
             const recognitionRef = useRef(null);
 
@@ -478,7 +454,7 @@
             const setKey = (v) => { setApiKey(v); localStorage.setItem(`dm_key_${aiProvider}`, v); };
 
             useEffect(() => {
-                if(isOffline) { const l=localStorage.getItem('dm_loc'); setData(l?JSON.parse(l):DEFAULT); return; }
+                if(isOffline) { const l=localStorage.getItem('dm_loc'); setData(l?JSON.parse(l):DEFAULT); hideLoader(); return; }
                 const unsub = fb.onSnapshot(fb.doc(fb.db, 'artifacts', fb.appId, 'public', 'data', 'campaigns', code), snap => {
                     if(snap.exists()) {
                         const d = snap.data();
@@ -533,17 +509,41 @@
                     const nd = {...data, campaign:{...data.campaign, pdfName:f.name, pdfText:t}}; updateCloud(nd);
                 } catch(e){alert("PDF Err");} finally { setPdfProcessing(false); }
             };
+            
+            const toggleListening = () => {
+                if (!recognitionRef.current && ('webkitSpeechRecognition' in window)) {
+                    const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
+                    recognitionRef.current = new Speech();
+                    recognitionRef.current.continuous = true;
+                    recognitionRef.current.lang = 'en-US';
+                    recognitionRef.current.onresult = (e) => {
+                        let t = ''; for(let i=e.resultIndex;i<e.results.length;++i) if(e.results[i].isFinal) t+=e.results[i][0].transcript;
+                        if(t) setInputText(p=>p+' '+t);
+                    };
+                    recognitionRef.current.start();
+                    setIsListening(true);
+                } else { if(isListening) { recognitionRef.current.stop(); setIsListening(false); } else { recognitionRef.current.start(); setIsListening(true); } }
+            };
+            
+            const handleDiceRoll = (d) => {
+                const r = Math.floor(Math.random()*d)+1;
+                setDiceLog(p => [{id:Date.now(), die:`d${d}`, result:r}, ...p].slice(0,10));
+                genResponse(`Roll d${d}: ${r}`);
+            };
 
             // Logic & Render
             if(!data) return <div className="h-screen flex items-center justify-center text-white">Syncing...</div>;
 
             return (
-                <>
-                    {view === 'session' && <SessionView data={data} chatHistory={chatHistory} setChatHistory={setChatHistory} inputText={inputText} setInputText={setInputText} isListening={isListening} toggleListening={()=>{/*...*/}} generateResponse={genResponse} isLoading={isLoading} role={role} activeChar={activeChar} showTools={props.showTools} setShowTools={props.setShowTools}/>}
-                    {view === 'journal' && <JournalView data={data} setData={setData} role={role} updateCloud={updateCloud}/>}
-                    {view === 'party' && <PartyView data={data} setData={setData} role={role} activeChar={activeChar} setActiveChar={setActiveChar} updateCloud={updateCloud}/>}
-                    {view === 'settings' && <SettingsView data={data} setData={setData} apiKey={apiKey} setApiKey={setKey} role={role} updateCloud={updateCloud} handlePdfUpload={handlePdf} clearPdf={()=>{const nd={...data, campaign:{...data.campaign, pdfName:null, pdfText:null}}; updateCloud(nd);}} pdfProcessing={pdfProcessing} code={code} user={user} transferDM={uid=>{if(confirm("Transfer?")){const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); fb.updateDoc(ref, {hostId:uid});}}} banPlayer={uid=>{if(confirm("Ban?")){const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); const na={...data.activeUsers}; delete na[uid]; fb.updateDoc(ref,{activeUsers:na, bannedUsers:fb.arrayUnion(uid)});}}} kickPlayer={uid=>{const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); const na={...data.activeUsers}; delete na[uid]; fb.updateDoc(ref, {activeUsers:na});}} unbanPlayer={uid=>{const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); fb.updateDoc(ref, {bannedUsers:fb.arrayRemove(uid)});}} aiProvider={aiProvider} setAiProvider={setAiProvider} fb={fb}/>}
-                </>
+                <div className="flex h-screen w-full bg-slate-900 text-slate-200">
+                    <Sidebar view={view} setView={setView} role={role} code={code} showTools={showTools} setShowTools={setShowTools} onExit={onExit}/>
+                    <main className="flex-1 h-full overflow-hidden relative">
+                        {view === 'session' && <SessionView data={data} chatHistory={chatHistory} setChatHistory={setChatHistory} inputText={inputText} setInputText={setInputText} isListening={isListening} toggleListening={toggleListening} generateResponse={genResponse} isLoading={isLoading} role={role} activeChar={activeChar} showTools={showTools} setShowTools={setShowTools} diceLog={diceLog} handleDiceRoll={handleDiceRoll} syncState={syncState}/>}
+                        {view === 'journal' && <JournalView data={data} setData={setData} role={role} updateCloud={updateCloud}/>}
+                        {view === 'party' && <PartyView data={data} setData={setData} role={role} activeChar={activeChar} setActiveChar={setActiveChar} updateCloud={updateCloud}/>}
+                        {view === 'settings' && <SettingsView data={data} setData={setData} apiKey={apiKey} setApiKey={setKey} role={role} updateCloud={updateCloud} handlePdfUpload={handlePdf} clearPdf={()=>{const nd={...data, campaign:{...data.campaign, pdfName:null, pdfText:null}}; updateCloud(nd);}} pdfProcessing={pdfProcessing} code={code} user={user} transferDM={uid=>{if(confirm("Transfer?")){const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); fb.updateDoc(ref, {hostId:uid});}}} banPlayer={uid=>{if(confirm("Ban?")){const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); const na={...data.activeUsers}; delete na[uid]; fb.updateDoc(ref,{activeUsers:na, bannedUsers:fb.arrayUnion(uid)});}}} kickPlayer={uid=>{const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); const na={...data.activeUsers}; delete na[uid]; fb.updateDoc(ref, {activeUsers:na});}} unbanPlayer={uid=>{const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); fb.updateDoc(ref, {bannedUsers:fb.arrayRemove(uid)});}} aiProvider={aiProvider} setAiProvider={setAiProvider} fb={fb}/>}
+                    </main>
+                </div>
             );
         };
 
