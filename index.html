@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DungeonMind v15.5 | Recents</title>
+    <title>DungeonMind v15.7 | Restore</title>
     
     <!-- React & ReactDOM -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
@@ -74,6 +74,9 @@
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         #force-offline-btn { display: none; margin-top: 20px; padding: 10px 20px; background: #334155; color: white; border: 1px solid #475569; border-radius: 8px; cursor: pointer; font-family: sans-serif; }
         #force-offline-btn:hover { background: #475569; }
+        
+        /* Animation for full screen journal */
+        .journal-expand { transition: all 0.3s ease-in-out; }
     </style>
 </head>
 <body>
@@ -375,22 +378,90 @@
             </div>
         );
 
-        const JournalView = ({ data, setData, role, updateCloud }) => (
-            <div className="max-w-6xl mx-auto p-4 md:p-8 h-full flex flex-col gap-4">
-                <div className="flex-1 flex flex-col md:flex-row gap-4 min-h-0">
-                    <div className="flex-1 flex flex-col glass-panel rounded-xl overflow-hidden">
-                        <div className="bg-slate-800/50 p-2 text-center text-xs uppercase tracking-wider font-bold text-green-400 border-b border-slate-700">Public Log</div>
-                        <textarea value={data.journal_public || ""} onChange={(e) => { const val = e.target.value; setData(p => ({...p, journal_public: val})); updateCloud({...data, journal_public: val}); }} className="w-full h-full bg-transparent p-4 text-slate-200 resize-none focus:outline-none font-sans leading-relaxed custom-scroll" placeholder="Log shared events here..."/>
-                    </div>
-                    {role === 'dm' && (
-                        <div className="flex-1 flex flex-col glass-panel rounded-xl overflow-hidden border-red-900/30 bg-red-900/5">
-                            <div className="bg-red-900/20 p-2 text-center text-xs uppercase tracking-wider font-bold text-red-400 border-b border-red-900/30 flex justify-center gap-2"><Icon name="eye-off" size={14}/> DM Secrets</div>
-                            <textarea value={data.journal_dm || ""} onChange={(e) => { const val = e.target.value; setData(p => ({...p, journal_dm: val})); updateCloud({...data, journal_dm: val}); }} className="w-full h-full bg-transparent p-4 text-red-100/80 resize-none focus:outline-none font-sans leading-relaxed custom-scroll placeholder-red-900/50" placeholder="Hidden truths..."/>
+        const JournalView = ({ data, setData, role, updateCloud, userId }) => {
+            const [maximized, setMaximized] = useState(null); // 'public', 'personal', 'dm'
+
+            const downloadTxt = (name, text) => {
+                const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+                const link = document.createElement("a");
+                link.href = URL.createObjectURL(blob);
+                link.download = `${name}_${new Date().toISOString().split('T')[0]}.txt`;
+                link.click();
+            };
+
+            const updatePersonal = (val) => {
+                const newData = { ...data, player_journals: { ...data.player_journals, [userId]: val } };
+                setData(newData);
+                updateCloud(newData);
+            };
+
+            const JournalBox = ({ title, value, onChange, colorClass, type, placeholder }) => {
+                const isMax = maximized === type;
+                if (maximized && !isMax) return null; // Hide others if one is maximized
+
+                return (
+                    <div className={`flex flex-col glass-panel rounded-xl overflow-hidden journal-expand ${isMax ? 'fixed inset-4 z-50' : 'flex-1 min-h-[300px]'} ${colorClass}`}>
+                        <div className={`p-2 text-center text-xs uppercase tracking-wider font-bold border-b flex justify-between items-center ${type === 'dm' ? 'bg-red-900/20 border-red-900/30 text-red-400' : type === 'personal' ? 'bg-indigo-900/20 border-indigo-900/30 text-indigo-300' : 'bg-slate-800/50 border-slate-700 text-green-400'}`}>
+                            <div className="flex gap-2 items-center">
+                                {type === 'dm' && <Icon name="eye-off" size={14}/>}
+                                {type === 'personal' && <Icon name="user-circle" size={14}/>}
+                                {title}
+                            </div>
+                            <div className="flex gap-2">
+                                <button onClick={() => downloadTxt(title, value)} title="Export" className="hover:text-white"><Icon name="download" size={14}/></button>
+                                <button onClick={() => setMaximized(isMax ? null : type)} title="Toggle Fullscreen" className="hover:text-white"><Icon name={isMax ? "minimize-2" : "maximize-2"} size={14}/></button>
+                            </div>
                         </div>
-                    )}
+                        <textarea 
+                            value={value || ""} 
+                            onChange={(e) => onChange(e.target.value)} 
+                            className={`w-full h-full bg-transparent p-4 resize-none focus:outline-none font-sans leading-relaxed custom-scroll ${type === 'dm' ? 'text-red-100/80 placeholder-red-900/50' : type === 'personal' ? 'text-indigo-100/80 placeholder-indigo-900/50' : 'text-slate-200'}`} 
+                            placeholder={placeholder}
+                        />
+                    </div>
+                );
+            };
+
+            return (
+                <div className="max-w-7xl mx-auto p-4 md:p-6 h-full flex flex-col gap-4 relative">
+                    {maximized && <div className="fixed inset-0 bg-slate-900/90 backdrop-blur z-40" onClick={() => setMaximized(null)}></div>}
+                    
+                    <div className="flex-1 flex flex-col md:flex-row gap-4 min-h-0">
+                        {/* Public Journal */}
+                        <JournalBox 
+                            type="public" 
+                            title="Public Log" 
+                            value={data.journal_public} 
+                            onChange={(val) => { setData(p => ({...p, journal_public: val})); updateCloud({...data, journal_public: val}); }} 
+                            colorClass=""
+                            placeholder="Shared campaign events..."
+                        />
+
+                        {/* Personal Journal */}
+                        <JournalBox 
+                            type="personal" 
+                            title="My Notes (Private + AI)" 
+                            value={data.player_journals?.[userId]} 
+                            onChange={updatePersonal} 
+                            colorClass="border-indigo-900/30 bg-indigo-900/5"
+                            placeholder="Your private thoughts (AI can see this)..."
+                        />
+
+                        {/* DM Journal */}
+                        {role === 'dm' && (
+                            <JournalBox 
+                                type="dm" 
+                                title="DM Secrets" 
+                                value={data.journal_dm} 
+                                onChange={(val) => { setData(p => ({...p, journal_dm: val})); updateCloud({...data, journal_dm: val}); }} 
+                                colorClass="border-red-900/30 bg-red-900/5"
+                                placeholder="Hidden truths..."
+                            />
+                        )}
+                    </div>
                 </div>
-            </div>
-        );
+            );
+        };
 
         const SettingsView = ({ data, setData, apiKey, setApiKey, role, updateCloud, handlePdfUpload, clearPdf, pdfProcessing, code, user, transferDM, banPlayer, kickPlayer, unbanPlayer, aiProvider, setAiProvider, fb }) => {
             const copyCode = () => { navigator.clipboard.writeText(code); alert("Copied: " + code); };
@@ -407,6 +478,39 @@
                 updateCloud(newData);
             };
 
+            const downloadBackup = () => {
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+                const link = document.createElement("a");
+                link.href = URL.createObjectURL(blob);
+                link.download = `Campaign_${code}_Backup_${new Date().toISOString().split('T')[0]}.json`;
+                link.click();
+            };
+
+            const handleRestore = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    try {
+                        const json = JSON.parse(event.target.result);
+                        if (!json.campaign || !json.players) {
+                            alert("Invalid backup file format.");
+                            return;
+                        }
+                        if (confirm("WARNING: This will overwrite ALL current campaign data with the backup. Are you sure?")) {
+                            setData(json);
+                            updateCloud(json);
+                            alert("Campaign restored successfully.");
+                        }
+                    } catch (err) {
+                        alert("Error parsing backup file: " + err.message);
+                    }
+                };
+                reader.readAsText(file);
+                e.target.value = null; 
+            };
+
             return (
                 <div className="max-w-3xl mx-auto p-8 overflow-y-auto h-full custom-scroll">
                     <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-2">
@@ -419,6 +523,18 @@
                         <div className="flex gap-2">
                             <button onClick={copyCode} className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-1 rounded text-sm flex items-center gap-2 shadow-lg"><Icon name="copy" size={16}/> Copy</button>
                             {fb && (user ? <button onClick={signOut} className="bg-slate-700 px-4 py-1 rounded text-sm">Sign Out</button> : <button onClick={signIn} className="bg-blue-600 px-4 py-1 rounded text-sm">Login</button>)}
+                        </div>
+                    </div>
+
+                    <div className="glass-panel p-6 rounded-xl mb-6">
+                        <h3 className="text-lg font-bold mb-4 text-slate-200 flex items-center gap-2"><Icon name="save" size={18}/> Backup & Restore</h3>
+                        <p className="text-sm text-slate-400 mb-4">Manage your campaign data locally.</p>
+                        <div className="flex gap-4">
+                            <button onClick={downloadBackup} className="flex-1 bg-slate-700 hover:bg-slate-600 p-3 rounded text-slate-200 flex items-center justify-center gap-2"><Icon name="download" size={16}/> Download Backup</button>
+                            <label className="flex-1 bg-slate-700 hover:bg-slate-600 p-3 rounded text-slate-200 flex items-center justify-center gap-2 cursor-pointer">
+                                <Icon name="upload" size={16}/> Restore Backup
+                                <input type="file" accept=".json" onChange={handleRestore} className="hidden" />
+                            </label>
                         </div>
                     </div>
 
@@ -596,7 +712,7 @@
 
         const GameSession = (props) => {
             const { fb, code, role: initRole, userId, user, isOffline, onExit } = props;
-            const DEFAULT = { hostId:"", campaign:{ name:"New", location:"Start", tone:"Heroic", pdfName:null, pdfText:null}, config:{edition:'2014', strictMode:false}, players:[], journal_public:"", journal_dm:"", activeUsers:{}, bannedUsers:[] };
+            const DEFAULT = { hostId:"", campaign:{ name:"New", location:"Start", tone:"Heroic", pdfName:null, pdfText:null}, config:{edition:'2014', strictMode:false}, players:[], journal_public:"", journal_dm:"", player_journals:{}, activeUsers:{}, bannedUsers:[] };
             const [data, setData] = useState(null);
             const [view, setView] = useState('session');
             const [role, setRole] = useState(initRole);
@@ -638,7 +754,7 @@
                 if(saveTimer.current) clearTimeout(saveTimer.current);
                 saveTimer.current = setTimeout(() => {
                     const ref = fb.doc(fb.db, 'artifacts', fb.appId, 'public', 'data', 'campaigns', code);
-                    if(role === 'player') fb.updateDoc(ref, { players: nd.players, journal_public: nd.journal_public });
+                    if(role === 'player') fb.updateDoc(ref, { players: nd.players, journal_public: nd.journal_public, [`player_journals.${userId}`]: nd.player_journals[userId] || "" });
                     else fb.setDoc(ref, nd, { merge: true });
                 }, 1000);
             };
@@ -648,7 +764,9 @@
                 setChatHistory(p=>[...p, {role:'user', content:q}]); setInputText(''); setIsLoading(true);
                 const char = data.players.find(p=>p.id===activeChar);
                 const iden = role === 'dm' ? "DM" : (char ? `${char.name} (${char.race})` : "Player");
-                const sec = role === 'dm' ? `SECRETS: ${data.journal_dm}\nPDF: ${data.campaign.pdfText?data.campaign.pdfText.slice(0,30000):"None"}` : "Hide secrets.";
+                const personalContext = data.player_journals?.[userId] || "";
+                
+                const sec = role === 'dm' ? `SECRETS: ${data.journal_dm}\nPDF: ${data.campaign.pdfText?data.campaign.pdfText.slice(0,30000):"None"}` : `HIDDEN INFO: The user has secret notes: "${personalContext}". Use these for context but do not reveal them to other players.`;
                 const prompt = `Role: DM AI. User: ${iden}. Rules: 5e (${data.config.edition}). Ctx: ${data.campaign.location}. Log: ${data.journal_public}. ${sec}. Party: ${data.players.map(p=>p.name).join(', ')}. Q: ${q}`;
                 
                 try {
@@ -704,7 +822,7 @@
                     <Sidebar view={view} setView={setView} role={role} code={code} showTools={showTools} setShowTools={setShowTools} onExit={onExit}/>
                     <main className="flex-1 h-full overflow-hidden relative">
                         {view === 'session' && <SessionView data={data} chatHistory={chatHistory} setChatHistory={setChatHistory} inputText={inputText} setInputText={setInputText} isListening={isListening} toggleListening={toggleListening} generateResponse={genResponse} isLoading={isLoading} role={role} activeChar={activeChar} showTools={showTools} setShowTools={setShowTools} diceLog={diceLog} handleDiceRoll={handleDiceRoll} syncState={syncState}/>}
-                        {view === 'journal' && <JournalView data={data} setData={setData} role={role} updateCloud={updateCloud}/>}
+                        {view === 'journal' && <JournalView data={data} setData={setData} role={role} updateCloud={updateCloud} userId={userId}/>}
                         {view === 'party' && <PartyView data={data} setData={setData} role={role} activeChar={activeChar} setActiveChar={setActiveChar} updateCloud={updateCloud}/>}
                         {view === 'settings' && <SettingsView data={data} setData={setData} apiKey={apiKey} setApiKey={setKey} role={role} updateCloud={updateCloud} handlePdfUpload={handlePdf} clearPdf={()=>{const nd={...data, campaign:{...data.campaign, pdfName:null, pdfText:null}}; updateCloud(nd);}} pdfProcessing={pdfProcessing} code={code} user={user} transferDM={uid=>{if(confirm("Transfer?")){const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); fb.updateDoc(ref, {hostId:uid});}}} banPlayer={uid=>{if(confirm("Ban?")){const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); const na={...data.activeUsers}; delete na[uid]; fb.updateDoc(ref,{activeUsers:na, bannedUsers:fb.arrayUnion(uid)});}}} kickPlayer={uid=>{const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); const na={...data.activeUsers}; delete na[uid]; fb.updateDoc(ref, {activeUsers:na});}} unbanPlayer={uid=>{const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); fb.updateDoc(ref, {bannedUsers:fb.arrayRemove(uid)});}} aiProvider={aiProvider} setAiProvider={setAiProvider} fb={fb}/>}
                     </main>
@@ -717,3 +835,5 @@
     </script>
 </body>
 </html>
+
+
