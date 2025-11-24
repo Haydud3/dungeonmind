@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DungeonMind v15.1 | Fail-Safe</title>
+    <title>DungeonMind v15.2 | Fixed Loading</title>
     
     <!-- React & ReactDOM -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
@@ -90,7 +90,7 @@
         setTimeout(() => {
             const btn = document.getElementById('force-offline-btn');
             if(btn) btn.style.display = 'block';
-        }, 4000); // Show button after 4 seconds
+        }, 3000); 
 
         window.forceOffline = function() {
             window.forcedOfflineMode = true;
@@ -100,7 +100,6 @@
     </script>
 
     <script type="text/babel">
-        // Hide loader logic inside React
         const hideLoader = () => {
             const loader = document.getElementById('app-loader');
             if(loader) loader.style.display = 'none';
@@ -110,7 +109,6 @@
 
         const { useState, useEffect, useRef, Component } = React;
 
-        // --- Error Boundary ---
         class ErrorBoundary extends Component {
             constructor(props) { super(props); this.state = { hasError: false, error: null }; }
             static getDerivedStateFromError(error) { return { hasError: true, error }; }
@@ -129,45 +127,47 @@
             }
         }
 
-        // --- Firebase Hook ---
         const useFirebase = () => {
             const [fb, setFb] = useState(null);
             const [user, setUser] = useState(null);
             const [isOffline, setIsOffline] = useState(false);
-            const [ready, setReady] = useState(false);
+            const [isAuthReady, setIsAuthReady] = useState(false);
 
             useEffect(() => {
-                // If user clicked "Force Offline"
                 if (window.forcedOfflineMode) {
                     setIsOffline(true);
-                    setReady(true);
+                    setIsAuthReady(true);
                     return;
                 }
 
                 const init = async () => {
                     let attempts = 0;
-                    while (!window.fbModules && attempts < 30) { // Wait 3s
+                    while (!window.fbModules && attempts < 30) {
                         await new Promise(r => setTimeout(r, 100));
                         attempts++;
-                        if(window.forcedOfflineMode) { setIsOffline(true); setReady(true); return; }
+                        if(window.forcedOfflineMode) { 
+                            setIsOffline(true); 
+                            setIsAuthReady(true); 
+                            return; 
+                        }
                     }
 
                     if (window.fbModules) {
                         const { auth, onAuthStateChanged } = window.fbModules;
                         onAuthStateChanged(auth, (u) => {
                             setUser(u);
-                            setReady(true);
+                            setIsAuthReady(true); // Signal ready
                         });
                         setFb({ ...window.fbModules, appId: 'dungeonmind' });
                     } else {
                         setIsOffline(true);
-                        setReady(true);
+                        setIsAuthReady(true); // Signal ready even if offline
                     }
                 };
                 init();
             }, []);
 
-            return { fb, user, isOffline, ready };
+            return { fb, user, isOffline, isAuthReady };
         };
 
         const Icon = ({ name, size = 20, className = "" }) => {
@@ -249,6 +249,10 @@
 
             return (
                 <div className="max-w-3xl mx-auto p-8 overflow-y-auto h-full custom-scroll">
+                    <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-2">
+                        <h2 className="text-3xl fantasy-font text-amber-500">Settings</h2>
+                    </div>
+
                     <div className="glass-panel p-8 rounded-xl mb-8 flex flex-col items-center text-center border-2 border-indigo-500/30 bg-indigo-900/10 relative overflow-hidden">
                         <h3 className="text-xs font-bold text-indigo-300 uppercase tracking-widest mb-2">Invite Code</h3>
                         <div className="text-5xl font-mono font-bold text-white tracking-widest mb-4 drop-shadow-lg">{code}</div>
@@ -264,7 +268,7 @@
                             <div className="space-y-2 mb-6">
                                 {Object.entries(activeUsers).map(([uid, email]) => (
                                     <div key={uid} className="flex justify-between items-center bg-slate-900 p-3 rounded border border-slate-700">
-                                        <div className="text-sm truncate w-1/2"><span className="text-slate-200">{email}</span></div>
+                                        <div className="text-sm truncate w-1/2"><span className="text-slate-200">{email}</span>{uid === userId && <span className="ml-2 text-xs text-green-500">(You)</span>}</div>
                                         {uid !== userId && <div className="flex gap-2"><button onClick={() => transferDM(uid)} className="bg-purple-900 text-xs px-2 py-1 rounded">DM</button><button onClick={() => kickPlayer(uid)} className="bg-amber-900 text-xs px-2 py-1 rounded">Kick</button><button onClick={() => banPlayer(uid)} className="bg-red-900 text-xs px-2 py-1 rounded">Ban</button></div>}
                                     </div>
                                 ))}
@@ -277,7 +281,7 @@
                         <div className="mb-3">
                             <select value={aiProvider} onChange={e => setAiProvider(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-slate-200 outline-none"><option value="gemini">Google Gemini</option><option value="openai">OpenAI</option></select>
                         </div>
-                        <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none" placeholder="API Key..."/>
+                        <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none" placeholder={aiProvider === 'openai' ? "sk-..." : "AIza..."}/>
                     </div>
 
                     {role === 'dm' && (
@@ -308,10 +312,11 @@
 
         const PartyView = ({ data, setData, role, activeChar, setActiveChar, updateCloud }) => {
             const updatePlayer = (idx, field, val) => {
-                const newPlayers = [...data.players];
-                newPlayers[idx] = { ...newPlayers[idx], [field]: val };
-                setData({ ...data, players: newPlayers });
-                updateCloud({ ...data, players: newPlayers });
+                setData(prev => {
+                    const newPlayers = prev.players.map((p, i) => i === idx ? { ...p, [field]: val } : p);
+                    updateCloud({ ...prev, players: newPlayers });
+                    return { ...prev, players: newPlayers };
+                });
             };
             const addPlayer = () => {
                 const newData = { ...data, players: [...data.players, { id: Date.now(), name: "New Hero", race: "Human", class: "Fighter", hp: 10, notes: "" }] };
