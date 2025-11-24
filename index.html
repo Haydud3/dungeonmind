@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DungeonMind v15.3 | Stable</title>
+    <title>DungeonMind v15.4 | Fixed</title>
     
     <!-- React & ReactDOM -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
@@ -42,13 +42,16 @@
             const auth = getAuth(app);
             const db = getFirestore(app);
 
+            // Attach to window for React to access
             window.fbModules = { 
                 app, auth, db, 
                 GoogleAuthProvider, signInWithPopup, signOut, 
                 doc, setDoc, getDoc, updateDoc, onSnapshot, onAuthStateChanged, arrayUnion, arrayRemove
             };
+            console.log("Firebase initialized successfully");
         } catch(e) {
             console.error("Firebase Init Failed", e);
+            window.firebaseError = e.message;
         }
     </script>
 
@@ -64,8 +67,6 @@
         .custom-scroll::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
         .glass-panel { background: rgba(30, 41, 59, 0.95); border: 1px solid rgba(255, 255, 255, 0.05); }
         input, textarea, select { font-size: 16px !important; }
-        .fade-in { animation: fadeIn 0.5s ease-out forwards; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         
         /* Loader Styles */
         #app-loader { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #0f172a; z-index: 9999; display: flex; flex-direction: column; align-items: center; justify-content: center; color: white; transition: opacity 0.5s; }
@@ -80,7 +81,7 @@
     <div id="app-loader">
         <div class="loader-spinner"></div>
         <h2 id="loader-text" style="margin-top: 20px; font-family: serif;">Summoning DungeonMind...</h2>
-        <p id="loader-sub" style="margin-top: 10px; font-size: 12px; color: #94a3b8;">Loading Scripts...</p>
+        <p id="loader-sub" style="margin-top: 10px; font-size: 12px; color: #94a3b8;">Establishing Arcane Link...</p>
         <button id="force-offline-btn" onclick="window.forceOffline()">Force Offline Mode</button>
     </div>
 
@@ -92,20 +93,22 @@
             const btn = document.getElementById('force-offline-btn');
             if(btn) btn.style.display = 'block';
             const sub = document.getElementById('loader-sub');
-            if(sub) sub.innerText = "Network slow? Click below.";
-        }, 3000); 
+            if(sub) sub.innerText = "Taking too long? Network issues?";
+        }, 4000); 
 
         window.forceOffline = function() {
             window.forcedOfflineMode = true;
-            const loader = document.getElementById('app-loader');
-            if(loader) loader.style.display = 'none';
+            console.log("Forcing offline mode via button");
         };
     </script>
 
     <script type="text/babel">
         const hideLoader = () => {
             const loader = document.getElementById('app-loader');
-            if(loader) loader.style.display = 'none';
+            if(loader) {
+                loader.style.opacity = 0;
+                setTimeout(() => loader.style.display = 'none', 500);
+            }
         };
 
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
@@ -137,18 +140,16 @@
             const [isAuthReady, setIsAuthReady] = useState(false);
 
             useEffect(() => {
-                if (window.forcedOfflineMode) {
-                    setIsOffline(true);
-                    setIsAuthReady(true);
-                    return;
-                }
-
                 const init = async () => {
                     let attempts = 0;
-                    while (!window.fbModules && attempts < 50) { // Wait 5s
+                    while (!window.fbModules && attempts < 50) { // Wait 5s max
                         await new Promise(r => setTimeout(r, 100));
                         attempts++;
-                        if(window.forcedOfflineMode) { setIsOffline(true); setIsAuthReady(true); return; }
+                        if(window.forcedOfflineMode) { 
+                            setIsOffline(true); 
+                            setIsAuthReady(true); 
+                            return; 
+                        }
                     }
 
                     if (window.fbModules) {
@@ -177,7 +178,94 @@
             return <i data-lucide={name} ref={iconRef} className={className}></i>;
         };
 
-        // --- COMPONENTS ---
+        // --- MISSING COMPONENT: LOBBY (Recreated) ---
+        const Lobby = ({ fb, user, onJoin, onOffline }) => {
+            const [joinCode, setJoinCode] = useState("");
+            const [isLoggingIn, setIsLoggingIn] = useState(false);
+
+            const handleLogin = async () => {
+                if(!fb) return;
+                setIsLoggingIn(true);
+                try {
+                    const provider = new fb.GoogleAuthProvider();
+                    await fb.signInWithPopup(fb.auth, provider);
+                } catch (e) {
+                    alert("Login Error: " + e.message + "\n\nIMPORTANT: If you are on GitHub Pages, ensure 'haydud3.github.io' is added to 'Authorized Domains' in Firebase Console -> Authentication -> Settings.");
+                } finally {
+                    setIsLoggingIn(false);
+                }
+            };
+
+            const createNew = () => {
+                const newCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+                onJoin(newCode, 'dm', user ? user.uid : 'anon');
+            };
+
+            return (
+                <div className="h-screen w-full flex items-center justify-center bg-[url('https://images.unsplash.com/photo-1519074069444-1ba4fff66d16?q=80&w=2544&auto=format&fit=crop')] bg-cover bg-center relative">
+                    <div className="absolute inset-0 bg-slate-900/80 backdrop-blur-sm"></div>
+                    <div className="relative z-10 w-full max-w-md p-8 glass-panel rounded-2xl shadow-2xl border border-slate-700">
+                        <div className="text-center mb-8">
+                            <h1 className="text-4xl fantasy-font text-amber-500 mb-2 text-shadow">DungeonMind</h1>
+                            <p className="text-slate-400 text-sm">AI-Enhanced TTRPG Assistant</p>
+                        </div>
+
+                        {!user && !fb && (
+                            <div className="bg-red-900/30 border border-red-500 text-red-200 p-4 rounded mb-4 text-center text-sm">
+                                Firebase Disconnected. Only offline mode available.
+                            </div>
+                        )}
+
+                        {user ? (
+                            <div className="bg-slate-800/50 p-4 rounded-lg mb-6 text-center border border-slate-700">
+                                <div className="text-sm text-slate-400 mb-1">Logged in as</div>
+                                <div className="font-bold text-green-400">{user.email}</div>
+                                <button onClick={() => fb.signOut(fb.auth)} className="text-xs text-red-400 mt-2 hover:underline">Sign Out</button>
+                            </div>
+                        ) : (
+                            fb && (
+                                <button onClick={handleLogin} disabled={isLoggingIn} className="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-3 rounded-lg font-bold mb-6 flex justify-center items-center gap-2 transition-all shadow-lg">
+                                    {isLoggingIn ? "Connecting..." : <><Icon name="log-in" size={20}/> Login with Google</>}
+                                </button>
+                            )
+                        )}
+
+                        <div className="space-y-3">
+                            <div className="relative">
+                                <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-700"></div></div>
+                                <div className="relative flex justify-center text-xs uppercase"><span className="bg-slate-900 px-2 text-slate-500">Campaign Access</span></div>
+                            </div>
+
+                            <button onClick={createNew} className="w-full bg-amber-700 hover:bg-amber-600 text-white py-3 rounded-lg font-bold border border-amber-500/30 shadow-lg">
+                                Start New Campaign (DM)
+                            </button>
+                            
+                            <div className="flex gap-2">
+                                <input 
+                                    value={joinCode} 
+                                    onChange={e => setJoinCode(e.target.value.toUpperCase())}
+                                    placeholder="ENTER CODE" 
+                                    className="flex-1 bg-slate-800 border border-slate-600 rounded-lg px-4 text-center font-mono tracking-widest text-lg outline-none focus:border-amber-500 text-white placeholder:text-slate-600"
+                                />
+                                <button 
+                                    onClick={() => joinCode && onJoin(joinCode, 'player', user ? user.uid : 'anon')} 
+                                    disabled={!joinCode}
+                                    className={`px-6 rounded-lg font-bold ${joinCode ? 'bg-slate-600 hover:bg-slate-500 text-white' : 'bg-slate-800 text-slate-600 cursor-not-allowed'}`}
+                                >
+                                    Join
+                                </button>
+                            </div>
+                            
+                            <button onClick={onOffline} className="w-full text-slate-500 hover:text-slate-300 text-xs mt-4 py-2">
+                                Continue Offline (Local Only)
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- EXISTING COMPONENTS ---
 
         const Sidebar = ({ view, setView, role, code, showTools, setShowTools, onExit }) => (
             <aside className="w-16 md:w-20 flex flex-col items-center bg-slate-900 border-r border-slate-800 py-4 z-20">
@@ -418,7 +506,11 @@
                 setView('lobby');
             };
 
-            if (!isAuthReady) return <div className="h-screen bg-slate-900 flex items-center justify-center text-white" id="app-loader"><div className="loader-spinner"></div></div>;
+            // Wait for Auth before rendering ANYTHING (keeps loader visible)
+            if (!isAuthReady) return null; 
+            
+            // Hide loader once React takes over
+            setTimeout(hideLoader, 100);
 
             if (view === 'lobby') return <Lobby fb={fb} user={user} onJoin={handleJoin} onOffline={handleOffline} />;
 
@@ -462,7 +554,7 @@
                         setData(d);
                         if(d.hostId === userId) setRole('dm'); else setRole('player');
                         hideLoader();
-                    } else { alert("Closed"); onExit(); }
+                    } else { alert("Closed or Invalid Code"); onExit(); }
                 });
                 return () => unsub();
             }, [code]);
