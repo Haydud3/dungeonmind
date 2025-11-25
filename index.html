@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DungeonMind v17.1 | Fixes & Memory</title>
+    <title>DungeonMind v17.2 | Stable Defaults</title>
     
     <!-- React & ReactDOM -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
@@ -368,7 +368,7 @@
             </div>
         );
 
-        const SettingsView = ({ data, setData, apiKey, setApiKey, role, updateCloud, handlePdfUpload, clearPdf, pdfProcessing, code, user, transferDM, banPlayer, kickPlayer, unbanPlayer, aiProvider, setAiProvider, fb, openAiModel, setOpenAiModel, workerUrl, setWorkerUrl }) => {
+        const SettingsView = ({ data, setData, apiKey, setApiKey, role, updateCloud, handlePdfUpload, clearPdf, pdfProcessing, code, user, transferDM, banPlayer, kickPlayer, unbanPlayer, aiProvider, setAiProvider, fb, openAiModel, setOpenAiModel, openRouterModel, setOpenRouterModel }) => {
             const copyCode = () => { navigator.clipboard.writeText(code); alert("Copied: " + code); };
             const activeUsers = data.activeUsers || {};
             const bannedUsers = data.bannedUsers || [];
@@ -470,9 +470,16 @@
 
                             {aiProvider === 'openrouter' && (
                                 <div>
-                                    <label className="block text-xs text-slate-400 mb-1">Cloudflare Worker URL</label>
-                                    <input type="text" value={workerUrl} onChange={e => setWorkerUrl(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none" placeholder="https://dungeonmind-proxy.your-name.workers.dev"/>
-                                    <p className="text-[10px] text-green-400 mt-1 flex items-center gap-1"><Icon name="check-circle" size={12}/> Default Proxy Active</p>
+                                    <label className="block text-xs text-slate-400 mb-1">OpenRouter Model</label>
+                                    <select value={openRouterModel} onChange={e => setOpenRouterModel(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-slate-200 outline-none mb-2">
+                                        <option value="google/gemini-2.0-flash-exp:free">Gemini 2.0 Flash (Free - Recommended)</option>
+                                        <option value="mistralai/mistral-7b-instruct:free">Mistral 7B Instruct (Free)</option>
+                                        <option value="meta-llama/llama-3-8b-instruct:free">Llama 3 8B (Free)</option>
+                                    </select>
+                                    <div className="bg-green-900/30 border border-green-600 rounded p-3 mt-2 flex items-center gap-2 text-xs text-green-300">
+                                        <Icon name="shield-check" size={14}/>
+                                        <span>Secure Proxy Active (Hidden)</span>
+                                    </div>
                                 </div>
                             )}
 
@@ -656,10 +663,11 @@
             const [inputText, setInputText] = useState('');
             const [isLoading, setIsLoading] = useState(false);
             const [apiKey, setApiKey] = useState('');
-            // CHANGED: Read provider from localStorage, default to 'gemini'
-            const [aiProvider, setAiProvider] = useState(() => localStorage.getItem('dm_ai_provider') || 'gemini');
+            // CHANGED: Read provider from localStorage, default to 'openrouter' (most stable free option)
+            const [aiProvider, setAiProvider] = useState(() => localStorage.getItem('dm_ai_provider') || 'openrouter');
             const [openAiModel, setOpenAiModel] = useState(() => localStorage.getItem('dm_openai_model') || 'gpt-4o'); 
-            const [workerUrl, setWorkerUrl] = useState(() => localStorage.getItem('dm_worker_url') || 'https://dungeonmind-proxy.heangeloff03.workers.dev'); 
+            const [openRouterModel, setOpenRouterModel] = useState(() => localStorage.getItem('dm_openrouter_model') || 'google/gemini-2.0-flash-exp:free'); // CHANGED DEFAULT
+            const [workerUrl, setWorkerUrl] = useState('https://dungeonmind-proxy.heangeloff03.workers.dev'); // HARDCODED
             const [pdfProcessing, setPdfProcessing] = useState(false);
             const [showTools, setShowTools] = useState(false);
             const [isListening, setIsListening] = useState(false);
@@ -673,7 +681,7 @@
             
             // Update localStorage when settings change
             useEffect(() => { localStorage.setItem('dm_openai_model', openAiModel); }, [openAiModel]);
-            useEffect(() => { localStorage.setItem('dm_worker_url', workerUrl); }, [workerUrl]);
+            useEffect(() => { localStorage.setItem('dm_openrouter_model', openRouterModel); }, [openRouterModel]);
             useEffect(() => { localStorage.setItem('dm_ai_provider', aiProvider); }, [aiProvider]);
 
             useEffect(() => { const k = localStorage.getItem(`dm_key_${aiProvider}`); setApiKey(k||''); }, [aiProvider]);
@@ -726,18 +734,16 @@
             const genResponse = async (ov) => {
                 const q = ov || inputText; if(!q.trim()) return;
                 
-                // Optimistic UI: Add user message immediately
+                // Optimistic UI
                 setChatHistory(p=>[...p, {role:'user', content:q}]); 
                 setInputText('');
                 
-                // OFFLINE / NO KEY CHECK
                 const hasKey = apiKey || (aiProvider === 'openrouter' && workerUrl);
                 if (!hasKey && !ov) return;
                 if (!hasKey && ov) return;
 
                 setIsLoading(true);
                 
-                // Context preparation (keep existing logic)
                 const char = data.players.find(p=>p.id==derivedActiveChar);
                 const iden = role === 'dm' ? "DM" : (char ? `${char.name} (${char.race})` : "Player");
                 const personalContext = data.player_journals?.[userId] || "";
@@ -771,7 +777,10 @@
                             r = await fetch(workerUrl, {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ prompt: prompt })
+                                body: JSON.stringify({ 
+                                    prompt: prompt,
+                                    model: openRouterModel // Pass selected model to worker
+                                })
                             });
                             if(!r.ok) throw new Error(`OpenRouter Error ${r.status}`);
                             j = await r.json();
@@ -779,7 +788,6 @@
                             txt = j.choices?.[0]?.message?.content;
                         } 
                         else {
-                            // OpenAI
                             if(!apiKey) throw new Error("API Key?");
                             r = await fetch('https://api.openai.com/v1/chat/completions', {
                                 method:'POST', 
@@ -788,14 +796,11 @@
                             });
                             if(!r.ok) throw new Error(`OpenAI Error ${r.status}`);
                             j = await r.json();
-                            if(j.error) {
-                                if (j.error.code === 'insufficient_quota') throw new Error("OpenAI Quota Exceeded. Check Settings > Billing.");
-                                throw new Error(j.error.message); 
-                            }
+                            if(j.error) throw new Error(j.error.message); 
                             txt = j.choices?.[0]?.message?.content;
                         }
 
-                        if (!txt) throw new Error("Empty response from AI");
+                        if (!txt || !txt.trim()) throw new Error("Empty response from AI");
                         
                         success = true;
                     } catch(e) {
@@ -803,7 +808,6 @@
                         if(attempts === maxRetries) {
                             setChatHistory(p=>[...p, {role:'system', content:`Failed after ${maxRetries} attempts: ${e.message}`}]);
                         } else {
-                            // Wait a bit before retrying
                             await new Promise(res => setTimeout(res, 1500));
                         }
                     }
@@ -843,7 +847,6 @@
             const handleDiceRoll = (d) => {
                 const r = Math.floor(Math.random()*d)+1;
                 setDiceLog(p => [{id:Date.now(), die:`d${d}`, result:r}, ...p].slice(0,10));
-                // If offline or no key, just log to chat without error
                 const hasKey = apiKey || (aiProvider === 'openrouter' && workerUrl);
                 if (!hasKey) {
                     setChatHistory(p=>[...p, {role:'user', content:`Roll d${d}: ${r}`}]);
@@ -861,7 +864,7 @@
                         {view === 'session' && <SessionView data={data} chatHistory={chatHistory} setChatHistory={setChatHistory} inputText={inputText} setInputText={setInputText} isListening={isListening} toggleListening={toggleListening} generateResponse={genResponse} isLoading={isLoading} role={role} activeChar={derivedActiveChar} showTools={showTools} setShowTools={setShowTools} diceLog={diceLog} handleDiceRoll={handleDiceRoll} syncState={syncState}/>}
                         {view === 'journal' && <JournalView data={data} setData={setData} role={role} updateCloud={updateCloud} userId={userId}/>}
                         {view === 'party' && <PartyView data={data} setData={setData} role={role} activeChar={derivedActiveChar} updateCloud={updateCloud}/>}
-                        {view === 'settings' && <SettingsView data={data} setData={setData} apiKey={apiKey} setApiKey={setKey} role={role} updateCloud={updateCloud} handlePdfUpload={handlePdf} clearPdf={()=>{const nd={...data, campaign:{...data.campaign, pdfName:null, pdfText:null}}; updateCloud(nd);}} pdfProcessing={pdfProcessing} code={code} user={user} transferDM={uid=>{if(confirm("Transfer?")){const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); fb.updateDoc(ref, {hostId:uid});}}} banPlayer={uid=>{if(confirm("Ban?")){const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); const na={...data.activeUsers}; delete na[uid]; fb.updateDoc(ref,{activeUsers:na, bannedUsers:fb.arrayUnion(uid)});}}} kickPlayer={uid=>{const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); const na={...data.activeUsers}; delete na[uid]; fb.updateDoc(ref, {activeUsers:na});}} unbanPlayer={uid=>{const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); fb.updateDoc(ref, {bannedUsers:fb.arrayRemove(uid)});}} aiProvider={aiProvider} setAiProvider={setAiProvider} fb={fb} openAiModel={openAiModel} setOpenAiModel={setOpenAiModel} workerUrl={workerUrl} setWorkerUrl={setWorkerUrl}/>}
+                        {view === 'settings' && <SettingsView data={data} setData={setData} apiKey={apiKey} setApiKey={setKey} role={role} updateCloud={updateCloud} handlePdfUpload={handlePdf} clearPdf={()=>{const nd={...data, campaign:{...data.campaign, pdfName:null, pdfText:null}}; updateCloud(nd);}} pdfProcessing={pdfProcessing} code={code} user={user} transferDM={uid=>{if(confirm("Transfer?")){const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); fb.updateDoc(ref, {hostId:uid});}}} banPlayer={uid=>{if(confirm("Ban?")){const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); const na={...data.activeUsers}; delete na[uid]; fb.updateDoc(ref,{activeUsers:na, bannedUsers:fb.arrayUnion(uid)});}}} kickPlayer={uid=>{const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); const na={...data.activeUsers}; delete na[uid]; fb.updateDoc(ref, {activeUsers:na});}} unbanPlayer={uid=>{const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); fb.updateDoc(ref, {bannedUsers:fb.arrayRemove(uid)});}} aiProvider={aiProvider} setAiProvider={setAiProvider} fb={fb} openAiModel={openAiModel} setOpenAiModel={setOpenAiModel} openRouterModel={openRouterModel} setOpenRouterModel={setOpenRouterModel} workerUrl={workerUrl} setWorkerUrl={setWorkerUrl}/>}
                     </main>
                 </div>
             );
