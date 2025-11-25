@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DungeonMind v16.9 | Pre-Configured Proxy</title>
+    <title>DungeonMind v17.0 | Auto-Retry</title>
     
     <!-- React & ReactDOM -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
@@ -655,7 +655,7 @@
             const [isLoading, setIsLoading] = useState(false);
             const [apiKey, setApiKey] = useState('');
             const [aiProvider, setAiProvider] = useState('gemini');
-            const [openAiModel, setOpenAiModel] = useState(() => localStorage.getItem('dm_openai_model') || 'gpt-4o'); 
+            const [openAiModel, setOpenAiModel] = useState(() => localStorage.getItem('dm_openai_model') || 'gpt-4o'); // NEW: State for Model
             const [workerUrl, setWorkerUrl] = useState(() => localStorage.getItem('dm_worker_url') || 'https://dungeonmind-proxy.heangeloff03.workers.dev'); // NEW: State for Worker URL
             const [pdfProcessing, setPdfProcessing] = useState(false);
             const [showTools, setShowTools] = useState(false);
@@ -668,7 +668,7 @@
             // Derive active character from assignments
             const derivedActiveChar = data?.assignments?.[userId] || null;
             
-            // Update localStorage
+            // Update localStorage when model changes
             useEffect(() => { localStorage.setItem('dm_openai_model', openAiModel); }, [openAiModel]);
             useEffect(() => { localStorage.setItem('dm_worker_url', workerUrl); }, [workerUrl]);
 
@@ -721,60 +721,95 @@
 
             const genResponse = async (ov) => {
                 const q = ov || inputText; if(!q.trim()) return;
-                setChatHistory(p=>[...p, {role:'user', content:q}]); setInputText('');
                 
-                // OFFLINE / NO KEY CHECK FOR DICE/SYSTEM
+                // Optimistic UI: Add user message immediately
+                setChatHistory(p=>[...p, {role:'user', content:q}]); 
+                setInputText('');
+                
+                // OFFLINE / NO KEY CHECK
                 const hasKey = apiKey || (aiProvider === 'openrouter' && workerUrl);
-                if (!hasKey && !ov) {
-                    // If user is typing manually but has no key, return
-                    return; 
-                }
-                
-                // If it's a dice roll and we have no key/offline, stop here (msg already added)
+                if (!hasKey && !ov) return;
                 if (!hasKey && ov) return;
 
                 setIsLoading(true);
+                
+                // Context preparation (keep existing logic)
                 const char = data.players.find(p=>p.id==derivedActiveChar);
                 const iden = role === 'dm' ? "DM" : (char ? `${char.name} (${char.race})` : "Player");
                 const personalContext = data.player_journals?.[userId] || "";
-                
                 const sec = role === 'dm' ? `SECRETS: ${data.journal_dm}\nPDF: ${data.campaign.pdfText?data.campaign.pdfText.slice(0,30000):"None"}` : `HIDDEN INFO: The user has secret notes: "${personalContext}". Use these for context but do not reveal them to other players.`;
                 const prompt = `Role: DM AI. User: ${iden}. Rules: 5e (${data.config.edition}). Ctx: ${data.campaign.location}. Log: ${data.journal_public}. ${sec}. Party: ${data.players.map(p=>p.name).join(', ')}. Q: ${q}`;
-                
-                try {
-                    let txt = "";
-                    if(aiProvider === 'gemini') {
-                        if(!apiKey) throw new Error("API Key?");
-                        const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({contents:[{parts:[{text:prompt}]}]})});
-                        const j = await r.json(); txt = j.candidates[0].content.parts[0].text;
-                    } else if (aiProvider === 'openrouter') {
-                        if(!workerUrl) throw new Error("Worker URL missing.");
+
+                // RETRY LOGIC
+                let attempts = 0;
+                const maxRetries = 3;
+                let success = false;
+                let txt = "";
+
+                while(attempts < maxRetries && !success) {
+                    try {
+                        attempts++;
+                        let r, j;
                         
-                        const r = await fetch(workerUrl, {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json'
-                            },
-                            body: JSON.stringify({
-                                prompt: prompt 
-                            })
-                        });
-                        const j = await r.json();
-                        if(j.error) throw new Error(j.error.message);
-                        txt = j.choices[0].message.content;
-                    } else {
-                        if(!apiKey) throw new Error("API Key?");
-                        const r = await fetch('https://api.openai.com/v1/chat/completions', {method:'POST', headers:{'Content-Type':'application/json', 'Authorization':`Bearer ${apiKey}`}, body:JSON.stringify({model: openAiModel, messages:[{role:"system", content:"DM Helper"}, {role:"user", content:prompt}]})});
-                        const j = await r.json();
-                        if(j.error) {
-                            if (j.error.code === 'insufficient_quota') throw new Error("OpenAI Quota Exceeded. Check Settings > Billing.");
-                            throw new Error(j.error.message); 
+                        if(aiProvider === 'gemini') {
+                             if(!apiKey) throw new Error("API Key?");
+                             r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+                                method:'POST', 
+                                headers:{'Content-Type':'application/json'}, 
+                                body:JSON.stringify({contents:[{parts:[{text:prompt}]}]})
+                             });
+                             if(!r.ok) throw new Error(`Gemini Error ${r.status}`);
+                             j = await r.json();
+                             txt = j.candidates?.[0]?.content?.parts?.[0]?.text;
+                        } 
+                        else if (aiProvider === 'openrouter') {
+                            if(!workerUrl) throw new Error("Worker URL missing.");
+                            r = await fetch(workerUrl, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ prompt: prompt })
+                            });
+                            if(!r.ok) throw new Error(`OpenRouter Error ${r.status}`);
+                            j = await r.json();
+                            if(j.error) throw new Error(j.error.message);
+                            txt = j.choices?.[0]?.message?.content;
+                        } 
+                        else {
+                            // OpenAI
+                            if(!apiKey) throw new Error("API Key?");
+                            r = await fetch('https://api.openai.com/v1/chat/completions', {
+                                method:'POST', 
+                                headers:{'Content-Type':'application/json', 'Authorization':`Bearer ${apiKey}`}, 
+                                body:JSON.stringify({model: openAiModel, messages:[{role:"system", content:"DM Helper"}, {role:"user", content:prompt}]})
+                            });
+                            if(!r.ok) throw new Error(`OpenAI Error ${r.status}`);
+                            j = await r.json();
+                            if(j.error) {
+                                if (j.error.code === 'insufficient_quota') throw new Error("OpenAI Quota Exceeded. Check Settings > Billing.");
+                                throw new Error(j.error.message); 
+                            }
+                            txt = j.choices?.[0]?.message?.content;
                         }
-                        txt = j.choices[0].message.content;
+
+                        if (!txt) throw new Error("Empty response from AI");
+                        
+                        success = true;
+                    } catch(e) {
+                        console.error(`Attempt ${attempts} failed:`, e);
+                        if(attempts === maxRetries) {
+                            setChatHistory(p=>[...p, {role:'system', content:`Failed after ${maxRetries} attempts: ${e.message}`}]);
+                        } else {
+                            // Wait a bit before retrying
+                            await new Promise(res => setTimeout(res, 1500));
+                        }
                     }
+                }
+
+                if(success && txt) {
                     setChatHistory(p=>[...p, {role:'ai', content:txt}]);
-                } catch(e){ setChatHistory(p=>[...p, {role:'system', content:e.message}]); }
-                finally { setIsLoading(false); }
+                }
+                
+                setIsLoading(false);
             };
 
             const handlePdf = async (e) => {
