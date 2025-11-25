@@ -3,21 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DungeonMind v18.5 | Stability Update</title>
+    <title>DungeonMind v18.7 | Mobile Fixes</title>
     
-    <!-- GLOBAL ERROR HANDLER (Must be first) -->
+    <!-- GLOBAL ERROR HANDLER -->
     <script>
         window.onerror = function(msg, url, line, col, error) {
             const loaderText = document.getElementById('loader-text');
-            const loaderSub = document.getElementById('loader-sub');
             if (loaderText) {
-                loaderText.innerText = "Critical Error";
+                loaderText.innerText = "Error: " + msg;
                 loaderText.style.color = "#ef4444";
-                loaderSub.innerText = msg + " (Line " + line + ")";
-                loaderSub.style.fontFamily = "monospace";
-                loaderSub.style.whiteSpace = "pre-wrap";
+                loaderText.style.fontSize = "12px";
             }
-            console.error("Global Error:", error);
             return false;
         };
     </script>
@@ -67,10 +63,11 @@
                 GoogleAuthProvider, signInWithPopup, signOut, 
                 doc, setDoc, getDoc, updateDoc, deleteDoc, onSnapshot, onAuthStateChanged, arrayUnion, arrayRemove
             };
-            console.log("Firebase initialized successfully");
+            console.log("Firebase initialized");
+            window.dispatchEvent(new Event('firebase-ready'));
         } catch(e) {
-            console.error("Firebase Init Failed", e);
-            // Don't stop execution, allow offline mode
+            console.error("Firebase Failed", e);
+            window.dispatchEvent(new Event('firebase-failed'));
         }
     </script>
 
@@ -92,7 +89,6 @@
         #force-offline-btn { display: none; margin-top: 20px; padding: 10px 20px; background: #334155; color: white; border: 1px solid #475569; border-radius: 8px; cursor: pointer; font-family: sans-serif; }
         #force-offline-btn:hover { background: #475569; }
         .journal-expand { transition: all 0.3s ease-in-out; }
-        /* Force remove strikethrough */
         .chat-content s, .chat-content strike, .chat-content del { text-decoration: none !important; }
     </style>
 </head>
@@ -101,27 +97,21 @@
         <div class="loader-spinner"></div>
         <h2 id="loader-text" style="margin-top: 20px; font-family: serif;">Summoning DungeonMind...</h2>
         <p id="loader-sub" style="margin-top: 10px; font-size: 12px; color: #94a3b8;">Establishing Arcane Link...</p>
-        <button id="force-offline-btn" onclick="window.forceOffline()">Force Launch (Offline)</button>
+        <button id="force-offline-btn" onclick="window.dispatchEvent(new Event('force-offline'))">Force Offline Mode</button>
     </div>
 
     <div id="root"></div>
 
     <script>
-        // Auto-show force offline button after 8 seconds if app hasn't loaded
         setTimeout(() => {
             const btn = document.getElementById('force-offline-btn');
-            if(btn && document.getElementById('app-loader').style.display !== 'none') {
+            const loader = document.getElementById('app-loader');
+            if(btn && loader && loader.style.display !== 'none') {
                 btn.style.display = 'block';
                 const sub = document.getElementById('loader-sub');
-                if(sub) sub.innerText = "Connection taking too long?";
+                if(sub) sub.innerText = "Network slow? Click below.";
             }
-        }, 8000); 
-
-        window.forceOffline = function() {
-            window.forcedOfflineMode = true;
-            // Trigger a storage event or console log to nudge the React loop if it's stuck
-            console.log("Forcing offline mode via button");
-        };
+        }, 4000);
     </script>
 
     <script type="text/babel">
@@ -162,52 +152,45 @@
             const [isAuthReady, setIsAuthReady] = useState(false);
 
             useEffect(() => {
-                const init = async () => {
-                    let attempts = 0;
-                    // Wait for firebase modules or forced offline
-                    while (!window.fbModules && attempts < 50) { 
-                        if(window.forcedOfflineMode) { 
-                            console.log("Offline mode forced during wait");
-                            setIsOffline(true); 
-                            setIsAuthReady(true); 
-                            return; 
-                        }
-                        await new Promise(r => setTimeout(r, 100));
-                        attempts++;
-                    }
+                let isMounted = true;
 
-                    if (window.fbModules && !window.forcedOfflineMode) {
-                        try {
-                            const { auth, onAuthStateChanged } = window.fbModules;
-                            onAuthStateChanged(auth, (u) => {
-                                setUser(u);
-                                setIsAuthReady(true);
-                            });
-                            setFb({ ...window.fbModules, appId: 'dungeonmind' });
-                        } catch(e) {
-                            console.error("Auth Init Error", e);
-                            setIsOffline(true);
+                const handleReady = () => {
+                    if (!isMounted) return;
+                    if (window.fbModules) {
+                        const { auth, onAuthStateChanged } = window.fbModules;
+                        onAuthStateChanged(auth, (u) => {
+                            if (!isMounted) return;
+                            setUser(u);
                             setIsAuthReady(true);
-                        }
-                    } else {
-                        setIsOffline(true);
-                        setIsAuthReady(true);
+                        });
+                        setFb({ ...window.fbModules, appId: 'dungeonmind' });
                     }
                 };
-                init();
+
+                const handleOffline = () => {
+                    if (!isMounted) return;
+                    setIsOffline(true);
+                    setIsAuthReady(true);
+                };
+
+                window.addEventListener('firebase-ready', handleReady);
+                window.addEventListener('firebase-failed', handleOffline);
+                window.addEventListener('force-offline', handleOffline);
+
+                if (window.fbModules) handleReady();
+                
+                const timer = setTimeout(() => {
+                    if (!window.fbModules && !isAuthReady) handleOffline();
+                }, 5000);
+
+                return () => {
+                    isMounted = false;
+                    window.removeEventListener('firebase-ready', handleReady);
+                    window.removeEventListener('firebase-failed', handleOffline);
+                    window.removeEventListener('force-offline', handleOffline);
+                    clearTimeout(timer);
+                };
             }, []);
-            
-            // Polling for forced offline mode in case user clicks button late
-            useEffect(() => {
-                const interval = setInterval(() => {
-                    if(window.forcedOfflineMode && !isAuthReady) {
-                        setIsOffline(true);
-                        setIsAuthReady(true);
-                        clearInterval(interval);
-                    }
-                }, 500);
-                return () => clearInterval(interval);
-            }, [isAuthReady]);
 
             return { fb, user, isOffline, isAuthReady };
         };
@@ -263,7 +246,6 @@
 
         const JournalView = ({ data, setData, role, updateCloud, userId }) => {
             const [maximized, setMaximized] = useState(null); 
-            
             const updatePersonal = (val) => {
                 const newData = { ...data, player_journals: { ...data.player_journals, [userId]: val } };
                 setData(newData);
@@ -387,7 +369,7 @@
         };
 
         const Sidebar = ({ view, setView, role, code, showTools, setShowTools, onExit }) => (
-            <aside className="w-16 md:w-20 flex flex-col items-center bg-slate-900 border-r border-slate-800 py-4 z-20">
+            <aside className="w-16 md:w-20 min-w-[4rem] flex flex-col items-center bg-slate-900 border-r border-slate-800 py-4 z-20">
                 <div className="mb-2 text-amber-500"><Icon name="dungeon" size={32} /></div>
                 <div className="text-[10px] font-mono text-slate-500 mb-6 bg-slate-800 px-1 rounded">{code || "LOCAL"}</div>
                 <nav className="flex-1 flex flex-col gap-4 w-full">
@@ -465,74 +447,93 @@
             };
 
             return (
-                <div className="max-w-3xl mx-auto p-8 overflow-y-auto h-full custom-scroll">
+                <div className="max-w-3xl mx-auto p-4 md:p-8 overflow-y-auto h-full custom-scroll w-full">
                     <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-2"><h2 className="text-3xl fantasy-font text-amber-500">Settings</h2></div>
-                    <div className="glass-panel p-8 rounded-xl mb-8 flex flex-col items-center text-center border-2 border-indigo-500/30 bg-indigo-900/10 relative overflow-hidden">
+                    
+                    {/* Invite Code Section - Responsive */}
+                    <div className="glass-panel p-8 rounded-xl mb-8 flex flex-col items-center text-center border-2 border-indigo-500/30 bg-indigo-900/10 relative overflow-hidden w-full">
                         <h3 className="text-xs font-bold text-indigo-300 uppercase tracking-widest mb-2">Invite Code</h3>
-                        <div className="text-5xl font-mono font-bold text-white tracking-widest mb-4 drop-shadow-lg">{code}</div>
-                        <div className="flex gap-2"><button onClick={copyCode} className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-1 rounded text-sm flex items-center gap-2 shadow-lg"><Icon name="copy" size={16}/> Copy</button>{fb && (user ? <button onClick={signOut} className="bg-slate-700 px-4 py-1 rounded text-sm">Sign Out</button> : <button onClick={signIn} className="bg-blue-600 px-4 py-1 rounded text-sm">Login</button>)}</div>
+                        <div className="text-4xl md:text-5xl font-mono font-bold text-white tracking-widest mb-4 drop-shadow-lg break-all">{code}</div>
+                        <div className="flex flex-wrap justify-center gap-2">
+                            <button onClick={copyCode} className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-1 rounded text-sm flex items-center gap-2 shadow-lg"><Icon name="copy" size={16}/> Copy</button>
+                            {fb && (user ? <button onClick={signOut} className="bg-slate-700 px-4 py-1 rounded text-sm">Sign Out</button> : <button onClick={signIn} className="bg-blue-600 px-4 py-1 rounded text-sm">Login</button>)}
+                        </div>
                     </div>
+
                     <div className="glass-panel p-6 rounded-xl mb-6">
                         <h3 className="text-lg font-bold mb-4 text-slate-200 flex items-center gap-2"><Icon name="save" size={18}/> Backup & Restore</h3>
-                        <div className="flex gap-4"><button onClick={downloadBackup} className="flex-1 bg-slate-700 hover:bg-slate-600 p-3 rounded text-slate-200 flex items-center justify-center gap-2"><Icon name="download" size={16}/> Download Backup</button><label className="flex-1 bg-slate-700 hover:bg-slate-600 p-3 rounded text-slate-200 flex items-center justify-center gap-2 cursor-pointer"><Icon name="upload" size={16}/> Restore Backup<input type="file" accept=".json" onChange={handleRestore} className="hidden" /></label></div>
+                        <div className="flex flex-col md:flex-row gap-4">
+                            <button onClick={downloadBackup} className="flex-1 bg-slate-700 hover:bg-slate-600 p-3 rounded text-slate-200 flex items-center justify-center gap-2"><Icon name="download" size={16}/> Download</button>
+                            <label className="flex-1 bg-slate-700 hover:bg-slate-600 p-3 rounded text-slate-200 flex items-center justify-center gap-2 cursor-pointer">
+                                <Icon name="upload" size={16}/> Restore
+                                <input type="file" accept=".json" onChange={handleRestore} className="hidden" />
+                            </label>
+                        </div>
                     </div>
+
                     {role === 'dm' && (
                         <div className="glass-panel p-6 rounded-xl mb-6 border-l-4 border-purple-500">
-                            <h3 className="text-lg font-bold mb-4 text-slate-200 flex items-center gap-2"><Icon name="shield-alert" size={18}/> Moderation & Character Assignment</h3>
-                            <div className="space-y-2 mb-6">
+                            <h3 className="text-lg font-bold mb-4 text-slate-200 flex items-center gap-2"><Icon name="shield-alert" size={18}/> Moderation</h3>
+                            <div className="space-y-3 mb-6">
                                 {Object.entries(activeUsers).map(([uid, email]) => (
-                                    <div key={uid} className="flex justify-between items-center bg-slate-900 p-3 rounded border border-slate-700">
-                                        <div className="text-sm flex-1 flex flex-col">
-                                            <div><span className="text-slate-200">{email}</span>{uid === userId && <span className="ml-2 text-xs text-green-500">(You)</span>}</div>
-                                            <div className="mt-1 flex items-center gap-2">
-                                                <span className="text-[10px] text-slate-500 uppercase">Assign:</span>
-                                                <select className="bg-slate-800 border border-slate-600 text-xs rounded px-2 py-1 text-white outline-none" value={assignments[uid] || ""} onChange={(e) => updateAssignment(uid, e.target.value)}>
+                                    <div key={uid} className="flex flex-col md:flex-row justify-between items-start md:items-center bg-slate-900 p-3 rounded border border-slate-700 gap-3">
+                                        <div className="text-sm w-full md:flex-1 flex flex-col">
+                                            <div className="truncate font-bold text-slate-200">{email}{uid === userId && <span className="ml-2 text-xs text-green-500">(You)</span>}</div>
+                                            <div className="mt-2 flex items-center gap-2 w-full">
+                                                <span className="text-[10px] text-slate-500 uppercase whitespace-nowrap">Assign:</span>
+                                                <select className="bg-slate-800 border border-slate-600 text-xs rounded px-2 py-1 text-white outline-none w-full md:w-auto flex-1" value={assignments[uid] || ""} onChange={(e) => updateAssignment(uid, e.target.value)}>
                                                     <option value="">Spectator</option>
                                                     {data.players.map(p => <option key={p.id} value={p.id}>{p.name} ({p.race})</option>)}
                                                 </select>
                                             </div>
                                         </div>
-                                        {uid !== userId && <div className="flex gap-2"><button onClick={() => transferDM(uid)} className="bg-purple-900 text-xs px-2 py-1 rounded">DM</button><button onClick={() => kickPlayer(uid)} className="bg-amber-900 text-xs px-2 py-1 rounded">Kick</button><button onClick={() => banPlayer(uid)} className="bg-red-900 text-xs px-2 py-1 rounded">Ban</button></div>}
+                                        {uid !== userId && (
+                                            <div className="flex gap-2 w-full md:w-auto justify-end">
+                                                <button onClick={() => transferDM(uid)} className="bg-purple-900 text-xs px-3 py-2 rounded flex-1 md:flex-none">DM</button>
+                                                <button onClick={() => kickPlayer(uid)} className="bg-amber-900 text-xs px-3 py-2 rounded flex-1 md:flex-none">Kick</button>
+                                                <button onClick={() => banPlayer(uid)} className="bg-red-900 text-xs px-3 py-2 rounded flex-1 md:flex-none">Ban</button>
+                                            </div>
+                                        )}
                                     </div>
                                 ))}
                             </div>
-                            {bannedUsers.length > 0 && <div className="space-y-2"><div className="text-xs text-red-400 uppercase font-bold">Banned</div>{bannedUsers.map(uid => <div key={uid} className="flex justify-between items-center bg-red-950/30 p-2 rounded border border-red-900/50"><span className="text-xs font-mono text-red-300">{uid.slice(0,8)}...</span><button onClick={() => unbanPlayer(uid)} className="text-xs text-slate-400 hover:text-white">Unban</button></div>)}</div>}
+                            {bannedUsers.length > 0 && <div className="space-y-2"><div className="text-xs text-red-400 uppercase font-bold">Banned</div>{bannedUsers.map(uid => <div key={uid} className="flex justify-between items-center bg-red-950/30 p-2 rounded border border-red-900/50"><span className="text-xs font-mono text-red-300 truncate flex-1">{uid.slice(0,8)}...</span><button onClick={() => unbanPlayer(uid)} className="text-xs text-slate-400 hover:text-white ml-2">Unban</button></div>)}</div>}
                         </div>
                     )}
+                    
                     <div className="glass-panel p-6 rounded-xl mb-6 border-l-4 border-amber-500">
                         <h3 className="text-lg font-bold mb-2 text-slate-200">AI Intelligence</h3>
                         <div className="mb-3">
                             <label className="block text-xs text-slate-400 mb-1">Provider</label>
-                            <select value={aiProvider} onChange={e => setAiProvider(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-slate-200 outline-none mb-2"><option value="puter">Puter.js (Free - Recommended)</option><option value="gemini">Google Gemini</option><option value="openai">OpenAI</option></select>
+                            <select value={aiProvider} onChange={e => setAiProvider(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none mb-3"><option value="puter">Puter.js (Free)</option><option value="gemini">Google Gemini</option><option value="openai">OpenAI</option></select>
                             
                             {aiProvider === 'openai' && (
                                 <div>
                                     <label className="block text-xs text-slate-400 mb-1">OpenAI Model</label>
-                                    <select value={openAiModel} onChange={e => setOpenAiModel(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-slate-200 outline-none">
-                                        <option value="gpt-4o">GPT-4o (Best, Expensive)</option>
-                                        <option value="gpt-4o-mini">GPT-4o Mini (Fast, Cheap)</option>
+                                    <select value={openAiModel} onChange={e => setOpenAiModel(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none mb-2">
+                                        <option value="gpt-4o">GPT-4o</option>
+                                        <option value="gpt-4o-mini">GPT-4o Mini</option>
                                         <option value="gpt-4-turbo">GPT-4 Turbo</option>
-                                        <option value="gpt-3.5-turbo">GPT-3.5 Turbo (Legacy)</option>
                                     </select>
-                                    <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none mt-2" placeholder="sk-..."/>
+                                    <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none" placeholder="sk-..."/>
                                 </div>
                             )}
 
                             {aiProvider === 'puter' && (
                                 <div>
                                     <label className="block text-xs text-slate-400 mb-1">Puter Model</label>
-                                    <select value={puterModel} onChange={e => setPuterModel(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-slate-200 outline-none mb-2">
-                                        <option value="deepseek-chat">DeepSeek V3 (Recommended)</option>
+                                    <select value={puterModel} onChange={e => setPuterModel(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none mb-3">
+                                        <option value="mistral-large-latest">Mistral Large (Recommended)</option>
+                                        <option value="deepseek-chat">DeepSeek V3</option>
                                         <option value="claude-3-5-sonnet">Claude 3.5 Sonnet</option>
                                         <option value="gpt-4o">GPT-4o</option>
-                                        <option value="mistral-large-latest">Mistral Large</option>
                                     </select>
-                                    <div className="bg-blue-900/30 border border-blue-600 rounded p-3 mt-2">
+                                    <div className="bg-blue-900/30 border border-blue-600 rounded p-3">
                                         <div className="flex items-center gap-2 text-xs text-blue-300 mb-2">
                                             <Icon name="cloud" size={14}/>
                                             <span>Powered by Puter.js (Serverless & Free)</span>
                                         </div>
-                                        <button onClick={async () => { await puter.auth.signIn(); window.location.reload(); }} className="w-full bg-blue-700 hover:bg-blue-600 text-white text-xs py-2 rounded font-bold transition-colors">Connect & Reload (Fix Auth Bug)</button>
+                                        <button onClick={async () => { await puter.auth.signIn(); window.location.reload(); }} className="w-full bg-blue-700 hover:bg-blue-600 text-white text-xs py-3 rounded font-bold transition-colors">Connect & Reload</button>
                                     </div>
                                 </div>
                             )}
@@ -542,19 +543,20 @@
                             )}
                         </div>
                     </div>
+                    
                     {role === 'dm' && (
                         <div className="glass-panel p-6 rounded-xl border-l-4 border-blue-500">
                             <h3 className="text-lg font-bold mb-4 text-slate-200">DM Tools</h3>
                             <div className="grid md:grid-cols-2 gap-6 mb-4">
-                                <div><label className="block text-xs font-bold text-slate-400 uppercase mb-2">Edition</label><select value={data.config?.edition || '2014'} onChange={e => updateConfig('edition', e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-slate-200 outline-none"><option value="2014">5e (2014)</option><option value="2024">5e (2024 Revised)</option></select></div>
-                                <div><label className="block text-xs font-bold text-slate-400 uppercase mb-2">AI Context</label><button onClick={() => updateConfig('strictMode', !data.config?.strictMode)} className={`w-full p-2 rounded text-sm font-bold border ${data.config?.strictMode ? 'bg-green-900/50 border-green-600 text-green-400' : 'bg-slate-900 border-slate-700 text-slate-400'}`}>{data.config?.strictMode ? "Strict" : "General"}</button></div>
+                                <div><label className="block text-xs font-bold text-slate-400 uppercase mb-2">Edition</label><select value={data.config?.edition || '2014'} onChange={e => updateConfig('edition', e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none"><option value="2014">5e (2014)</option><option value="2024">5e (2024 Revised)</option></select></div>
+                                <div><label className="block text-xs font-bold text-slate-400 uppercase mb-2">AI Context</label><button onClick={() => updateConfig('strictMode', !data.config?.strictMode)} className={`w-full p-3 rounded text-sm font-bold border ${data.config?.strictMode ? 'bg-green-900/50 border-green-600 text-green-400' : 'bg-slate-900 border-slate-700 text-slate-400'}`}>{data.config?.strictMode ? "Strict" : "General"}</button></div>
                             </div>
-                            <input value={data.campaign?.location || ""} onChange={e => { const newData = {...data, campaign: {...data.campaign, location: e.target.value}}; setData(newData); updateCloud(newData); }} className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-slate-200 outline-none" placeholder="Current Location"/>
+                            <input value={data.campaign?.location || ""} onChange={e => { const newData = {...data, campaign: {...data.campaign, location: e.target.value}}; setData(newData); updateCloud(newData); }} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none" placeholder="Current Location"/>
                             <div className="border-2 border-dashed border-slate-700 rounded p-4 text-center mt-4">
                                 {pdfProcessing ? <div className="text-amber-500 animate-pulse">Processing...</div> : !data.campaign?.pdfName ? (
                                     <label className="cursor-pointer block w-full"><span className="text-slate-300 font-bold">Upload PDF</span><input type="file" className="hidden" accept=".pdf" onChange={handlePdfUpload}/></label>
                                 ) : (
-                                    <div className="flex justify-between"><span className="text-green-400">{data.campaign.pdfName}</span><button onClick={clearPdf}><Icon name="trash-2" size={16}/></button></div>
+                                    <div className="flex justify-between items-center"><span className="text-green-400 truncate flex-1 mr-2">{data.campaign.pdfName}</span><button onClick={clearPdf}><Icon name="trash-2" size={16}/></button></div>
                                 )}
                             </div>
                         </div>
@@ -580,9 +582,9 @@
             };
 
             return (
-                <div className="max-w-4xl mx-auto p-8 overflow-y-auto h-full custom-scroll">
+                <div className="max-w-4xl mx-auto p-4 md:p-8 overflow-y-auto h-full custom-scroll">
                     <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-2"><h2 className="text-3xl fantasy-font text-amber-500">Party</h2>{role === 'dm' && <button onClick={addPlayer} className="bg-amber-600 px-3 py-1 rounded text-sm font-bold">+ Add</button>}</div>
-                    <div className="grid md:grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         {data.players?.map((p, idx) => {
                             const canEdit = role === 'dm' || activeChar === p.id;
                             return (
@@ -630,38 +632,38 @@
                         <div className="h-12 border-b border-slate-800 flex items-center justify-between px-4 bg-slate-900/90 backdrop-blur">
                             <div className="flex gap-2 items-center">
                                 <div className={`live-status ${syncState === 'saved' ? 'status-online' : 'status-offline'}`}></div>
-                                <span className="text-sm font-bold text-amber-500">{data.campaign?.location || "Unknown Location"}</span>
+                                <span className="text-sm font-bold text-amber-500 truncate max-w-[120px]">{data.campaign?.location || "Unknown Location"}</span>
                             </div>
                             <div className="flex items-center gap-2">
-                                {data.config?.strictMode && <span className="text-[10px] bg-blue-900/30 text-blue-400 px-1 rounded border border-blue-800">STRICT</span>}
-                                <span className="text-[10px] text-slate-500">{data.config?.edition || '2014'}</span>
+                                {data.config?.strictMode && <span className="text-[10px] bg-blue-900/30 text-blue-400 px-1 rounded border border-blue-800 hidden sm:inline">STRICT</span>}
+                                <span className="text-[10px] text-slate-500 hidden sm:inline">{data.config?.edition || '2014'}</span>
                                 <div className={`text-xs px-2 py-1 rounded ${role === 'dm' ? 'bg-red-900/30 text-red-400' : 'bg-green-900/30 text-green-400'}`}>{role === 'dm' ? 'DM' : `PLAYER: ${charName}`}</div>
                             </div>
                         </div>
                         <div ref={chatEndRef} className="flex-1 overflow-y-auto custom-scroll p-4 pb-40 space-y-6 chat-content">
                             {chatHistory.map((msg, i) => (
-                                <div key={i} style={{textDecoration: 'none'}} className={`p-4 rounded-lg max-w-[85%] no-underline ${msg.role === 'user' ? 'bg-slate-800 ml-auto text-right' : msg.role === 'system' ? 'bg-slate-800/50 mx-auto text-center text-xs text-slate-500' : 'bg-indigo-900/20 border border-indigo-500/30 mr-auto'}`}>
-                                    <div dangerouslySetInnerHTML={{__html: msg.content.replace(/~~([\s\S]*?)~~/g, '$1').replace(/<(s|strike|del)>([\s\S]*?)<\/\1>/gi, '$2').replace(/\*\*(.*?)\*\*/g, '<b>$1</b>').replace(/\n/g, '<br/>')}} />
+                                <div key={i} style={{textDecoration: 'none'}} className={`p-4 rounded-lg max-w-[95%] md:max-w-[85%] no-underline ${msg.role === 'user' ? 'bg-slate-800 ml-auto text-right' : msg.role === 'system' ? 'bg-slate-800/50 mx-auto text-center text-xs text-slate-500' : 'bg-indigo-900/20 border border-indigo-500/30 mr-auto'}`}>
+                                    <div className="break-words" dangerouslySetInnerHTML={{__html: msg.content.replace(/~~([\s\S]*?)~~/g, '$1').replace(/<(s|strike|del)>([\s\S]*?)<\/\1>/gi, '$2').replace(/\*\*(.*?)\*\*/g, '<b>$1</b>').replace(/\n/g, '<br/>')}} />
                                 </div>
                             ))}
                             {isLoading && <div className="text-center text-xs text-slate-500 animate-pulse">Thinking...</div>}
                         </div>
                         
                         {/* ACTION BAR */}
-                        <div className="absolute bottom-0 w-full p-4 bg-slate-900 border-t border-slate-800 flex flex-col gap-2">
+                        <div className="absolute bottom-0 w-full p-2 md:p-4 bg-slate-900 border-t border-slate-800 flex flex-col gap-2">
                             {/* Role-Based Buttons */}
-                            <div className="flex gap-2 overflow-x-auto custom-scroll pb-1">
+                            <div className="flex gap-2 overflow-x-auto custom-scroll pb-1 w-full">
                                 {role === 'dm' ? (
                                     <>
-                                        <button onClick={() => handleAction('narrate')} className="bg-blue-900/50 hover:bg-blue-800 text-blue-200 border border-blue-700/50 rounded-full px-3 py-1 text-xs flex items-center gap-1 transition-colors whitespace-nowrap"><Icon name="eye" size={12}/> Narrate</button>
-                                        <button onClick={() => handleAction('mechanics')} className="bg-purple-900/50 hover:bg-purple-800 text-purple-200 border border-purple-700/50 rounded-full px-3 py-1 text-xs flex items-center gap-1 transition-colors whitespace-nowrap"><Icon name="settings" size={12}/> Mechanics</button>
-                                        <button onClick={() => handleAction('npc')} className="bg-amber-900/50 hover:bg-amber-800 text-amber-200 border border-amber-700/50 rounded-full px-3 py-1 text-xs flex items-center gap-1 transition-colors whitespace-nowrap"><Icon name="users" size={12}/> NPC</button>
+                                        <button onClick={() => handleAction('narrate')} className="bg-blue-900/50 hover:bg-blue-800 text-blue-200 border border-blue-700/50 rounded-full px-3 py-1 text-xs flex items-center gap-1 transition-colors whitespace-nowrap flex-shrink-0"><Icon name="eye" size={12}/> Narrate</button>
+                                        <button onClick={() => handleAction('mechanics')} className="bg-purple-900/50 hover:bg-purple-800 text-purple-200 border border-purple-700/50 rounded-full px-3 py-1 text-xs flex items-center gap-1 transition-colors whitespace-nowrap flex-shrink-0"><Icon name="settings" size={12}/> Mechanics</button>
+                                        <button onClick={() => handleAction('npc')} className="bg-amber-900/50 hover:bg-amber-800 text-amber-200 border border-amber-700/50 rounded-full px-3 py-1 text-xs flex items-center gap-1 transition-colors whitespace-nowrap flex-shrink-0"><Icon name="users" size={12}/> NPC</button>
                                     </>
                                 ) : (
                                     <>
-                                        <button onClick={() => handleAction('action')} className="bg-red-900/50 hover:bg-red-800 text-red-200 border border-red-700/50 rounded-full px-3 py-1 text-xs flex items-center gap-1 transition-colors whitespace-nowrap"><Icon name="sword" size={12}/> Action</button>
-                                        <button onClick={() => handleAction('speak')} className="bg-green-900/50 hover:bg-green-800 text-green-200 border border-green-700/50 rounded-full px-3 py-1 text-xs flex items-center gap-1 transition-colors whitespace-nowrap"><Icon name="message-circle" size={12}/> Speak</button>
-                                        <button onClick={() => handleAction('recall')} className="bg-indigo-900/50 hover:bg-indigo-800 text-indigo-200 border border-indigo-700/50 rounded-full px-3 py-1 text-xs flex items-center gap-1 transition-colors whitespace-nowrap"><Icon name="brain" size={12}/> Recall</button>
+                                        <button onClick={() => handleAction('action')} className="bg-red-900/50 hover:bg-red-800 text-red-200 border border-red-700/50 rounded-full px-3 py-1 text-xs flex items-center gap-1 transition-colors whitespace-nowrap flex-shrink-0"><Icon name="sword" size={12}/> Action</button>
+                                        <button onClick={() => handleAction('speak')} className="bg-green-900/50 hover:bg-green-800 text-green-200 border border-green-700/50 rounded-full px-3 py-1 text-xs flex items-center gap-1 transition-colors whitespace-nowrap flex-shrink-0"><Icon name="message-circle" size={12}/> Speak</button>
+                                        <button onClick={() => handleAction('recall')} className="bg-indigo-900/50 hover:bg-indigo-800 text-indigo-200 border border-indigo-700/50 rounded-full px-3 py-1 text-xs flex items-center gap-1 transition-colors whitespace-nowrap flex-shrink-0"><Icon name="brain" size={12}/> Recall</button>
                                     </>
                                 )}
                             </div>
@@ -671,12 +673,12 @@
                                     <textarea value={inputText} onChange={e => setInputText(e.target.value)} onKeyDown={e => { if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); generateResponse(); }}} placeholder={role==='dm' ? "DM Instruction..." : `What does ${charName} do?`} className="w-full bg-slate-800 text-white rounded-lg p-3 pr-10 resize-none h-14 focus:ring-1 focus:ring-amber-500 outline-none custom-scroll"/>
                                     <button onClick={toggleListening} className={`absolute right-2 top-2 p-2 rounded-full ${isListening ? 'text-red-500' : 'text-slate-400'}`}><Icon name="mic" size={18}/></button>
                                 </div>
-                                <button onClick={() => generateResponse()} className="bg-amber-600 hover:bg-amber-500 px-4 rounded text-white h-14 flex items-center justify-center"><Icon name="send" size={20}/></button>
+                                <button onClick={() => generateResponse()} className="bg-amber-600 hover:bg-amber-500 px-4 rounded text-white h-14 flex items-center justify-center flex-shrink-0 w-14"><Icon name="send" size={20}/></button>
                             </div>
                         </div>
                     </div>
                     {showTools && (
-                        <div className="w-72 bg-slate-900 border-l border-slate-800 flex flex-col p-4 gap-4">
+                        <div className="absolute md:relative z-30 right-0 top-0 h-full w-64 md:w-72 bg-slate-900 border-l border-slate-800 flex flex-col p-4 gap-4 shadow-xl">
                             <div className="flex justify-between items-center mb-2"><span className="fantasy-font text-amber-500">Tools</span><button onClick={() => setShowTools(false)}><Icon name="x" size={16}/></button></div>
                             <DiceTray diceLog={diceLog} handleDiceRoll={handleDiceRoll} />
                         </div>
@@ -740,7 +742,7 @@
             const [apiKey, setApiKey] = useState('');
             const [aiProvider, setAiProvider] = useState(() => localStorage.getItem('dm_ai_provider') || 'puter');
             const [openAiModel, setOpenAiModel] = useState(() => localStorage.getItem('dm_openai_model') || 'gpt-4o'); 
-            const [puterModel, setPuterModel] = useState(() => localStorage.getItem('dm_puter_model') || 'deepseek-chat'); 
+            const [puterModel, setPuterModel] = useState(() => localStorage.getItem('dm_puter_model') || 'mistral-large-latest'); 
             const [pdfProcessing, setPdfProcessing] = useState(false);
             const [showTools, setShowTools] = useState(false);
             const [isListening, setIsListening] = useState(false);
@@ -801,7 +803,6 @@
                 }, 1000);
             };
 
-            // GEN RESPONSE WITH MODES
             const genResponse = async (ov, mode = 'standard') => {
                 const q = ov || inputText; if(!q.trim()) return;
                 setChatHistory(p=>[...p, {role:'user', content:q}]); setInputText('');
@@ -816,13 +817,10 @@
                 const iden = role === 'dm' ? "DM" : (char ? `${char.name} (${char.race})` : "Player");
                 const personalContext = data.player_journals?.[userId] || "";
                 
-                // RICH CONTEXT BUILDING
                 let partyContext = "";
                 if (role === 'dm') {
-                    // DM sees everyone's details summarized
                     partyContext = data.players.map(p => `${p.name} (${p.race} ${p.class}): ${p.backstory ? p.backstory.slice(0,100) + '...' : 'No bio'}`).join(' | ');
                 } else {
-                    // Player sees their own full details + basic party list
                     partyContext = `My Character: ${char ? `${char.name} (${char.race} ${char.class}). Backstory: ${char.backstory}. Notes: ${char.notes}` : "Spectator"}. Party: ${data.players.map(p => p.name).join(', ')}`;
                 }
 
