@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DungeonMind v16.2 | Fixed Icons</title>
+    <title>DungeonMind v16.5 | Free AI & Fixes</title>
     
     <!-- React & ReactDOM -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
@@ -109,6 +109,8 @@
 
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
+        const OPENROUTER_KEY = "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";
+
         const { useState, useEffect, useRef, Component } = React;
 
         class ErrorBoundary extends Component {
@@ -161,33 +163,19 @@
             return { fb, user, isOffline, isAuthReady };
         };
 
-        // --- UPDATED ICON COMPONENT (Fixed for Stability) ---
         const Icon = ({ name, size = 20, className = "" }) => {
             const containerRef = useRef(null);
-            
             useEffect(() => {
                 if (window.lucide && containerRef.current) {
-                    // Using a stable container root prevents the querySelectorAll null error
                     window.lucide.createIcons({ 
                         root: containerRef.current, 
                         nameAttr: 'data-lucide', 
-                        attrs: { 
-                            class: `w-${size/4} h-${size/4} ${className}`,
-                            width: size,
-                            height: size
-                        } 
+                        attrs: { class: `w-${size/4} h-${size/4} ${className}`, width: size, height: size } 
                     });
                 }
             }, [name, size, className]);
-
-            return (
-                <span ref={containerRef} className="inline-flex items-center justify-center">
-                    <i data-lucide={name}></i>
-                </span>
-            );
+            return <span ref={containerRef} className="inline-flex items-center justify-center"><i data-lucide={name}></i></span>;
         };
-
-        // --- COMPONENTS ---
 
         const JournalBox = ({ title, value, onChange, colorClass, type, placeholder, maximized, setMaximized }) => {
             const isMax = maximized === type;
@@ -237,23 +225,9 @@
                 <div className="max-w-7xl mx-auto p-4 md:p-6 h-full flex flex-col gap-4 relative">
                     {maximized && <div className="fixed inset-0 bg-slate-900/90 backdrop-blur z-40" onClick={() => setMaximized(null)}></div>}
                     <div className="flex-1 flex flex-col md:flex-row gap-4 min-h-0">
-                        <JournalBox 
-                            type="public" title="Public Log" value={data.journal_public} 
-                            onChange={(val) => { setData(p => ({...p, journal_public: val})); updateCloud({...data, journal_public: val}); }} 
-                            colorClass="" placeholder="Shared campaign events..." maximized={maximized} setMaximized={setMaximized}
-                        />
-                        <JournalBox 
-                            type="personal" title="My Notes (Private + AI)" value={data.player_journals?.[userId]} 
-                            onChange={updatePersonal} colorClass="border-indigo-900/30 bg-indigo-900/5" 
-                            placeholder="Your private thoughts (AI can see this)..." maximized={maximized} setMaximized={setMaximized}
-                        />
-                        {role === 'dm' && (
-                            <JournalBox 
-                                type="dm" title="DM Secrets" value={data.journal_dm} 
-                                onChange={(val) => { setData(p => ({...p, journal_dm: val})); updateCloud({...data, journal_dm: val}); }} 
-                                colorClass="border-red-900/30 bg-red-900/5" placeholder="Hidden truths..." maximized={maximized} setMaximized={setMaximized}
-                            />
-                        )}
+                        <JournalBox type="public" title="Public Log" value={data.journal_public} onChange={(val) => { setData(p => ({...p, journal_public: val})); updateCloud({...data, journal_public: val}); }} colorClass="" placeholder="Shared campaign events..." maximized={maximized} setMaximized={setMaximized}/>
+                        <JournalBox type="personal" title="My Notes (Private + AI)" value={data.player_journals?.[userId]} onChange={updatePersonal} colorClass="border-indigo-900/30 bg-indigo-900/5" placeholder="Your private thoughts (AI can see this)..." maximized={maximized} setMaximized={setMaximized}/>
+                        {role === 'dm' && <JournalBox type="dm" title="DM Secrets" value={data.journal_dm} onChange={(val) => { setData(p => ({...p, journal_dm: val})); updateCloud({...data, journal_dm: val}); }} colorClass="border-red-900/30 bg-red-900/5" placeholder="Hidden truths..." maximized={maximized} setMaximized={setMaximized}/>}
                     </div>
                 </div>
             );
@@ -394,7 +368,7 @@
             </div>
         );
 
-        const SettingsView = ({ data, setData, apiKey, setApiKey, role, updateCloud, handlePdfUpload, clearPdf, pdfProcessing, code, user, transferDM, banPlayer, kickPlayer, unbanPlayer, aiProvider, setAiProvider, fb, openAiModel, setOpenAiModel }) => {
+        const SettingsView = ({ data, setData, apiKey, setApiKey, role, updateCloud, handlePdfUpload, clearPdf, pdfProcessing, code, user, transferDM, banPlayer, kickPlayer, unbanPlayer, aiProvider, setAiProvider, fb, openAiModel, setOpenAiModel, openRouterModel, setOpenRouterModel }) => {
             const copyCode = () => { navigator.clipboard.writeText(code); alert("Copied: " + code); };
             const activeUsers = data.activeUsers || {};
             const bannedUsers = data.bannedUsers || [];
@@ -479,7 +453,8 @@
                         <h3 className="text-lg font-bold mb-2 text-slate-200">AI Intelligence</h3>
                         <div className="mb-3">
                             <label className="block text-xs text-slate-400 mb-1">Provider</label>
-                            <select value={aiProvider} onChange={e => setAiProvider(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-slate-200 outline-none mb-2"><option value="gemini">Google Gemini</option><option value="openai">OpenAI</option></select>
+                            <select value={aiProvider} onChange={e => setAiProvider(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-slate-200 outline-none mb-2"><option value="gemini">Google Gemini</option><option value="openai">OpenAI</option><option value="openrouter">OpenRouter (Free Mistral)</option></select>
+                            
                             {aiProvider === 'openai' && (
                                 <div>
                                     <label className="block text-xs text-slate-400 mb-1">OpenAI Model</label>
@@ -489,10 +464,21 @@
                                         <option value="gpt-4-turbo">GPT-4 Turbo</option>
                                         <option value="gpt-3.5-turbo">GPT-3.5 Turbo (Legacy)</option>
                                     </select>
+                                    <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none mt-2" placeholder="sk-..."/>
                                 </div>
                             )}
+
+                            {aiProvider === 'openrouter' && (
+                                <div className="bg-slate-800/50 p-3 rounded border border-green-900/30">
+                                    <p className="text-xs text-green-400 font-mono flex items-center gap-2"><Icon name="check-circle" size={14}/> Using Shared Free Key</p>
+                                    <p className="text-[10px] text-slate-500 mt-1">Model: Mistral 7B Instruct (Free)</p>
+                                </div>
+                            )}
+
+                            {aiProvider === 'gemini' && (
+                                <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none" placeholder="AIza..."/>
+                            )}
                         </div>
-                        <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none" placeholder={aiProvider === 'openai' ? "sk-..." : "AIza..."}/>
                     </div>
                     {role === 'dm' && (
                         <div className="glass-panel p-6 rounded-xl border-l-4 border-blue-500">
@@ -586,8 +572,8 @@
                         </div>
                         <div ref={chatEndRef} className="flex-1 overflow-y-auto custom-scroll p-4 pb-40 space-y-6">
                             {chatHistory.map((msg, i) => (
-                                <div key={i} className={`p-4 rounded-lg max-w-[85%] ${msg.role === 'user' ? 'bg-slate-800 ml-auto text-right' : msg.role === 'system' ? 'bg-slate-800/50 mx-auto text-center text-xs text-slate-500' : 'bg-indigo-900/20 border border-indigo-500/30 mr-auto'}`}>
-                                    <div dangerouslySetInnerHTML={{__html: msg.content.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>').replace(/\n/g, '<br/>')}} />
+                                <div key={i} style={{textDecoration: 'none'}} className={`p-4 rounded-lg max-w-[85%] no-underline ${msg.role === 'user' ? 'bg-slate-800 ml-auto text-right' : msg.role === 'system' ? 'bg-slate-800/50 mx-auto text-center text-xs text-slate-500' : 'bg-indigo-900/20 border border-indigo-500/30 mr-auto'}`}>
+                                    <div dangerouslySetInnerHTML={{__html: msg.content.replace(/~~(.*?)~~/g, '$1').replace(/\*\*(.*?)\*\*/g, '<b>$1</b>').replace(/\n/g, '<br/>')}} />
                                 </div>
                             ))}
                             {isLoading && <div className="text-center text-xs text-slate-500 animate-pulse">Thinking...</div>}
@@ -671,6 +657,7 @@
             const [apiKey, setApiKey] = useState('');
             const [aiProvider, setAiProvider] = useState('gemini');
             const [openAiModel, setOpenAiModel] = useState(() => localStorage.getItem('dm_openai_model') || 'gpt-4o'); // NEW: State for Model
+            const [openRouterModel, setOpenRouterModel] = useState('mistralai/mistral-7b-instruct:free');
             const [pdfProcessing, setPdfProcessing] = useState(false);
             const [showTools, setShowTools] = useState(false);
             const [isListening, setIsListening] = useState(false);
@@ -684,6 +671,7 @@
             
             // Update localStorage when model changes
             useEffect(() => { localStorage.setItem('dm_openai_model', openAiModel); }, [openAiModel]);
+            // useEffect(() => { localStorage.setItem('dm_openrouter_model', openRouterModel); }, [openRouterModel]);
 
             useEffect(() => { const k = localStorage.getItem(`dm_key_${aiProvider}`); setApiKey(k||''); }, [aiProvider]);
             const setKey = (v) => { setApiKey(v); localStorage.setItem(`dm_key_${aiProvider}`, v); };
@@ -734,7 +722,16 @@
 
             const genResponse = async (ov) => {
                 const q = ov || inputText; if(!q.trim()) return;
-                setChatHistory(p=>[...p, {role:'user', content:q}]); setInputText(''); setIsLoading(true);
+                setChatHistory(p=>[...p, {role:'user', content:q}]); setInputText('');
+                
+                // OFFLINE / NO KEY CHECK FOR DICE/SYSTEM
+                if (!apiKey && aiProvider !== 'openrouter' && !ov) {
+                    // If user is typing manually but has no key, just return (or log locally)
+                    // But if it was a dice roll (ov is set), we log it without hitting API
+                    return; 
+                }
+                
+                setIsLoading(true);
                 const char = data.players.find(p=>p.id==derivedActiveChar);
                 const iden = role === 'dm' ? "DM" : (char ? `${char.name} (${char.race})` : "Player");
                 const personalContext = data.player_journals?.[userId] || "";
@@ -743,20 +740,35 @@
                 const prompt = `Role: DM AI. User: ${iden}. Rules: 5e (${data.config.edition}). Ctx: ${data.campaign.location}. Log: ${data.journal_public}. ${sec}. Party: ${data.players.map(p=>p.name).join(', ')}. Q: ${q}`;
                 
                 try {
-                    if(!apiKey) throw new Error("API Key?");
                     let txt = "";
                     if(aiProvider === 'gemini') {
+                        if(!apiKey) throw new Error("API Key?");
                         const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({contents:[{parts:[{text:prompt}]}]})});
                         const j = await r.json(); txt = j.candidates[0].content.parts[0].text;
+                    } else if (aiProvider === 'openrouter') {
+                        const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${OPENROUTER_KEY}`,
+                                'HTTP-Referer': window.location.href,
+                                'X-Title': 'DungeonMind'
+                            },
+                            body: JSON.stringify({
+                                model: openRouterModel, 
+                                messages: [{role:"system", content:"DM Helper"}, {role:"user", content:prompt}]
+                            })
+                        });
+                        const j = await r.json();
+                        if(j.error) throw new Error(j.error.message);
+                        txt = j.choices[0].message.content;
                     } else {
+                        if(!apiKey) throw new Error("API Key?");
                         // UPDATED OPENAI CALL with Selected Model
                         const r = await fetch('https://api.openai.com/v1/chat/completions', {method:'POST', headers:{'Content-Type':'application/json', 'Authorization':`Bearer ${apiKey}`}, body:JSON.stringify({model: openAiModel, messages:[{role:"system", content:"DM Helper"}, {role:"user", content:prompt}]})});
                         const j = await r.json();
                         if(j.error) {
-                            // Specific Quota Error Handling
-                            if (j.error.code === 'insufficient_quota') {
-                                throw new Error("OpenAI Quota Exceeded. Check Settings > Billing in OpenAI dashboard. You likely need to add $5 credit.");
-                            }
+                            if (j.error.code === 'insufficient_quota') throw new Error("OpenAI Quota Exceeded. Check Settings > Billing.");
                             throw new Error(j.error.message); 
                         }
                         txt = j.choices[0].message.content;
@@ -793,7 +805,12 @@
             const handleDiceRoll = (d) => {
                 const r = Math.floor(Math.random()*d)+1;
                 setDiceLog(p => [{id:Date.now(), die:`d${d}`, result:r}, ...p].slice(0,10));
-                genResponse(`Roll d${d}: ${r}`);
+                // If offline or no key, just log to chat without error
+                if (!apiKey && aiProvider !== 'openrouter') {
+                    setChatHistory(p=>[...p, {role:'user', content:`Roll d${d}: ${r}`}]);
+                } else {
+                    genResponse(`Roll d${d}: ${r}`);
+                }
             };
 
             if(!data) return <div className="h-screen flex items-center justify-center text-white">Syncing...</div>;
@@ -805,7 +822,7 @@
                         {view === 'session' && <SessionView data={data} chatHistory={chatHistory} setChatHistory={setChatHistory} inputText={inputText} setInputText={setInputText} isListening={isListening} toggleListening={toggleListening} generateResponse={genResponse} isLoading={isLoading} role={role} activeChar={derivedActiveChar} showTools={showTools} setShowTools={setShowTools} diceLog={diceLog} handleDiceRoll={handleDiceRoll} syncState={syncState}/>}
                         {view === 'journal' && <JournalView data={data} setData={setData} role={role} updateCloud={updateCloud} userId={userId}/>}
                         {view === 'party' && <PartyView data={data} setData={setData} role={role} activeChar={derivedActiveChar} updateCloud={updateCloud}/>}
-                        {view === 'settings' && <SettingsView data={data} setData={setData} apiKey={apiKey} setApiKey={setKey} role={role} updateCloud={updateCloud} handlePdfUpload={handlePdf} clearPdf={()=>{const nd={...data, campaign:{...data.campaign, pdfName:null, pdfText:null}}; updateCloud(nd);}} pdfProcessing={pdfProcessing} code={code} user={user} transferDM={uid=>{if(confirm("Transfer?")){const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); fb.updateDoc(ref, {hostId:uid});}}} banPlayer={uid=>{if(confirm("Ban?")){const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); const na={...data.activeUsers}; delete na[uid]; fb.updateDoc(ref,{activeUsers:na, bannedUsers:fb.arrayUnion(uid)});}}} kickPlayer={uid=>{const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); const na={...data.activeUsers}; delete na[uid]; fb.updateDoc(ref, {activeUsers:na});}} unbanPlayer={uid=>{const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); fb.updateDoc(ref, {bannedUsers:fb.arrayRemove(uid)});}} aiProvider={aiProvider} setAiProvider={setAiProvider} fb={fb} openAiModel={openAiModel} setOpenAiModel={setOpenAiModel}/>}
+                        {view === 'settings' && <SettingsView data={data} setData={setData} apiKey={apiKey} setApiKey={setKey} role={role} updateCloud={updateCloud} handlePdfUpload={handlePdf} clearPdf={()=>{const nd={...data, campaign:{...data.campaign, pdfName:null, pdfText:null}}; updateCloud(nd);}} pdfProcessing={pdfProcessing} code={code} user={user} transferDM={uid=>{if(confirm("Transfer?")){const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); fb.updateDoc(ref, {hostId:uid});}}} banPlayer={uid=>{if(confirm("Ban?")){const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); const na={...data.activeUsers}; delete na[uid]; fb.updateDoc(ref,{activeUsers:na, bannedUsers:fb.arrayUnion(uid)});}}} kickPlayer={uid=>{const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); const na={...data.activeUsers}; delete na[uid]; fb.updateDoc(ref, {activeUsers:na});}} unbanPlayer={uid=>{const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); fb.updateDoc(ref, {bannedUsers:fb.arrayRemove(uid)});}} aiProvider={aiProvider} setAiProvider={setAiProvider} fb={fb} openAiModel={openAiModel} setOpenAiModel={setOpenAiModel} openRouterModel={openRouterModel} setOpenRouterModel={setOpenRouterModel}/>}
                     </main>
                 </div>
             );
