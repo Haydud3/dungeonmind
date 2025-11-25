@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DungeonMind v17.0 | Auto-Retry</title>
+    <title>DungeonMind v17.1 | Fixes & Memory</title>
     
     <!-- React & ReactDOM -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
@@ -72,6 +72,8 @@
         #force-offline-btn { display: none; margin-top: 20px; padding: 10px 20px; background: #334155; color: white; border: 1px solid #475569; border-radius: 8px; cursor: pointer; font-family: sans-serif; }
         #force-offline-btn:hover { background: #475569; }
         .journal-expand { transition: all 0.3s ease-in-out; }
+        /* Force remove strikethrough */
+        .chat-content s, .chat-content strike, .chat-content del { text-decoration: none !important; }
     </style>
 </head>
 <body>
@@ -569,10 +571,10 @@
                                 <div className={`text-xs px-2 py-1 rounded ${role === 'dm' ? 'bg-red-900/30 text-red-400' : 'bg-green-900/30 text-green-400'}`}>{role === 'dm' ? 'DM' : `PLAYER: ${charName}`}</div>
                             </div>
                         </div>
-                        <div ref={chatEndRef} className="flex-1 overflow-y-auto custom-scroll p-4 pb-40 space-y-6">
+                        <div ref={chatEndRef} className="flex-1 overflow-y-auto custom-scroll p-4 pb-40 space-y-6 chat-content">
                             {chatHistory.map((msg, i) => (
                                 <div key={i} style={{textDecoration: 'none'}} className={`p-4 rounded-lg max-w-[85%] no-underline ${msg.role === 'user' ? 'bg-slate-800 ml-auto text-right' : msg.role === 'system' ? 'bg-slate-800/50 mx-auto text-center text-xs text-slate-500' : 'bg-indigo-900/20 border border-indigo-500/30 mr-auto'}`}>
-                                    <div dangerouslySetInnerHTML={{__html: msg.content.replace(/~~(.*?)~~/g, '$1').replace(/\*\*(.*?)\*\*/g, '<b>$1</b>').replace(/\n/g, '<br/>')}} />
+                                    <div dangerouslySetInnerHTML={{__html: msg.content.replace(/~~([\s\S]*?)~~/g, '$1').replace(/<(s|strike|del)>([\s\S]*?)<\/\1>/gi, '$2').replace(/\*\*(.*?)\*\*/g, '<b>$1</b>').replace(/\n/g, '<br/>')}} />
                                 </div>
                             ))}
                             {isLoading && <div className="text-center text-xs text-slate-500 animate-pulse">Thinking...</div>}
@@ -654,9 +656,10 @@
             const [inputText, setInputText] = useState('');
             const [isLoading, setIsLoading] = useState(false);
             const [apiKey, setApiKey] = useState('');
-            const [aiProvider, setAiProvider] = useState('gemini');
-            const [openAiModel, setOpenAiModel] = useState(() => localStorage.getItem('dm_openai_model') || 'gpt-4o'); // NEW: State for Model
-            const [workerUrl, setWorkerUrl] = useState(() => localStorage.getItem('dm_worker_url') || 'https://dungeonmind-proxy.heangeloff03.workers.dev'); // NEW: State for Worker URL
+            // CHANGED: Read provider from localStorage, default to 'gemini'
+            const [aiProvider, setAiProvider] = useState(() => localStorage.getItem('dm_ai_provider') || 'gemini');
+            const [openAiModel, setOpenAiModel] = useState(() => localStorage.getItem('dm_openai_model') || 'gpt-4o'); 
+            const [workerUrl, setWorkerUrl] = useState(() => localStorage.getItem('dm_worker_url') || 'https://dungeonmind-proxy.heangeloff03.workers.dev'); 
             const [pdfProcessing, setPdfProcessing] = useState(false);
             const [showTools, setShowTools] = useState(false);
             const [isListening, setIsListening] = useState(false);
@@ -668,9 +671,10 @@
             // Derive active character from assignments
             const derivedActiveChar = data?.assignments?.[userId] || null;
             
-            // Update localStorage when model changes
+            // Update localStorage when settings change
             useEffect(() => { localStorage.setItem('dm_openai_model', openAiModel); }, [openAiModel]);
             useEffect(() => { localStorage.setItem('dm_worker_url', workerUrl); }, [workerUrl]);
+            useEffect(() => { localStorage.setItem('dm_ai_provider', aiProvider); }, [aiProvider]);
 
             useEffect(() => { const k = localStorage.getItem(`dm_key_${aiProvider}`); setApiKey(k||''); }, [aiProvider]);
             const setKey = (v) => { setApiKey(v); localStorage.setItem(`dm_key_${aiProvider}`, v); };
