@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DungeonMind v16.7 | UI System Key</title>
+    <title>DungeonMind v16.9 | Pre-Configured Proxy</title>
     
     <!-- React & ReactDOM -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
@@ -366,14 +366,12 @@
             </div>
         );
 
-        const SettingsView = ({ data, setData, apiKey, setApiKey, role, updateCloud, handlePdfUpload, clearPdf, pdfProcessing, code, user, transferDM, banPlayer, kickPlayer, unbanPlayer, aiProvider, setAiProvider, fb, openAiModel, setOpenAiModel, openRouterModel, setOpenRouterModel, sysKey }) => {
+        const SettingsView = ({ data, setData, apiKey, setApiKey, role, updateCloud, handlePdfUpload, clearPdf, pdfProcessing, code, user, transferDM, banPlayer, kickPlayer, unbanPlayer, aiProvider, setAiProvider, fb, openAiModel, setOpenAiModel, workerUrl, setWorkerUrl }) => {
             const copyCode = () => { navigator.clipboard.writeText(code); alert("Copied: " + code); };
             const activeUsers = data.activeUsers || {};
             const bannedUsers = data.bannedUsers || [];
             const userId = user ? user.uid : 'offline';
             const assignments = data.assignments || {};
-            const [showSysInput, setShowSysInput] = useState(false);
-            const [tempSysKey, setTempSysKey] = useState("");
             
             const signIn = async () => { try { await fb.signInWithPopup(fb.auth, new fb.GoogleAuthProvider()); } catch(e){alert(e.message);} };
             const signOut = async () => { if(fb) await fb.signOut(fb.auth); };
@@ -389,15 +387,6 @@
                 const newData = { ...data, assignments: newAssignments };
                 setData(newData);
                 updateCloud(newData);
-            };
-
-            const saveSystemKey = async () => {
-                if(!tempSysKey.trim()) return;
-                try {
-                    await fb.setDoc(fb.doc(fb.db, 'artifacts', 'dungeonmind', 'public', 'data', 'config', 'secrets'), { openrouter_key: tempSysKey });
-                    alert("System Key Saved!");
-                    setShowSysInput(false);
-                } catch(e) { alert("Error: " + e.message); }
             };
 
             const downloadBackup = () => {
@@ -462,7 +451,7 @@
                         <h3 className="text-lg font-bold mb-2 text-slate-200">AI Intelligence</h3>
                         <div className="mb-3">
                             <label className="block text-xs text-slate-400 mb-1">Provider</label>
-                            <select value={aiProvider} onChange={e => setAiProvider(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-slate-200 outline-none mb-2"><option value="gemini">Google Gemini</option><option value="openai">OpenAI</option><option value="openrouter">OpenRouter (Free Mistral)</option></select>
+                            <select value={aiProvider} onChange={e => setAiProvider(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-slate-200 outline-none mb-2"><option value="gemini">Google Gemini</option><option value="openai">OpenAI</option><option value="openrouter">OpenRouter (Free Proxy)</option></select>
                             
                             {aiProvider === 'openai' && (
                                 <div>
@@ -478,27 +467,10 @@
                             )}
 
                             {aiProvider === 'openrouter' && (
-                                <div className="bg-slate-800/50 p-3 rounded border border-green-900/30">
-                                    <div className="flex justify-between items-center">
-                                        <p className="text-xs text-green-400 font-mono flex items-center gap-2">
-                                            <Icon name={sysKey ? "check-circle" : "alert-circle"} size={14}/> 
-                                            {sysKey ? "System Key Active" : "System Key Missing"}
-                                        </p>
-                                        <button onClick={() => setShowSysInput(!showSysInput)} className="text-[10px] text-slate-500 hover:text-slate-300 underline">Update</button>
-                                    </div>
-                                    <p className="text-[10px] text-slate-500 mt-1">Model: Mistral 7B Instruct (Free)</p>
-                                    
-                                    {showSysInput && (
-                                        <div className="mt-2 flex gap-2">
-                                            <input 
-                                                type="password" 
-                                                placeholder="Enter System Key..." 
-                                                className="flex-1 bg-slate-900 border border-slate-700 p-1 text-xs rounded text-slate-200 outline-none"
-                                                onChange={(e) => setTempSysKey(e.target.value)}
-                                            />
-                                            <button onClick={saveSystemKey} className="bg-green-700 text-white text-xs px-2 rounded hover:bg-green-600">Save</button>
-                                        </div>
-                                    )}
+                                <div>
+                                    <label className="block text-xs text-slate-400 mb-1">Cloudflare Worker URL</label>
+                                    <input type="text" value={workerUrl} onChange={e => setWorkerUrl(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none" placeholder="https://dungeonmind-proxy.your-name.workers.dev"/>
+                                    <p className="text-[10px] text-green-400 mt-1 flex items-center gap-1"><Icon name="check-circle" size={12}/> Default Proxy Active</p>
                                 </div>
                             )}
 
@@ -683,38 +655,25 @@
             const [isLoading, setIsLoading] = useState(false);
             const [apiKey, setApiKey] = useState('');
             const [aiProvider, setAiProvider] = useState('gemini');
-            const [openAiModel, setOpenAiModel] = useState(() => localStorage.getItem('dm_openai_model') || 'gpt-4o'); // NEW: State for Model
-            const [openRouterModel, setOpenRouterModel] = useState('mistralai/mistral-7b-instruct:free');
+            const [openAiModel, setOpenAiModel] = useState(() => localStorage.getItem('dm_openai_model') || 'gpt-4o'); 
+            const [workerUrl, setWorkerUrl] = useState(() => localStorage.getItem('dm_worker_url') || 'https://dungeonmind-proxy.heangeloff03.workers.dev'); // NEW: State for Worker URL
             const [pdfProcessing, setPdfProcessing] = useState(false);
             const [showTools, setShowTools] = useState(false);
             const [isListening, setIsListening] = useState(false);
             const [diceLog, setDiceLog] = useState([]);
             const [syncState, setSyncState] = useState('init');
-            const [sysKey, setSysKey] = useState(null);
             const saveTimer = useRef(null);
             const recognitionRef = useRef(null);
 
             // Derive active character from assignments
             const derivedActiveChar = data?.assignments?.[userId] || null;
             
-            // Update localStorage when model changes
+            // Update localStorage
             useEffect(() => { localStorage.setItem('dm_openai_model', openAiModel); }, [openAiModel]);
-            // useEffect(() => { localStorage.setItem('dm_openrouter_model', openRouterModel); }, [openRouterModel]);
+            useEffect(() => { localStorage.setItem('dm_worker_url', workerUrl); }, [workerUrl]);
 
             useEffect(() => { const k = localStorage.getItem(`dm_key_${aiProvider}`); setApiKey(k||''); }, [aiProvider]);
             const setKey = (v) => { setApiKey(v); localStorage.setItem(`dm_key_${aiProvider}`, v); };
-
-            // FETCH SYSTEM KEY ON LOAD
-            useEffect(() => {
-                if (!fb || isOffline) return;
-                const fetchSysKey = async () => {
-                    try {
-                        const snap = await fb.getDoc(fb.doc(fb.db, 'artifacts', 'dungeonmind', 'public', 'data', 'config', 'secrets'));
-                        if (snap.exists()) setSysKey(snap.data().openrouter_key);
-                    } catch(e) { console.log("No system key found"); }
-                };
-                fetchSysKey();
-            }, []);
 
             useEffect(() => {
                 if(isOffline) { const l=localStorage.getItem('dm_loc'); setData(l?JSON.parse(l):DEFAULT); hideLoader(); return; }
@@ -765,7 +724,7 @@
                 setChatHistory(p=>[...p, {role:'user', content:q}]); setInputText('');
                 
                 // OFFLINE / NO KEY CHECK FOR DICE/SYSTEM
-                const hasKey = apiKey || (aiProvider === 'openrouter' && sysKey);
+                const hasKey = apiKey || (aiProvider === 'openrouter' && workerUrl);
                 if (!hasKey && !ov) {
                     // If user is typing manually but has no key, return
                     return; 
@@ -789,20 +748,15 @@
                         const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({contents:[{parts:[{text:prompt}]}]})});
                         const j = await r.json(); txt = j.candidates[0].content.parts[0].text;
                     } else if (aiProvider === 'openrouter') {
-                        const effectiveKey = apiKey || sysKey;
-                        if(!effectiveKey) throw new Error("System key missing.");
+                        if(!workerUrl) throw new Error("Worker URL missing.");
                         
-                        const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+                        const r = await fetch(workerUrl, {
                             method: 'POST',
                             headers: {
-                                'Content-Type': 'application/json',
-                                'Authorization': `Bearer ${effectiveKey}`,
-                                'HTTP-Referer': window.location.href,
-                                'X-Title': 'DungeonMind'
+                                'Content-Type': 'application/json'
                             },
                             body: JSON.stringify({
-                                model: openRouterModel, 
-                                messages: [{role:"system", content:"DM Helper"}, {role:"user", content:prompt}]
+                                prompt: prompt 
                             })
                         });
                         const j = await r.json();
@@ -810,7 +764,6 @@
                         txt = j.choices[0].message.content;
                     } else {
                         if(!apiKey) throw new Error("API Key?");
-                        // UPDATED OPENAI CALL with Selected Model
                         const r = await fetch('https://api.openai.com/v1/chat/completions', {method:'POST', headers:{'Content-Type':'application/json', 'Authorization':`Bearer ${apiKey}`}, body:JSON.stringify({model: openAiModel, messages:[{role:"system", content:"DM Helper"}, {role:"user", content:prompt}]})});
                         const j = await r.json();
                         if(j.error) {
@@ -852,7 +805,7 @@
                 const r = Math.floor(Math.random()*d)+1;
                 setDiceLog(p => [{id:Date.now(), die:`d${d}`, result:r}, ...p].slice(0,10));
                 // If offline or no key, just log to chat without error
-                const hasKey = apiKey || (aiProvider === 'openrouter' && sysKey);
+                const hasKey = apiKey || (aiProvider === 'openrouter' && workerUrl);
                 if (!hasKey) {
                     setChatHistory(p=>[...p, {role:'user', content:`Roll d${d}: ${r}`}]);
                 } else {
@@ -869,7 +822,7 @@
                         {view === 'session' && <SessionView data={data} chatHistory={chatHistory} setChatHistory={setChatHistory} inputText={inputText} setInputText={setInputText} isListening={isListening} toggleListening={toggleListening} generateResponse={genResponse} isLoading={isLoading} role={role} activeChar={derivedActiveChar} showTools={showTools} setShowTools={setShowTools} diceLog={diceLog} handleDiceRoll={handleDiceRoll} syncState={syncState}/>}
                         {view === 'journal' && <JournalView data={data} setData={setData} role={role} updateCloud={updateCloud} userId={userId}/>}
                         {view === 'party' && <PartyView data={data} setData={setData} role={role} activeChar={derivedActiveChar} updateCloud={updateCloud}/>}
-                        {view === 'settings' && <SettingsView data={data} setData={setData} apiKey={apiKey} setApiKey={setKey} role={role} updateCloud={updateCloud} handlePdfUpload={handlePdf} clearPdf={()=>{const nd={...data, campaign:{...data.campaign, pdfName:null, pdfText:null}}; updateCloud(nd);}} pdfProcessing={pdfProcessing} code={code} user={user} transferDM={uid=>{if(confirm("Transfer?")){const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); fb.updateDoc(ref, {hostId:uid});}}} banPlayer={uid=>{if(confirm("Ban?")){const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); const na={...data.activeUsers}; delete na[uid]; fb.updateDoc(ref,{activeUsers:na, bannedUsers:fb.arrayUnion(uid)});}}} kickPlayer={uid=>{const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); const na={...data.activeUsers}; delete na[uid]; fb.updateDoc(ref, {activeUsers:na});}} unbanPlayer={uid=>{const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); fb.updateDoc(ref, {bannedUsers:fb.arrayRemove(uid)});}} aiProvider={aiProvider} setAiProvider={setAiProvider} fb={fb} openAiModel={openAiModel} setOpenAiModel={setOpenAiModel} openRouterModel={openRouterModel} setOpenRouterModel={setOpenRouterModel} sysKey={sysKey}/>}
+                        {view === 'settings' && <SettingsView data={data} setData={setData} apiKey={apiKey} setApiKey={setKey} role={role} updateCloud={updateCloud} handlePdfUpload={handlePdf} clearPdf={()=>{const nd={...data, campaign:{...data.campaign, pdfName:null, pdfText:null}}; updateCloud(nd);}} pdfProcessing={pdfProcessing} code={code} user={user} transferDM={uid=>{if(confirm("Transfer?")){const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); fb.updateDoc(ref, {hostId:uid});}}} banPlayer={uid=>{if(confirm("Ban?")){const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); const na={...data.activeUsers}; delete na[uid]; fb.updateDoc(ref,{activeUsers:na, bannedUsers:fb.arrayUnion(uid)});}}} kickPlayer={uid=>{const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); const na={...data.activeUsers}; delete na[uid]; fb.updateDoc(ref, {activeUsers:na});}} unbanPlayer={uid=>{const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); fb.updateDoc(ref, {bannedUsers:fb.arrayRemove(uid)});}} aiProvider={aiProvider} setAiProvider={setAiProvider} fb={fb} openAiModel={openAiModel} setOpenAiModel={setOpenAiModel} workerUrl={workerUrl} setWorkerUrl={setWorkerUrl}/>}
                     </main>
                 </div>
             );
