@@ -3,25 +3,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DungeonMind v17.4 | Hidden Proxy & DeepSeek</title>
+    <title>DungeonMind v17.5 | DeepSeek V3 Fix</title>
     
-    <!-- React & ReactDOM -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     
-    <!-- Babel -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
-    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
 
-    <!-- PDF.js -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 
-    <!-- Firebase Modular SDKs -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInWithPopup, signOut, GoogleAuthProvider, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
@@ -72,8 +66,9 @@
         #force-offline-btn { display: none; margin-top: 20px; padding: 10px 20px; background: #334155; color: white; border: 1px solid #475569; border-radius: 8px; cursor: pointer; font-family: sans-serif; }
         #force-offline-btn:hover { background: #475569; }
         .journal-expand { transition: all 0.3s ease-in-out; }
-        /* Force remove strikethrough */
-        .chat-content s, .chat-content strike, .chat-content del { text-decoration: none !important; }
+        /* STRICT REMOVAL OF STRIKETHROUGH */
+        .chat-content s, .chat-content strike, .chat-content del { text-decoration: none !important; color: inherit; }
+        .chat-content * { text-decoration-line: none !important; }
     </style>
 </head>
 <body>
@@ -368,7 +363,7 @@
             </div>
         );
 
-        const SettingsView = ({ data, setData, apiKey, setApiKey, role, updateCloud, handlePdfUpload, clearPdf, pdfProcessing, code, user, transferDM, banPlayer, kickPlayer, unbanPlayer, aiProvider, setAiProvider, fb, openAiModel, setOpenAiModel, openRouterModel, setOpenRouterModel }) => {
+        const SettingsView = ({ data, setData, apiKey, setApiKey, role, updateCloud, handlePdfUpload, clearPdf, pdfProcessing, code, user, transferDM, banPlayer, kickPlayer, unbanPlayer, aiProvider, setAiProvider, fb, openAiModel, setOpenAiModel, openRouterModel, setOpenRouterModel, workerUrl, setWorkerUrl }) => {
             const copyCode = () => { navigator.clipboard.writeText(code); alert("Copied: " + code); };
             const activeUsers = data.activeUsers || {};
             const bannedUsers = data.bannedUsers || [];
@@ -453,7 +448,7 @@
                         <h3 className="text-lg font-bold mb-2 text-slate-200">AI Intelligence</h3>
                         <div className="mb-3">
                             <label className="block text-xs text-slate-400 mb-1">Provider</label>
-                            <select value={aiProvider} onChange={e => setAiProvider(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-slate-200 outline-none mb-2"><option value="openrouter">OpenRouter (Free Proxy - Recommended)</option><option value="gemini">Google Gemini</option><option value="openai">OpenAI</option></select>
+                            <select value={aiProvider} onChange={e => setAiProvider(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-slate-200 outline-none mb-2"><option value="openrouter">OpenRouter (Free/Proxy)</option><option value="gemini">Google Gemini</option><option value="openai">OpenAI</option></select>
                             
                             {aiProvider === 'openai' && (
                                 <div>
@@ -464,7 +459,7 @@
                                         <option value="gpt-4-turbo">GPT-4 Turbo</option>
                                         <option value="gpt-3.5-turbo">GPT-3.5 Turbo (Legacy)</option>
                                     </select>
-                                    <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none mt-2" placeholder="sk-..."/>
+                                    <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none mt-2" placeholder="sk-..." />
                                 </div>
                             )}
 
@@ -472,15 +467,16 @@
                                 <div>
                                     <label className="block text-xs text-slate-400 mb-1">OpenRouter Model</label>
                                     <select value={openRouterModel} onChange={e => setOpenRouterModel(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-slate-200 outline-none mb-2">
-                                        <option value="deepseek/deepseek-chat:free">DeepSeek V3 (Free - Recommended)</option>
+                                        <option value="deepseek/deepseek-chat:free">DeepSeek V3 (Free)</option>
                                         <option value="google/gemini-2.0-flash-exp:free">Gemini 2.0 Flash (Free)</option>
                                         <option value="mistralai/mistral-7b-instruct:free">Mistral 7B Instruct (Free)</option>
                                         <option value="meta-llama/llama-3-8b-instruct:free">Llama 3 8B (Free)</option>
                                     </select>
-                                    <div className="bg-green-900/30 border border-green-600 rounded p-3 mt-2 flex items-center gap-2 text-xs text-green-300">
-                                        <Icon name="shield-check" size={14}/>
-                                        <span>Cloudflare Proxy Active</span>
-                                    </div>
+                                    <label className="block text-xs text-slate-400 mb-1">OpenRouter API Key (Required)</label>
+                                    <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none" placeholder="sk-or-v1-..." />
+                                    
+                                    <label className="block text-xs text-slate-400 mb-1 mt-2">Proxy Worker URL</label>
+                                    <input value={workerUrl} onChange={e => setWorkerUrl(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none font-mono text-xs" />
                                 </div>
                             )}
 
@@ -565,6 +561,16 @@
             useEffect(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), [chatHistory, isLoading]);
             const charName = data.players?.find(p => p.id == activeChar)?.name || "Adventurer";
 
+            // Strip Strikethrough Syntax (tilde)
+            const cleanHtml = (content) => {
+                let cleaned = content
+                    .replace(/~~/g, '') // Remove double tildes completely
+                    .replace(/<(s|strike|del)>([\s\S]*?)<\/\1>/gi, '$2') // Remove html tags but keep content
+                    .replace(/\*\*(.*?)\*\*/g, '<b>$1</b>')
+                    .replace(/\n/g, '<br/>');
+                return cleaned;
+            };
+
             return (
                 <div className="flex h-full relative">
                     <div className="flex-1 flex flex-col h-full relative">
@@ -582,7 +588,7 @@
                         <div ref={chatEndRef} className="flex-1 overflow-y-auto custom-scroll p-4 pb-40 space-y-6 chat-content">
                             {chatHistory.map((msg, i) => (
                                 <div key={i} style={{textDecoration: 'none'}} className={`p-4 rounded-lg max-w-[85%] no-underline ${msg.role === 'user' ? 'bg-slate-800 ml-auto text-right' : msg.role === 'system' ? 'bg-slate-800/50 mx-auto text-center text-xs text-slate-500' : 'bg-indigo-900/20 border border-indigo-500/30 mr-auto'}`}>
-                                    <div dangerouslySetInnerHTML={{__html: msg.content.replace(/~~([\s\S]*?)~~/g, '$1').replace(/<(s|strike|del)>([\s\S]*?)<\/\1>/gi, '$2').replace(/\*\*(.*?)\*\*/g, '<b>$1</b>').replace(/\n/g, '<br/>')}} />
+                                    <div dangerouslySetInnerHTML={{__html: cleanHtml(msg.content)}} />
                                 </div>
                             ))}
                             {isLoading && <div className="text-center text-xs text-slate-500 animate-pulse">Thinking...</div>}
@@ -611,7 +617,6 @@
             const [modeParams, setModeParams] = useState(null);
 
             const handleJoin = (code, role, uid) => {
-                // Save session to local storage for auto-login
                 localStorage.setItem('dm_last_code', code);
                 setModeParams({ fb, code, role, userId: uid, isOffline: false, user });
                 setView('game');
@@ -623,18 +628,15 @@
             };
 
             const handleExit = () => {
-                localStorage.removeItem('dm_last_code'); // Clear auto-login on explicit exit
+                localStorage.removeItem('dm_last_code'); 
                 setModeParams(null);
                 setView('lobby');
             };
 
-            // Auto-Login Logic
             useEffect(() => {
                 if (isAuthReady && !modeParams && !isOffline && fb && user) {
                     const lastCode = localStorage.getItem('dm_last_code');
                     if (lastCode) {
-                        console.log("Auto-rejoining session:", lastCode);
-                        // We default to 'player', GameSession logic will upgrade to DM if hostId matches
                         handleJoin(lastCode, 'player', user.uid);
                     }
                 }
@@ -664,11 +666,13 @@
             const [inputText, setInputText] = useState('');
             const [isLoading, setIsLoading] = useState(false);
             const [apiKey, setApiKey] = useState('');
-            // CHANGED: Read provider from localStorage, default to 'openrouter' (most stable free option)
+            
+            // REMEMBERS AI SETTINGS
             const [aiProvider, setAiProvider] = useState(() => localStorage.getItem('dm_ai_provider') || 'openrouter');
             const [openAiModel, setOpenAiModel] = useState(() => localStorage.getItem('dm_openai_model') || 'gpt-4o'); 
-            const [openRouterModel, setOpenRouterModel] = useState(() => localStorage.getItem('dm_openrouter_model') || 'deepseek/deepseek-chat:free'); // CHANGED DEFAULT TO DEEPSEEK V3
-            const [workerUrl, setWorkerUrl] = useState(() => localStorage.getItem('dm_worker_url') || 'https://dungeonmind-proxy.heangeloff03.workers.dev'); // HARDCODED
+            const [openRouterModel, setOpenRouterModel] = useState(() => localStorage.getItem('dm_openrouter_model') || 'deepseek/deepseek-chat:free');
+            const [workerUrl, setWorkerUrl] = useState(() => localStorage.getItem('dm_worker_url') || 'https://dungeonmind-proxy.heangeloff03.workers.dev');
+
             const [pdfProcessing, setPdfProcessing] = useState(false);
             const [showTools, setShowTools] = useState(false);
             const [isListening, setIsListening] = useState(false);
@@ -677,15 +681,14 @@
             const saveTimer = useRef(null);
             const recognitionRef = useRef(null);
 
-            // Derive active character from assignments
             const derivedActiveChar = data?.assignments?.[userId] || null;
             
-            // Update localStorage when settings change
             useEffect(() => { localStorage.setItem('dm_openai_model', openAiModel); }, [openAiModel]);
             useEffect(() => { localStorage.setItem('dm_openrouter_model', openRouterModel); }, [openRouterModel]);
             useEffect(() => { localStorage.setItem('dm_ai_provider', aiProvider); }, [aiProvider]);
             useEffect(() => { localStorage.setItem('dm_worker_url', workerUrl); }, [workerUrl]);
 
+            // LOAD KEY PER PROVIDER
             useEffect(() => { const k = localStorage.getItem(`dm_key_${aiProvider}`); setApiKey(k||''); }, [aiProvider]);
             const setKey = (v) => { setApiKey(v); localStorage.setItem(`dm_key_${aiProvider}`, v); };
 
@@ -710,7 +713,6 @@
                 return () => unsub();
             }, [code]);
             
-            // REGISTER USER PRESENCE
             useEffect(() => {
                 if (!fb || isOffline || !data || !user) return;
                 const register = async () => {
@@ -736,7 +738,6 @@
             const genResponse = async (ov) => {
                 const q = ov || inputText; if(!q.trim()) return;
                 
-                // Optimistic UI
                 setChatHistory(p=>[...p, {role:'user', content:q}]); 
                 setInputText('');
                 
@@ -752,7 +753,6 @@
                 const sec = role === 'dm' ? `SECRETS: ${data.journal_dm}\nPDF: ${data.campaign.pdfText?data.campaign.pdfText.slice(0,30000):"None"}` : `HIDDEN INFO: The user has secret notes: "${personalContext}". Use these for context but do not reveal them to other players.`;
                 const prompt = `Role: DM AI. User: ${iden}. Rules: 5e (${data.config.edition}). Ctx: ${data.campaign.location}. Log: ${data.journal_public}. ${sec}. Party: ${data.players.map(p=>p.name).join(', ')}. Q: ${q}`;
 
-                // RETRY LOGIC
                 let attempts = 0;
                 const maxRetries = 3;
                 let success = false;
@@ -776,15 +776,26 @@
                         } 
                         else if (aiProvider === 'openrouter') {
                             if(!workerUrl) throw new Error("Worker URL missing.");
+                            if(!apiKey) throw new Error("OpenRouter Key Missing in Settings.");
+
+                            // FIXED: Passing the key to the worker via Authorization header
                             r = await fetch(workerUrl, {
                                 method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
+                                headers: { 
+                                    'Content-Type': 'application/json',
+                                    'Authorization': `Bearer ${apiKey}` // PASSING THE KEY
+                                },
                                 body: JSON.stringify({ 
-                                    prompt: prompt,
-                                    model: openRouterModel // Pass selected model to worker
+                                    messages: [{ role: "user", content: prompt }], // Standard format
+                                    model: openRouterModel
                                 })
                             });
-                            if(!r.ok) throw new Error(`OpenRouter Error ${r.status}`);
+                            
+                            if(!r.ok) {
+                                const errText = await r.text();
+                                throw new Error(`Proxy Error ${r.status}: ${errText}`);
+                            }
+                            
                             j = await r.json();
                             if(j.error) throw new Error(j.error.message);
                             txt = j.choices?.[0]?.message?.content;
@@ -798,10 +809,7 @@
                             });
                             if(!r.ok) throw new Error(`OpenAI Error ${r.status}`);
                             j = await r.json();
-                            if(j.error) {
-                                if (j.error.code === 'insufficient_quota') throw new Error("OpenAI Quota Exceeded. Check Settings > Billing.");
-                                throw new Error(j.error.message); 
-                            }
+                            if(j.error) throw new Error(j.error.message);
                             txt = j.choices?.[0]?.message?.content;
                         }
 
@@ -852,7 +860,6 @@
             const handleDiceRoll = (d) => {
                 const r = Math.floor(Math.random()*d)+1;
                 setDiceLog(p => [{id:Date.now(), die:`d${d}`, result:r}, ...p].slice(0,10));
-                // If offline or no key, just log to chat without error
                 const hasKey = apiKey || (aiProvider === 'openrouter' && workerUrl);
                 if (!hasKey) {
                     setChatHistory(p=>[...p, {role:'user', content:`Roll d${d}: ${r}`}]);
