@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DungeonMind v15.8 | Player Editing</title>
+    <title>DungeonMind v15.9 | Fixed Focus & Auth</title>
     
     <!-- React & ReactDOM -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
@@ -42,7 +42,6 @@
             const auth = getAuth(app);
             const db = getFirestore(app);
 
-            // Attach to window for React to access
             window.fbModules = { 
                 app, auth, db, 
                 GoogleAuthProvider, signInWithPopup, signOut, 
@@ -67,20 +66,15 @@
         .custom-scroll::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
         .glass-panel { background: rgba(30, 41, 59, 0.95); border: 1px solid rgba(255, 255, 255, 0.05); }
         input, textarea, select { font-size: 16px !important; }
-        
-        /* Loader Styles */
         #app-loader { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #0f172a; z-index: 9999; display: flex; flex-direction: column; align-items: center; justify-content: center; color: white; transition: opacity 0.5s; }
         .loader-spinner { border: 4px solid rgba(255,255,255,0.1); border-top: 4px solid #d97706; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         #force-offline-btn { display: none; margin-top: 20px; padding: 10px 20px; background: #334155; color: white; border: 1px solid #475569; border-radius: 8px; cursor: pointer; font-family: sans-serif; }
         #force-offline-btn:hover { background: #475569; }
-        
-        /* Animation for full screen journal */
         .journal-expand { transition: all 0.3s ease-in-out; }
     </style>
 </head>
 <body>
-    <!-- FAIL-SAFE LOADER -->
     <div id="app-loader">
         <div class="loader-spinner"></div>
         <h2 id="loader-text" style="margin-top: 20px; font-family: serif;">Summoning DungeonMind...</h2>
@@ -91,7 +85,6 @@
     <div id="root"></div>
 
     <script>
-        // Emergency Fail-Safe Script
         setTimeout(() => {
             const btn = document.getElementById('force-offline-btn');
             if(btn) btn.style.display = 'block';
@@ -145,14 +138,10 @@
             useEffect(() => {
                 const init = async () => {
                     let attempts = 0;
-                    while (!window.fbModules && attempts < 50) { // Wait 5s max
+                    while (!window.fbModules && attempts < 50) { 
                         await new Promise(r => setTimeout(r, 100));
                         attempts++;
-                        if(window.forcedOfflineMode) { 
-                            setIsOffline(true); 
-                            setIsAuthReady(true); 
-                            return; 
-                        }
+                        if(window.forcedOfflineMode) { setIsOffline(true); setIsAuthReady(true); return; }
                     }
 
                     if (window.fbModules) {
@@ -169,7 +158,6 @@
                 };
                 init();
             }, []);
-
             return { fb, user, isOffline, isAuthReady };
         };
 
@@ -181,12 +169,83 @@
             return <i data-lucide={name} ref={iconRef} className={className}></i>;
         };
 
+        // --- SUB-COMPONENTS EXTRACTED TO FIX FOCUS BUGS ---
+
+        const JournalBox = ({ title, value, onChange, colorClass, type, placeholder, maximized, setMaximized }) => {
+            const isMax = maximized === type;
+            if (maximized && !isMax) return null;
+
+            const downloadTxt = (name, text) => {
+                const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+                const link = document.createElement("a");
+                link.href = URL.createObjectURL(blob);
+                link.download = `${name}_${new Date().toISOString().split('T')[0]}.txt`;
+                link.click();
+            };
+
+            return (
+                <div className={`flex flex-col glass-panel rounded-xl overflow-hidden journal-expand ${isMax ? 'fixed inset-4 z-50' : 'flex-1 min-h-[300px]'} ${colorClass}`}>
+                    <div className={`p-2 text-center text-xs uppercase tracking-wider font-bold border-b flex justify-between items-center ${type === 'dm' ? 'bg-red-900/20 border-red-900/30 text-red-400' : type === 'personal' ? 'bg-indigo-900/20 border-indigo-900/30 text-indigo-300' : 'bg-slate-800/50 border-slate-700 text-green-400'}`}>
+                        <div className="flex gap-2 items-center">
+                            {type === 'dm' && <Icon name="eye-off" size={14}/>}
+                            {type === 'personal' && <Icon name="user-circle" size={14}/>}
+                            {title}
+                        </div>
+                        <div className="flex gap-2">
+                            <button onClick={() => downloadTxt(title, value)} title="Export" className="hover:text-white"><Icon name="download" size={14}/></button>
+                            <button onClick={() => setMaximized(isMax ? null : type)} title="Toggle Fullscreen" className="hover:text-white"><Icon name={isMax ? "minimize-2" : "maximize-2"} size={14}/></button>
+                        </div>
+                    </div>
+                    <textarea 
+                        value={value || ""} 
+                        onChange={(e) => onChange(e.target.value)} 
+                        className={`w-full h-full bg-transparent p-4 resize-none focus:outline-none font-sans leading-relaxed custom-scroll ${type === 'dm' ? 'text-red-100/80 placeholder-red-900/50' : type === 'personal' ? 'text-indigo-100/80 placeholder-indigo-900/50' : 'text-slate-200'}`} 
+                        placeholder={placeholder}
+                    />
+                </div>
+            );
+        };
+
+        const JournalView = ({ data, setData, role, updateCloud, userId }) => {
+            const [maximized, setMaximized] = useState(null); 
+            
+            const updatePersonal = (val) => {
+                const newData = { ...data, player_journals: { ...data.player_journals, [userId]: val } };
+                setData(newData);
+                updateCloud(newData);
+            };
+
+            return (
+                <div className="max-w-7xl mx-auto p-4 md:p-6 h-full flex flex-col gap-4 relative">
+                    {maximized && <div className="fixed inset-0 bg-slate-900/90 backdrop-blur z-40" onClick={() => setMaximized(null)}></div>}
+                    <div className="flex-1 flex flex-col md:flex-row gap-4 min-h-0">
+                        <JournalBox 
+                            type="public" title="Public Log" value={data.journal_public} 
+                            onChange={(val) => { setData(p => ({...p, journal_public: val})); updateCloud({...data, journal_public: val}); }} 
+                            colorClass="" placeholder="Shared campaign events..." maximized={maximized} setMaximized={setMaximized}
+                        />
+                        <JournalBox 
+                            type="personal" title="My Notes (Private + AI)" value={data.player_journals?.[userId]} 
+                            onChange={updatePersonal} colorClass="border-indigo-900/30 bg-indigo-900/5" 
+                            placeholder="Your private thoughts (AI can see this)..." maximized={maximized} setMaximized={setMaximized}
+                        />
+                        {role === 'dm' && (
+                            <JournalBox 
+                                type="dm" title="DM Secrets" value={data.journal_dm} 
+                                onChange={(val) => { setData(p => ({...p, journal_dm: val})); updateCloud({...data, journal_dm: val}); }} 
+                                colorClass="border-red-900/30 bg-red-900/5" placeholder="Hidden truths..." maximized={maximized} setMaximized={setMaximized}
+                            />
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
         const Lobby = ({ fb, user, onJoin, onOffline }) => {
             const [joinCode, setJoinCode] = useState("");
             const [isLoggingIn, setIsLoggingIn] = useState(false);
             const [recents, setRecents] = useState([]);
 
-            // Load recents on mount
             useEffect(() => {
                 try {
                     const saved = localStorage.getItem('dm_recents');
@@ -198,13 +257,8 @@
                 if(!fb) return;
                 setIsLoggingIn(true);
                 try {
-                    const provider = new fb.GoogleAuthProvider();
-                    await fb.signInWithPopup(fb.auth, provider);
-                } catch (e) {
-                    alert("Login Error: " + e.message);
-                } finally {
-                    setIsLoggingIn(false);
-                }
+                    await fb.signInWithPopup(fb.auth, new fb.GoogleAuthProvider());
+                } catch (e) { alert("Login Error: " + e.message); } finally { setIsLoggingIn(false); }
             };
 
             const addToRecents = (code, role) => {
@@ -229,20 +283,16 @@
             const deleteCampaign = async (e, item) => {
                 e.stopPropagation();
                 if (item.role === 'dm') {
-                    if (confirm(`PERMANENTLY DELETE Campaign ${item.code}?\n\nThis cannot be undone.`)) {
+                    if (confirm(`PERMANENTLY DELETE Campaign ${item.code}?`)) {
                         try {
-                            if (fb && fb.deleteDoc) {
-                                await fb.deleteDoc(fb.doc(fb.db, 'artifacts', fb.appId, 'public', 'data', 'campaigns', item.code));
-                            }
+                            if (fb && fb.deleteDoc) await fb.deleteDoc(fb.doc(fb.db, 'artifacts', fb.appId, 'public', 'data', 'campaigns', item.code));
                             const newRecents = recents.filter(r => r.code !== item.code);
                             setRecents(newRecents);
                             localStorage.setItem('dm_recents', JSON.stringify(newRecents));
-                        } catch (err) {
-                            alert("Error deleting: " + err.message);
-                        }
+                        } catch (err) { alert("Error deleting: " + err.message); }
                     }
                 } else {
-                    if (confirm("Remove from recent history?")) {
+                    if (confirm("Remove from history?")) {
                         const newRecents = recents.filter(r => r.code !== item.code);
                         setRecents(newRecents);
                         localStorage.setItem('dm_recents', JSON.stringify(newRecents));
@@ -258,13 +308,7 @@
                             <h1 className="text-4xl fantasy-font text-amber-500 mb-2 text-shadow">DungeonMind</h1>
                             <p className="text-slate-400 text-sm">AI-Enhanced TTRPG Assistant</p>
                         </div>
-
-                        {!user && !fb && (
-                            <div className="bg-red-900/30 border border-red-500 text-red-200 p-4 rounded mb-4 text-center text-sm">
-                                Firebase Disconnected. Only offline mode available.
-                            </div>
-                        )}
-
+                        {!user && !fb && <div className="bg-red-900/30 border border-red-500 text-red-200 p-4 rounded mb-4 text-center text-sm">Firebase Disconnected. Only offline mode available.</div>}
                         {user ? (
                             <div className="bg-slate-800/50 p-4 rounded-lg mb-6 text-center border border-slate-700">
                                 <div className="text-sm text-slate-400 mb-1">Logged in as</div>
@@ -272,71 +316,28 @@
                                 <button onClick={() => fb.signOut(fb.auth)} className="text-xs text-red-400 mt-2 hover:underline">Sign Out</button>
                             </div>
                         ) : (
-                            fb && (
-                                <button onClick={handleLogin} disabled={isLoggingIn} className="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-3 rounded-lg font-bold mb-6 flex justify-center items-center gap-2 transition-all shadow-lg">
-                                    {isLoggingIn ? "Connecting..." : <><Icon name="log-in" size={20}/> Login with Google</>}
-                                </button>
-                            )
+                            fb && <button onClick={handleLogin} disabled={isLoggingIn} className="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-3 rounded-lg font-bold mb-6 flex justify-center items-center gap-2 transition-all shadow-lg">{isLoggingIn ? "Connecting..." : <><Icon name="log-in" size={20}/> Login with Google</>}</button>
                         )}
-
                         <div className="space-y-3">
-                            <div className="relative">
-                                <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-700"></div></div>
-                                <div className="relative flex justify-center text-xs uppercase"><span className="bg-slate-900 px-2 text-slate-500">Campaign Access</span></div>
-                            </div>
-
-                            <button onClick={createNew} className="w-full bg-amber-700 hover:bg-amber-600 text-white py-3 rounded-lg font-bold border border-amber-500/30 shadow-lg">
-                                Start New Campaign (DM)
-                            </button>
-                            
+                            <button onClick={createNew} className="w-full bg-amber-700 hover:bg-amber-600 text-white py-3 rounded-lg font-bold border border-amber-500/30 shadow-lg">Start New Campaign (DM)</button>
                             <div className="flex gap-2">
-                                <input 
-                                    value={joinCode} 
-                                    onChange={e => setJoinCode(e.target.value.toUpperCase())}
-                                    placeholder="ENTER CODE" 
-                                    className="flex-1 bg-slate-800 border border-slate-600 rounded-lg px-4 text-center font-mono tracking-widest text-lg outline-none focus:border-amber-500 text-white placeholder:text-slate-600"
-                                />
-                                <button 
-                                    onClick={joinExisting} 
-                                    disabled={!joinCode}
-                                    className={`px-6 rounded-lg font-bold ${joinCode ? 'bg-slate-600 hover:bg-slate-500 text-white' : 'bg-slate-800 text-slate-600 cursor-not-allowed'}`}
-                                >
-                                    Join
-                                </button>
+                                <input value={joinCode} onChange={e => setJoinCode(e.target.value.toUpperCase())} placeholder="ENTER CODE" className="flex-1 bg-slate-800 border border-slate-600 rounded-lg px-4 text-center font-mono tracking-widest text-lg outline-none focus:border-amber-500 text-white placeholder:text-slate-600"/>
+                                <button onClick={joinExisting} disabled={!joinCode} className={`px-6 rounded-lg font-bold ${joinCode ? 'bg-slate-600 hover:bg-slate-500 text-white' : 'bg-slate-800 text-slate-600 cursor-not-allowed'}`}>Join</button>
                             </div>
-
-                            {/* RECENTS SECTION */}
                             {recents.length > 0 && (
                                 <div className="mt-6">
                                     <div className="text-xs uppercase font-bold text-slate-500 mb-2 ml-1">Recent Adventures</div>
                                     <div className="space-y-2">
                                         {recents.map((r, i) => (
                                             <div key={i} onClick={() => onJoin(r.code, r.role, user ? user.uid : 'anon')} className="group flex items-center justify-between bg-slate-800/50 hover:bg-slate-700 border border-slate-700 hover:border-amber-500/30 p-3 rounded-lg cursor-pointer transition-all">
-                                                <div className="flex flex-col">
-                                                    <span className="font-mono font-bold text-amber-500 tracking-wider">{r.code}</span>
-                                                    <span className="text-[10px] text-slate-400 uppercase">{r.role}</span>
-                                                </div>
-                                                <div className="flex items-center gap-2">
-                                                    <span className="text-[10px] text-slate-500 mr-2">
-                                                        {new Date(r.date).toLocaleDateString()}
-                                                    </span>
-                                                    <button 
-                                                        onClick={(e) => deleteCampaign(e, r)}
-                                                        className={`p-2 rounded hover:bg-slate-900 ${r.role === 'dm' ? 'text-red-500 hover:text-red-400' : 'text-slate-500 hover:text-slate-300'}`}
-                                                        title={r.role === 'dm' ? "Delete Campaign Permanently" : "Remove from History"}
-                                                    >
-                                                        <Icon name={r.role === 'dm' ? "trash-2" : "x"} size={16}/>
-                                                    </button>
-                                                </div>
+                                                <div className="flex flex-col"><span className="font-mono font-bold text-amber-500 tracking-wider">{r.code}</span><span className="text-[10px] text-slate-400 uppercase">{r.role}</span></div>
+                                                <div className="flex items-center gap-2"><span className="text-[10px] text-slate-500 mr-2">{new Date(r.date).toLocaleDateString()}</span><button onClick={(e) => deleteCampaign(e, r)} className={`p-2 rounded hover:bg-slate-900 ${r.role === 'dm' ? 'text-red-500 hover:text-red-400' : 'text-slate-500 hover:text-slate-300'}`}><Icon name={r.role === 'dm' ? "trash-2" : "x"} size={16}/></button></div>
                                             </div>
                                         ))}
                                     </div>
                                 </div>
                             )}
-                            
-                            <button onClick={onOffline} className="w-full text-slate-500 hover:text-slate-300 text-xs mt-4 py-2">
-                                Continue Offline (Local Only)
-                            </button>
+                            <button onClick={onOffline} className="w-full text-slate-500 hover:text-slate-300 text-xs mt-4 py-2">Continue Offline (Local Only)</button>
                         </div>
                     </div>
                 </div>
@@ -369,99 +370,11 @@
                 </div>
                 <div className="h-24 overflow-y-auto custom-scroll bg-slate-900/50 rounded p-2 font-mono text-xs space-y-1">
                     {diceLog.map(log => (
-                        <div key={log.id} className="flex justify-between border-b border-slate-800 pb-1">
-                            <span className="text-slate-400">{log.die}</span>
-                            <span className={`font-bold ${log.result == 20 && log.die == 'd20' ? 'text-green-400' : log.result == 1 && log.die == 'd20' ? 'text-red-400' : 'text-amber-400'}`}>{log.result}</span>
-                        </div>
+                        <div key={log.id} className="flex justify-between border-b border-slate-800 pb-1"><span className="text-slate-400">{log.die}</span><span className={`font-bold ${log.result == 20 && log.die == 'd20' ? 'text-green-400' : log.result == 1 && log.die == 'd20' ? 'text-red-400' : 'text-amber-400'}`}>{log.result}</span></div>
                     ))}
                 </div>
             </div>
         );
-
-        const JournalView = ({ data, setData, role, updateCloud, userId }) => {
-            const [maximized, setMaximized] = useState(null); // 'public', 'personal', 'dm'
-
-            const downloadTxt = (name, text) => {
-                const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
-                const link = document.createElement("a");
-                link.href = URL.createObjectURL(blob);
-                link.download = `${name}_${new Date().toISOString().split('T')[0]}.txt`;
-                link.click();
-            };
-
-            const updatePersonal = (val) => {
-                const newData = { ...data, player_journals: { ...data.player_journals, [userId]: val } };
-                setData(newData);
-                updateCloud(newData);
-            };
-
-            const JournalBox = ({ title, value, onChange, colorClass, type, placeholder }) => {
-                const isMax = maximized === type;
-                if (maximized && !isMax) return null; // Hide others if one is maximized
-
-                return (
-                    <div className={`flex flex-col glass-panel rounded-xl overflow-hidden journal-expand ${isMax ? 'fixed inset-4 z-50' : 'flex-1 min-h-[300px]'} ${colorClass}`}>
-                        <div className={`p-2 text-center text-xs uppercase tracking-wider font-bold border-b flex justify-between items-center ${type === 'dm' ? 'bg-red-900/20 border-red-900/30 text-red-400' : type === 'personal' ? 'bg-indigo-900/20 border-indigo-900/30 text-indigo-300' : 'bg-slate-800/50 border-slate-700 text-green-400'}`}>
-                            <div className="flex gap-2 items-center">
-                                {type === 'dm' && <Icon name="eye-off" size={14}/>}
-                                {type === 'personal' && <Icon name="user-circle" size={14}/>}
-                                {title}
-                            </div>
-                            <div className="flex gap-2">
-                                <button onClick={() => downloadTxt(title, value)} title="Export" className="hover:text-white"><Icon name="download" size={14}/></button>
-                                <button onClick={() => setMaximized(isMax ? null : type)} title="Toggle Fullscreen" className="hover:text-white"><Icon name={isMax ? "minimize-2" : "maximize-2"} size={14}/></button>
-                            </div>
-                        </div>
-                        <textarea 
-                            value={value || ""} 
-                            onChange={(e) => onChange(e.target.value)} 
-                            className={`w-full h-full bg-transparent p-4 resize-none focus:outline-none font-sans leading-relaxed custom-scroll ${type === 'dm' ? 'text-red-100/80 placeholder-red-900/50' : type === 'personal' ? 'text-indigo-100/80 placeholder-indigo-900/50' : 'text-slate-200'}`} 
-                            placeholder={placeholder}
-                        />
-                    </div>
-                );
-            };
-
-            return (
-                <div className="max-w-7xl mx-auto p-4 md:p-6 h-full flex flex-col gap-4 relative">
-                    {maximized && <div className="fixed inset-0 bg-slate-900/90 backdrop-blur z-40" onClick={() => setMaximized(null)}></div>}
-                    
-                    <div className="flex-1 flex flex-col md:flex-row gap-4 min-h-0">
-                        {/* Public Journal */}
-                        <JournalBox 
-                            type="public" 
-                            title="Public Log" 
-                            value={data.journal_public} 
-                            onChange={(val) => { setData(p => ({...p, journal_public: val})); updateCloud({...data, journal_public: val}); }} 
-                            colorClass=""
-                            placeholder="Shared campaign events..."
-                        />
-
-                        {/* Personal Journal */}
-                        <JournalBox 
-                            type="personal" 
-                            title="My Notes (Private + AI)" 
-                            value={data.player_journals?.[userId]} 
-                            onChange={updatePersonal} 
-                            colorClass="border-indigo-900/30 bg-indigo-900/5"
-                            placeholder="Your private thoughts (AI can see this)..."
-                        />
-
-                        {/* DM Journal */}
-                        {role === 'dm' && (
-                            <JournalBox 
-                                type="dm" 
-                                title="DM Secrets" 
-                                value={data.journal_dm} 
-                                onChange={(val) => { setData(p => ({...p, journal_dm: val})); updateCloud({...data, journal_dm: val}); }} 
-                                colorClass="border-red-900/30 bg-red-900/5"
-                                placeholder="Hidden truths..."
-                            />
-                        )}
-                    </div>
-                </div>
-            );
-        };
 
         const SettingsView = ({ data, setData, apiKey, setApiKey, role, updateCloud, handlePdfUpload, clearPdf, pdfProcessing, code, user, transferDM, banPlayer, kickPlayer, unbanPlayer, aiProvider, setAiProvider, fb }) => {
             const copyCode = () => { navigator.clipboard.writeText(code); alert("Copied: " + code); };
@@ -489,23 +402,13 @@
             const handleRestore = (e) => {
                 const file = e.target.files[0];
                 if (!file) return;
-                
                 const reader = new FileReader();
                 reader.onload = (event) => {
                     try {
                         const json = JSON.parse(event.target.result);
-                        if (!json.campaign || !json.players) {
-                            alert("Invalid backup file format.");
-                            return;
-                        }
-                        if (confirm("WARNING: This will overwrite ALL current campaign data with the backup. Are you sure?")) {
-                            setData(json);
-                            updateCloud(json);
-                            alert("Campaign restored successfully.");
-                        }
-                    } catch (err) {
-                        alert("Error parsing backup file: " + err.message);
-                    }
+                        if (!json.campaign || !json.players) { alert("Invalid backup file."); return; }
+                        if (confirm("Overwrite ALL data with backup?")) { setData(json); updateCloud(json); alert("Restored."); }
+                    } catch (err) { alert("Error: " + err.message); }
                 };
                 reader.readAsText(file);
                 e.target.value = null; 
@@ -513,31 +416,16 @@
 
             return (
                 <div className="max-w-3xl mx-auto p-8 overflow-y-auto h-full custom-scroll">
-                    <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-2">
-                        <h2 className="text-3xl fantasy-font text-amber-500">Settings</h2>
-                    </div>
-
+                    <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-2"><h2 className="text-3xl fantasy-font text-amber-500">Settings</h2></div>
                     <div className="glass-panel p-8 rounded-xl mb-8 flex flex-col items-center text-center border-2 border-indigo-500/30 bg-indigo-900/10 relative overflow-hidden">
                         <h3 className="text-xs font-bold text-indigo-300 uppercase tracking-widest mb-2">Invite Code</h3>
                         <div className="text-5xl font-mono font-bold text-white tracking-widest mb-4 drop-shadow-lg">{code}</div>
-                        <div className="flex gap-2">
-                            <button onClick={copyCode} className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-1 rounded text-sm flex items-center gap-2 shadow-lg"><Icon name="copy" size={16}/> Copy</button>
-                            {fb && (user ? <button onClick={signOut} className="bg-slate-700 px-4 py-1 rounded text-sm">Sign Out</button> : <button onClick={signIn} className="bg-blue-600 px-4 py-1 rounded text-sm">Login</button>)}
-                        </div>
+                        <div className="flex gap-2"><button onClick={copyCode} className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-1 rounded text-sm flex items-center gap-2 shadow-lg"><Icon name="copy" size={16}/> Copy</button>{fb && (user ? <button onClick={signOut} className="bg-slate-700 px-4 py-1 rounded text-sm">Sign Out</button> : <button onClick={signIn} className="bg-blue-600 px-4 py-1 rounded text-sm">Login</button>)}</div>
                     </div>
-
                     <div className="glass-panel p-6 rounded-xl mb-6">
                         <h3 className="text-lg font-bold mb-4 text-slate-200 flex items-center gap-2"><Icon name="save" size={18}/> Backup & Restore</h3>
-                        <p className="text-sm text-slate-400 mb-4">Manage your campaign data locally.</p>
-                        <div className="flex gap-4">
-                            <button onClick={downloadBackup} className="flex-1 bg-slate-700 hover:bg-slate-600 p-3 rounded text-slate-200 flex items-center justify-center gap-2"><Icon name="download" size={16}/> Download Backup</button>
-                            <label className="flex-1 bg-slate-700 hover:bg-slate-600 p-3 rounded text-slate-200 flex items-center justify-center gap-2 cursor-pointer">
-                                <Icon name="upload" size={16}/> Restore Backup
-                                <input type="file" accept=".json" onChange={handleRestore} className="hidden" />
-                            </label>
-                        </div>
+                        <div className="flex gap-4"><button onClick={downloadBackup} className="flex-1 bg-slate-700 hover:bg-slate-600 p-3 rounded text-slate-200 flex items-center justify-center gap-2"><Icon name="download" size={16}/> Download Backup</button><label className="flex-1 bg-slate-700 hover:bg-slate-600 p-3 rounded text-slate-200 flex items-center justify-center gap-2 cursor-pointer"><Icon name="upload" size={16}/> Restore Backup<input type="file" accept=".json" onChange={handleRestore} className="hidden" /></label></div>
                     </div>
-
                     {role === 'dm' && (
                         <div className="glass-panel p-6 rounded-xl mb-6 border-l-4 border-purple-500">
                             <h3 className="text-lg font-bold mb-4 text-slate-200 flex items-center gap-2"><Icon name="shield-alert" size={18}/> Moderation</h3>
@@ -552,27 +440,17 @@
                             {bannedUsers.length > 0 && <div className="space-y-2"><div className="text-xs text-red-400 uppercase font-bold">Banned</div>{bannedUsers.map(uid => <div key={uid} className="flex justify-between items-center bg-red-950/30 p-2 rounded border border-red-900/50"><span className="text-xs font-mono text-red-300">{uid.slice(0,8)}...</span><button onClick={() => unbanPlayer(uid)} className="text-xs text-slate-400 hover:text-white">Unban</button></div>)}</div>}
                         </div>
                     )}
-
                     <div className="glass-panel p-6 rounded-xl mb-6 border-l-4 border-amber-500">
                         <h3 className="text-lg font-bold mb-2 text-slate-200">AI Intelligence</h3>
-                        <div className="mb-3">
-                            <select value={aiProvider} onChange={e => setAiProvider(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-slate-200 outline-none"><option value="gemini">Google Gemini</option><option value="openai">OpenAI</option></select>
-                        </div>
+                        <div className="mb-3"><select value={aiProvider} onChange={e => setAiProvider(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-slate-200 outline-none"><option value="gemini">Google Gemini</option><option value="openai">OpenAI</option></select></div>
                         <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none" placeholder={aiProvider === 'openai' ? "sk-..." : "AIza..."}/>
                     </div>
-
                     {role === 'dm' && (
                         <div className="glass-panel p-6 rounded-xl border-l-4 border-blue-500">
                             <h3 className="text-lg font-bold mb-4 text-slate-200">DM Tools</h3>
                             <div className="grid md:grid-cols-2 gap-6 mb-4">
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Edition</label>
-                                    <select value={data.config?.edition || '2014'} onChange={e => updateConfig('edition', e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-slate-200 outline-none"><option value="2014">5e (2014)</option><option value="2024">5e (2024 Revised)</option></select>
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-400 uppercase mb-2">AI Context</label>
-                                    <button onClick={() => updateConfig('strictMode', !data.config?.strictMode)} className={`w-full p-2 rounded text-sm font-bold border ${data.config?.strictMode ? 'bg-green-900/50 border-green-600 text-green-400' : 'bg-slate-900 border-slate-700 text-slate-400'}`}>{data.config?.strictMode ? "Strict" : "General"}</button>
-                                </div>
+                                <div><label className="block text-xs font-bold text-slate-400 uppercase mb-2">Edition</label><select value={data.config?.edition || '2014'} onChange={e => updateConfig('edition', e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-slate-200 outline-none"><option value="2014">5e (2014)</option><option value="2024">5e (2024 Revised)</option></select></div>
+                                <div><label className="block text-xs font-bold text-slate-400 uppercase mb-2">AI Context</label><button onClick={() => updateConfig('strictMode', !data.config?.strictMode)} className={`w-full p-2 rounded text-sm font-bold border ${data.config?.strictMode ? 'bg-green-900/50 border-green-600 text-green-400' : 'bg-slate-900 border-slate-700 text-slate-400'}`}>{data.config?.strictMode ? "Strict" : "General"}</button></div>
                             </div>
                             <input value={data.campaign?.location || ""} onChange={e => { const newData = {...data, campaign: {...data.campaign, location: e.target.value}}; setData(newData); updateCloud(newData); }} className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-slate-200 outline-none" placeholder="Current Location"/>
                             <div className="border-2 border-dashed border-slate-700 rounded p-4 text-center mt-4">
@@ -589,7 +467,7 @@
         };
 
         const PartyView = ({ data, setData, role, activeChar, setActiveChar, updateCloud }) => {
-            const [viewMode, setViewMode] = useState('stats'); // 'stats' or 'bio'
+            const [viewMode, setViewMode] = useState('stats');
 
             const updatePlayer = (idx, field, val) => {
                 setData(prev => {
@@ -606,11 +484,7 @@
 
             return (
                 <div className="max-w-4xl mx-auto p-8 overflow-y-auto h-full custom-scroll">
-                    <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-2">
-                        <h2 className="text-3xl fantasy-font text-amber-500">Party</h2>
-                        {role === 'dm' && <button onClick={addPlayer} className="bg-amber-600 px-3 py-1 rounded text-sm font-bold">+ Add</button>}
-                    </div>
-                    
+                    <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-2"><h2 className="text-3xl fantasy-font text-amber-500">Party</h2>{role === 'dm' && <button onClick={addPlayer} className="bg-amber-600 px-3 py-1 rounded text-sm font-bold">+ Add</button>}</div>
                     <div className="grid md:grid-cols-2 gap-4">
                         {data.players?.map((p, idx) => {
                             const canEdit = role === 'dm' || activeChar === p.id;
@@ -622,17 +496,8 @@
                                         {role === 'player' && activeChar !== p.id && <button onClick={() => setActiveChar(p.id)} className="text-xs bg-slate-700 px-2 rounded hover:bg-green-700">Play</button>}
                                         {activeChar == p.id && <span className="text-xs text-green-400 font-bold">YOU</span>}
                                     </div>
-                                    <div className="flex gap-2 mb-2">
-                                        <input disabled={!canEdit} className="w-1/2 bg-slate-800/50 rounded p-1 text-sm border border-transparent focus:border-amber-500 outline-none" value={p.race} placeholder="Race" onChange={e => updatePlayer(idx, 'race', e.target.value)}/>
-                                        <input disabled={!canEdit} className="w-1/2 bg-slate-800/50 rounded p-1 text-sm border border-transparent focus:border-amber-500 outline-none" value={p.class} placeholder="Class" onChange={e => updatePlayer(idx, 'class', e.target.value)}/>
-                                    </div>
-                                    
-                                    {/* Tabs */}
-                                    <div className="flex border-b border-slate-700 mb-2">
-                                        <button onClick={() => setViewMode('stats')} className={`flex-1 text-xs py-1 ${viewMode === 'stats' ? 'text-amber-400 border-b-2 border-amber-400' : 'text-slate-500'}`}>Stats & Notes</button>
-                                        <button onClick={() => setViewMode('bio')} className={`flex-1 text-xs py-1 ${viewMode === 'bio' ? 'text-amber-400 border-b-2 border-amber-400' : 'text-slate-500'}`}>Backstory</button>
-                                    </div>
-
+                                    <div className="flex gap-2 mb-2"><input disabled={!canEdit} className="w-1/2 bg-slate-800/50 rounded p-1 text-sm border border-transparent focus:border-amber-500 outline-none" value={p.race} placeholder="Race" onChange={e => updatePlayer(idx, 'race', e.target.value)}/><input disabled={!canEdit} className="w-1/2 bg-slate-800/50 rounded p-1 text-sm border border-transparent focus:border-amber-500 outline-none" value={p.class} placeholder="Class" onChange={e => updatePlayer(idx, 'class', e.target.value)}/></div>
+                                    <div className="flex border-b border-slate-700 mb-2"><button onClick={() => setViewMode('stats')} className={`flex-1 text-xs py-1 ${viewMode === 'stats' ? 'text-amber-400 border-b-2 border-amber-400' : 'text-slate-500'}`}>Stats & Notes</button><button onClick={() => setViewMode('bio')} className={`flex-1 text-xs py-1 ${viewMode === 'bio' ? 'text-amber-400 border-b-2 border-amber-400' : 'text-slate-500'}`}>Backstory</button></div>
                                     {viewMode === 'stats' ? (
                                         <textarea disabled={!canEdit} className="w-full bg-slate-800/30 rounded p-2 text-sm h-32 resize-none custom-scroll border border-transparent focus:border-amber-500 outline-none" value={p.notes} placeholder="Inventory, Stats, Loot..." onChange={e => updatePlayer(idx, 'notes', e.target.value)}/>
                                     ) : (
@@ -647,14 +512,12 @@
         };
 
         const SessionView = (props) => {
-            // SAFE DESTRUCTURING with defaults
             const { 
                 data, chatHistory, setChatHistory, inputText, setInputText, 
                 isListening = false, toggleListening = () => {}, 
                 generateResponse, isLoading, role, activeChar, 
                 showTools, setShowTools, diceLog = [], handleDiceRoll = () => {}, syncState 
             } = props;
-
             const chatEndRef = useRef(null);
             useEffect(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), [chatHistory, isLoading]);
             const charName = data.players?.find(p => p.id == activeChar)?.name || "Adventurer";
@@ -719,10 +582,8 @@
                 setView('lobby');
             };
 
-            // Wait for Auth before rendering ANYTHING (keeps loader visible)
             if (!isAuthReady) return null; 
             
-            // Hide loader once React takes over
             setTimeout(hideLoader, 100);
 
             if (view === 'lobby') return <Lobby fb={fb} user={user} onJoin={handleJoin} onOffline={handleOffline} />;
@@ -736,7 +597,7 @@
 
         const GameSession = (props) => {
             const { fb, code, role: initRole, userId, user, isOffline, onExit } = props;
-            const DEFAULT = { hostId:"", campaign:{ name:"New", location:"Start", tone:"Heroic", pdfName:null, pdfText:null}, config:{edition:'2014', strictMode:false}, players:[], journal_public:"", journal_dm:"", player_journals:{}, activeUsers:{}, bannedUsers:[] };
+            const DEFAULT = { hostId: userId, campaign:{ name:"New", location:"Start", tone:"Heroic", pdfName:null, pdfText:null}, config:{edition:'2014', strictMode:false}, players:[], journal_public:"", journal_dm:"", player_journals:{}, activeUsers:{}, bannedUsers:[] };
             const [data, setData] = useState(null);
             const [view, setView] = useState('session');
             const [role, setRole] = useState(initRole);
@@ -751,7 +612,6 @@
             const [isListening, setIsListening] = useState(false);
             const [diceLog, setDiceLog] = useState([]);
             const [syncState, setSyncState] = useState('init');
-            
             const saveTimer = useRef(null);
             const recognitionRef = useRef(null);
 
@@ -760,17 +620,36 @@
 
             useEffect(() => {
                 if(isOffline) { const l=localStorage.getItem('dm_loc'); setData(l?JSON.parse(l):DEFAULT); hideLoader(); return; }
-                const unsub = fb.onSnapshot(fb.doc(fb.db, 'artifacts', fb.appId, 'public', 'data', 'campaigns', code), snap => {
+                const ref = fb.doc(fb.db, 'artifacts', fb.appId, 'public', 'data', 'campaigns', code);
+                const unsub = fb.onSnapshot(ref, snap => {
                     if(snap.exists()) {
                         const d = snap.data();
                         if(d.bannedUsers?.includes(userId)) { alert("Banned"); onExit(); return; }
                         setData(d);
                         if(d.hostId === userId) setRole('dm'); else setRole('player');
                         hideLoader();
-                    } else { alert("Closed or Invalid Code"); onExit(); }
+                    } else { 
+                        if (initRole === 'dm') {
+                             fb.setDoc(ref, DEFAULT).catch(e => { alert("Failed to create: " + e.message); onExit(); });
+                        } else {
+                             alert("Campaign not found."); onExit(); 
+                        }
+                    }
                 });
                 return () => unsub();
             }, [code]);
+            
+            // REGISTER USER PRESENCE
+            useEffect(() => {
+                if (!fb || isOffline || !data || !user) return;
+                const register = async () => {
+                    try {
+                        const ref = fb.doc(fb.db, 'artifacts', fb.appId, 'public', 'data', 'campaigns', code);
+                        await fb.updateDoc(ref, { [`activeUsers.${user.uid}`]: user.email || "Anonymous" });
+                    } catch(e) {}
+                };
+                register();
+            }, [data?.campaign?.name]); // Trigger once loaded
 
             const updateCloud = (nd) => {
                 setData(nd);
@@ -838,7 +717,6 @@
                 genResponse(`Roll d${d}: ${r}`);
             };
 
-            // Logic & Render
             if(!data) return <div className="h-screen flex items-center justify-center text-white">Syncing...</div>;
 
             return (
@@ -859,5 +737,3 @@
     </script>
 </body>
 </html>
-
-
