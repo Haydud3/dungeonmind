@@ -3,8 +3,25 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DungeonMind v18.4 | Auth Reload Fix</title>
+    <title>DungeonMind v18.5 | Stability Update</title>
     
+    <!-- GLOBAL ERROR HANDLER (Must be first) -->
+    <script>
+        window.onerror = function(msg, url, line, col, error) {
+            const loaderText = document.getElementById('loader-text');
+            const loaderSub = document.getElementById('loader-sub');
+            if (loaderText) {
+                loaderText.innerText = "Critical Error";
+                loaderText.style.color = "#ef4444";
+                loaderSub.innerText = msg + " (Line " + line + ")";
+                loaderSub.style.fontFamily = "monospace";
+                loaderSub.style.whiteSpace = "pre-wrap";
+            }
+            console.error("Global Error:", error);
+            return false;
+        };
+    </script>
+
     <!-- React & ReactDOM -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -21,7 +38,7 @@
     <!-- PDF.js -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 
-    <!-- Puter.js (New AI Provider) -->
+    <!-- Puter.js -->
     <script src="https://js.puter.com/v2/"></script>
 
     <!-- Firebase Modular SDKs -->
@@ -53,7 +70,7 @@
             console.log("Firebase initialized successfully");
         } catch(e) {
             console.error("Firebase Init Failed", e);
-            window.firebaseError = e.message;
+            // Don't stop execution, allow offline mode
         }
     </script>
 
@@ -84,21 +101,25 @@
         <div class="loader-spinner"></div>
         <h2 id="loader-text" style="margin-top: 20px; font-family: serif;">Summoning DungeonMind...</h2>
         <p id="loader-sub" style="margin-top: 10px; font-size: 12px; color: #94a3b8;">Establishing Arcane Link...</p>
-        <button id="force-offline-btn" onclick="window.forceOffline()">Force Offline Mode</button>
+        <button id="force-offline-btn" onclick="window.forceOffline()">Force Launch (Offline)</button>
     </div>
 
     <div id="root"></div>
 
     <script>
+        // Auto-show force offline button after 8 seconds if app hasn't loaded
         setTimeout(() => {
             const btn = document.getElementById('force-offline-btn');
-            if(btn) btn.style.display = 'block';
-            const sub = document.getElementById('loader-sub');
-            if(sub) sub.innerText = "Taking too long? Network issues?";
-        }, 4000); 
+            if(btn && document.getElementById('app-loader').style.display !== 'none') {
+                btn.style.display = 'block';
+                const sub = document.getElementById('loader-sub');
+                if(sub) sub.innerText = "Connection taking too long?";
+            }
+        }, 8000); 
 
         window.forceOffline = function() {
             window.forcedOfflineMode = true;
+            // Trigger a storage event or console log to nudge the React loop if it's stuck
             console.log("Forcing offline mode via button");
         };
     </script>
@@ -106,7 +127,7 @@
     <script type="text/babel">
         const hideLoader = () => {
             const loader = document.getElementById('app-loader');
-            if(loader) {
+            if(loader && loader.style.display !== 'none') {
                 loader.style.opacity = 0;
                 setTimeout(() => loader.style.display = 'none', 500);
             }
@@ -143,19 +164,31 @@
             useEffect(() => {
                 const init = async () => {
                     let attempts = 0;
+                    // Wait for firebase modules or forced offline
                     while (!window.fbModules && attempts < 50) { 
+                        if(window.forcedOfflineMode) { 
+                            console.log("Offline mode forced during wait");
+                            setIsOffline(true); 
+                            setIsAuthReady(true); 
+                            return; 
+                        }
                         await new Promise(r => setTimeout(r, 100));
                         attempts++;
-                        if(window.forcedOfflineMode) { setIsOffline(true); setIsAuthReady(true); return; }
                     }
 
-                    if (window.fbModules) {
-                        const { auth, onAuthStateChanged } = window.fbModules;
-                        onAuthStateChanged(auth, (u) => {
-                            setUser(u);
+                    if (window.fbModules && !window.forcedOfflineMode) {
+                        try {
+                            const { auth, onAuthStateChanged } = window.fbModules;
+                            onAuthStateChanged(auth, (u) => {
+                                setUser(u);
+                                setIsAuthReady(true);
+                            });
+                            setFb({ ...window.fbModules, appId: 'dungeonmind' });
+                        } catch(e) {
+                            console.error("Auth Init Error", e);
+                            setIsOffline(true);
                             setIsAuthReady(true);
-                        });
-                        setFb({ ...window.fbModules, appId: 'dungeonmind' });
+                        }
                     } else {
                         setIsOffline(true);
                         setIsAuthReady(true);
@@ -163,6 +196,19 @@
                 };
                 init();
             }, []);
+            
+            // Polling for forced offline mode in case user clicks button late
+            useEffect(() => {
+                const interval = setInterval(() => {
+                    if(window.forcedOfflineMode && !isAuthReady) {
+                        setIsOffline(true);
+                        setIsAuthReady(true);
+                        clearInterval(interval);
+                    }
+                }, 500);
+                return () => clearInterval(interval);
+            }, [isAuthReady]);
+
             return { fb, user, isOffline, isAuthReady };
         };
 
@@ -253,7 +299,7 @@
                 setIsLoggingIn(true);
                 try {
                     await fb.signInWithPopup(fb.auth, new fb.GoogleAuthProvider());
-                    window.location.reload(); // FORCE RELOAD TO FIX BLANK SCREEN
+                    window.location.reload(); 
                 } catch (e) { alert("Login Error: " + e.message); setIsLoggingIn(false); }
             };
 
@@ -635,6 +681,247 @@
                             <DiceTray diceLog={diceLog} handleDiceRoll={handleDiceRoll} />
                         </div>
                     )}
+                </div>
+            );
+        };
+
+        function App() {
+            const { fb, user, isAuthReady, isOffline } = useFirebase();
+            const [view, setView] = useState('lobby');
+            const [modeParams, setModeParams] = useState(null);
+
+            const handleJoin = (code, role, uid) => {
+                localStorage.setItem('dm_last_code', code);
+                setModeParams({ fb, code, role, userId: uid, isOffline: false, user });
+                setView('game');
+            };
+
+            const handleOffline = () => {
+                setModeParams({ fb: null, code: 'LOCAL', role: 'dm', userId: 'local', user: {uid:'local',email:'Offline'}, isOffline: true });
+                setView('game');
+            };
+
+            const handleExit = () => {
+                localStorage.removeItem('dm_last_code'); 
+                setModeParams(null);
+                setView('lobby');
+            };
+
+            useEffect(() => {
+                if (isAuthReady && !modeParams && !isOffline && fb && user) {
+                    const lastCode = localStorage.getItem('dm_last_code');
+                    if (lastCode) handleJoin(lastCode, 'player', user.uid);
+                }
+            }, [isAuthReady, user]);
+
+            if (!isAuthReady) return null; 
+            
+            setTimeout(hideLoader, 100);
+
+            if (view === 'lobby') return <Lobby fb={fb} user={user} onJoin={handleJoin} onOffline={handleOffline} />;
+
+            return (
+                <ErrorBoundary>
+                    <GameSession {...modeParams} onExit={handleExit} />
+                </ErrorBoundary>
+            );
+        }
+
+        const GameSession = (props) => {
+            const { fb, code, role: initRole, userId, user, isOffline, onExit } = props;
+            const DEFAULT = { hostId: userId, campaign:{ name:"New", location:"Start", tone:"Heroic", pdfName:null, pdfText:null}, config:{edition:'2014', strictMode:false}, players:[], journal_public:"", journal_dm:"", player_journals:{}, activeUsers:{}, bannedUsers:[], assignments:{} };
+            const [data, setData] = useState(null);
+            const [view, setView] = useState('session');
+            const [role, setRole] = useState(initRole);
+            const [activeChar, setActiveChar] = useState(null);
+            const [chatHistory, setChatHistory] = useState([{role:'system', content:`Connected ${code}`}]);
+            const [inputText, setInputText] = useState('');
+            const [isLoading, setIsLoading] = useState(false);
+            const [apiKey, setApiKey] = useState('');
+            const [aiProvider, setAiProvider] = useState(() => localStorage.getItem('dm_ai_provider') || 'puter');
+            const [openAiModel, setOpenAiModel] = useState(() => localStorage.getItem('dm_openai_model') || 'gpt-4o'); 
+            const [puterModel, setPuterModel] = useState(() => localStorage.getItem('dm_puter_model') || 'deepseek-chat'); 
+            const [pdfProcessing, setPdfProcessing] = useState(false);
+            const [showTools, setShowTools] = useState(false);
+            const [isListening, setIsListening] = useState(false);
+            const [diceLog, setDiceLog] = useState([]);
+            const [syncState, setSyncState] = useState('init');
+            const saveTimer = useRef(null);
+            const recognitionRef = useRef(null);
+
+            const derivedActiveChar = data?.assignments?.[userId] || null;
+            
+            useEffect(() => { localStorage.setItem('dm_openai_model', openAiModel); }, [openAiModel]);
+            useEffect(() => { localStorage.setItem('dm_puter_model', puterModel); }, [puterModel]);
+            useEffect(() => { localStorage.setItem('dm_ai_provider', aiProvider); }, [aiProvider]);
+
+            useEffect(() => { const k = localStorage.getItem(`dm_key_${aiProvider}`); setApiKey(k||''); }, [aiProvider]);
+            const setKey = (v) => { setApiKey(v); localStorage.setItem(`dm_key_${aiProvider}`, v); };
+
+            useEffect(() => {
+                if(isOffline) { const l=localStorage.getItem('dm_loc'); setData(l?JSON.parse(l):DEFAULT); hideLoader(); return; }
+                const ref = fb.doc(fb.db, 'artifacts', fb.appId, 'public', 'data', 'campaigns', code);
+                const unsub = fb.onSnapshot(ref, snap => {
+                    if(snap.exists()) {
+                        const d = snap.data();
+                        if(d.bannedUsers?.includes(userId)) { alert("Banned"); onExit(); return; }
+                        setData(d);
+                        if(d.hostId === userId) setRole('dm'); else setRole('player');
+                        hideLoader();
+                    } else { 
+                        if (initRole === 'dm') {
+                             fb.setDoc(ref, DEFAULT).catch(e => { alert("Failed to create: " + e.message); onExit(); });
+                        } else {
+                             alert("Campaign not found."); onExit(); 
+                        }
+                    }
+                });
+                return () => unsub();
+            }, [code]);
+            
+            useEffect(() => {
+                if (!fb || isOffline || !data || !user) return;
+                const register = async () => {
+                    try {
+                        const ref = fb.doc(fb.db, 'artifacts', fb.appId, 'public', 'data', 'campaigns', code);
+                        await fb.updateDoc(ref, { [`activeUsers.${user.uid}`]: user.email || "Anonymous" });
+                    } catch(e) {}
+                };
+                register();
+            }, [data?.campaign?.name]); 
+
+            const updateCloud = (nd) => {
+                setData(nd);
+                if(isOffline) { localStorage.setItem('dm_loc', JSON.stringify(nd)); return; }
+                if(saveTimer.current) clearTimeout(saveTimer.current);
+                saveTimer.current = setTimeout(() => {
+                    const ref = fb.doc(fb.db, 'artifacts', fb.appId, 'public', 'data', 'campaigns', code);
+                    if(role === 'player') fb.updateDoc(ref, { players: nd.players, journal_public: nd.journal_public, [`player_journals.${userId}`]: nd.player_journals[userId] || "" });
+                    else fb.setDoc(ref, nd, { merge: true });
+                }, 1000);
+            };
+
+            // GEN RESPONSE WITH MODES
+            const genResponse = async (ov, mode = 'standard') => {
+                const q = ov || inputText; if(!q.trim()) return;
+                setChatHistory(p=>[...p, {role:'user', content:q}]); setInputText('');
+                
+                const hasKey = aiProvider === 'puter' || apiKey;
+                if (!hasKey && !ov) return;
+                if (!hasKey && ov) return;
+
+                setIsLoading(true);
+                
+                const char = data.players.find(p=>p.id==derivedActiveChar);
+                const iden = role === 'dm' ? "DM" : (char ? `${char.name} (${char.race})` : "Player");
+                const personalContext = data.player_journals?.[userId] || "";
+                
+                // RICH CONTEXT BUILDING
+                let partyContext = "";
+                if (role === 'dm') {
+                    // DM sees everyone's details summarized
+                    partyContext = data.players.map(p => `${p.name} (${p.race} ${p.class}): ${p.backstory ? p.backstory.slice(0,100) + '...' : 'No bio'}`).join(' | ');
+                } else {
+                    // Player sees their own full details + basic party list
+                    partyContext = `My Character: ${char ? `${char.name} (${char.race} ${char.class}). Backstory: ${char.backstory}. Notes: ${char.notes}` : "Spectator"}. Party: ${data.players.map(p => p.name).join(', ')}`;
+                }
+
+                let instruction = "";
+                if (role === 'dm') {
+                    if (mode === 'narrate') instruction = "TASK: Narrate this scene for the players using vivid boxed text. Hide all secrets, DCs, and mechanics.";
+                    else if (mode === 'mechanics') instruction = "TASK: Explain the rules, calculate DCs, and clarify mechanics for this situation. Show math.";
+                    else if (mode === 'npc') instruction = "TASK: Roleplay as the relevant NPC. Speak in their voice and give their reaction.";
+                    else instruction = "TASK: Act as a DM Assistant. Answer the DM's query efficiently.";
+                } else {
+                    if (mode === 'action') instruction = "TASK: Resolve this attempted action using 5e rules. Describe the outcome based on typical DCs (Easy 10, Med 15, Hard 20).";
+                    else if (mode === 'speak') instruction = "TASK: Roleplay the world's reaction to what the player said.";
+                    else if (mode === 'recall') instruction = "TASK: Check the player's personal notes/backstory and the public log to see if they remember or know this info. Do NOT meta-game.";
+                    else instruction = "TASK: Answer as the Game Master. Only reveal info known to the player.";
+                }
+
+                const sec = role === 'dm' ? `SECRETS: ${data.journal_dm}\nPDF: ${data.campaign.pdfText ? data.campaign.pdfText.slice(0, 30000) : "None"}` : `HIDDEN INFO: The user has secret notes: "${personalContext}".`;
+                const prompt = `Role: DM AI. User: ${iden}. Rules: 5e (${data.config.edition}). Ctx: ${data.campaign.location}. Log: ${data.journal_public}. ${sec}. Party Info: ${partyContext}. \n${instruction}\n\nInput: ${q}`;
+
+                let attempts = 0;
+                const maxRetries = 3;
+                let success = false;
+                let txt = "";
+
+                while(attempts < maxRetries && !success) {
+                    try {
+                        attempts++;
+                        let r, j;
+                        if(aiProvider === 'puter') {
+                            const response = await puter.ai.chat(prompt, { model: puterModel });
+                            txt = response?.message?.content;
+                        } else if(aiProvider === 'gemini') {
+                             if(!apiKey) throw new Error("API Key?");
+                             r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({contents:[{parts:[{text:prompt}]}]}) });
+                             if(!r.ok) throw new Error(`Gemini Error ${r.status}`);
+                             j = await r.json();
+                             txt = j.candidates?.[0]?.content?.parts?.[0]?.text;
+                        } else {
+                            if(!apiKey) throw new Error("API Key?");
+                            r = await fetch('https://api.openai.com/v1/chat/completions', { method:'POST', headers:{'Content-Type':'application/json', 'Authorization':`Bearer ${apiKey}`}, body:JSON.stringify({model: openAiModel, messages:[{role:"system", content:"DM Helper"}, {role:"user", content:prompt}]}) });
+                            if(!r.ok) throw new Error(`OpenAI Error ${r.status}`);
+                            j = await r.json();
+                            txt = j.choices?.[0]?.message?.content;
+                        }
+                        if (!txt || !txt.trim()) throw new Error("Empty response from AI");
+                        success = true;
+                    } catch(e) {
+                        console.error(`Attempt ${attempts} failed:`, e);
+                        if(attempts === maxRetries) setChatHistory(p=>[...p, {role:'system', content:`Failed: ${e.message}`}]);
+                        else await new Promise(res => setTimeout(res, 1500));
+                    }
+                }
+                if(success && txt) setChatHistory(p=>[...p, {role:'ai', content:txt}]);
+                setIsLoading(false);
+            };
+
+            const handlePdf = async (e) => {
+                const f = e.target.files[0]; if(!f) return; setPdfProcessing(true);
+                try {
+                    const ab = await f.arrayBuffer(); const pdf = await pdfjsLib.getDocument({data:ab}).promise;
+                    let t = ""; for(let i=1;i<=Math.min(pdf.numPages,50);i++) t+=(await (await pdf.getPage(i)).getTextContent()).items.map(s=>s.str).join(' ');
+                    const nd = {...data, campaign:{...data.campaign, pdfName:f.name, pdfText:t}}; updateCloud(nd);
+                } catch(e){alert("PDF Err");} finally { setPdfProcessing(false); }
+            };
+            
+            const toggleListening = () => {
+                if (!recognitionRef.current && ('webkitSpeechRecognition' in window)) {
+                    const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
+                    recognitionRef.current = new Speech();
+                    recognitionRef.current.continuous = true;
+                    recognitionRef.current.lang = 'en-US';
+                    recognitionRef.current.onresult = (e) => {
+                        let t = ''; for(let i=e.resultIndex;i<e.results.length;++i) if(e.results[i].isFinal) t+=e.results[i][0].transcript;
+                        if(t) setInputText(p=>p+' '+t);
+                    };
+                    recognitionRef.current.start();
+                    setIsListening(true);
+                } else { if(isListening) { recognitionRef.current.stop(); setIsListening(false); } else { recognitionRef.current.start(); setIsListening(true); } }
+            };
+            
+            const handleDiceRoll = (d) => {
+                const r = Math.floor(Math.random()*d)+1;
+                setDiceLog(p => [{id:Date.now(), die:`d${d}`, result:r}, ...p].slice(0,10));
+                const hasKey = aiProvider === 'puter' || apiKey;
+                if (!hasKey) { setChatHistory(p=>[...p, {role:'user', content:`Roll d${d}: ${r}`}]); } 
+                else { genResponse(`Roll d${d}: ${r}`); }
+            };
+
+            if(!data) return <div className="h-screen flex items-center justify-center text-white">Syncing...</div>;
+
+            return (
+                <div className="flex h-screen w-full bg-slate-900 text-slate-200">
+                    <Sidebar view={view} setView={setView} role={role} code={code} showTools={showTools} setShowTools={setShowTools} onExit={onExit}/>
+                    <main className="flex-1 h-full overflow-hidden relative">
+                        {view === 'session' && <SessionView data={data} chatHistory={chatHistory} setChatHistory={setChatHistory} inputText={inputText} setInputText={setInputText} isListening={isListening} toggleListening={toggleListening} generateResponse={genResponse} isLoading={isLoading} role={role} activeChar={derivedActiveChar} showTools={showTools} setShowTools={setShowTools} diceLog={diceLog} handleDiceRoll={handleDiceRoll} syncState={syncState}/>}
+                        {view === 'journal' && <JournalView data={data} setData={setData} role={role} updateCloud={updateCloud} userId={userId}/>}
+                        {view === 'party' && <PartyView data={data} setData={setData} role={role} activeChar={derivedActiveChar} updateCloud={updateCloud}/>}
+                        {view === 'settings' && <SettingsView data={data} setData={setData} apiKey={apiKey} setApiKey={setKey} role={role} updateCloud={updateCloud} handlePdfUpload={handlePdf} clearPdf={()=>{const nd={...data, campaign:{...data.campaign, pdfName:null, pdfText:null}}; updateCloud(nd);}} pdfProcessing={pdfProcessing} code={code} user={user} transferDM={uid=>{if(confirm("Transfer?")){const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); fb.updateDoc(ref, {hostId:uid});}}} banPlayer={uid=>{if(confirm("Ban?")){const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); const na={...data.activeUsers}; delete na[uid]; fb.updateDoc(ref,{activeUsers:na, bannedUsers:fb.arrayUnion(uid)});}}} kickPlayer={uid=>{const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); const na={...data.activeUsers}; delete na[uid]; fb.updateDoc(ref, {activeUsers:na});}} unbanPlayer={uid=>{const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); fb.updateDoc(ref, {bannedUsers:fb.arrayRemove(uid)});}} aiProvider={aiProvider} setAiProvider={setAiProvider} fb={fb} openAiModel={openAiModel} setOpenAiModel={setOpenAiModel} puterModel={puterModel} setPuterModel={setPuterModel}/>}
+                    </main>
                 </div>
             );
         };
