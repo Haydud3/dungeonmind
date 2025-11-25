@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DungeonMind v15.9 | Fixed Focus & Auth</title>
+    <title>DungeonMind v16.0 | DM Assignments & Auto-Join</title>
     
     <!-- React & ReactDOM -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
@@ -169,7 +169,7 @@
             return <i data-lucide={name} ref={iconRef} className={className}></i>;
         };
 
-        // --- SUB-COMPONENTS EXTRACTED TO FIX FOCUS BUGS ---
+        // --- COMPONENTS ---
 
         const JournalBox = ({ title, value, onChange, colorClass, type, placeholder, maximized, setMaximized }) => {
             const isMax = maximized === type;
@@ -381,12 +381,20 @@
             const activeUsers = data.activeUsers || {};
             const bannedUsers = data.bannedUsers || [];
             const userId = user ? user.uid : 'offline';
+            const assignments = data.assignments || {};
             
             const signIn = async () => { try { await fb.signInWithPopup(fb.auth, new fb.GoogleAuthProvider()); } catch(e){alert(e.message);} };
             const signOut = async () => { if(fb) await fb.signOut(fb.auth); };
 
             const updateConfig = (key, val) => {
                 const newData = { ...data, config: { ...data.config, [key]: val } };
+                setData(newData);
+                updateCloud(newData);
+            };
+
+            const updateAssignment = (uid, charId) => {
+                const newAssignments = { ...assignments, [uid]: charId };
+                const newData = { ...data, assignments: newAssignments };
                 setData(newData);
                 updateCloud(newData);
             };
@@ -428,11 +436,20 @@
                     </div>
                     {role === 'dm' && (
                         <div className="glass-panel p-6 rounded-xl mb-6 border-l-4 border-purple-500">
-                            <h3 className="text-lg font-bold mb-4 text-slate-200 flex items-center gap-2"><Icon name="shield-alert" size={18}/> Moderation</h3>
+                            <h3 className="text-lg font-bold mb-4 text-slate-200 flex items-center gap-2"><Icon name="shield-alert" size={18}/> Moderation & Character Assignment</h3>
                             <div className="space-y-2 mb-6">
                                 {Object.entries(activeUsers).map(([uid, email]) => (
                                     <div key={uid} className="flex justify-between items-center bg-slate-900 p-3 rounded border border-slate-700">
-                                        <div className="text-sm truncate w-1/2"><span className="text-slate-200">{email}</span>{uid === userId && <span className="ml-2 text-xs text-green-500">(You)</span>}</div>
+                                        <div className="text-sm flex-1 flex flex-col">
+                                            <div><span className="text-slate-200">{email}</span>{uid === userId && <span className="ml-2 text-xs text-green-500">(You)</span>}</div>
+                                            <div className="mt-1 flex items-center gap-2">
+                                                <span className="text-[10px] text-slate-500 uppercase">Assign:</span>
+                                                <select className="bg-slate-800 border border-slate-600 text-xs rounded px-2 py-1 text-white outline-none" value={assignments[uid] || ""} onChange={(e) => updateAssignment(uid, e.target.value)}>
+                                                    <option value="">Spectator</option>
+                                                    {data.players.map(p => <option key={p.id} value={p.id}>{p.name} ({p.race})</option>)}
+                                                </select>
+                                            </div>
+                                        </div>
                                         {uid !== userId && <div className="flex gap-2"><button onClick={() => transferDM(uid)} className="bg-purple-900 text-xs px-2 py-1 rounded">DM</button><button onClick={() => kickPlayer(uid)} className="bg-amber-900 text-xs px-2 py-1 rounded">Kick</button><button onClick={() => banPlayer(uid)} className="bg-red-900 text-xs px-2 py-1 rounded">Ban</button></div>}
                                     </div>
                                 ))}
@@ -466,7 +483,7 @@
             );
         };
 
-        const PartyView = ({ data, setData, role, activeChar, setActiveChar, updateCloud }) => {
+        const PartyView = ({ data, setData, role, activeChar, updateCloud }) => {
             const [viewMode, setViewMode] = useState('stats');
 
             const updatePlayer = (idx, field, val) => {
@@ -493,7 +510,6 @@
                                     <div className="flex justify-between mb-2">
                                         <input disabled={!canEdit} className={`bg-transparent font-bold text-lg w-full outline-none ${!canEdit && 'text-slate-400'}`} value={p.name} onChange={e => updatePlayer(idx, 'name', e.target.value)} placeholder="Name"/>
                                         {role === 'dm' && <button onClick={() => { const nd = { ...data, players: data.players.filter(pl => pl.id !== p.id) }; setData(nd); updateCloud(nd); }} className="text-slate-600 hover:text-red-500"><Icon name="trash-2" size={16}/></button>}
-                                        {role === 'player' && activeChar !== p.id && <button onClick={() => setActiveChar(p.id)} className="text-xs bg-slate-700 px-2 rounded hover:bg-green-700">Play</button>}
                                         {activeChar == p.id && <span className="text-xs text-green-400 font-bold">YOU</span>}
                                     </div>
                                     <div className="flex gap-2 mb-2"><input disabled={!canEdit} className="w-1/2 bg-slate-800/50 rounded p-1 text-sm border border-transparent focus:border-amber-500 outline-none" value={p.race} placeholder="Race" onChange={e => updatePlayer(idx, 'race', e.target.value)}/><input disabled={!canEdit} className="w-1/2 bg-slate-800/50 rounded p-1 text-sm border border-transparent focus:border-amber-500 outline-none" value={p.class} placeholder="Class" onChange={e => updatePlayer(idx, 'class', e.target.value)}/></div>
@@ -568,6 +584,8 @@
             const [modeParams, setModeParams] = useState(null);
 
             const handleJoin = (code, role, uid) => {
+                // Save session to local storage for auto-login
+                localStorage.setItem('dm_last_code', code);
                 setModeParams({ fb, code, role, userId: uid, isOffline: false, user });
                 setView('game');
             };
@@ -578,9 +596,22 @@
             };
 
             const handleExit = () => {
+                localStorage.removeItem('dm_last_code'); // Clear auto-login on explicit exit
                 setModeParams(null);
                 setView('lobby');
             };
+
+            // Auto-Login Logic
+            useEffect(() => {
+                if (isAuthReady && !modeParams && !isOffline && fb && user) {
+                    const lastCode = localStorage.getItem('dm_last_code');
+                    if (lastCode) {
+                        console.log("Auto-rejoining session:", lastCode);
+                        // We default to 'player', GameSession logic will upgrade to DM if hostId matches
+                        handleJoin(lastCode, 'player', user.uid);
+                    }
+                }
+            }, [isAuthReady, user]);
 
             if (!isAuthReady) return null; 
             
@@ -597,11 +628,10 @@
 
         const GameSession = (props) => {
             const { fb, code, role: initRole, userId, user, isOffline, onExit } = props;
-            const DEFAULT = { hostId: userId, campaign:{ name:"New", location:"Start", tone:"Heroic", pdfName:null, pdfText:null}, config:{edition:'2014', strictMode:false}, players:[], journal_public:"", journal_dm:"", player_journals:{}, activeUsers:{}, bannedUsers:[] };
+            const DEFAULT = { hostId: userId, campaign:{ name:"New", location:"Start", tone:"Heroic", pdfName:null, pdfText:null}, config:{edition:'2014', strictMode:false}, players:[], journal_public:"", journal_dm:"", player_journals:{}, activeUsers:{}, bannedUsers:[], assignments:{} };
             const [data, setData] = useState(null);
             const [view, setView] = useState('session');
             const [role, setRole] = useState(initRole);
-            const [activeChar, setActiveChar] = useState(null);
             const [chatHistory, setChatHistory] = useState([{role:'system', content:`Connected ${code}`}]);
             const [inputText, setInputText] = useState('');
             const [isLoading, setIsLoading] = useState(false);
@@ -614,6 +644,9 @@
             const [syncState, setSyncState] = useState('init');
             const saveTimer = useRef(null);
             const recognitionRef = useRef(null);
+
+            // Derive active character from assignments
+            const activeChar = data?.assignments?.[userId] || null;
 
             useEffect(() => { const k = localStorage.getItem(`dm_key_${aiProvider}`); setApiKey(k||''); }, [aiProvider]);
             const setKey = (v) => { setApiKey(v); localStorage.setItem(`dm_key_${aiProvider}`, v); };
@@ -649,7 +682,7 @@
                     } catch(e) {}
                 };
                 register();
-            }, [data?.campaign?.name]); // Trigger once loaded
+            }, [data?.campaign?.name]); 
 
             const updateCloud = (nd) => {
                 setData(nd);
@@ -665,7 +698,7 @@
             const genResponse = async (ov) => {
                 const q = ov || inputText; if(!q.trim()) return;
                 setChatHistory(p=>[...p, {role:'user', content:q}]); setInputText(''); setIsLoading(true);
-                const char = data.players.find(p=>p.id===activeChar);
+                const char = data.players.find(p=>p.id==activeChar);
                 const iden = role === 'dm' ? "DM" : (char ? `${char.name} (${char.race})` : "Player");
                 const personalContext = data.player_journals?.[userId] || "";
                 
@@ -680,7 +713,9 @@
                         const j = await r.json(); txt = j.candidates[0].content.parts[0].text;
                     } else {
                         const r = await fetch('https://api.openai.com/v1/chat/completions', {method:'POST', headers:{'Content-Type':'application/json', 'Authorization':`Bearer ${apiKey}`}, body:JSON.stringify({model:"gpt-4o", messages:[{role:"system", content:"DM Helper"}, {role:"user", content:prompt}]})});
-                        const j = await r.json(); txt = j.choices[0].message.content;
+                        const j = await r.json();
+                        if(j.error) throw new Error(j.error.message); // FIX: Check for API error response
+                        txt = j.choices[0].message.content;
                     }
                     setChatHistory(p=>[...p, {role:'ai', content:txt}]);
                 } catch(e){ setChatHistory(p=>[...p, {role:'system', content:e.message}]); }
@@ -725,7 +760,7 @@
                     <main className="flex-1 h-full overflow-hidden relative">
                         {view === 'session' && <SessionView data={data} chatHistory={chatHistory} setChatHistory={setChatHistory} inputText={inputText} setInputText={setInputText} isListening={isListening} toggleListening={toggleListening} generateResponse={genResponse} isLoading={isLoading} role={role} activeChar={activeChar} showTools={showTools} setShowTools={setShowTools} diceLog={diceLog} handleDiceRoll={handleDiceRoll} syncState={syncState}/>}
                         {view === 'journal' && <JournalView data={data} setData={setData} role={role} updateCloud={updateCloud} userId={userId}/>}
-                        {view === 'party' && <PartyView data={data} setData={setData} role={role} activeChar={activeChar} setActiveChar={setActiveChar} updateCloud={updateCloud}/>}
+                        {view === 'party' && <PartyView data={data} setData={setData} role={role} activeChar={activeChar} updateCloud={updateCloud}/>}
                         {view === 'settings' && <SettingsView data={data} setData={setData} apiKey={apiKey} setApiKey={setKey} role={role} updateCloud={updateCloud} handlePdfUpload={handlePdf} clearPdf={()=>{const nd={...data, campaign:{...data.campaign, pdfName:null, pdfText:null}}; updateCloud(nd);}} pdfProcessing={pdfProcessing} code={code} user={user} transferDM={uid=>{if(confirm("Transfer?")){const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); fb.updateDoc(ref, {hostId:uid});}}} banPlayer={uid=>{if(confirm("Ban?")){const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); const na={...data.activeUsers}; delete na[uid]; fb.updateDoc(ref,{activeUsers:na, bannedUsers:fb.arrayUnion(uid)});}}} kickPlayer={uid=>{const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); const na={...data.activeUsers}; delete na[uid]; fb.updateDoc(ref, {activeUsers:na});}} unbanPlayer={uid=>{const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); fb.updateDoc(ref, {bannedUsers:fb.arrayRemove(uid)});}} aiProvider={aiProvider} setAiProvider={setAiProvider} fb={fb}/>}
                     </main>
                 </div>
