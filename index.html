@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DungeonMind v17.3 | DeepSeek V3 Default</title>
+    <title>DungeonMind v17.4 | Hidden Proxy & DeepSeek</title>
     
     <!-- React & ReactDOM -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
@@ -453,7 +453,7 @@
                         <h3 className="text-lg font-bold mb-2 text-slate-200">AI Intelligence</h3>
                         <div className="mb-3">
                             <label className="block text-xs text-slate-400 mb-1">Provider</label>
-                            <select value={aiProvider} onChange={e => setAiProvider(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-slate-200 outline-none mb-2"><option value="gemini">Google Gemini</option><option value="openai">OpenAI</option><option value="openrouter">OpenRouter (Free Proxy)</option></select>
+                            <select value={aiProvider} onChange={e => setAiProvider(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-slate-200 outline-none mb-2"><option value="openrouter">OpenRouter (Free Proxy - Recommended)</option><option value="gemini">Google Gemini</option><option value="openai">OpenAI</option></select>
                             
                             {aiProvider === 'openai' && (
                                 <div>
@@ -479,7 +479,7 @@
                                     </select>
                                     <div className="bg-green-900/30 border border-green-600 rounded p-3 mt-2 flex items-center gap-2 text-xs text-green-300">
                                         <Icon name="shield-check" size={14}/>
-                                        <span>Secure Proxy Active (Hidden)</span>
+                                        <span>Cloudflare Proxy Active</span>
                                     </div>
                                 </div>
                             )}
