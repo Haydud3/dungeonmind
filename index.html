@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DungeonMind v16.6 | Secure Config</title>
+    <title>DungeonMind v16.7 | UI System Key</title>
     
     <!-- React & ReactDOM -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
@@ -41,15 +41,6 @@
             const app = initializeApp(firebaseConfig);
             const auth = getAuth(app);
             const db = getFirestore(app);
-
-            // ADMIN TOOL: Run window.setSystemKey("YOUR_KEY") in console once to save key to DB
-            window.setSystemKey = async (key) => {
-                try {
-                    await setDoc(doc(db, 'artifacts', 'dungeonmind', 'public', 'data', 'config', 'secrets'), { openrouter_key: key });
-                    console.log("✅ System Key Saved to Database! It is now safe to remove from code.");
-                    alert("Key Saved Successfully");
-                } catch(e) { console.error(e); alert("Error saving key: " + e.message); }
-            };
 
             window.fbModules = { 
                 app, auth, db, 
@@ -381,6 +372,8 @@
             const bannedUsers = data.bannedUsers || [];
             const userId = user ? user.uid : 'offline';
             const assignments = data.assignments || {};
+            const [showSysInput, setShowSysInput] = useState(false);
+            const [tempSysKey, setTempSysKey] = useState("");
             
             const signIn = async () => { try { await fb.signInWithPopup(fb.auth, new fb.GoogleAuthProvider()); } catch(e){alert(e.message);} };
             const signOut = async () => { if(fb) await fb.signOut(fb.auth); };
@@ -396,6 +389,15 @@
                 const newData = { ...data, assignments: newAssignments };
                 setData(newData);
                 updateCloud(newData);
+            };
+
+            const saveSystemKey = async () => {
+                if(!tempSysKey.trim()) return;
+                try {
+                    await fb.setDoc(fb.doc(fb.db, 'artifacts', 'dungeonmind', 'public', 'data', 'config', 'secrets'), { openrouter_key: tempSysKey });
+                    alert("System Key Saved!");
+                    setShowSysInput(false);
+                } catch(e) { alert("Error: " + e.message); }
             };
 
             const downloadBackup = () => {
@@ -477,8 +479,26 @@
 
                             {aiProvider === 'openrouter' && (
                                 <div className="bg-slate-800/50 p-3 rounded border border-green-900/30">
-                                    <p className="text-xs text-green-400 font-mono flex items-center gap-2"><Icon name="check-circle" size={14}/> {sysKey ? "System Key Active" : "Loading Key..."}</p>
+                                    <div className="flex justify-between items-center">
+                                        <p className="text-xs text-green-400 font-mono flex items-center gap-2">
+                                            <Icon name={sysKey ? "check-circle" : "alert-circle"} size={14}/> 
+                                            {sysKey ? "System Key Active" : "System Key Missing"}
+                                        </p>
+                                        <button onClick={() => setShowSysInput(!showSysInput)} className="text-[10px] text-slate-500 hover:text-slate-300 underline">Update</button>
+                                    </div>
                                     <p className="text-[10px] text-slate-500 mt-1">Model: Mistral 7B Instruct (Free)</p>
+                                    
+                                    {showSysInput && (
+                                        <div className="mt-2 flex gap-2">
+                                            <input 
+                                                type="password" 
+                                                placeholder="Enter System Key..." 
+                                                className="flex-1 bg-slate-900 border border-slate-700 p-1 text-xs rounded text-slate-200 outline-none"
+                                                onChange={(e) => setTempSysKey(e.target.value)}
+                                            />
+                                            <button onClick={saveSystemKey} className="bg-green-700 text-white text-xs px-2 rounded hover:bg-green-600">Save</button>
+                                        </div>
+                                    )}
                                 </div>
                             )}
 
