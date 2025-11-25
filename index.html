@@ -3,16 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DungeonMind v18.7 | Mobile Fixes</title>
+    <title>DungeonMind v19.6 | Sidebar Restore</title>
     
     <!-- GLOBAL ERROR HANDLER -->
     <script>
         window.onerror = function(msg, url, line, col, error) {
             const loaderText = document.getElementById('loader-text');
+            const loaderSub = document.getElementById('loader-sub');
             if (loaderText) {
-                loaderText.innerText = "Error: " + msg;
+                loaderText.innerText = "Startup Error";
                 loaderText.style.color = "#ef4444";
-                loaderText.style.fontSize = "12px";
+                if(loaderSub) loaderSub.innerText = msg;
             }
             return false;
         };
@@ -195,6 +196,8 @@
             return { fb, user, isOffline, isAuthReady };
         };
 
+        // --- BASE COMPONENTS ---
+
         const Icon = ({ name, size = 20, className = "" }) => {
             const containerRef = useRef(null);
             useEffect(() => {
@@ -212,7 +215,6 @@
         const JournalBox = ({ title, value, onChange, colorClass, type, placeholder, maximized, setMaximized }) => {
             const isMax = maximized === type;
             if (maximized && !isMax) return null;
-
             const downloadTxt = (name, text) => {
                 const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
                 const link = document.createElement("a");
@@ -220,7 +222,6 @@
                 link.download = `${name}_${new Date().toISOString().split('T')[0]}.txt`;
                 link.click();
             };
-
             return (
                 <div className={`flex flex-col glass-panel rounded-xl overflow-hidden journal-expand ${isMax ? 'fixed inset-4 z-50' : 'flex-1 min-h-[300px]'} ${colorClass}`}>
                     <div className={`p-2 text-center text-xs uppercase tracking-wider font-bold border-b flex justify-between items-center ${type === 'dm' ? 'bg-red-900/20 border-red-900/30 text-red-400' : type === 'personal' ? 'bg-indigo-900/20 border-indigo-900/30 text-indigo-300' : 'bg-slate-800/50 border-slate-700 text-green-400'}`}>
@@ -234,15 +235,44 @@
                             <button onClick={() => setMaximized(isMax ? null : type)} title="Toggle Fullscreen" className="hover:text-white"><Icon name={isMax ? "minimize-2" : "maximize-2"} size={14}/></button>
                         </div>
                     </div>
-                    <textarea 
-                        value={value || ""} 
-                        onChange={(e) => onChange(e.target.value)} 
-                        className={`w-full h-full bg-transparent p-4 resize-none focus:outline-none font-sans leading-relaxed custom-scroll ${type === 'dm' ? 'text-red-100/80 placeholder-red-900/50' : type === 'personal' ? 'text-indigo-100/80 placeholder-indigo-900/50' : 'text-slate-200'}`} 
-                        placeholder={placeholder}
-                    />
+                    <textarea value={value || ""} onChange={(e) => onChange(e.target.value)} className={`w-full h-full bg-transparent p-4 resize-none focus:outline-none font-sans leading-relaxed custom-scroll ${type === 'dm' ? 'text-red-100/80 placeholder-red-900/50' : type === 'personal' ? 'text-indigo-100/80 placeholder-indigo-900/50' : 'text-slate-200'}`} placeholder={placeholder}/>
                 </div>
             );
         };
+
+        const DiceTray = ({ diceLog, handleDiceRoll }) => (
+            <div className="glass-panel p-4 rounded-lg mb-4">
+                <h3 className="text-xs font-bold text-slate-500 uppercase mb-2">Dice Roller</h3>
+                <div className="grid grid-cols-4 gap-2 mb-3">
+                    {[4, 6, 8, 10, 12, 20, 100].map(d => (
+                        <button key={d} onClick={() => handleDiceRoll(d)} className="bg-slate-700 hover:bg-amber-700 text-xs font-mono py-1 rounded border border-slate-600 transition-colors">d{d}</button>
+                    ))}
+                </div>
+                <div className="h-24 overflow-y-auto custom-scroll bg-slate-900/50 rounded p-2 font-mono text-xs space-y-1">
+                    {diceLog.map(log => (
+                        <div key={log.id} className="flex justify-between border-b border-slate-800 pb-1"><span className="text-slate-400">{log.die}</span><span className={`font-bold ${log.result == 20 && log.die == 'd20' ? 'text-green-400' : log.result == 1 && log.die == 'd20' ? 'text-red-400' : 'text-amber-400'}`}>{log.result}</span></div>
+                    ))}
+                </div>
+            </div>
+        );
+        
+        const Sidebar = ({ view, setView, role, code, showTools, setShowTools, onExit }) => (
+            <aside className="w-16 md:w-20 min-w-[4rem] flex flex-col items-center bg-slate-900 border-r border-slate-800 py-4 z-20">
+                <div className="mb-2 text-amber-500"><Icon name="dungeon" size={32} /></div>
+                <div className="text-[10px] font-mono text-slate-500 mb-6 bg-slate-800 px-1 rounded">{code || "LOCAL"}</div>
+                <nav className="flex-1 flex flex-col gap-4 w-full">
+                    {['session', 'journal', 'party', 'settings'].map(v => (
+                        <button key={v} onClick={() => setView(v)} className={`w-full py-3 flex justify-center transition-all border-l-4 ${view === v ? 'border-amber-500 bg-slate-800 text-amber-400' : 'border-transparent text-slate-500 hover:text-slate-200'}`}>
+                            <Icon name={v === 'session' ? 'scroll-text' : v === 'journal' ? 'book-open-text' : v === 'party' ? 'users' : 'settings-2'} size={24} />
+                        </button>
+                    ))}
+                </nav>
+                <button onClick={() => setShowTools(!showTools)} className={`mb-4 p-3 rounded-lg transition-colors ${showTools ? 'bg-amber-900/50 text-amber-400' : 'text-slate-500 hover:bg-slate-800'}`}><Icon name="hammer" size={20} /></button>
+                <button onClick={onExit} className="mb-4 text-red-500 hover:bg-red-900/30 p-2 rounded"><Icon name="log-out" size={20}/></button>
+            </aside>
+        );
+
+        // --- VIEW COMPONENTS ---
 
         const JournalView = ({ data, setData, role, updateCloud, userId }) => {
             const [maximized, setMaximized] = useState(null); 
@@ -251,7 +281,6 @@
                 setData(newData);
                 updateCloud(newData);
             };
-
             return (
                 <div className="max-w-7xl mx-auto p-4 md:p-6 h-full flex flex-col gap-4 relative">
                     {maximized && <div className="fixed inset-0 bg-slate-900/90 backdrop-blur z-40" onClick={() => setMaximized(null)}></div>}
@@ -260,6 +289,209 @@
                         <JournalBox type="personal" title="My Notes (Private + AI)" value={data.player_journals?.[userId]} onChange={updatePersonal} colorClass="border-indigo-900/30 bg-indigo-900/5" placeholder="Your private thoughts (AI can see this)..." maximized={maximized} setMaximized={setMaximized}/>
                         {role === 'dm' && <JournalBox type="dm" title="DM Secrets" value={data.journal_dm} onChange={(val) => { setData(p => ({...p, journal_dm: val})); updateCloud({...data, journal_dm: val}); }} colorClass="border-red-900/30 bg-red-900/5" placeholder="Hidden truths..." maximized={maximized} setMaximized={setMaximized}/>}
                     </div>
+                </div>
+            );
+        };
+
+        const SettingsView = ({ data, setData, apiKey, setApiKey, role, updateCloud, handlePdfUpload, clearPdf, pdfProcessing, code, user, transferDM, banPlayer, kickPlayer, unbanPlayer, aiProvider, setAiProvider, fb, openAiModel, setOpenAiModel, puterModel, setPuterModel }) => {
+            const copyCode = () => { navigator.clipboard.writeText(code); alert("Copied: " + code); };
+            const activeUsers = data.activeUsers || {};
+            const bannedUsers = data.bannedUsers || [];
+            const userId = user ? user.uid : 'offline';
+            const assignments = data.assignments || {};
+            const signIn = async () => { try { await fb.signInWithPopup(fb.auth, new fb.GoogleAuthProvider()); } catch(e){alert(e.message);} };
+            const signOut = async () => { if(fb) await fb.signOut(fb.auth); };
+            const updateConfig = (key, val) => { const newData = { ...data, config: { ...data.config, [key]: val } }; setData(newData); updateCloud(newData); };
+            const updateAssignment = (uid, charId) => { const newAssignments = { ...assignments, [uid]: charId }; const newData = { ...data, assignments: newAssignments }; setData(newData); updateCloud(newData); };
+            const downloadBackup = () => { const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }); const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = `Campaign_${code}_Backup_${new Date().toISOString().split('T')[0]}.json`; link.click(); };
+            const handleRestore = (e) => { const file = e.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onload = (event) => { try { const json = JSON.parse(event.target.result); if (!json.campaign || !json.players) { alert("Invalid backup file."); return; } if (confirm("Overwrite ALL data with backup?")) { setData(json); updateCloud(json); alert("Restored."); } } catch (err) { alert("Error: " + err.message); } }; reader.readAsText(file); e.target.value = null; };
+
+            return (
+                <div className="max-w-3xl mx-auto p-4 md:p-8 overflow-y-auto h-full custom-scroll w-full">
+                    <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-2"><h2 className="text-3xl fantasy-font text-amber-500">Settings</h2></div>
+                    <div className="glass-panel p-8 rounded-xl mb-8 flex flex-col items-center text-center border-2 border-indigo-500/30 bg-indigo-900/10 relative overflow-hidden w-full">
+                        <h3 className="text-xs font-bold text-indigo-300 uppercase tracking-widest mb-2">Invite Code</h3>
+                        <div className="text-4xl md:text-5xl font-mono font-bold text-white tracking-widest mb-4 drop-shadow-lg break-all">{code}</div>
+                        <div className="flex flex-wrap justify-center gap-2"><button onClick={copyCode} className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-1 rounded text-sm flex items-center gap-2 shadow-lg"><Icon name="copy" size={16}/> Copy</button>{fb && (user ? <button onClick={signOut} className="bg-slate-700 px-4 py-1 rounded text-sm">Sign Out</button> : <button onClick={signIn} className="bg-blue-600 px-4 py-1 rounded text-sm">Login</button>)}</div>
+                    </div>
+                    <div className="glass-panel p-6 rounded-xl mb-6">
+                        <h3 className="text-lg font-bold mb-4 text-slate-200 flex items-center gap-2"><Icon name="save" size={18}/> Backup & Restore</h3>
+                        <div className="flex flex-col md:flex-row gap-4"><button onClick={downloadBackup} className="flex-1 bg-slate-700 hover:bg-slate-600 p-3 rounded text-slate-200 flex items-center justify-center gap-2"><Icon name="download" size={16}/> Download</button><label className="flex-1 bg-slate-700 hover:bg-slate-600 p-3 rounded text-slate-200 flex items-center justify-center gap-2 cursor-pointer"><Icon name="upload" size={16}/> Restore<input type="file" accept=".json" onChange={handleRestore} className="hidden" /></label></div>
+                    </div>
+                    {role === 'dm' && (
+                        <div className="glass-panel p-6 rounded-xl mb-6 border-l-4 border-purple-500">
+                            <h3 className="text-lg font-bold mb-4 text-slate-200 flex items-center gap-2"><Icon name="shield-alert" size={18}/> Moderation</h3>
+                            <div className="space-y-3 mb-6">{Object.entries(activeUsers).map(([uid, email]) => (<div key={uid} className="flex flex-col md:flex-row justify-between items-start md:items-center bg-slate-900 p-3 rounded border border-slate-700 gap-3"><div className="text-sm w-full md:flex-1 flex flex-col"><div className="truncate font-bold text-slate-200">{email}{uid === userId && <span className="ml-2 text-xs text-green-500">(You)</span>}</div><div className="mt-2 flex items-center gap-2 w-full"><span className="text-[10px] text-slate-500 uppercase whitespace-nowrap">Assign:</span><select className="bg-slate-800 border border-slate-600 text-xs rounded px-2 py-1 text-white outline-none w-full md:w-auto flex-1" value={assignments[uid] || ""} onChange={(e) => updateAssignment(uid, e.target.value)}><option value="">Spectator</option>{data.players.map(p => <option key={p.id} value={p.id}>{p.name} ({p.race})</option>)}</select></div></div>{uid !== userId && (<div className="flex gap-2 w-full md:w-auto justify-end"><button onClick={() => transferDM(uid)} className="bg-purple-900 text-xs px-3 py-2 rounded flex-1 md:flex-none">DM</button><button onClick={() => kickPlayer(uid)} className="bg-amber-900 text-xs px-3 py-2 rounded flex-1 md:flex-none">Kick</button><button onClick={() => banPlayer(uid)} className="bg-red-900 text-xs px-3 py-2 rounded flex-1 md:flex-none">Ban</button></div>)}</div>))}</div>
+                            {bannedUsers.length > 0 && <div className="space-y-2"><div className="text-xs text-red-400 uppercase font-bold">Banned</div>{bannedUsers.map(uid => <div key={uid} className="flex justify-between items-center bg-red-950/30 p-2 rounded border border-red-900/50"><span className="text-xs font-mono text-red-300 truncate flex-1">{uid.slice(0,8)}...</span><button onClick={() => unbanPlayer(uid)} className="text-xs text-slate-400 hover:text-white ml-2">Unban</button></div>)}</div>}
+                        </div>
+                    )}
+                    <div className="glass-panel p-6 rounded-xl mb-6 border-l-4 border-amber-500">
+                        <h3 className="text-lg font-bold mb-2 text-slate-200">AI Intelligence</h3>
+                        <div className="mb-3">
+                            <label className="block text-xs text-slate-400 mb-1">Provider</label>
+                            <select value={aiProvider} onChange={e => setAiProvider(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none mb-3"><option value="puter">Puter.js (Free)</option><option value="gemini">Google Gemini</option><option value="openai">OpenAI</option></select>
+                            {aiProvider === 'openai' && (<div><label className="block text-xs text-slate-400 mb-1">OpenAI Model</label><select value={openAiModel} onChange={e => setOpenAiModel(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none mb-2"><option value="gpt-4o">GPT-4o</option><option value="gpt-4o-mini">GPT-4o Mini</option><option value="gpt-4-turbo">GPT-4 Turbo</option></select><input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none" placeholder="sk-..."/></div>)}
+                            {aiProvider === 'puter' && (<div><label className="block text-xs text-slate-400 mb-1">Puter Model</label><select value={puterModel} onChange={e => setPuterModel(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none mb-3"><option value="mistral-large-latest">Mistral Large (Recommended)</option><option value="deepseek-chat">DeepSeek V3</option><option value="claude-3-5-sonnet">Claude 3.5 Sonnet</option><option value="gpt-4o">GPT-4o</option></select><div className="bg-blue-900/30 border border-blue-600 rounded p-3"><div className="flex items-center gap-2 text-xs text-blue-300 mb-2"><Icon name="cloud" size={14}/><span>Powered by Puter.js (Serverless & Free)</span></div><button onClick={async () => { await puter.auth.signIn(); window.location.reload(); }} className="w-full bg-blue-700 hover:bg-blue-600 text-white text-xs py-3 rounded font-bold transition-colors">Connect & Reload</button></div></div>)}
+                            {aiProvider === 'gemini' && (<input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none" placeholder="AIza..."/>)}
+                        </div>
+                    </div>
+                    {role === 'dm' && (
+                        <div className="glass-panel p-6 rounded-xl border-l-4 border-blue-500">
+                            <h3 className="text-lg font-bold mb-4 text-slate-200">DM Tools</h3>
+                            <div className="grid md:grid-cols-2 gap-6 mb-4">
+                                <div><label className="block text-xs font-bold text-slate-400 uppercase mb-2">Edition</label><select value={data.config?.edition || '2014'} onChange={e => updateConfig('edition', e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none"><option value="2014">5e (2014)</option><option value="2024">5e (2024 Revised)</option></select></div>
+                                <div><label className="block text-xs font-bold text-slate-400 uppercase mb-2">AI Context</label><button onClick={() => updateConfig('strictMode', !data.config?.strictMode)} className={`w-full p-3 rounded text-sm font-bold border ${data.config?.strictMode ? 'bg-green-900/50 border-green-600 text-green-400' : 'bg-slate-900 border-slate-700 text-slate-400'}`}>{data.config?.strictMode ? "Strict" : "General"}</button></div>
+                            </div>
+                            <input value={data.campaign?.location || ""} onChange={e => { const newData = {...data, campaign: {...data.campaign, location: e.target.value}}; setData(newData); updateCloud(newData); }} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none" placeholder="Current Location"/>
+                            <div className="border-2 border-dashed border-slate-700 rounded p-4 text-center mt-4">
+                                {pdfProcessing ? <div className="text-amber-500 animate-pulse">Processing...</div> : !data.campaign?.pdfName ? (<label className="cursor-pointer block w-full"><span className="text-slate-300 font-bold">Upload PDF</span><input type="file" className="hidden" accept=".pdf" onChange={handlePdfUpload}/></label>) : (<div className="flex justify-between items-center"><span className="text-green-400 truncate flex-1 mr-2">{data.campaign.pdfName}</span><button onClick={clearPdf}><Icon name="trash-2" size={16}/></button></div>)}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const PartyView = ({ data, setData, role, activeChar, updateCloud }) => {
+            const [viewMode, setViewMode] = useState('stats');
+            const updatePlayer = (idx, field, val) => { const newPlayers = data.players.map((p, i) => i === idx ? { ...p, [field]: val } : p); setData(prev => ({...prev, players: newPlayers})); updateCloud({...data, players: newPlayers}); };
+            const addPlayer = () => { const newData = { ...data, players: [...data.players, { id: Date.now(), name: "New Hero", race: "Human", class: "Fighter", hp: 10, notes: "", backstory: "" }] }; setData(newData); updateCloud(newData); };
+            return (
+                <div className="max-w-4xl mx-auto p-4 md:p-8 overflow-y-auto h-full custom-scroll">
+                    <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-2"><h2 className="text-3xl fantasy-font text-amber-500">Party</h2>{role === 'dm' && <button onClick={addPlayer} className="bg-amber-600 px-3 py-1 rounded text-sm font-bold">+ Add</button>}</div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {data.players?.map((p, idx) => {
+                            const canEdit = role === 'dm' || activeChar === p.id;
+                            return (
+                                <div key={p.id} className={`glass-panel p-4 rounded-xl border-l-4 relative group ${activeChar == p.id ? 'border-green-500 bg-green-900/10' : 'border-amber-600'}`}>
+                                    <div className="flex justify-between mb-2">
+                                        <input disabled={!canEdit} className={`bg-transparent font-bold text-lg w-full outline-none ${!canEdit && 'text-slate-400'}`} value={p.name} onChange={e => updatePlayer(idx, 'name', e.target.value)} placeholder="Name"/>
+                                        {role === 'dm' && <button onClick={() => { const nd = { ...data, players: data.players.filter(pl => pl.id !== p.id) }; setData(nd); updateCloud(nd); }} className="text-slate-600 hover:text-red-500"><Icon name="trash-2" size={16}/></button>}
+                                        {activeChar == p.id && <span className="text-xs text-green-400 font-bold">YOU</span>}
+                                    </div>
+                                    <div className="flex gap-2 mb-2"><input disabled={!canEdit} className="w-1/2 bg-slate-800/50 rounded p-1 text-sm border border-transparent focus:border-amber-500 outline-none" value={p.race} placeholder="Race" onChange={e => updatePlayer(idx, 'race', e.target.value)}/><input disabled={!canEdit} className="w-1/2 bg-slate-800/50 rounded p-1 text-sm border border-transparent focus:border-amber-500 outline-none" value={p.class} placeholder="Class" onChange={e => updatePlayer(idx, 'class', e.target.value)}/></div>
+                                    <div className="flex border-b border-slate-700 mb-2"><button onClick={() => setViewMode('stats')} className={`flex-1 text-xs py-1 ${viewMode === 'stats' ? 'text-amber-400 border-b-2 border-amber-400' : 'text-slate-500'}`}>Stats & Notes</button><button onClick={() => setViewMode('bio')} className={`flex-1 text-xs py-1 ${viewMode === 'bio' ? 'text-amber-400 border-b-2 border-amber-400' : 'text-slate-500'}`}>Backstory</button></div>
+                                    {viewMode === 'stats' ? (
+                                        <textarea disabled={!canEdit} className="w-full bg-slate-800/30 rounded p-2 text-sm h-32 resize-none custom-scroll border border-transparent focus:border-amber-500 outline-none" value={p.notes} placeholder="Inventory, Stats, Loot..." onChange={e => updatePlayer(idx, 'notes', e.target.value)}/>
+                                    ) : (
+                                        <textarea disabled={!canEdit} className="w-full bg-slate-800/30 rounded p-2 text-sm h-32 resize-none custom-scroll border border-transparent focus:border-amber-500 outline-none" value={p.backstory} placeholder="Character description, history, and personality..." onChange={e => updatePlayer(idx, 'backstory', e.target.value)}/>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            );
+        };
+
+        const SessionView = (props) => {
+            const { 
+                data, chatHistory, setChatHistory, inputText, setInputText, 
+                isListening = false, toggleListening = () => {}, 
+                generateResponse, isLoading, role, activeChar, 
+                showTools, setShowTools, diceLog = [], handleDiceRoll = () => {}, syncState,
+                isPlayerFacing, setIsPlayerFacing, updateCloud 
+            } = props;
+            const chatEndRef = useRef(null);
+            useEffect(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), [chatHistory, isLoading]);
+            const charName = data.players?.find(p => p.id == activeChar)?.name || "Adventurer";
+
+            const handleAction = (mode) => {
+                if (!inputText.trim()) return; 
+                generateResponse(null, mode);
+            };
+
+            const [showSavedSessions, setShowSavedSessions] = useState(false);
+            const [sessionName, setSessionName] = useState("");
+
+            return (
+                <div className="flex h-full relative">
+                    <div className="flex-1 flex flex-col h-full relative">
+                        <div className="h-12 border-b border-slate-800 flex items-center justify-between px-4 bg-slate-900/90 backdrop-blur">
+                            <div className="flex gap-2 items-center">
+                                <div className={`live-status ${syncState === 'saved' ? 'status-online' : 'status-offline'}`}></div>
+                                <span className="text-sm font-bold text-amber-500 truncate max-w-[120px]">{data.campaign?.location || "Unknown Location"}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <button onClick={() => setShowSavedSessions(true)} className="p-1 hover:text-white text-slate-400"><Icon name="folder-open" size={18}/></button>
+                                <button onClick={() => {
+                                    const name = prompt("Name this session save:");
+                                    if(name) {
+                                        const newSession = { id: Date.now(), name: name, messages: chatHistory, date: Date.now() };
+                                        const saved = [...(data.savedSessions || []), newSession];
+                                        updateCloud({...data, savedSessions: saved});
+                                    }
+                                }} className="p-1 hover:text-white text-slate-400"><Icon name="save" size={18}/></button>
+                                
+                                {data.config?.strictMode && <span className="text-[10px] bg-blue-900/30 text-blue-400 px-1 rounded border border-blue-800 hidden sm:inline">STRICT</span>}
+                                <div className={`text-xs px-2 py-1 rounded ${role === 'dm' ? 'bg-red-900/30 text-red-400' : 'bg-green-900/30 text-green-400'}`}>{role === 'dm' ? 'DM' : `PLAYER: ${charName}`}</div>
+                            </div>
+                        </div>
+
+                        {showSavedSessions && (
+                            <div className="absolute inset-0 z-50 bg-slate-900/95 backdrop-blur flex flex-col p-6">
+                                <div className="flex justify-between items-center mb-4 border-b border-slate-700 pb-2">
+                                    <h3 className="text-xl fantasy-font text-amber-500">Saved Sessions</h3>
+                                    <button onClick={() => setShowSavedSessions(false)}><Icon name="x" size={24}/></button>
+                                </div>
+                                <div className="flex-1 overflow-y-auto custom-scroll space-y-2">
+                                    {(data.savedSessions || []).map(s => (
+                                        <div key={s.id} className="flex justify-between items-center bg-slate-800 p-3 rounded border border-slate-700 hover:border-amber-500/50 cursor-pointer" onClick={() => {
+                                            if(confirm(`Load session "${s.name}"? Current chat will be replaced.`)) {
+                                                setChatHistory(s.messages);
+                                                setShowSavedSessions(false);
+                                            }
+                                        }}>
+                                            <div><div className="font-bold text-slate-200">{s.name}</div><div className="text-[10px] text-slate-500">{new Date(s.date).toLocaleDateString()} • {s.messages.length} messages</div></div>
+                                            <button onClick={(e) => { e.stopPropagation(); if(confirm("Delete save?")) { const saved = data.savedSessions.filter(x => x.id !== s.id); updateCloud({...data, savedSessions: saved}); } }} className="text-slate-500 hover:text-red-500 p-2"><Icon name="trash-2" size={16}/></button>
+                                        </div>
+                                    ))}
+                                    {(!data.savedSessions || data.savedSessions.length === 0) && <div className="text-slate-500 text-center mt-10">No saved sessions yet.</div>}
+                                </div>
+                            </div>
+                        )}
+
+                        <div ref={chatEndRef} className="flex-1 overflow-y-auto custom-scroll p-4 pb-40 space-y-6 chat-content">
+                            {chatHistory.map((msg, i) => (
+                                <div key={i} style={{textDecoration: 'none'}} className={`p-4 rounded-lg max-w-[95%] md:max-w-[85%] no-underline ${msg.role === 'user' ? 'bg-slate-800 ml-auto text-right' : msg.role === 'system' ? 'bg-slate-800/50 mx-auto text-center text-xs text-slate-500' : 'bg-indigo-900/20 border border-indigo-500/30 mr-auto'}`}>
+                                    <div className="break-words" dangerouslySetInnerHTML={{__html: msg.content.replace(/~~([\s\S]*?)~~/g, '$1').replace(/<(s|strike|del)>([\s\S]*?)<\/\1>/gi, '$2').replace(/\*\*(.*?)\*\*/g, '<b>$1</b>').replace(/\n/g, '<br/>')}} />
+                                </div>
+                            ))}
+                            {isLoading && <div className="text-center text-xs text-slate-500 animate-pulse">Thinking...</div>}
+                        </div>
+                        
+                        <div className="absolute bottom-0 w-full p-2 md:p-4 bg-slate-900 border-t border-slate-800 flex flex-col gap-2">
+                            <div className="flex gap-2 overflow-x-auto custom-scroll pb-1 w-full">
+                                {role === 'dm' ? (
+                                    <>
+                                        <button onClick={() => handleAction('narrate')} className="bg-blue-900/50 hover:bg-blue-800 text-blue-200 border border-blue-700/50 rounded-full px-3 py-1 text-xs flex items-center gap-1 transition-colors whitespace-nowrap flex-shrink-0"><Icon name="eye" size={12}/> Narrate</button>
+                                        <button onClick={() => handleAction('mechanics')} className="bg-purple-900/50 hover:bg-purple-800 text-purple-200 border border-purple-700/50 rounded-full px-3 py-1 text-xs flex items-center gap-1 transition-colors whitespace-nowrap flex-shrink-0"><Icon name="settings" size={12}/> Mechanics</button>
+                                        <button onClick={() => handleAction('npc')} className="bg-amber-900/50 hover:bg-amber-800 text-amber-200 border border-amber-700/50 rounded-full px-3 py-1 text-xs flex items-center gap-1 transition-colors whitespace-nowrap flex-shrink-0"><Icon name="users" size={12}/> NPC</button>
+                                    </>
+                                ) : (
+                                    <>
+                                        <button onClick={() => handleAction('action')} className="bg-red-900/50 hover:bg-red-800 text-red-200 border border-red-700/50 rounded-full px-3 py-1 text-xs flex items-center gap-1 transition-colors whitespace-nowrap flex-shrink-0"><Icon name="sword" size={12}/> Action</button>
+                                        <button onClick={() => handleAction('speak')} className="bg-green-900/50 hover:bg-green-800 text-green-200 border border-green-700/50 rounded-full px-3 py-1 text-xs flex items-center gap-1 transition-colors whitespace-nowrap flex-shrink-0"><Icon name="message-circle" size={12}/> Speak</button>
+                                        <button onClick={() => handleAction('recall')} className="bg-indigo-900/50 hover:bg-indigo-800 text-indigo-200 border border-indigo-700/50 rounded-full px-3 py-1 text-xs flex items-center gap-1 transition-colors whitespace-nowrap flex-shrink-0"><Icon name="brain" size={12}/> Recall</button>
+                                    </>
+                                )}
+                            </div>
+
+                            <div className="relative flex gap-2">
+                                <div className="relative flex-1">
+                                    <textarea value={inputText} onChange={e => setInputText(e.target.value)} onKeyDown={e => { if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); generateResponse(); }}} placeholder={role==='dm' ? "DM Instruction..." : `What does ${charName} do?`} className="w-full bg-slate-800 text-white rounded-lg p-3 pr-10 resize-none h-14 focus:ring-1 focus:ring-amber-500 outline-none custom-scroll"/>
+                                    <button onClick={toggleListening} className={`absolute right-2 top-2 p-2 rounded-full ${isListening ? 'text-red-500' : 'text-slate-400'}`}><Icon name="mic" size={18}/></button>
+                                </div>
+                                <button onClick={() => generateResponse()} className="bg-amber-600 hover:bg-amber-500 px-4 rounded text-white h-14 flex items-center justify-center flex-shrink-0 w-14"><Icon name="send" size={20}/></button>
+                            </div>
+                        </div>
+                    </div>
+                    {showTools && (
+                        <div className="absolute md:relative z-30 right-0 top-0 h-full w-64 md:w-72 bg-slate-900 border-l border-slate-800 flex flex-col p-4 gap-4 shadow-xl">
+                            <div className="flex justify-between items-center mb-2"><span className="fantasy-font text-amber-500">Tools</span><button onClick={() => setShowTools(false)}><Icon name="x" size={16}/></button></div>
+                            <DiceTray diceLog={diceLog} handleDiceRoll={handleDiceRoll} />
+                        </div>
+                    )}
                 </div>
             );
         };
@@ -368,367 +600,6 @@
             );
         };
 
-        const Sidebar = ({ view, setView, role, code, showTools, setShowTools, onExit }) => (
-            <aside className="w-16 md:w-20 min-w-[4rem] flex flex-col items-center bg-slate-900 border-r border-slate-800 py-4 z-20">
-                <div className="mb-2 text-amber-500"><Icon name="dungeon" size={32} /></div>
-                <div className="text-[10px] font-mono text-slate-500 mb-6 bg-slate-800 px-1 rounded">{code || "LOCAL"}</div>
-                <nav className="flex-1 flex flex-col gap-4 w-full">
-                    {['session', 'journal', 'party', 'settings'].map(v => (
-                        <button key={v} onClick={() => setView(v)} className={`w-full py-3 flex justify-center transition-all border-l-4 ${view === v ? 'border-amber-500 bg-slate-800 text-amber-400' : 'border-transparent text-slate-500 hover:text-slate-200'}`}>
-                            <Icon name={v === 'session' ? 'scroll-text' : v === 'journal' ? 'book-open-text' : v === 'party' ? 'users' : 'settings-2'} size={24} />
-                        </button>
-                    ))}
-                </nav>
-                <button onClick={() => setShowTools(!showTools)} className={`mb-4 p-3 rounded-lg transition-colors ${showTools ? 'bg-amber-900/50 text-amber-400' : 'text-slate-500 hover:bg-slate-800'}`}><Icon name="hammer" size={20} /></button>
-                <button onClick={onExit} className="mb-4 text-red-500 hover:bg-red-900/30 p-2 rounded"><Icon name="log-out" size={20}/></button>
-            </aside>
-        );
-
-        const DiceTray = ({ diceLog, handleDiceRoll }) => (
-            <div className="glass-panel p-4 rounded-lg mb-4">
-                <h3 className="text-xs font-bold text-slate-500 uppercase mb-2">Dice Roller</h3>
-                <div className="grid grid-cols-4 gap-2 mb-3">
-                    {[4, 6, 8, 10, 12, 20, 100].map(d => (
-                        <button key={d} onClick={() => handleDiceRoll(d)} className="bg-slate-700 hover:bg-amber-700 text-xs font-mono py-1 rounded border border-slate-600 transition-colors">d{d}</button>
-                    ))}
-                </div>
-                <div className="h-24 overflow-y-auto custom-scroll bg-slate-900/50 rounded p-2 font-mono text-xs space-y-1">
-                    {diceLog.map(log => (
-                        <div key={log.id} className="flex justify-between border-b border-slate-800 pb-1"><span className="text-slate-400">{log.die}</span><span className={`font-bold ${log.result == 20 && log.die == 'd20' ? 'text-green-400' : log.result == 1 && log.die == 'd20' ? 'text-red-400' : 'text-amber-400'}`}>{log.result}</span></div>
-                    ))}
-                </div>
-            </div>
-        );
-
-        const SettingsView = ({ data, setData, apiKey, setApiKey, role, updateCloud, handlePdfUpload, clearPdf, pdfProcessing, code, user, transferDM, banPlayer, kickPlayer, unbanPlayer, aiProvider, setAiProvider, fb, openAiModel, setOpenAiModel, puterModel, setPuterModel }) => {
-            const copyCode = () => { navigator.clipboard.writeText(code); alert("Copied: " + code); };
-            const activeUsers = data.activeUsers || {};
-            const bannedUsers = data.bannedUsers || [];
-            const userId = user ? user.uid : 'offline';
-            const assignments = data.assignments || {};
-            
-            const signIn = async () => { try { await fb.signInWithPopup(fb.auth, new fb.GoogleAuthProvider()); } catch(e){alert(e.message);} };
-            const signOut = async () => { if(fb) await fb.signOut(fb.auth); };
-
-            const updateConfig = (key, val) => {
-                const newData = { ...data, config: { ...data.config, [key]: val } };
-                setData(newData);
-                updateCloud(newData);
-            };
-
-            const updateAssignment = (uid, charId) => {
-                const newAssignments = { ...assignments, [uid]: charId };
-                const newData = { ...data, assignments: newAssignments };
-                setData(newData);
-                updateCloud(newData);
-            };
-
-            const downloadBackup = () => {
-                const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-                const link = document.createElement("a");
-                link.href = URL.createObjectURL(blob);
-                link.download = `Campaign_${code}_Backup_${new Date().toISOString().split('T')[0]}.json`;
-                link.click();
-            };
-
-            const handleRestore = (e) => {
-                const file = e.target.files[0];
-                if (!file) return;
-                const reader = new FileReader();
-                reader.onload = (event) => {
-                    try {
-                        const json = JSON.parse(event.target.result);
-                        if (!json.campaign || !json.players) { alert("Invalid backup file."); return; }
-                        if (confirm("Overwrite ALL data with backup?")) { setData(json); updateCloud(json); alert("Restored."); }
-                    } catch (err) { alert("Error: " + err.message); }
-                };
-                reader.readAsText(file);
-                e.target.value = null; 
-            };
-
-            return (
-                <div className="max-w-3xl mx-auto p-4 md:p-8 overflow-y-auto h-full custom-scroll w-full">
-                    <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-2"><h2 className="text-3xl fantasy-font text-amber-500">Settings</h2></div>
-                    
-                    {/* Invite Code Section - Responsive */}
-                    <div className="glass-panel p-8 rounded-xl mb-8 flex flex-col items-center text-center border-2 border-indigo-500/30 bg-indigo-900/10 relative overflow-hidden w-full">
-                        <h3 className="text-xs font-bold text-indigo-300 uppercase tracking-widest mb-2">Invite Code</h3>
-                        <div className="text-4xl md:text-5xl font-mono font-bold text-white tracking-widest mb-4 drop-shadow-lg break-all">{code}</div>
-                        <div className="flex flex-wrap justify-center gap-2">
-                            <button onClick={copyCode} className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-1 rounded text-sm flex items-center gap-2 shadow-lg"><Icon name="copy" size={16}/> Copy</button>
-                            {fb && (user ? <button onClick={signOut} className="bg-slate-700 px-4 py-1 rounded text-sm">Sign Out</button> : <button onClick={signIn} className="bg-blue-600 px-4 py-1 rounded text-sm">Login</button>)}
-                        </div>
-                    </div>
-
-                    <div className="glass-panel p-6 rounded-xl mb-6">
-                        <h3 className="text-lg font-bold mb-4 text-slate-200 flex items-center gap-2"><Icon name="save" size={18}/> Backup & Restore</h3>
-                        <div className="flex flex-col md:flex-row gap-4">
-                            <button onClick={downloadBackup} className="flex-1 bg-slate-700 hover:bg-slate-600 p-3 rounded text-slate-200 flex items-center justify-center gap-2"><Icon name="download" size={16}/> Download</button>
-                            <label className="flex-1 bg-slate-700 hover:bg-slate-600 p-3 rounded text-slate-200 flex items-center justify-center gap-2 cursor-pointer">
-                                <Icon name="upload" size={16}/> Restore
-                                <input type="file" accept=".json" onChange={handleRestore} className="hidden" />
-                            </label>
-                        </div>
-                    </div>
-
-                    {role === 'dm' && (
-                        <div className="glass-panel p-6 rounded-xl mb-6 border-l-4 border-purple-500">
-                            <h3 className="text-lg font-bold mb-4 text-slate-200 flex items-center gap-2"><Icon name="shield-alert" size={18}/> Moderation</h3>
-                            <div className="space-y-3 mb-6">
-                                {Object.entries(activeUsers).map(([uid, email]) => (
-                                    <div key={uid} className="flex flex-col md:flex-row justify-between items-start md:items-center bg-slate-900 p-3 rounded border border-slate-700 gap-3">
-                                        <div className="text-sm w-full md:flex-1 flex flex-col">
-                                            <div className="truncate font-bold text-slate-200">{email}{uid === userId && <span className="ml-2 text-xs text-green-500">(You)</span>}</div>
-                                            <div className="mt-2 flex items-center gap-2 w-full">
-                                                <span className="text-[10px] text-slate-500 uppercase whitespace-nowrap">Assign:</span>
-                                                <select className="bg-slate-800 border border-slate-600 text-xs rounded px-2 py-1 text-white outline-none w-full md:w-auto flex-1" value={assignments[uid] || ""} onChange={(e) => updateAssignment(uid, e.target.value)}>
-                                                    <option value="">Spectator</option>
-                                                    {data.players.map(p => <option key={p.id} value={p.id}>{p.name} ({p.race})</option>)}
-                                                </select>
-                                            </div>
-                                        </div>
-                                        {uid !== userId && (
-                                            <div className="flex gap-2 w-full md:w-auto justify-end">
-                                                <button onClick={() => transferDM(uid)} className="bg-purple-900 text-xs px-3 py-2 rounded flex-1 md:flex-none">DM</button>
-                                                <button onClick={() => kickPlayer(uid)} className="bg-amber-900 text-xs px-3 py-2 rounded flex-1 md:flex-none">Kick</button>
-                                                <button onClick={() => banPlayer(uid)} className="bg-red-900 text-xs px-3 py-2 rounded flex-1 md:flex-none">Ban</button>
-                                            </div>
-                                        )}
-                                    </div>
-                                ))}
-                            </div>
-                            {bannedUsers.length > 0 && <div className="space-y-2"><div className="text-xs text-red-400 uppercase font-bold">Banned</div>{bannedUsers.map(uid => <div key={uid} className="flex justify-between items-center bg-red-950/30 p-2 rounded border border-red-900/50"><span className="text-xs font-mono text-red-300 truncate flex-1">{uid.slice(0,8)}...</span><button onClick={() => unbanPlayer(uid)} className="text-xs text-slate-400 hover:text-white ml-2">Unban</button></div>)}</div>}
-                        </div>
-                    )}
-                    
-                    <div className="glass-panel p-6 rounded-xl mb-6 border-l-4 border-amber-500">
-                        <h3 className="text-lg font-bold mb-2 text-slate-200">AI Intelligence</h3>
-                        <div className="mb-3">
-                            <label className="block text-xs text-slate-400 mb-1">Provider</label>
-                            <select value={aiProvider} onChange={e => setAiProvider(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none mb-3"><option value="puter">Puter.js (Free)</option><option value="gemini">Google Gemini</option><option value="openai">OpenAI</option></select>
-                            
-                            {aiProvider === 'openai' && (
-                                <div>
-                                    <label className="block text-xs text-slate-400 mb-1">OpenAI Model</label>
-                                    <select value={openAiModel} onChange={e => setOpenAiModel(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none mb-2">
-                                        <option value="gpt-4o">GPT-4o</option>
-                                        <option value="gpt-4o-mini">GPT-4o Mini</option>
-                                        <option value="gpt-4-turbo">GPT-4 Turbo</option>
-                                    </select>
-                                    <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none" placeholder="sk-..."/>
-                                </div>
-                            )}
-
-                            {aiProvider === 'puter' && (
-                                <div>
-                                    <label className="block text-xs text-slate-400 mb-1">Puter Model</label>
-                                    <select value={puterModel} onChange={e => setPuterModel(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none mb-3">
-                                        <option value="mistral-large-latest">Mistral Large (Recommended)</option>
-                                        <option value="deepseek-chat">DeepSeek V3</option>
-                                        <option value="claude-3-5-sonnet">Claude 3.5 Sonnet</option>
-                                        <option value="gpt-4o">GPT-4o</option>
-                                    </select>
-                                    <div className="bg-blue-900/30 border border-blue-600 rounded p-3">
-                                        <div className="flex items-center gap-2 text-xs text-blue-300 mb-2">
-                                            <Icon name="cloud" size={14}/>
-                                            <span>Powered by Puter.js (Serverless & Free)</span>
-                                        </div>
-                                        <button onClick={async () => { await puter.auth.signIn(); window.location.reload(); }} className="w-full bg-blue-700 hover:bg-blue-600 text-white text-xs py-3 rounded font-bold transition-colors">Connect & Reload</button>
-                                    </div>
-                                </div>
-                            )}
-
-                            {aiProvider === 'gemini' && (
-                                <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none" placeholder="AIza..."/>
-                            )}
-                        </div>
-                    </div>
-                    
-                    {role === 'dm' && (
-                        <div className="glass-panel p-6 rounded-xl border-l-4 border-blue-500">
-                            <h3 className="text-lg font-bold mb-4 text-slate-200">DM Tools</h3>
-                            <div className="grid md:grid-cols-2 gap-6 mb-4">
-                                <div><label className="block text-xs font-bold text-slate-400 uppercase mb-2">Edition</label><select value={data.config?.edition || '2014'} onChange={e => updateConfig('edition', e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none"><option value="2014">5e (2014)</option><option value="2024">5e (2024 Revised)</option></select></div>
-                                <div><label className="block text-xs font-bold text-slate-400 uppercase mb-2">AI Context</label><button onClick={() => updateConfig('strictMode', !data.config?.strictMode)} className={`w-full p-3 rounded text-sm font-bold border ${data.config?.strictMode ? 'bg-green-900/50 border-green-600 text-green-400' : 'bg-slate-900 border-slate-700 text-slate-400'}`}>{data.config?.strictMode ? "Strict" : "General"}</button></div>
-                            </div>
-                            <input value={data.campaign?.location || ""} onChange={e => { const newData = {...data, campaign: {...data.campaign, location: e.target.value}}; setData(newData); updateCloud(newData); }} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none" placeholder="Current Location"/>
-                            <div className="border-2 border-dashed border-slate-700 rounded p-4 text-center mt-4">
-                                {pdfProcessing ? <div className="text-amber-500 animate-pulse">Processing...</div> : !data.campaign?.pdfName ? (
-                                    <label className="cursor-pointer block w-full"><span className="text-slate-300 font-bold">Upload PDF</span><input type="file" className="hidden" accept=".pdf" onChange={handlePdfUpload}/></label>
-                                ) : (
-                                    <div className="flex justify-between items-center"><span className="text-green-400 truncate flex-1 mr-2">{data.campaign.pdfName}</span><button onClick={clearPdf}><Icon name="trash-2" size={16}/></button></div>
-                                )}
-                            </div>
-                        </div>
-                    )}
-                </div>
-            );
-        };
-
-        const PartyView = ({ data, setData, role, activeChar, updateCloud }) => {
-            const [viewMode, setViewMode] = useState('stats');
-
-            const updatePlayer = (idx, field, val) => {
-                setData(prev => {
-                    const newPlayers = prev.players.map((p, i) => i === idx ? { ...p, [field]: val } : p);
-                    updateCloud({ ...prev, players: newPlayers });
-                    return { ...prev, players: newPlayers };
-                });
-            };
-            const addPlayer = () => {
-                const newData = { ...data, players: [...data.players, { id: Date.now(), name: "New Hero", race: "Human", class: "Fighter", hp: 10, notes: "", backstory: "" }] };
-                setData(newData);
-                updateCloud(newData);
-            };
-
-            return (
-                <div className="max-w-4xl mx-auto p-4 md:p-8 overflow-y-auto h-full custom-scroll">
-                    <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-2"><h2 className="text-3xl fantasy-font text-amber-500">Party</h2>{role === 'dm' && <button onClick={addPlayer} className="bg-amber-600 px-3 py-1 rounded text-sm font-bold">+ Add</button>}</div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {data.players?.map((p, idx) => {
-                            const canEdit = role === 'dm' || activeChar === p.id;
-                            return (
-                                <div key={p.id} className={`glass-panel p-4 rounded-xl border-l-4 relative group ${activeChar == p.id ? 'border-green-500 bg-green-900/10' : 'border-amber-600'}`}>
-                                    <div className="flex justify-between mb-2">
-                                        <input disabled={!canEdit} className={`bg-transparent font-bold text-lg w-full outline-none ${!canEdit && 'text-slate-400'}`} value={p.name} onChange={e => updatePlayer(idx, 'name', e.target.value)} placeholder="Name"/>
-                                        {role === 'dm' && <button onClick={() => { const nd = { ...data, players: data.players.filter(pl => pl.id !== p.id) }; setData(nd); updateCloud(nd); }} className="text-slate-600 hover:text-red-500"><Icon name="trash-2" size={16}/></button>}
-                                        {activeChar == p.id && <span className="text-xs text-green-400 font-bold">YOU</span>}
-                                    </div>
-                                    <div className="flex gap-2 mb-2"><input disabled={!canEdit} className="w-1/2 bg-slate-800/50 rounded p-1 text-sm border border-transparent focus:border-amber-500 outline-none" value={p.race} placeholder="Race" onChange={e => updatePlayer(idx, 'race', e.target.value)}/><input disabled={!canEdit} className="w-1/2 bg-slate-800/50 rounded p-1 text-sm border border-transparent focus:border-amber-500 outline-none" value={p.class} placeholder="Class" onChange={e => updatePlayer(idx, 'class', e.target.value)}/></div>
-                                    <div className="flex border-b border-slate-700 mb-2"><button onClick={() => setViewMode('stats')} className={`flex-1 text-xs py-1 ${viewMode === 'stats' ? 'text-amber-400 border-b-2 border-amber-400' : 'text-slate-500'}`}>Stats & Notes</button><button onClick={() => setViewMode('bio')} className={`flex-1 text-xs py-1 ${viewMode === 'bio' ? 'text-amber-400 border-b-2 border-amber-400' : 'text-slate-500'}`}>Backstory</button></div>
-                                    {viewMode === 'stats' ? (
-                                        <textarea disabled={!canEdit} className="w-full bg-slate-800/30 rounded p-2 text-sm h-32 resize-none custom-scroll border border-transparent focus:border-amber-500 outline-none" value={p.notes} placeholder="Inventory, Stats, Loot..." onChange={e => updatePlayer(idx, 'notes', e.target.value)}/>
-                                    ) : (
-                                        <textarea disabled={!canEdit} className="w-full bg-slate-800/30 rounded p-2 text-sm h-32 resize-none custom-scroll border border-transparent focus:border-amber-500 outline-none" value={p.backstory} placeholder="Character description, history, and personality..." onChange={e => updatePlayer(idx, 'backstory', e.target.value)}/>
-                                    )}
-                                </div>
-                            );
-                        })}
-                    </div>
-                </div>
-            );
-        };
-
-        const SessionView = (props) => {
-            const { 
-                data, chatHistory, setChatHistory, inputText, setInputText, 
-                isListening = false, toggleListening = () => {}, 
-                generateResponse, isLoading, role, activeChar, 
-                showTools, setShowTools, diceLog = [], handleDiceRoll = () => {}, syncState 
-            } = props;
-            const chatEndRef = useRef(null);
-            useEffect(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), [chatHistory, isLoading]);
-            const charName = data.players?.find(p => p.id == activeChar)?.name || "Adventurer";
-
-            // Action Buttons Handler
-            const handleAction = (mode) => {
-                if (!inputText.trim()) return; 
-                generateResponse(null, mode);
-            };
-
-            return (
-                <div className="flex h-full relative">
-                    <div className="flex-1 flex flex-col h-full relative">
-                        <div className="h-12 border-b border-slate-800 flex items-center justify-between px-4 bg-slate-900/90 backdrop-blur">
-                            <div className="flex gap-2 items-center">
-                                <div className={`live-status ${syncState === 'saved' ? 'status-online' : 'status-offline'}`}></div>
-                                <span className="text-sm font-bold text-amber-500 truncate max-w-[120px]">{data.campaign?.location || "Unknown Location"}</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                {data.config?.strictMode && <span className="text-[10px] bg-blue-900/30 text-blue-400 px-1 rounded border border-blue-800 hidden sm:inline">STRICT</span>}
-                                <span className="text-[10px] text-slate-500 hidden sm:inline">{data.config?.edition || '2014'}</span>
-                                <div className={`text-xs px-2 py-1 rounded ${role === 'dm' ? 'bg-red-900/30 text-red-400' : 'bg-green-900/30 text-green-400'}`}>{role === 'dm' ? 'DM' : `PLAYER: ${charName}`}</div>
-                            </div>
-                        </div>
-                        <div ref={chatEndRef} className="flex-1 overflow-y-auto custom-scroll p-4 pb-40 space-y-6 chat-content">
-                            {chatHistory.map((msg, i) => (
-                                <div key={i} style={{textDecoration: 'none'}} className={`p-4 rounded-lg max-w-[95%] md:max-w-[85%] no-underline ${msg.role === 'user' ? 'bg-slate-800 ml-auto text-right' : msg.role === 'system' ? 'bg-slate-800/50 mx-auto text-center text-xs text-slate-500' : 'bg-indigo-900/20 border border-indigo-500/30 mr-auto'}`}>
-                                    <div className="break-words" dangerouslySetInnerHTML={{__html: msg.content.replace(/~~([\s\S]*?)~~/g, '$1').replace(/<(s|strike|del)>([\s\S]*?)<\/\1>/gi, '$2').replace(/\*\*(.*?)\*\*/g, '<b>$1</b>').replace(/\n/g, '<br/>')}} />
-                                </div>
-                            ))}
-                            {isLoading && <div className="text-center text-xs text-slate-500 animate-pulse">Thinking...</div>}
-                        </div>
-                        
-                        {/* ACTION BAR */}
-                        <div className="absolute bottom-0 w-full p-2 md:p-4 bg-slate-900 border-t border-slate-800 flex flex-col gap-2">
-                            {/* Role-Based Buttons */}
-                            <div className="flex gap-2 overflow-x-auto custom-scroll pb-1 w-full">
-                                {role === 'dm' ? (
-                                    <>
-                                        <button onClick={() => handleAction('narrate')} className="bg-blue-900/50 hover:bg-blue-800 text-blue-200 border border-blue-700/50 rounded-full px-3 py-1 text-xs flex items-center gap-1 transition-colors whitespace-nowrap flex-shrink-0"><Icon name="eye" size={12}/> Narrate</button>
-                                        <button onClick={() => handleAction('mechanics')} className="bg-purple-900/50 hover:bg-purple-800 text-purple-200 border border-purple-700/50 rounded-full px-3 py-1 text-xs flex items-center gap-1 transition-colors whitespace-nowrap flex-shrink-0"><Icon name="settings" size={12}/> Mechanics</button>
-                                        <button onClick={() => handleAction('npc')} className="bg-amber-900/50 hover:bg-amber-800 text-amber-200 border border-amber-700/50 rounded-full px-3 py-1 text-xs flex items-center gap-1 transition-colors whitespace-nowrap flex-shrink-0"><Icon name="users" size={12}/> NPC</button>
-                                    </>
-                                ) : (
-                                    <>
-                                        <button onClick={() => handleAction('action')} className="bg-red-900/50 hover:bg-red-800 text-red-200 border border-red-700/50 rounded-full px-3 py-1 text-xs flex items-center gap-1 transition-colors whitespace-nowrap flex-shrink-0"><Icon name="sword" size={12}/> Action</button>
-                                        <button onClick={() => handleAction('speak')} className="bg-green-900/50 hover:bg-green-800 text-green-200 border border-green-700/50 rounded-full px-3 py-1 text-xs flex items-center gap-1 transition-colors whitespace-nowrap flex-shrink-0"><Icon name="message-circle" size={12}/> Speak</button>
-                                        <button onClick={() => handleAction('recall')} className="bg-indigo-900/50 hover:bg-indigo-800 text-indigo-200 border border-indigo-700/50 rounded-full px-3 py-1 text-xs flex items-center gap-1 transition-colors whitespace-nowrap flex-shrink-0"><Icon name="brain" size={12}/> Recall</button>
-                                    </>
-                                )}
-                            </div>
-
-                            <div className="relative flex gap-2">
-                                <div className="relative flex-1">
-                                    <textarea value={inputText} onChange={e => setInputText(e.target.value)} onKeyDown={e => { if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); generateResponse(); }}} placeholder={role==='dm' ? "DM Instruction..." : `What does ${charName} do?`} className="w-full bg-slate-800 text-white rounded-lg p-3 pr-10 resize-none h-14 focus:ring-1 focus:ring-amber-500 outline-none custom-scroll"/>
-                                    <button onClick={toggleListening} className={`absolute right-2 top-2 p-2 rounded-full ${isListening ? 'text-red-500' : 'text-slate-400'}`}><Icon name="mic" size={18}/></button>
-                                </div>
-                                <button onClick={() => generateResponse()} className="bg-amber-600 hover:bg-amber-500 px-4 rounded text-white h-14 flex items-center justify-center flex-shrink-0 w-14"><Icon name="send" size={20}/></button>
-                            </div>
-                        </div>
-                    </div>
-                    {showTools && (
-                        <div className="absolute md:relative z-30 right-0 top-0 h-full w-64 md:w-72 bg-slate-900 border-l border-slate-800 flex flex-col p-4 gap-4 shadow-xl">
-                            <div className="flex justify-between items-center mb-2"><span className="fantasy-font text-amber-500">Tools</span><button onClick={() => setShowTools(false)}><Icon name="x" size={16}/></button></div>
-                            <DiceTray diceLog={diceLog} handleDiceRoll={handleDiceRoll} />
-                        </div>
-                    )}
-                </div>
-            );
-        };
-
-        function App() {
-            const { fb, user, isAuthReady, isOffline } = useFirebase();
-            const [view, setView] = useState('lobby');
-            const [modeParams, setModeParams] = useState(null);
-
-            const handleJoin = (code, role, uid) => {
-                localStorage.setItem('dm_last_code', code);
-                setModeParams({ fb, code, role, userId: uid, isOffline: false, user });
-                setView('game');
-            };
-
-            const handleOffline = () => {
-                setModeParams({ fb: null, code: 'LOCAL', role: 'dm', userId: 'local', user: {uid:'local',email:'Offline'}, isOffline: true });
-                setView('game');
-            };
-
-            const handleExit = () => {
-                localStorage.removeItem('dm_last_code'); 
-                setModeParams(null);
-                setView('lobby');
-            };
-
-            useEffect(() => {
-                if (isAuthReady && !modeParams && !isOffline && fb && user) {
-                    const lastCode = localStorage.getItem('dm_last_code');
-                    if (lastCode) handleJoin(lastCode, 'player', user.uid);
-                }
-            }, [isAuthReady, user]);
-
-            if (!isAuthReady) return null; 
-            
-            setTimeout(hideLoader, 100);
-
-            if (view === 'lobby') return <Lobby fb={fb} user={user} onJoin={handleJoin} onOffline={handleOffline} />;
-
-            return (
-                <ErrorBoundary>
-                    <GameSession {...modeParams} onExit={handleExit} />
-                </ErrorBoundary>
-            );
-        }
-
         const GameSession = (props) => {
             const { fb, code, role: initRole, userId, user, isOffline, onExit } = props;
             const DEFAULT = { hostId: userId, campaign:{ name:"New", location:"Start", tone:"Heroic", pdfName:null, pdfText:null}, config:{edition:'2014', strictMode:false}, players:[], journal_public:"", journal_dm:"", player_journals:{}, activeUsers:{}, bannedUsers:[], assignments:{} };
@@ -748,6 +619,7 @@
             const [isListening, setIsListening] = useState(false);
             const [diceLog, setDiceLog] = useState([]);
             const [syncState, setSyncState] = useState('init');
+            const [isPlayerFacing, setIsPlayerFacing] = useState(false);
             const saveTimer = useRef(null);
             const recognitionRef = useRef(null);
 
@@ -799,7 +671,7 @@
                 saveTimer.current = setTimeout(() => {
                     const ref = fb.doc(fb.db, 'artifacts', fb.appId, 'public', 'data', 'campaigns', code);
                     if(role === 'player') fb.updateDoc(ref, { players: nd.players, journal_public: nd.journal_public, [`player_journals.${userId}`]: nd.player_journals[userId] || "" });
-                    else fb.setDoc(ref, nd, { merge: true });
+                    else fb.setDoc(ref, nd, { merge: true, savedSessions: nd.savedSessions || [] }); 
                 }, 1000);
             };
 
@@ -838,7 +710,21 @@
                 }
 
                 const sec = role === 'dm' ? `SECRETS: ${data.journal_dm}\nPDF: ${data.campaign.pdfText ? data.campaign.pdfText.slice(0, 30000) : "None"}` : `HIDDEN INFO: The user has secret notes: "${personalContext}".`;
-                const prompt = `Role: DM AI. User: ${iden}. Rules: 5e (${data.config.edition}). Ctx: ${data.campaign.location}. Log: ${data.journal_public}. ${sec}. Party Info: ${partyContext}. \n${instruction}\n\nInput: ${q}`;
+                const systemPrompt = `Role: DM AI. User: ${iden}. Rules: 5e (${data.config.edition}). Ctx: ${data.campaign.location}. Log: ${data.journal_public}. ${sec}. Party Info: ${partyContext}. \n${instruction}`;
+
+                const historyLimit = 10;
+                const recentHistory = chatHistory.slice(-historyLimit).map(msg => {
+                    let r = 'user';
+                    if (msg.role === 'ai') r = 'assistant';
+                    if (msg.role === 'system') r = 'system';
+                    return { role: r, content: msg.content };
+                });
+                
+                const messages = [
+                    { role: "system", content: systemPrompt },
+                    ...recentHistory,
+                    { role: "user", content: q }
+                ];
 
                 let attempts = 0;
                 const maxRetries = 3;
@@ -850,17 +736,18 @@
                         attempts++;
                         let r, j;
                         if(aiProvider === 'puter') {
-                            const response = await puter.ai.chat(prompt, { model: puterModel });
+                            const response = await puter.ai.chat(messages, { model: puterModel });
                             txt = response?.message?.content;
                         } else if(aiProvider === 'gemini') {
+                             const combinedPrompt = messages.map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n');
                              if(!apiKey) throw new Error("API Key?");
-                             r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({contents:[{parts:[{text:prompt}]}]}) });
+                             r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({contents:[{parts:[{text:combinedPrompt}]}]}) });
                              if(!r.ok) throw new Error(`Gemini Error ${r.status}`);
                              j = await r.json();
                              txt = j.candidates?.[0]?.content?.parts?.[0]?.text;
                         } else {
                             if(!apiKey) throw new Error("API Key?");
-                            r = await fetch('https://api.openai.com/v1/chat/completions', { method:'POST', headers:{'Content-Type':'application/json', 'Authorization':`Bearer ${apiKey}`}, body:JSON.stringify({model: openAiModel, messages:[{role:"system", content:"DM Helper"}, {role:"user", content:prompt}]}) });
+                            r = await fetch('https://api.openai.com/v1/chat/completions', { method:'POST', headers:{'Content-Type':'application/json', 'Authorization':`Bearer ${apiKey}`}, body:JSON.stringify({model: openAiModel, messages: messages}) });
                             if(!r.ok) throw new Error(`OpenAI Error ${r.status}`);
                             j = await r.json();
                             txt = j.choices?.[0]?.message?.content;
@@ -915,17 +802,64 @@
                 <div className="flex h-screen w-full bg-slate-900 text-slate-200">
                     <Sidebar view={view} setView={setView} role={role} code={code} showTools={showTools} setShowTools={setShowTools} onExit={onExit}/>
                     <main className="flex-1 h-full overflow-hidden relative">
-                        {view === 'session' && <SessionView data={data} chatHistory={chatHistory} setChatHistory={setChatHistory} inputText={inputText} setInputText={setInputText} isListening={isListening} toggleListening={toggleListening} generateResponse={genResponse} isLoading={isLoading} role={role} activeChar={derivedActiveChar} showTools={showTools} setShowTools={setShowTools} diceLog={diceLog} handleDiceRoll={handleDiceRoll} syncState={syncState}/>}
+                        {view === 'session' && <SessionView data={data} chatHistory={chatHistory} setChatHistory={setChatHistory} inputText={inputText} setInputText={setInputText} isListening={isListening} toggleListening={toggleListening} generateResponse={genResponse} isLoading={isLoading} role={role} activeChar={derivedActiveChar} showTools={showTools} setShowTools={setShowTools} diceLog={diceLog} handleDiceRoll={handleDiceRoll} syncState={syncState} isPlayerFacing={isPlayerFacing} setIsPlayerFacing={setIsPlayerFacing} updateCloud={updateCloud}/>}
                         {view === 'journal' && <JournalView data={data} setData={setData} role={role} updateCloud={updateCloud} userId={userId}/>}
                         {view === 'party' && <PartyView data={data} setData={setData} role={role} activeChar={derivedActiveChar} updateCloud={updateCloud}/>}
-                        {view === 'settings' && <SettingsView data={data} setData={setData} apiKey={apiKey} setApiKey={setKey} role={role} updateCloud={updateCloud} handlePdfUpload={handlePdf} clearPdf={()=>{const nd={...data, campaign:{...data.campaign, pdfName:null, pdfText:null}}; updateCloud(nd);}} pdfProcessing={pdfProcessing} code={code} user={user} transferDM={uid=>{if(confirm("Transfer?")){const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); fb.updateDoc(ref, {hostId:uid});}}} banPlayer={uid=>{if(confirm("Ban?")){const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); const na={...data.activeUsers}; delete na[uid]; fb.updateDoc(ref,{activeUsers:na, bannedUsers:fb.arrayUnion(uid)});}}} kickPlayer={uid=>{const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); const na={...data.activeUsers}; delete na[uid]; fb.updateDoc(ref, {activeUsers:na});}} unbanPlayer={uid=>{const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); fb.updateDoc(ref, {bannedUsers:fb.arrayRemove(uid)});}} aiProvider={aiProvider} setAiProvider={setAiProvider} fb={fb} openAiModel={openAiModel} setOpenAiModel={setOpenAiModel} puterModel={puterModel} setPuterModel={setPuterModel}/>}
+                        {view === 'settings' && <SettingsView data={data} setData={setData} apiKey={apiKey} setApiKey={setKey} role={role} updateCloud={updateCloud} handlePdfUpload={handlePdf} clearPdf={()=>{const nd={...data, campaign:{...data.campaign, pdfName:null, pdfText:null}}; updateCloud(nd);}} pdfProcessing={pdfProcessing} code={code} user={user} transferDM={uid=>{if(confirm("Transfer?")){const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); fb.updateDoc(ref, {hostId:uid});}}} banPlayer={uid=>{if(confirm("Ban?")){const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); const na={...data.activeUsers}; delete na[uid]; fb.updateDoc(ref,{activeUsers:na, bannedUsers:fb.arrayUnion(uid)});}}} kickPlayer={uid=>{const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); const na={...data.activeUsers}; delete na[uid]; fb.updateDoc(ref, {activeUsers:na});}} unbanPlayer={uid=>{const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); fb.updateDoc(ref, {bannedUsers:fb.arrayRemove(uid)});}} aiProvider={aiProvider} setAiProvider={setAiProvider} fb={fb} openAiModel={openAiModel} setOpenAiModel={setOpenAiModel} puterModel={puterModel} setPuterModel={setPuterModel} isOffline={isOffline}/>}
                     </main>
                 </div>
             );
         };
 
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
+        const App = () => {
+            const { fb, user, isAuthReady, isOffline } = useFirebase();
+            const [view, setView] = useState('lobby');
+            const [modeParams, setModeParams] = useState(null);
+
+            const handleJoin = (code, role, uid) => {
+                localStorage.setItem('dm_last_code', code);
+                setModeParams({ fb, code, role, userId: uid, isOffline: false, user });
+                setView('game');
+            };
+
+            const handleOffline = () => {
+                setModeParams({ fb: null, code: 'LOCAL', role: 'dm', userId: 'local', user: {uid:'local',email:'Offline'}, isOffline: true });
+                setView('game');
+            };
+
+            const handleExit = () => {
+                localStorage.removeItem('dm_last_code'); 
+                setModeParams(null);
+                setView('lobby');
+            };
+
+            useEffect(() => {
+                if (isAuthReady && !modeParams && !isOffline && fb && user) {
+                    const lastCode = localStorage.getItem('dm_last_code');
+                    if (lastCode) handleJoin(lastCode, 'player', user.uid);
+                }
+            }, [isAuthReady, user]);
+
+            if (!isAuthReady) return null; 
+            
+            setTimeout(hideLoader, 100);
+
+            if (view === 'lobby') return <Lobby fb={fb} user={user} onJoin={handleJoin} onOffline={handleOffline} />;
+
+            return (
+                <ErrorBoundary>
+                    <GameSession {...modeParams} onExit={handleExit} />
+                </ErrorBoundary>
+            );
+        };
+
+        // Safe Render
+        try {
+            const root = ReactDOM.createRoot(document.getElementById('root'));
+            root.render(<App />);
+        } catch (e) {
+            console.error("React Mount Error:", e);
+        }
     </script>
 </body>
 </html>
