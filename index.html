@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DungeonMind v20.4 | Smart Visuals</title>
+    <title>DungeonMind v20.5 | Stable</title>
     
     <!-- GLOBAL ERROR HANDLER -->
     <script>
@@ -880,18 +880,27 @@
                     try {
                         attempts++;
                         if(aiProvider === 'puter') {
-                            // FIXED: Strictly following PDF standard for puter.ai.chat
-                            // It accepts (messagesArray, optionsObject)
-                            // Ensuring model is a valid string, defaulting to a safe option if undefined
-                            const safeModel = puterModel || 'mistral-large-latest';
+                            if (!window.puter) throw new Error("Puter.js not loaded");
                             
                             // Check if puter is logged in
                             if (!window.puter.auth.isSignedIn()) {
                                 await window.puter.auth.signIn();
                             }
 
+                            // FIXED: Strictly following PDF standard for puter.ai.chat
+                            // It accepts (messagesArray, optionsObject)
+                            // Ensuring model is a valid string, defaulting to a safe option if undefined
+                            const safeModel = puterModel || 'mistral-large-latest';
+
                             const response = await window.puter.ai.chat(messages, { model: safeModel });
-                            return response?.message?.content;
+                            
+                            // Robust check for valid response structure
+                            if (!response || !response.message || !response.message.content) {
+                                console.warn("Unexpected Puter response:", response);
+                                throw new Error("Invalid response structure from Puter AI");
+                            }
+                            
+                            return response.message.content;
                         } else if(aiProvider === 'gemini') {
                              const combinedPrompt = messages.map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n');
                              const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({contents:[{parts:[{text:combinedPrompt}]}]}) });
@@ -906,7 +915,9 @@
                         }
                     } catch(e) {
                         console.error(e);
-                        if(attempts === maxRetries) throw e;
+                        // Normalize error message so it's never 'undefined'
+                        const errMsg = e instanceof Error ? e.message : (typeof e === 'string' ? e : JSON.stringify(e));
+                        if(attempts === maxRetries) throw new Error(errMsg || "Unknown Error");
                         await new Promise(res => setTimeout(res, 1000));
                     }
                 }
@@ -950,8 +961,9 @@
                     
                     setChatHistory(p => [...p, {role: 'ai', content: `Visualized: ${imagePrompt.slice(0, 50)}...`, image: url}]);
                 } catch(e) {
-                    alert("Image Gen Failed: " + e.message);
-                    setChatHistory(p => [...p, {role: 'system', content: `Image gen failed: ${e.message}`}]);
+                    const errMsg = e instanceof Error ? e.message : String(e);
+                    alert("Image Gen Failed: " + errMsg);
+                    setChatHistory(p => [...p, {role: 'system', content: `Image gen failed: ${errMsg}`}]);
                 } finally {
                     setIsLoading(false);
                 }
@@ -1012,7 +1024,8 @@
                     const txt = await queryAiService(messages);
                     if(txt) setChatHistory(p=>[...p, {role:'ai', content:txt}]);
                 } catch(e) {
-                    setChatHistory(p=>[...p, {role:'system', content:`Failed: ${e.message}`}]);
+                    const errMsg = e instanceof Error ? e.message : String(e);
+                    setChatHistory(p=>[...p, {role:'system', content:`Failed: ${errMsg}`}]);
                 }
                 setIsLoading(false);
             };
