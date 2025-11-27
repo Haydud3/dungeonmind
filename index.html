@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DungeonMind v20.6 | Character Looks</title>
+    <title>DungeonMind v20.8 | Onboarding</title>
     
     <!-- GLOBAL ERROR HANDLER -->
     <script>
@@ -212,6 +212,62 @@
                 }
             }, [name, size, className]);
             return <span ref={containerRef} className="inline-flex items-center justify-center"><i data-lucide={name}></i></span>;
+        };
+
+        // --- TOUR GUIDE COMPONENT (UPDATED FOR NON-INTRUSIVE UI) ---
+        const TourGuide = ({ onClose, setView }) => {
+            const steps = [
+                { title: "Welcome to DungeonMind", content: "Your AI-enhanced TTRPG assistant. This tool combines chat, journaling, and world-building. Feel free to explore the UI while reading this.", view: 'session' },
+                { title: "The Session Hub", content: "This is your main command center. Chat with the AI, roll dice, and see the story unfold. The input box is at the bottom.", view: 'session' },
+                { title: "Visuals & Voice", content: "See that Camera icon near the input box? Click it to generate scene images. The Mic icon enables voice-to-text input.", view: 'session' },
+                { title: "Journals & Secrets", content: "Navigate to the Journal tab (Book icon on left). Keep public logs and private notes. The AI reads your private notes for context.", view: 'journal' },
+                { title: "The Party", content: "The 'Party' tab lets you manage stats. Keeping the 'Looks' section updated ensures consistent image generation for your character.", view: 'party' },
+                { title: "NPC Registry", content: "Need a shopkeeper? The Skull icon takes you to the NPC generator. Create fully fleshed-out characters instantly.", view: 'npcs' },
+                { title: "Settings & Cloud", content: "Configure your AI model (Puter, OpenAI, Gemini) and save your campaign data in the Settings tab.", view: 'settings' }
+            ];
+
+            const [currentStep, setCurrentStep] = useState(0);
+
+            useEffect(() => {
+                if(steps[currentStep].view) setView(steps[currentStep].view);
+            }, [currentStep]);
+
+            const handleNext = () => {
+                if (currentStep < steps.length - 1) setCurrentStep(c => c + 1);
+                else onClose();
+            };
+
+            return (
+                <div className="fixed inset-0 z-[100] pointer-events-none flex flex-col justify-end pb-6 px-4 md:pb-8">
+                    {/* Inner container is clickable, background is transparent to click through */}
+                    <div className="pointer-events-auto bg-slate-900/95 backdrop-blur border-t-4 border-amber-500 rounded-xl p-6 max-w-2xl w-full shadow-2xl mx-auto relative animate-in slide-in-from-bottom-10 fade-in duration-500">
+                        <button onClick={onClose} className="absolute top-4 right-4 text-slate-500 hover:text-white bg-slate-800 rounded-full p-1 transition-colors"><Icon name="x" size={16}/></button>
+                        
+                        <div className="flex gap-4 items-start">
+                            <div className="bg-amber-900/20 p-3 rounded-full hidden sm:block">
+                                <Icon name="compass" size={32} className="text-amber-500"/>
+                            </div>
+                            <div className="flex-1">
+                                <div className="flex justify-between items-center mb-1">
+                                    <h3 className="text-lg md:text-xl fantasy-font text-amber-500 font-bold">{steps[currentStep].title}</h3>
+                                    <span className="text-[10px] uppercase font-bold text-slate-500 bg-slate-800 px-2 py-1 rounded-full">{currentStep + 1} / {steps.length}</span>
+                                </div>
+                                <p className="text-slate-300 text-sm leading-relaxed mb-4">{steps[currentStep].content}</p>
+                                
+                                <div className="flex justify-between items-center">
+                                    <button onClick={onClose} className="text-xs text-slate-500 hover:text-slate-300 underline">Dismiss</button>
+                                    <div className="flex gap-2">
+                                        {currentStep > 0 && <button onClick={() => setCurrentStep(c => c - 1)} className="px-4 py-2 rounded bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold transition-colors">Back</button>}
+                                        <button onClick={handleNext} className="px-6 py-2 rounded bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs shadow-lg shadow-amber-900/20 transition-colors">
+                                            {currentStep === steps.length - 1 ? "Finish Tour" : "Next Tip"}
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
         };
 
         const JournalBox = ({ title, value, onChange, colorClass, type, placeholder, maximized, setMaximized, children }) => {
@@ -822,6 +878,7 @@
             const [diceLog, setDiceLog] = useState([]);
             const [syncState, setSyncState] = useState('init');
             const [isPlayerFacing, setIsPlayerFacing] = useState(false);
+            const [showTour, setShowTour] = useState(false);
             const saveTimer = useRef(null);
             const recognitionRef = useRef(null);
 
@@ -833,6 +890,14 @@
 
             useEffect(() => { const k = localStorage.getItem(`dm_key_${aiProvider}`); setApiKey(k||''); }, [aiProvider]);
             const setKey = (v) => { setApiKey(v); localStorage.setItem(`dm_key_${aiProvider}`, v); };
+
+            // Tour Check
+            useEffect(() => {
+                const tourSeen = localStorage.getItem('dm_tour_completed');
+                if (!tourSeen && data) { // Only show once data is loaded
+                    setShowTour(true);
+                }
+            }, [data]);
 
             useEffect(() => {
                 if(isOffline) { const l=localStorage.getItem('dm_loc'); setData(l?JSON.parse(l):DEFAULT); hideLoader(); return; }
@@ -1115,6 +1180,7 @@
                         {view === 'npcs' && <NpcView data={data} setData={setData} role={role} updateCloud={updateCloud} generateNpc={generateNpc} setChatInput={setInputText} setView={setView}/>}
                         {view === 'settings' && <SettingsView data={data} setData={setData} apiKey={apiKey} setApiKey={setKey} role={role} updateCloud={updateCloud} handlePdfUpload={handlePdf} clearPdf={()=>{const nd={...data, campaign:{...data.campaign, pdfName:null, pdfText:null}}; updateCloud(nd);}} pdfProcessing={pdfProcessing} code={code} user={user} transferDM={uid=>{if(confirm("Transfer?")){const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); fb.updateDoc(ref, {hostId:uid});}}} banPlayer={uid=>{if(confirm("Ban?")){const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); const na={...data.activeUsers}; delete na[uid]; fb.updateDoc(ref,{activeUsers:na, bannedUsers:fb.arrayUnion(uid)});}}} kickPlayer={uid=>{const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); const na={...data.activeUsers}; delete na[uid]; fb.updateDoc(ref, {activeUsers:na});}} unbanPlayer={uid=>{const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); fb.updateDoc(ref, {bannedUsers:fb.arrayRemove(uid)});}} aiProvider={aiProvider} setAiProvider={setAiProvider} fb={fb} openAiModel={openAiModel} setOpenAiModel={setOpenAiModel} puterModel={puterModel} setPuterModel={setPuterModel} isOffline={isOffline}/>}
                     </main>
+                    {showTour && <TourGuide setView={setView} onClose={() => { setShowTour(false); localStorage.setItem('dm_tour_completed', 'true'); }} />}
                 </div>
             );
         };
