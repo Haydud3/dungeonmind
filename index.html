@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DungeonMind v20.8 | Onboarding</title>
+    <title>DungeonMind v22 | World & Combat</title>
     
     <!-- GLOBAL ERROR HANDLER -->
     <script>
@@ -93,6 +93,8 @@
         .chat-content s, .chat-content strike, .chat-content del { text-decoration: none !important; }
         .npc-card:hover { transform: translateY(-2px); border-color: #d97706; }
         .chat-image { max-width: 100%; border-radius: 8px; margin-top: 8px; border: 2px solid #d97706; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+        .onboarding-step { animation: fadeIn 0.5s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
     </style>
 </head>
 <body>
@@ -214,56 +216,152 @@
             return <span ref={containerRef} className="inline-flex items-center justify-center"><i data-lucide={name}></i></span>;
         };
 
-        // --- TOUR GUIDE COMPONENT (UPDATED FOR NON-INTRUSIVE UI) ---
-        const TourGuide = ({ onClose, setView }) => {
+        // --- ONBOARDING WIZARD ---
+        const OnboardingWizard = ({ onComplete, aiHelper }) => {
+            const [step, setStep] = useState(1);
+            const [data, setData] = useState({
+                sourceMode: 'new', // new or existing
+                tone: 'Adventurous',
+                conceptDesc: '',
+                conflict: '',
+                loreText: ''
+            });
+            const [isThinking, setIsThinking] = useState(false);
+
             const steps = [
-                { title: "Welcome to DungeonMind", content: "Your AI-enhanced TTRPG assistant. This tool combines chat, journaling, and world-building. Feel free to explore the UI while reading this.", view: 'session' },
-                { title: "The Session Hub", content: "This is your main command center. Chat with the AI, roll dice, and see the story unfold. The input box is at the bottom.", view: 'session' },
-                { title: "Visuals & Voice", content: "See that Camera icon near the input box? Click it to generate scene images. The Mic icon enables voice-to-text input.", view: 'session' },
-                { title: "Journals & Secrets", content: "Navigate to the Journal tab (Book icon on left). Keep public logs and private notes. The AI reads your private notes for context.", view: 'journal' },
-                { title: "The Party", content: "The 'Party' tab lets you manage stats. Keeping the 'Looks' section updated ensures consistent image generation for your character.", view: 'party' },
-                { title: "NPC Registry", content: "Need a shopkeeper? The Skull icon takes you to the NPC generator. Create fully fleshed-out characters instantly.", view: 'npcs' },
-                { title: "Settings & Cloud", content: "Configure your AI model (Puter, OpenAI, Gemini) and save your campaign data in the Settings tab.", view: 'settings' }
+                { id: 1, title: 'Source', icon: 'book' },
+                { id: 2, title: 'Tone', icon: 'music' },
+                { id: 3, title: 'Concept/Lore', icon: 'lightbulb' },
+                { id: 4, title: 'Conflict', icon: 'sword' }
             ];
 
-            const [currentStep, setCurrentStep] = useState(0);
-
-            useEffect(() => {
-                if(steps[currentStep].view) setView(steps[currentStep].view);
-            }, [currentStep]);
-
             const handleNext = () => {
-                if (currentStep < steps.length - 1) setCurrentStep(c => c + 1);
-                else onClose();
+                if (step < 4) setStep(s => s + 1);
+                else onComplete(data);
+            };
+
+            const handleBack = () => {
+                if (step > 1) setStep(s => s - 1);
+            };
+
+            const handleBrainstorm = async () => {
+                if (isThinking) return;
+                setIsThinking(true);
+                const prompt = `Role: DM Assistant. Context: A ${data.tone} campaign. Concept: ${data.conceptDesc}. Task: Suggest a central conflict or BBEG (Big Bad Evil Guy) that fits this world. Max 2 sentences.`;
+
+                try {
+                    const res = await aiHelper([{ role: "user", content: prompt }]);
+                    if (res) setData(p => ({ ...p, conflict: res }));
+                } catch (e) {
+                    alert("AI Error: " + e.message);
+                }
+                setIsThinking(false);
             };
 
             return (
-                <div className="fixed inset-0 z-[100] pointer-events-none flex flex-col justify-end pb-6 px-4 md:pb-8">
-                    {/* Inner container is clickable, background is transparent to click through */}
-                    <div className="pointer-events-auto bg-slate-900/95 backdrop-blur border-t-4 border-amber-500 rounded-xl p-6 max-w-2xl w-full shadow-2xl mx-auto relative animate-in slide-in-from-bottom-10 fade-in duration-500">
-                        <button onClick={onClose} className="absolute top-4 right-4 text-slate-500 hover:text-white bg-slate-800 rounded-full p-1 transition-colors"><Icon name="x" size={16}/></button>
-                        
-                        <div className="flex gap-4 items-start">
-                            <div className="bg-amber-900/20 p-3 rounded-full hidden sm:block">
-                                <Icon name="compass" size={32} className="text-amber-500"/>
+                <div className="fixed inset-0 z-[60] bg-slate-900 flex flex-col items-center justify-center p-4">
+                    <div className="max-w-3xl w-full bg-slate-800/90 border border-amber-500/30 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+                        {/* Header */}
+                        <div className="bg-slate-900 p-6 border-b border-slate-700 flex justify-between items-center">
+                            <div>
+                                <h2 className="text-2xl fantasy-font text-amber-500">Genesis</h2>
+                                <p className="text-slate-400 text-sm">Forging the world.</p>
                             </div>
-                            <div className="flex-1">
-                                <div className="flex justify-between items-center mb-1">
-                                    <h3 className="text-lg md:text-xl fantasy-font text-amber-500 font-bold">{steps[currentStep].title}</h3>
-                                    <span className="text-[10px] uppercase font-bold text-slate-500 bg-slate-800 px-2 py-1 rounded-full">{currentStep + 1} / {steps.length}</span>
-                                </div>
-                                <p className="text-slate-300 text-sm leading-relaxed mb-4">{steps[currentStep].content}</p>
-                                
-                                <div className="flex justify-between items-center">
-                                    <button onClick={onClose} className="text-xs text-slate-500 hover:text-slate-300 underline">Dismiss</button>
-                                    <div className="flex gap-2">
-                                        {currentStep > 0 && <button onClick={() => setCurrentStep(c => c - 1)} className="px-4 py-2 rounded bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold transition-colors">Back</button>}
-                                        <button onClick={handleNext} className="px-6 py-2 rounded bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs shadow-lg shadow-amber-900/20 transition-colors">
-                                            {currentStep === steps.length - 1 ? "Finish Tour" : "Next Tip"}
-                                        </button>
+                            <div className="flex gap-2">
+                                {steps.map(s => (
+                                    <div key={s.id} className={`h-2 w-8 rounded-full ${step >= s.id ? 'bg-amber-500' : 'bg-slate-700'}`}></div>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* Content */}
+                        <div className="flex-1 p-8 overflow-y-auto custom-scroll onboarding-step">
+                            {step === 1 && (
+                                <div className="space-y-6">
+                                    <div className="flex items-center gap-3 text-amber-400 mb-2">
+                                        <Icon name="book" size={24}/>
+                                        <h3 className="text-xl font-bold">1. The Source</h3>
+                                    </div>
+                                    <div className="grid md:grid-cols-2 gap-6">
+                                        <div onClick={() => setData({...data, sourceMode: 'new'})} className={`p-6 rounded-lg border cursor-pointer ${data.sourceMode === 'new' ? 'bg-amber-900/40 border-amber-500' : 'bg-slate-700/50 border-slate-600 hover:bg-slate-700'}`}>
+                                            <div className="font-bold text-lg mb-2 text-white">Forge New World</div>
+                                            <p className="text-sm text-slate-300">Brainstorm a homebrew setting from scratch using AI assistance.</p>
+                                        </div>
+                                        <div onClick={() => setData({...data, sourceMode: 'existing'})} className={`p-6 rounded-lg border cursor-pointer ${data.sourceMode === 'existing' ? 'bg-amber-900/40 border-amber-500' : 'bg-slate-700/50 border-slate-600 hover:bg-slate-700'}`}>
+                                            <div className="font-bold text-lg mb-2 text-white">Use Existing Lore</div>
+                                            <p className="text-sm text-slate-300">Input established lore (e.g., Forgotten Realms, Eberron) for the AI to follow.</p>
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
+                            )}
+
+                            {step === 2 && (
+                                <div className="space-y-6">
+                                    <div className="flex items-center gap-3 text-amber-400 mb-2">
+                                        <Icon name="music" size={24}/>
+                                        <h3 className="text-xl font-bold">2. Define the Tone</h3>
+                                    </div>
+                                    <p className="text-slate-300">What is the "vibe"? This aligns player expectations.</p>
+                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                        {['Heroic', 'Epic', 'Gritty', 'Comedic', 'Horror', 'Mystery'].map(t => (
+                                            <button key={t} onClick={() => setData({...data, tone: t})} className={`p-4 rounded-lg border text-center transition-all ${data.tone === t ? 'bg-amber-600 border-amber-400 text-white' : 'bg-slate-700 border-slate-600 hover:border-amber-500/50'}`}>
+                                                {t}
+                                            </button>
+                                        ))}
+                                    </div>
+                                    <input value={data.tone} onChange={e => setData({...data, tone: e.target.value})} className="w-full bg-slate-900 border border-slate-600 p-3 rounded text-slate-200" placeholder="Or type custom tone..."/>
+                                </div>
+                            )}
+
+                            {step === 3 && (
+                                <div className="space-y-6">
+                                    <div className="flex items-center gap-3 text-amber-400 mb-2">
+                                        <Icon name="lightbulb" size={24}/>
+                                        <h3 className="text-xl font-bold">3. {data.sourceMode === 'new' ? "The Concept" : "The Lore"}</h3>
+                                    </div>
+                                    
+                                    {data.sourceMode === 'new' ? (
+                                        <div>
+                                            <p className="text-slate-300 mb-4">What is the core premise? (e.g., "A world where magic causes madness")</p>
+                                            <textarea value={data.conceptDesc} onChange={e => setData({...data, conceptDesc: e.target.value})} className="w-full h-48 bg-slate-900 border border-slate-600 p-3 rounded text-slate-200 resize-none" placeholder="Enter your campaign pitch..."/>
+                                        </div>
+                                    ) : (
+                                        <div>
+                                            <p className="text-slate-300 mb-4">Paste the essential lore, wiki text, or notes for the AI to reference. This replaces the need for a PDF.</p>
+                                            <textarea value={data.loreText} onChange={e => setData({...data, loreText: e.target.value})} className="w-full h-64 bg-slate-900 border border-slate-600 p-3 rounded text-slate-200 resize-none custom-scroll" placeholder="Paste setting info here (e.g., 'Waterdeep is a city splitt by factions...')..."/>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {step === 4 && (
+                                <div className="space-y-6">
+                                    <div className="flex items-center gap-3 text-amber-400 mb-2">
+                                        <Icon name="sword" size={24}/>
+                                        <h3 className="text-xl font-bold">4. Central Conflict</h3>
+                                    </div>
+                                    <p className="text-slate-300">Give players a clear goal or enemy right from the start.</p>
+                                    
+                                    <div className="relative">
+                                        <textarea value={data.conflict} onChange={e => setData({...data, conflict: e.target.value})} className="w-full h-40 bg-slate-900 border border-slate-600 p-3 rounded text-slate-200 resize-none" placeholder="An evil empire? A tournament? A missing god?"/>
+                                        {data.sourceMode === 'new' && (
+                                            <button onClick={handleBrainstorm} disabled={isThinking} className="absolute right-2 bottom-2 bg-indigo-600/80 hover:bg-indigo-500 text-white px-3 py-1 rounded text-xs font-bold flex items-center gap-1">
+                                                {isThinking ? <Icon name="loader-2" size={12} className="animate-spin"/> : <Icon name="wand-2" size={12}/>} AI Suggest
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Footer */}
+                        <div className="bg-slate-900 p-6 border-t border-slate-700 flex justify-between">
+                            <button onClick={step === 1 ? () => onComplete(null) : handleBack} className="text-slate-500 hover:text-white font-bold px-4 py-2">
+                                {step === 1 ? "Skip Wizard" : "Back"}
+                            </button>
+                            <button onClick={handleNext} className="bg-amber-600 hover:bg-amber-500 text-white font-bold px-6 py-2 rounded shadow-lg shadow-amber-900/20">
+                                {step === 4 ? "Initialize Campaign" : "Next Step"}
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -321,9 +419,9 @@
                 <div className="mb-2 text-amber-500"><Icon name="dungeon" size={32} /></div>
                 <div className="text-[10px] font-mono text-slate-500 mb-6 bg-slate-800 px-1 rounded">{code || "LOCAL"}</div>
                 <nav className="flex-1 flex flex-col gap-4 w-full">
-                    {['session', 'journal', 'party', 'npcs', 'settings'].map(v => (
+                    {['session', 'journal', 'world', 'party', 'npcs', 'settings'].map(v => (
                         <button key={v} onClick={() => setView(v)} className={`w-full py-3 flex justify-center transition-all border-l-4 ${view === v ? 'border-amber-500 bg-slate-800 text-amber-400' : 'border-transparent text-slate-500 hover:text-slate-200'}`}>
-                            <Icon name={v === 'session' ? 'scroll-text' : v === 'journal' ? 'book-open-text' : v === 'party' ? 'users' : v === 'npcs' ? 'skull' : 'settings-2'} size={24} />
+                            <Icon name={v === 'session' ? 'scroll-text' : v === 'journal' ? 'book-open-text' : v === 'world' ? 'map' : v === 'party' ? 'users' : v === 'npcs' ? 'skull' : 'settings-2'} size={24} />
                         </button>
                     ))}
                 </nav>
@@ -333,6 +431,102 @@
         );
 
         // --- VIEW COMPONENTS ---
+
+        const WorldView = ({ data, setData, role, updateCloud, generateLoc }) => {
+            const [genType, setGenType] = useState("Town");
+            const [genNote, setGenNote] = useState("");
+            const [isGenerating, setIsGenerating] = useState(false);
+            const locations = data.locations || [];
+            const genesis = data.campaign?.genesis || {};
+
+            const updateGenesis = (field, val) => {
+                const nd = { ...data, campaign: { ...data.campaign, genesis: { ...genesis, [field]: val } } };
+                setData(nd);
+                updateCloud(nd);
+            };
+
+            const handleGen = async () => {
+                if(isGenerating) return;
+                setIsGenerating(true);
+                const loc = await generateLoc(genType, genNote, genesis);
+                if(loc) {
+                    const nd = { ...data, locations: [{id:Date.now(), ...loc}, ...locations] };
+                    setData(nd);
+                    updateCloud(nd);
+                }
+                setIsGenerating(false);
+            };
+
+            const deleteLoc = (id) => {
+                if(confirm("Delete Location?")) {
+                    const nd = { ...data, locations: locations.filter(l => l.id !== id) };
+                    setData(nd);
+                    updateCloud(nd);
+                }
+            };
+
+            return (
+                <div className="max-w-7xl mx-auto p-4 md:p-6 h-full flex flex-col md:flex-row gap-6 overflow-hidden">
+                    {/* Left: Campaign Bible */}
+                    <div className="w-full md:w-1/3 flex flex-col glass-panel rounded-xl overflow-hidden max-h-full">
+                        <div className="p-4 border-b border-slate-700 bg-slate-800/50">
+                            <h3 className="fantasy-font text-xl text-amber-500 mb-2">Campaign Bible</h3>
+                            <p className="text-xs text-slate-400">The core truths of your world. Edit anytime.</p>
+                        </div>
+                        <div className="flex-1 overflow-y-auto custom-scroll p-4 space-y-4">
+                            <div>
+                                <label className="text-xs font-bold text-slate-500 uppercase">Tone</label>
+                                <input disabled={role!=='dm'} value={genesis.tone || ""} onChange={e => updateGenesis('tone', e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-slate-200"/>
+                            </div>
+                            <div>
+                                <label className="text-xs font-bold text-slate-500 uppercase">Conflict</label>
+                                <textarea disabled={role!=='dm'} value={genesis.conflict || ""} onChange={e => updateGenesis('conflict', e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-slate-200 h-24 resize-none"/>
+                            </div>
+                            <div>
+                                <label className="text-xs font-bold text-slate-500 uppercase">Lore / Concept</label>
+                                <textarea disabled={role!=='dm'} value={genesis.loreText || genesis.conceptDesc || ""} onChange={e => updateGenesis(genesis.loreText ? 'loreText' : 'conceptDesc', e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-slate-200 h-64 resize-none custom-scroll"/>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Right: Atlas */}
+                    <div className="flex-1 flex flex-col glass-panel rounded-xl overflow-hidden max-h-full">
+                        <div className="p-4 border-b border-slate-700 bg-slate-800/50 flex justify-between items-center">
+                            <h3 className="fantasy-font text-xl text-amber-500">Atlas</h3>
+                        </div>
+                        
+                        {role === 'dm' && (
+                            <div className="p-4 bg-slate-900/30 border-b border-slate-700 flex gap-2">
+                                <select value={genType} onChange={e => setGenType(e.target.value)} className="bg-slate-800 border border-slate-600 rounded px-3 py-2 text-sm text-white outline-none">
+                                    <option value="Town">Town</option>
+                                    <option value="Dungeon">Dungeon</option>
+                                    <option value="Region">Region</option>
+                                    <option value="Shop">Shop</option>
+                                </select>
+                                <input value={genNote} onChange={e => setGenNote(e.target.value)} placeholder="Optional theme (e.g. 'Swampy')" className="flex-1 bg-slate-800 border border-slate-600 rounded px-3 py-2 text-sm text-white outline-none"/>
+                                <button onClick={handleGen} disabled={isGenerating} className="bg-amber-600 hover:bg-amber-500 text-white px-4 py-2 rounded font-bold text-sm flex items-center gap-2">
+                                    {isGenerating ? <Icon name="loader-2" size={16} className="animate-spin"/> : <Icon name="wand-2" size={16}/>} Generate
+                                </button>
+                            </div>
+                        )}
+
+                        <div className="flex-1 overflow-y-auto custom-scroll p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {locations.map(loc => (
+                                <div key={loc.id} className="bg-slate-900/50 border border-slate-700 rounded p-4 relative hover:border-amber-500/30 transition-colors">
+                                    <div className="flex justify-between items-start mb-2">
+                                        <h4 className="font-bold text-amber-400">{loc.name}</h4>
+                                        <span className="text-[10px] uppercase bg-slate-800 px-2 py-1 rounded text-slate-400">{loc.type}</span>
+                                    </div>
+                                    <p className="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap">{loc.desc}</p>
+                                    {role === 'dm' && <button onClick={() => deleteLoc(loc.id)} className="absolute bottom-2 right-2 text-slate-600 hover:text-red-500"><Icon name="trash-2" size={14}/></button>}
+                                </div>
+                            ))}
+                            {locations.length === 0 && <div className="col-span-full text-center text-slate-500 mt-10">No locations mapped yet. Brainstorm one above!</div>}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
 
         const JournalView = ({ data, setData, role, updateCloud, userId, generateLoot }) => {
             const [maximized, setMaximized] = useState(null); 
@@ -479,16 +673,29 @@
                                     <div className="text-xs font-bold text-red-400 uppercase mb-1 flex items-center gap-2"><Icon name="eye-off" size={12}/> Secret</div>
                                     <div className="text-slate-300 text-sm">{selectedNpc.secret}</div>
                                 </div>
-                                <div>
-                                    <div className="text-xs font-bold text-slate-500 uppercase mb-2">Statblock & Notes</div>
-                                    <textarea className="w-full h-48 bg-slate-900 border border-slate-700 rounded p-3 text-sm text-slate-300 font-mono leading-relaxed resize-none focus:outline-none focus:border-amber-500" value={selectedNpc.stats} onChange={(e) => {
-                                        const updated = { ...selectedNpc, stats: e.target.value };
-                                        setSelectedNpc(updated);
-                                        const newNpcs = npcs.map(n => n.id === updated.id ? updated : n);
-                                        const nd = { ...data, npcs: newNpcs };
-                                        setData(nd);
-                                        updateCloud(nd);
-                                    }} />
+                                <div className="bg-slate-900/30 p-4 rounded border border-slate-700">
+                                    <div className="text-xs font-bold text-slate-500 uppercase mb-2 flex items-center gap-2"><Icon name="swords" size={14}/> Combat Stats & Abilities</div>
+                                    <textarea className="w-full h-48 bg-slate-900/80 border border-slate-700 rounded p-3 text-sm text-green-300 font-mono leading-relaxed resize-none focus:outline-none focus:border-amber-500" 
+                                        value={selectedNpc.stats || "No stats generated."} 
+                                        onChange={(e) => {
+                                            const updated = { ...selectedNpc, stats: e.target.value };
+                                            setSelectedNpc(updated);
+                                            const newNpcs = npcs.map(n => n.id === updated.id ? updated : n);
+                                            const nd = { ...data, npcs: newNpcs };
+                                            setData(nd);
+                                            updateCloud(nd);
+                                        }} 
+                                    />
+                                    {selectedNpc.weapons && (
+                                        <div className="mt-2 text-sm text-slate-400">
+                                            <span className="font-bold text-slate-500">Weapons:</span> {Array.isArray(selectedNpc.weapons) ? selectedNpc.weapons.join(", ") : selectedNpc.weapons}
+                                        </div>
+                                    )}
+                                    {selectedNpc.spells && (
+                                        <div className="mt-1 text-sm text-slate-400">
+                                            <span className="font-bold text-slate-500">Spells:</span> {Array.isArray(selectedNpc.spells) ? selectedNpc.spells.join(", ") : selectedNpc.spells}
+                                        </div>
+                                    )}
                                 </div>
                                 <div>
                                     <div className="text-xs font-bold text-slate-500 uppercase mb-2">Personality Summary</div>
@@ -583,7 +790,7 @@
         const PartyView = ({ data, setData, role, activeChar, updateCloud }) => {
             const [viewMode, setViewMode] = useState('stats');
             const updatePlayer = (idx, field, val) => { const newPlayers = data.players.map((p, i) => i === idx ? { ...p, [field]: val } : p); setData(prev => ({...prev, players: newPlayers})); updateCloud({...data, players: newPlayers}); };
-            const addPlayer = () => { const newData = { ...data, players: [...data.players, { id: Date.now(), name: "New Hero", race: "Human", class: "Fighter", hp: 10, notes: "", backstory: "", appearance: "" }] }; setData(newData); updateCloud(newData); };
+            const addPlayer = () => { const newData = { ...data, players: [...data.players, { id: Date.now(), name: "New Hero", race: "Human", class: "Fighter", hp: 10, notes: "", backstory: "", appearance: "", motivation: "" }] }; setData(newData); updateCloud(newData); };
             return (
                 <div className="max-w-4xl mx-auto p-4 md:p-8 overflow-y-auto h-full custom-scroll">
                     <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-2"><h2 className="text-3xl fantasy-font text-amber-500">Party</h2>{role === 'dm' && <button onClick={addPlayer} className="bg-amber-600 px-3 py-1 rounded text-sm font-bold">+ Add</button>}</div>
@@ -607,7 +814,10 @@
                                         <textarea disabled={!canEdit} className="w-full bg-slate-800/30 rounded p-2 text-sm h-32 resize-none custom-scroll border border-transparent focus:border-amber-500 outline-none" value={p.notes} placeholder="Inventory, Stats, Loot..." onChange={e => updatePlayer(idx, 'notes', e.target.value)}/>
                                     )}
                                     {viewMode === 'bio' && (
-                                        <textarea disabled={!canEdit} className="w-full bg-slate-800/30 rounded p-2 text-sm h-32 resize-none custom-scroll border border-transparent focus:border-amber-500 outline-none" value={p.backstory} placeholder="Character description, history, and personality..." onChange={e => updatePlayer(idx, 'backstory', e.target.value)}/>
+                                        <div className="space-y-2">
+                                            <textarea disabled={!canEdit} className="w-full bg-slate-800/30 rounded p-2 text-sm h-24 resize-none custom-scroll border border-transparent focus:border-amber-500 outline-none" value={p.backstory} placeholder="Character backstory & personality..." onChange={e => updatePlayer(idx, 'backstory', e.target.value)}/>
+                                            <input disabled={!canEdit} className="w-full bg-indigo-900/20 border border-indigo-900/50 rounded p-2 text-sm text-indigo-200 outline-none focus:border-indigo-500" value={p.motivation || ""} placeholder="Primary Motivation / Goal..." onChange={e => updatePlayer(idx, 'motivation', e.target.value)}/>
+                                        </div>
                                     )}
                                     {viewMode === 'appearance' && (
                                         <textarea disabled={!canEdit} className="w-full bg-slate-800/30 rounded p-2 text-sm h-32 resize-none custom-scroll border border-transparent focus:border-amber-500 outline-none" value={p.appearance || ""} placeholder="Physical description for image generation (e.g. 'Tall, scar on left cheek, wearing plate armor')..." onChange={e => updatePlayer(idx, 'appearance', e.target.value)}/>
@@ -860,7 +1070,7 @@
 
         const GameSession = (props) => {
             const { fb, code, role: initRole, userId, user, isOffline, onExit } = props;
-            const DEFAULT = { hostId: userId, campaign:{ name:"New", location:"Start", tone:"Heroic", pdfName:null, pdfText:null}, config:{edition:'2014', strictMode:false}, players:[], journal_public:"", journal_dm:"", partyStash:"", player_journals:{}, npcs: [], activeUsers:{}, bannedUsers:[], assignments:{} };
+            const DEFAULT = { hostId: userId, campaign:{ name:"New", location:"Start", tone:"Heroic", pdfName:null, pdfText:null, genesis:{}}, config:{edition:'2014', strictMode:false}, players:[], locations:[], journal_public:"", journal_dm:"", partyStash:"", player_journals:{}, npcs: [], activeUsers:{}, bannedUsers:[], assignments:{}, onboardingComplete: false };
             const [data, setData] = useState(null);
             const [view, setView] = useState('session');
             const [role, setRole] = useState(initRole);
@@ -891,13 +1101,15 @@
             useEffect(() => { const k = localStorage.getItem(`dm_key_${aiProvider}`); setApiKey(k||''); }, [aiProvider]);
             const setKey = (v) => { setApiKey(v); localStorage.setItem(`dm_key_${aiProvider}`, v); };
 
-            // Tour Check
+            // Tour Check - ONLY show if onboarding is complete or if player
             useEffect(() => {
                 const tourSeen = localStorage.getItem('dm_tour_completed');
-                if (!tourSeen && data) { // Only show once data is loaded
-                    setShowTour(true);
+                if (!tourSeen && data) {
+                    if (role === 'player' || data.onboardingComplete) {
+                        setShowTour(true);
+                    }
                 }
-            }, [data]);
+            }, [data?.onboardingComplete, role]);
 
             useEffect(() => {
                 if(isOffline) { const l=localStorage.getItem('dm_loc'); setData(l?JSON.parse(l):DEFAULT); hideLoader(); return; }
@@ -954,25 +1166,10 @@
                         attempts++;
                         if(aiProvider === 'puter') {
                             if (!window.puter) throw new Error("Puter.js not loaded");
-                            
-                            // Check if puter is logged in
-                            if (!window.puter.auth.isSignedIn()) {
-                                await window.puter.auth.signIn();
-                            }
-
-                            // FIXED: Strictly following PDF standard for puter.ai.chat
-                            // It accepts (messagesArray, optionsObject)
-                            // Ensuring model is a valid string, defaulting to a safe option if undefined
+                            if (!window.puter.auth.isSignedIn()) await window.puter.auth.signIn();
                             const safeModel = puterModel || 'mistral-large-latest';
-
                             const response = await window.puter.ai.chat(messages, { model: safeModel });
-                            
-                            // Robust check for valid response structure
-                            if (!response || !response.message || !response.message.content) {
-                                console.warn("Unexpected Puter response:", response);
-                                throw new Error("Invalid response structure from Puter AI");
-                            }
-                            
+                            if (!response || !response.message || !response.message.content) throw new Error("Invalid response structure from Puter AI");
                             return response.message.content;
                         } else if(aiProvider === 'gemini') {
                              const combinedPrompt = messages.map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n');
@@ -988,7 +1185,6 @@
                         }
                     } catch(e) {
                         console.error(e);
-                        // Normalize error message so it's never 'undefined'
                         const errMsg = e instanceof Error ? e.message : (typeof e === 'string' ? e : JSON.stringify(e));
                         if(attempts === maxRetries) throw new Error(errMsg || "Unknown Error");
                         await new Promise(res => setTimeout(res, 1000));
@@ -999,141 +1195,83 @@
             const generateSceneImage = async () => {
                 if(aiProvider !== 'puter') return;
                 setIsLoading(true);
-                
                 try {
                     setChatHistory(p => [...p, {role: 'system', content: `Analyzing context for visualization...`}]);
-
-                    // Step 1: Gather Context (Characters + Journal)
                     const knownCharacters = data.players.map(p => {
                         const desc = p.appearance ? `Appearance: ${p.appearance}` : "No physical description provided.";
-                        return `${p.name} (${p.race} ${p.class}). ${desc}. Backstory context: ${p.backstory ? p.backstory.slice(0, 100) : 'None'}...`;
+                        return `${p.name} (${p.race} ${p.class}). ${desc}.`;
                     }).join(" | ");
-
-                    const journalContext = data.journal_public ? data.journal_public.slice(0, 500) : ""; // Last 500 chars of journal
+                    const journalContext = data.journal_public ? data.journal_public.slice(0, 500) : "";
                     const chatContext = chatHistory.slice(-5).map(m => m.content).join(" ");
-
-                    // Step 2: Ask Text AI to generate a detailed Image Prompt
-                    const metaPrompt = `
-                        Role: Art Director.
-                        Context: A D&D game scene.
-                        Characters Present: ${knownCharacters}.
-                        Journal: ${journalContext}.
-                        Current Situation: ${chatContext}.
-                        Task: Write a detailed, vivid image generation prompt (max 50 words) that describes this specific scene. Include physical details of the characters mentioned in the current situation. Artistic Style: Digital Fantasy Art, Cinematic, Detailed.
-                    `;
-
+                    const metaPrompt = `Role: Art Director. Context: D&D. Characters: ${knownCharacters}. Log: ${journalContext}. Situation: ${chatContext}. Task: Write a vivid image prompt (max 50 words). Style: Digital Fantasy Art.`;
                     const imagePrompt = await queryAiService([{role: 'system', content: metaPrompt}, {role: 'user', content: 'Generate prompt.'}]);
-                    
-                    if (!imagePrompt) throw new Error("Failed to generate image prompt");
-
-                    setChatHistory(p => {
-                         const n = [...p];
-                         n[n.length-1].content = `Painting scene...`; // Update status
-                         return n;
-                    });
-
-                    // Step 3: Send Generated Prompt to Image AI
+                    setChatHistory(p => { const n = [...p]; n[n.length-1].content = `Painting scene...`; return n; });
                     const img = await window.puter.ai.txt2img(imagePrompt);
-                    const url = img.src; 
-                    
-                    setChatHistory(p => [...p, {role: 'ai', content: `Visualized: ${imagePrompt.slice(0, 50)}...`, image: url}]);
+                    setChatHistory(p => [...p, {role: 'ai', content: `Visualized: ${imagePrompt.slice(0, 50)}...`, image: img.src}]);
                 } catch(e) {
-                    const errMsg = e instanceof Error ? e.message : String(e);
-                    alert("Image Gen Failed: " + errMsg);
-                    setChatHistory(p => [...p, {role: 'system', content: `Image gen failed: ${errMsg}`}]);
-                } finally {
-                    setIsLoading(false);
-                }
+                    alert("Image Gen Failed: " + e.message);
+                    setChatHistory(p => [...p, {role: 'system', content: `Image gen failed.`}]);
+                } finally { setIsLoading(false); }
             };
 
             const genResponse = async (ov, mode = 'standard') => {
                 const q = mode === 'chaos' ? "TRIGGER CHAOS" : (ov || inputText);
                 if(!q.trim()) return;
-
                 if(mode !== 'chaos') setChatHistory(p=>[...p, {role:'user', content:q}]); 
                 if(mode !== 'chaos') setInputText('');
-                
                 setIsLoading(true);
                 
                 const char = data.players.find(p=>p.id==derivedActiveChar);
                 const iden = role === 'dm' ? "DM" : (char ? `${char.name} (${char.race})` : "Player");
-                const personalContext = data.player_journals?.[userId] || "";
+                const genesis = data.campaign?.genesis || {};
                 
                 let partyContext = "";
                 if (role === 'dm') {
-                    partyContext = data.players.map(p => `${p.name} (${p.race} ${p.class}): ${p.backstory ? p.backstory.slice(0,100) + '...' : 'No bio'}`).join(' | ');
+                    partyContext = data.players.map(p => `${p.name} (${p.race} ${p.class}). Motivation: ${p.motivation || "None"}. Bio: ${p.backstory ? p.backstory.slice(0,100)+'...' : 'None'}`).join(' | ');
                 } else {
-                    partyContext = `My Character: ${char ? `${char.name} (${char.race} ${char.class}). Backstory: ${char.backstory}. Notes: ${char.notes}` : "Spectator"}. Party: ${data.players.map(p => p.name).join(', ')}`;
+                    partyContext = `Me: ${char ? `${char.name} (${char.race}). Goal: ${char.motivation}` : "Spectator"}. Party: ${data.players.map(p => p.name).join(', ')}`;
                 }
 
-                let instruction = "";
-                if (role === 'dm') {
-                    if (mode === 'narrate') instruction = "TASK: Narrate this scene for the players using vivid boxed text. Hide all secrets, DCs, and mechanics.";
-                    else if (mode === 'mechanics') instruction = "TASK: Explain the rules, calculate DCs, and clarify mechanics for this situation. Show math.";
-                    else if (mode === 'npc') instruction = "TASK: Roleplay as the relevant NPC. Speak in their voice and give their reaction.";
-                    else if (mode === 'chaos') instruction = "TASK: Inject a sudden, random event into the current scene (weather, monster, failure, etc.) to spice up roleplay. Be brief and impactful. Format it as bold boxed text.";
-                    else instruction = "TASK: Act as a DM Assistant. Answer the DM's query efficiently.";
-                } else {
-                    if (mode === 'action') instruction = "TASK: Resolve this attempted action using 5e rules. Describe the outcome based on typical DCs (Easy 10, Med 15, Hard 20).";
-                    else if (mode === 'speak') instruction = "TASK: Roleplay the world's reaction to what the player said.";
-                    else if (mode === 'recall') instruction = "TASK: Check the player's personal notes/backstory and the public log to see if they remember or know this info. Do NOT meta-game.";
-                    else instruction = "TASK: Answer as the Game Master. Only reveal info known to the player.";
-                }
+                const loreContext = genesis.loreText || genesis.conceptDesc || "Standard Fantasy";
+                const pdfContext = data.campaign.pdfText ? `PDF Content: ${data.campaign.pdfText.slice(0, 20000)}...` : "";
 
-                const sec = role === 'dm' ? `SECRETS: ${data.journal_dm}\nPDF: ${data.campaign.pdfText ? data.campaign.pdfText.slice(0, 30000) : "None"}` : `HIDDEN INFO: The user has secret notes: "${personalContext}".`;
-                const systemPrompt = `Role: DM AI. User: ${iden}. Rules: 5e (${data.config.edition}). Ctx: ${data.campaign.location}. Log: ${data.journal_public}. ${sec}. Party Info: ${partyContext}. \n${instruction}`;
-
-                const historyLimit = 10;
-                const recentHistory = chatHistory.slice(-historyLimit).map(msg => {
-                    let r = 'user';
-                    if (msg.role === 'ai') r = 'assistant';
-                    if (msg.role === 'system') r = 'system';
-                    return { role: r, content: msg.content };
-                });
-                
-                const messages = [
-                    { role: "system", content: systemPrompt },
-                    ...recentHistory,
-                    { role: "user", content: q }
-                ];
-
+                const systemPrompt = `
+Role: Dungeon Master AI. 
+User: ${iden}. 
+World Context: Tone: ${genesis.tone || "Generic"}. Conflict: ${genesis.conflict || "None"}. Lore: ${loreContext}.
+Location: ${data.campaign.location}.
+Party: ${partyContext}.
+Public Log: ${data.journal_public.slice(-2000)}.
+${role === 'dm' ? `DM Secrets: ${data.journal_dm}. ${pdfContext}` : `Private Notes: ${data.player_journals?.[userId] || "None"}`}
+Rules: 5e (${data.config.edition}).
+Instruction: ${mode === 'narrate' ? "Narrate vividly using boxed text. No secrets." : mode === 'mechanics' ? "Explain rules/DCs. Show math." : mode === 'npc' ? "Roleplay NPC." : mode === 'chaos' ? "Inject sudden random event. Bold text." : "Answer as DM."}
+`;
                 try {
-                    const txt = await queryAiService(messages);
+                    const txt = await queryAiService([{ role: "system", content: systemPrompt }, ...chatHistory.slice(-10).map(m => ({role: m.role==='ai'?'assistant':m.role, content: m.content})), { role: "user", content: q }]);
                     if(txt) setChatHistory(p=>[...p, {role:'ai', content:txt}]);
-                } catch(e) {
-                    const errMsg = e instanceof Error ? e.message : String(e);
-                    setChatHistory(p=>[...p, {role:'system', content:`Failed: ${errMsg}`}]);
-                }
+                } catch(e) { setChatHistory(p=>[...p, {role:'system', content:`Failed: ${e.message}`}]); }
                 setIsLoading(false);
             };
 
             const generateLoot = async (cr) => {
-                const systemPrompt = `Role: 5e Loot Generator. Task: Generate a loot hoard for a CR ${cr} encounter. Output: A simple comma-separated list of items (coins, gems, art objects, magic items). Do not include intro text.`;
-                try {
-                    return await queryAiService([{ role: "system", content: systemPrompt }, { role: "user", content: "Generate loot."}]);
-                } catch(e) { alert(e.message); return null; }
+                try { return await queryAiService([{ role: "system", content: `Generate 5e loot for CR ${cr}. Comma separated list.` }, { role: "user", content: "Go."}]); } catch(e) { return null; }
             };
 
             const generateNpc = async (name, context) => {
-                const systemPrompt = `Role: 5e NPC Generator. 
-                Task: Create an NPC. If the name "${name}" is from an official D&D module/lore, use their canonical details. Otherwise create a new character.
-                Context: ${context}.
-                Output format (Strict JSON):
-                {
-                    "name": "Name",
-                    "race": "Race",
-                    "class": "Class/Archetype",
-                    "quirk": "Short visual or behavioral quirk",
-                    "secret": "A hidden motivation or dark secret",
-                    "goal": "Current objective",
-                    "stats": "Brief stat summary (AC, HP, Str/Dex/Con/Int/Wis/Cha modifiers, Key Actions)",
-                    "personality": "Short personality summary"
-                }`;
+                const genesis = data.campaign?.genesis || {};
+                const prompt = `Create 5e NPC. Name: ${name}. Context: ${context}. Campaign Tone: ${genesis.tone}. Campaign Lore: ${genesis.loreText}. Include simplified 5e Statblock (AC, HP, Speed, Abilities), Weapons/Attacks, and Spells if applicable. Return JSON: {name, race, class, quirk, secret, goal, stats, personality, weapons, spells}`;
                 try {
-                    const txt = await queryAiService([{ role: "system", content: systemPrompt }, { role: "user", content: "Generate NPC."}]);
-                    const jsonStr = txt.replace(/```json/g, '').replace(/```/g, '');
-                    return JSON.parse(jsonStr);
-                } catch(e) { alert("Gen Failed: " + e.message); return null; }
+                    const txt = await queryAiService([{ role: "system", content: prompt }, { role: "user", content: "Gen"}]);
+                    return JSON.parse(txt.replace(/```json/g, '').replace(/```/g, ''));
+                } catch(e) { return null; }
+            };
+
+            const generateLoc = async (type, note, genesis) => {
+                const prompt = `Create a fantasy location. Type: ${type}. Theme: ${note}. Campaign Tone: ${genesis.tone}. Campaign Lore: ${genesis.loreText || genesis.conceptDesc}. Return JSON: {name, type, desc}`;
+                try {
+                    const txt = await queryAiService([{ role: "system", content: prompt }, { role: "user", content: "Gen"}]);
+                    return JSON.parse(txt.replace(/```json/g, '').replace(/```/g, ''));
+                } catch(e) { return null; }
             };
 
             const handlePdf = async (e) => {
@@ -1168,6 +1306,16 @@
                 else { genResponse(`Roll d${d}: ${r}`); }
             };
 
+            const handleOnboardingComplete = (onboardingData) => {
+                let newData = { ...data, onboardingComplete: true };
+                if (onboardingData) {
+                    newData.campaign = { ...newData.campaign, genesis: onboardingData };
+                    const setupSummary = `\n[GENESIS] New Campaign Initialized.\nTone: ${onboardingData.tone}\nConflict: ${onboardingData.conflict}\n`;
+                    newData.journal_public = (newData.journal_public || "") + setupSummary;
+                }
+                updateCloud(newData);
+            };
+
             if(!data) return <div className="h-screen flex items-center justify-center text-white">Syncing...</div>;
 
             return (
@@ -1176,11 +1324,64 @@
                     <main className="flex-1 h-full overflow-hidden relative">
                         {view === 'session' && <SessionView data={data} chatHistory={chatHistory} setChatHistory={setChatHistory} inputText={inputText} setInputText={setInputText} isListening={isListening} toggleListening={toggleListening} generateResponse={genResponse} isLoading={isLoading} role={role} activeChar={derivedActiveChar} showTools={showTools} setShowTools={setShowTools} diceLog={diceLog} handleDiceRoll={handleDiceRoll} syncState={syncState} isPlayerFacing={isPlayerFacing} setIsPlayerFacing={setIsPlayerFacing} updateCloud={updateCloud} generateSceneImage={generateSceneImage} aiProvider={aiProvider}/>}
                         {view === 'journal' && <JournalView data={data} setData={setData} role={role} updateCloud={updateCloud} userId={userId} generateLoot={generateLoot}/>}
+                        {view === 'world' && <WorldView data={data} setData={setData} role={role} updateCloud={updateCloud} generateLoc={generateLoc}/>}
                         {view === 'party' && <PartyView data={data} setData={setData} role={role} activeChar={derivedActiveChar} updateCloud={updateCloud}/>}
                         {view === 'npcs' && <NpcView data={data} setData={setData} role={role} updateCloud={updateCloud} generateNpc={generateNpc} setChatInput={setInputText} setView={setView}/>}
                         {view === 'settings' && <SettingsView data={data} setData={setData} apiKey={apiKey} setApiKey={setKey} role={role} updateCloud={updateCloud} handlePdfUpload={handlePdf} clearPdf={()=>{const nd={...data, campaign:{...data.campaign, pdfName:null, pdfText:null}}; updateCloud(nd);}} pdfProcessing={pdfProcessing} code={code} user={user} transferDM={uid=>{if(confirm("Transfer?")){const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); fb.updateDoc(ref, {hostId:uid});}}} banPlayer={uid=>{if(confirm("Ban?")){const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); const na={...data.activeUsers}; delete na[uid]; fb.updateDoc(ref,{activeUsers:na, bannedUsers:fb.arrayUnion(uid)});}}} kickPlayer={uid=>{const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); const na={...data.activeUsers}; delete na[uid]; fb.updateDoc(ref, {activeUsers:na});}} unbanPlayer={uid=>{const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); fb.updateDoc(ref, {bannedUsers:fb.arrayRemove(uid)});}} aiProvider={aiProvider} setAiProvider={setAiProvider} fb={fb} openAiModel={openAiModel} setOpenAiModel={setOpenAiModel} puterModel={puterModel} setPuterModel={setPuterModel} isOffline={isOffline}/>}
                     </main>
                     {showTour && <TourGuide setView={setView} onClose={() => { setShowTour(false); localStorage.setItem('dm_tour_completed', 'true'); }} />}
+                    {role === 'dm' && !data.onboardingComplete && <OnboardingWizard onComplete={handleOnboardingComplete} aiHelper={queryAiService} />}
+                </div>
+            );
+        };
+
+        const TourGuide = ({ onClose, setView }) => {
+            const steps = [
+                { title: "Welcome to DungeonMind", content: "Your AI-enhanced TTRPG assistant. This tool combines chat, journaling, and world-building.", view: 'session' },
+                { title: "The Session Hub", content: "This is your main command center. Chat with the AI, roll dice, and see the story unfold.", view: 'session' },
+                { title: "The World Tab", content: "New in v21: The Map Icon. This is your Campaign Bible (Tone, Lore) and your Atlas. Edit your world truths and generate locations here.", view: 'world' },
+                { title: "Visuals & Voice", content: "See that Camera icon near the input box? Click it to generate scene images. The Mic icon enables voice-to-text input.", view: 'session' },
+                { title: "Journals & Secrets", content: "The Book icon. Keep public logs and private notes. The AI reads your private notes for context.", view: 'journal' },
+                { title: "The Party", content: "The 'Party' tab. Update your character's Motivation here so the AI can weave your story into the plot.", view: 'party' },
+                { title: "NPC Registry", content: "The Skull icon. Create fully fleshed-out characters instantly.", view: 'npcs' },
+                { title: "Settings & Cloud", content: "Configure your AI model (Puter, OpenAI, Gemini) and save your campaign data in the Settings tab.", view: 'settings' }
+            ];
+
+            const [currentStep, setCurrentStep] = useState(0);
+
+            useEffect(() => {
+                if(steps[currentStep].view) setView(steps[currentStep].view);
+            }, [currentStep]);
+
+            const handleNext = () => {
+                if (currentStep < steps.length - 1) setCurrentStep(c => c + 1);
+                else onClose();
+            };
+
+            return (
+                <div className="fixed inset-0 z-[100] pointer-events-none flex flex-col justify-end pb-6 px-4 md:pb-8">
+                    <div className="pointer-events-auto bg-slate-900/95 backdrop-blur border-t-4 border-amber-500 rounded-xl p-6 max-w-2xl w-full shadow-2xl mx-auto relative animate-in slide-in-from-bottom-10 fade-in duration-500">
+                        <button onClick={onClose} className="absolute top-4 right-4 text-slate-500 hover:text-white bg-slate-800 rounded-full p-1 transition-colors"><Icon name="x" size={16}/></button>
+                        <div className="flex gap-4 items-start">
+                            <div className="bg-amber-900/20 p-3 rounded-full hidden sm:block"><Icon name="compass" size={32} className="text-amber-500"/></div>
+                            <div className="flex-1">
+                                <div className="flex justify-between items-center mb-1">
+                                    <h3 className="text-lg md:text-xl fantasy-font text-amber-500 font-bold">{steps[currentStep].title}</h3>
+                                    <span className="text-[10px] uppercase font-bold text-slate-500 bg-slate-800 px-2 py-1 rounded-full">{currentStep + 1} / {steps.length}</span>
+                                </div>
+                                <p className="text-slate-300 text-sm leading-relaxed mb-4">{steps[currentStep].content}</p>
+                                <div className="flex justify-between items-center">
+                                    <button onClick={onClose} className="text-xs text-slate-500 hover:text-slate-300 underline">Dismiss</button>
+                                    <div className="flex gap-2">
+                                        {currentStep > 0 && <button onClick={() => setCurrentStep(c => c - 1)} className="px-4 py-2 rounded bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold transition-colors">Back</button>}
+                                        <button onClick={handleNext} className="px-6 py-2 rounded bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs shadow-lg shadow-amber-900/20 transition-colors">
+                                            {currentStep === steps.length - 1 ? "Finish Tour" : "Next Tip"}
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             );
         };
@@ -1227,7 +1428,6 @@
             );
         };
 
-        // Safe Render
         try {
             const root = ReactDOM.createRoot(document.getElementById('root'));
             root.render(<App />);
@@ -1237,4 +1437,3 @@
     </script>
 </body>
 </html>
-
