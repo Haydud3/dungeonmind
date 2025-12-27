@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DungeonMind v22 | World & Combat</title>
+    <title>DungeonMind v23 | Collaborative Journaling</title>
     
     <!-- GLOBAL ERROR HANDLER -->
     <script>
@@ -95,6 +95,12 @@
         .chat-image { max-width: 100%; border-radius: 8px; margin-top: 8px; border: 2px solid #d97706; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
         .onboarding-step { animation: fadeIn 0.5s ease-out; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        
+        /* Collaborative Text Area Styles */
+        .collab-status { font-size: 10px; padding: 2px 6px; border-radius: 4px; font-weight: bold; text-transform: uppercase; transition: all 0.3s; }
+        .status-saved { color: #4ade80; background: rgba(74, 222, 128, 0.1); }
+        .status-saving { color: #facc15; background: rgba(250, 204, 21, 0.1); }
+        .status-error { color: #ef4444; background: rgba(239, 68, 68, 0.1); }
     </style>
 </head>
 <body>
@@ -130,7 +136,7 @@
 
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
-        const { useState, useEffect, useRef, Component } = React;
+        const { useState, useEffect, useRef, Component, useCallback } = React;
 
         class ErrorBoundary extends Component {
             constructor(props) { super(props); this.state = { hasError: false, error: null }; }
@@ -368,9 +374,33 @@
             );
         };
 
-        const JournalBox = ({ title, value, onChange, colorClass, type, placeholder, maximized, setMaximized, children }) => {
+        const JournalBox = ({ title, value, onSave, colorClass, type, placeholder, maximized, setMaximized, children }) => {
             const isMax = maximized === type;
+            const [localValue, setLocalValue] = useState(value || "");
+            const [saveStatus, setSaveStatus] = useState("saved"); // saved, saving, error
+            const timerRef = useRef(null);
+
+            // Sync local state with props when not editing for a moment
+            useEffect(() => {
+                if (saveStatus === "saved") {
+                    setLocalValue(value || "");
+                }
+            }, [value]);
+
+            const handleChange = (newVal) => {
+                setLocalValue(newVal);
+                setSaveStatus("saving");
+                
+                // Debounce Save
+                if (timerRef.current) clearTimeout(timerRef.current);
+                timerRef.current = setTimeout(() => {
+                    onSave(newVal);
+                    setSaveStatus("saved");
+                }, 1000); // 1 second delay
+            };
+
             if (maximized && !isMax) return null;
+
             const downloadTxt = (name, text) => {
                 const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
                 const link = document.createElement("a");
@@ -378,6 +408,7 @@
                 link.download = `${name}_${new Date().toISOString().split('T')[0]}.txt`;
                 link.click();
             };
+
             return (
                 <div className={`flex flex-col glass-panel rounded-xl overflow-hidden journal-expand ${isMax ? 'fixed inset-4 z-50' : 'flex-1 min-h-[300px]'} ${colorClass}`}>
                     <div className={`p-2 text-center text-xs uppercase tracking-wider font-bold border-b flex justify-between items-center ${type === 'dm' ? 'bg-red-900/20 border-red-900/30 text-red-400' : type === 'stash' ? 'bg-amber-900/20 border-amber-900/30 text-amber-300' : type === 'personal' ? 'bg-indigo-900/20 border-indigo-900/30 text-indigo-300' : 'bg-slate-800/50 border-slate-700 text-green-400'}`}>
@@ -386,14 +417,22 @@
                             {type === 'stash' && <Icon name="coins" size={14}/>}
                             {type === 'personal' && <Icon name="user-circle" size={14}/>}
                             {title}
+                            <span className={`collab-status ml-2 ${saveStatus === 'saved' ? 'status-saved' : 'status-saving'}`}>
+                                {saveStatus === 'saved' ? 'Saved' : 'Saving...'}
+                            </span>
                         </div>
                         <div className="flex gap-2">
                             {children}
-                            <button onClick={() => downloadTxt(title, value)} title="Export" className="hover:text-white"><Icon name="download" size={14}/></button>
+                            <button onClick={() => downloadTxt(title, localValue)} title="Export" className="hover:text-white"><Icon name="download" size={14}/></button>
                             <button onClick={() => setMaximized(isMax ? null : type)} title="Toggle Fullscreen" className="hover:text-white"><Icon name={isMax ? "minimize-2" : "maximize-2"} size={14}/></button>
                         </div>
                     </div>
-                    <textarea value={value || ""} onChange={(e) => onChange(e.target.value)} className={`w-full flex-1 bg-transparent p-4 resize-none focus:outline-none font-sans leading-relaxed custom-scroll ${type === 'dm' ? 'text-red-100/80 placeholder-red-900/50' : type === 'stash' ? 'text-amber-100/80 placeholder-amber-900/50' : type === 'personal' ? 'text-indigo-100/80 placeholder-indigo-900/50' : 'text-slate-200'}`} placeholder={placeholder}/>
+                    <textarea 
+                        value={localValue} 
+                        onChange={(e) => handleChange(e.target.value)} 
+                        className={`w-full flex-1 bg-transparent p-4 resize-none focus:outline-none font-sans leading-relaxed custom-scroll ${type === 'dm' ? 'text-red-100/80 placeholder-red-900/50' : type === 'stash' ? 'text-amber-100/80 placeholder-amber-900/50' : type === 'personal' ? 'text-indigo-100/80 placeholder-indigo-900/50' : 'text-slate-200'}`} 
+                        placeholder={placeholder}
+                    />
                 </div>
             );
         };
@@ -528,16 +567,16 @@
             );
         };
 
-        const JournalView = ({ data, setData, role, updateCloud, userId, generateLoot }) => {
+        const JournalView = ({ data, setData, role, updateJournalField, userId, generateLoot }) => {
             const [maximized, setMaximized] = useState(null); 
             const [lootCr, setLootCr] = useState(1);
             const [isGenerating, setIsGenerating] = useState(false);
 
-            const updatePersonal = (val) => {
-                const newData = { ...data, player_journals: { ...data.player_journals, [userId]: val } };
-                setData(newData);
-                updateCloud(newData);
-            };
+            // These save functions now trigger specific Firestore updates, NOT the whole document
+            const savePublic = (val) => updateJournalField('journal_public', val);
+            const saveStash = (val) => updateJournalField('partyStash', val);
+            const saveDm = (val) => updateJournalField('journal_dm', val);
+            const savePersonal = (val) => updateJournalField(`player_journals.${userId}`, val);
 
             const handleLootGen = async () => {
                 if(isGenerating) return;
@@ -546,9 +585,10 @@
                 if(loot) {
                     const ts = new Date().toLocaleTimeString();
                     const entry = `\n[${ts}] Loot (CR ${lootCr}): ${loot}\n`;
-                    const newData = { ...data, partyStash: (data.partyStash || "") + entry };
-                    setData(newData);
-                    updateCloud(newData);
+                    // For generated loot, we append to existing, so we need to know current value
+                    // But we can just use the specific update function which will merge
+                    const current = data.partyStash || "";
+                    updateJournalField('partyStash', current + entry);
                 }
                 setIsGenerating(false);
             };
@@ -559,8 +599,8 @@
                     <div className="flex flex-col gap-6 min-h-full pb-20">
                         {/* Row 1 */}
                         <div className="flex flex-col md:flex-row gap-6 md:flex-1 min-h-[300px]">
-                            <JournalBox type="public" title="Public Log" value={data.journal_public} onChange={(val) => { setData(p => ({...p, journal_public: val})); updateCloud({...data, journal_public: val}); }} colorClass="" placeholder="Shared campaign events..." maximized={maximized} setMaximized={setMaximized}/>
-                            <JournalBox type="stash" title="Party Stash" value={data.partyStash} onChange={(val) => { setData(p => ({...p, partyStash: val})); updateCloud({...data, partyStash: val}); }} colorClass="border-amber-900/30 bg-amber-900/5" placeholder="Loot and treasure..." maximized={maximized} setMaximized={setMaximized}>
+                            <JournalBox type="public" title="Public Log" value={data.journal_public} onSave={savePublic} colorClass="" placeholder="Shared campaign events..." maximized={maximized} setMaximized={setMaximized}/>
+                            <JournalBox type="stash" title="Party Stash" value={data.partyStash} onSave={saveStash} colorClass="border-amber-900/30 bg-amber-900/5" placeholder="Loot and treasure..." maximized={maximized} setMaximized={setMaximized}>
                                 {role === 'dm' && (
                                     <div className="flex items-center gap-2 bg-amber-900/50 rounded px-2 py-0.5 border border-amber-900/50">
                                         <span className="text-[10px] uppercase font-bold text-amber-200">CR</span>
@@ -572,8 +612,8 @@
                         </div>
                         {/* Row 2 */}
                         <div className="flex flex-col md:flex-row gap-6 md:flex-1 min-h-[300px]">
-                            <JournalBox type="personal" title="My Notes (Private + AI)" value={data.player_journals?.[userId]} onChange={updatePersonal} colorClass="border-indigo-900/30 bg-indigo-900/5" placeholder="Your private thoughts (AI can see this)..." maximized={maximized} setMaximized={setMaximized}/>
-                            {role === 'dm' && <JournalBox type="dm" title="DM Secrets" value={data.journal_dm} onChange={(val) => { setData(p => ({...p, journal_dm: val})); updateCloud({...data, journal_dm: val}); }} colorClass="border-red-900/30 bg-red-900/5" placeholder="Hidden truths..." maximized={maximized} setMaximized={setMaximized}/>}
+                            <JournalBox type="personal" title="My Notes (Private + AI)" value={data.player_journals?.[userId]} onSave={savePersonal} colorClass="border-indigo-900/30 bg-indigo-900/5" placeholder="Your private thoughts (AI can see this)..." maximized={maximized} setMaximized={setMaximized}/>
+                            {role === 'dm' && <JournalBox type="dm" title="DM Secrets" value={data.journal_dm} onSave={saveDm} colorClass="border-red-900/30 bg-red-900/5" placeholder="Hidden truths..." maximized={maximized} setMaximized={setMaximized}/>}
                         </div>
                     </div>
                 </div>
@@ -1143,6 +1183,7 @@
                 register();
             }, [data?.campaign?.name]); 
 
+            // General Cloud Update - saves entire state (Use sparingly)
             const updateCloud = (nd) => {
                 setData(nd);
                 if(isOffline) { localStorage.setItem('dm_loc', JSON.stringify(nd)); return; }
@@ -1152,6 +1193,28 @@
                     if(role === 'player') fb.updateDoc(ref, { players: nd.players, journal_public: nd.journal_public, partyStash: nd.partyStash, [`player_journals.${userId}`]: nd.player_journals[userId] || "" });
                     else fb.setDoc(ref, nd, { merge: true, savedSessions: nd.savedSessions || [] }); 
                 }, 1000);
+            };
+
+            // Granular Journal Update - Specific for concurrent editing
+            const updateJournalField = (field, value) => {
+                // Optimistic UI update
+                if (field.startsWith('player_journals')) {
+                   const journalId = field.split('.')[1];
+                   setData(prev => ({...prev, player_journals: {...prev.player_journals, [journalId]: value}}));
+                } else {
+                   setData(prev => ({...prev, [field]: value}));
+                }
+
+                if(isOffline) {
+                    const nd = {...data, [field]: value}; // Simple merge for offline
+                    localStorage.setItem('dm_loc', JSON.stringify(nd));
+                    return;
+                }
+
+                const ref = fb.doc(fb.db, 'artifacts', fb.appId, 'public', 'data', 'campaigns', code);
+                // Directly update the specific field in Firestore
+                // This prevents overwriting the whole document with stale data from other fields
+                fb.updateDoc(ref, { [field]: value }).catch(err => console.error("Save failed", err));
             };
 
             const queryAiService = async (messages) => {
@@ -1323,7 +1386,7 @@ Instruction: ${mode === 'narrate' ? "Narrate vividly using boxed text. No secret
                     <Sidebar view={view} setView={setView} role={role} code={code} showTools={showTools} setShowTools={setShowTools} onExit={onExit}/>
                     <main className="flex-1 h-full overflow-hidden relative">
                         {view === 'session' && <SessionView data={data} chatHistory={chatHistory} setChatHistory={setChatHistory} inputText={inputText} setInputText={setInputText} isListening={isListening} toggleListening={toggleListening} generateResponse={genResponse} isLoading={isLoading} role={role} activeChar={derivedActiveChar} showTools={showTools} setShowTools={setShowTools} diceLog={diceLog} handleDiceRoll={handleDiceRoll} syncState={syncState} isPlayerFacing={isPlayerFacing} setIsPlayerFacing={setIsPlayerFacing} updateCloud={updateCloud} generateSceneImage={generateSceneImage} aiProvider={aiProvider}/>}
-                        {view === 'journal' && <JournalView data={data} setData={setData} role={role} updateCloud={updateCloud} userId={userId} generateLoot={generateLoot}/>}
+                        {view === 'journal' && <JournalView data={data} setData={setData} role={role} updateJournalField={updateJournalField} userId={userId} generateLoot={generateLoot}/>}
                         {view === 'world' && <WorldView data={data} setData={setData} role={role} updateCloud={updateCloud} generateLoc={generateLoc}/>}
                         {view === 'party' && <PartyView data={data} setData={setData} role={role} activeChar={derivedActiveChar} updateCloud={updateCloud}/>}
                         {view === 'npcs' && <NpcView data={data} setData={setData} role={role} updateCloud={updateCloud} generateNpc={generateNpc} setChatInput={setInputText} setView={setView}/>}
