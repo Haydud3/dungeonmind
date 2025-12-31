@@ -659,7 +659,7 @@
             );
         };
 
-        const SettingsView = ({ data, setData, apiKey, setApiKey, role, updateCloud, handlePdfUpload, clearPdf, pdfProcessing, code, user, transferDM, banPlayer, kickPlayer, unbanPlayer, aiProvider, setAiProvider, fb, openAiModel, setOpenAiModel, puterModel, setPuterModel }) => {
+        const SettingsView = ({ data, setData, apiKey, setApiKey, role, updateCloud, handlePdfUpload, clearPdf, pdfProcessing, code, user, transferDM, banPlayer, kickPlayer, unbanPlayer, aiProvider, setAiProvider, fb, openAiModel, setOpenAiModel, puterModel, setPuterModel, onExit }) => {
             const copyCode = () => { navigator.clipboard.writeText(code); alert("Copied: " + code); };
             const activeUsers = data.activeUsers || {};
             const bannedUsers = data.bannedUsers || [];
@@ -686,7 +686,11 @@
                     <div className="glass-panel p-8 rounded-xl mb-8 flex flex-col items-center text-center border-2 border-indigo-500/30 bg-indigo-900/10 relative overflow-hidden w-full">
                         <h3 className="text-xs font-bold text-indigo-300 uppercase tracking-widest mb-2">Invite Code</h3>
                         <div className="text-4xl md:text-5xl font-mono font-bold text-white tracking-widest mb-4 drop-shadow-lg break-all">{code}</div>
-                        <div className="flex flex-wrap justify-center gap-2"><button onClick={copyCode} className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded text-sm flex items-center gap-2 shadow-lg"><Icon name="copy" size={16}/> Copy</button>{fb && (user ? <button onClick={signOut} className="bg-slate-700 px-4 py-2 rounded text-sm">Sign Out</button> : <button onClick={signIn} className="bg-blue-600 px-4 py-2 rounded text-sm">Login</button>)}</div>
+                        <div className="flex flex-wrap justify-center gap-2 mb-4"><button onClick={copyCode} className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded text-sm flex items-center gap-2 shadow-lg"><Icon name="copy" size={16}/> Copy</button>{fb && (user ? <button onClick={signOut} className="bg-slate-700 px-4 py-2 rounded text-sm">Sign Out</button> : <button onClick={signIn} className="bg-blue-600 px-4 py-2 rounded text-sm">Login</button>)}</div>
+                        {/* Mobile Only Exit Button */}
+                        <button onClick={onExit} className="md:hidden w-full bg-red-900/50 hover:bg-red-900 text-red-200 border border-red-800 py-3 rounded-lg font-bold flex items-center justify-center gap-2">
+                            <Icon name="log-out" size={20} /> Return to Main Menu
+                        </button>
                     </div>
                     {role === 'dm' && (
                         <div className="glass-panel p-6 rounded-xl border-l-4 border-blue-500 mb-6">
@@ -1320,7 +1324,7 @@ Instruction: ${mode === 'narrate' ? "Narrate vividly using boxed text. No secret
                         {view === 'world' && <WorldView data={data} setData={setData} role={role} updateCloud={updateCloud} generateLoc={generateLoc}/>}
                         {view === 'party' && <PartyView data={data} setData={setData} role={role} activeChar={derivedActiveChar} updateCloud={updateCloud}/>}
                         {view === 'npcs' && <NpcView data={data} setData={setData} role={role} updateCloud={updateCloud} generateNpc={generateNpc} setChatInput={setInputText} setView={setView}/>}
-                        {view === 'settings' && <SettingsView data={data} setData={setData} apiKey={apiKey} setApiKey={setKey} role={role} updateCloud={updateCloud} handlePdfUpload={handlePdf} clearPdf={()=>{const nd={...data, campaign:{...data.campaign, pdfName:null, pdfText:null}}; updateCloud(nd);}} pdfProcessing={pdfProcessing} code={code} user={user} transferDM={uid=>{if(confirm("Transfer?")){const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); fb.updateDoc(ref, {hostId:uid});}}} banPlayer={uid=>{if(confirm("Ban?")){const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); const na={...data.activeUsers}; delete na[uid]; fb.updateDoc(ref,{activeUsers:na, bannedUsers:fb.arrayUnion(uid)});}}} kickPlayer={uid=>{const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); const na={...data.activeUsers}; delete na[uid]; fb.updateDoc(ref, {activeUsers:na});}} unbanPlayer={uid=>{const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); fb.updateDoc(ref, {bannedUsers:fb.arrayRemove(uid)});}} aiProvider={aiProvider} setAiProvider={setAiProvider} fb={fb} openAiModel={openAiModel} setOpenAiModel={setOpenAiModel} puterModel={puterModel} setPuterModel={setPuterModel} isOffline={isOffline}/>}
+                        {view === 'settings' && <SettingsView data={data} setData={setData} apiKey={apiKey} setApiKey={setKey} role={role} updateCloud={updateCloud} handlePdfUpload={handlePdf} clearPdf={()=>{const nd={...data, campaign:{...data.campaign, pdfName:null, pdfText:null}}; updateCloud(nd);}} pdfProcessing={pdfProcessing} code={code} user={user} transferDM={uid=>{if(confirm("Transfer?")){const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); fb.updateDoc(ref, {hostId:uid});}}} banPlayer={uid=>{if(confirm("Ban?")){const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); const na={...data.activeUsers}; delete na[uid]; fb.updateDoc(ref,{activeUsers:na, bannedUsers:fb.arrayUnion(uid)});}}} kickPlayer={uid=>{const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); const na={...data.activeUsers}; delete na[uid]; fb.updateDoc(ref, {activeUsers:na});}} unbanPlayer={uid=>{const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); fb.updateDoc(ref, {bannedUsers:fb.arrayRemove(uid)});}} aiProvider={aiProvider} setAiProvider={setAiProvider} fb={fb} openAiModel={openAiModel} setOpenAiModel={setOpenAiModel} puterModel={puterModel} setPuterModel={setPuterModel} isOffline={isOffline} onExit={onExit}/>}
                     </main>
 
                     <MobileNav view={view} setView={setView} code={code} onExit={onExit} />
@@ -1431,4 +1435,5 @@ Instruction: ${mode === 'narrate' ? "Narrate vividly using boxed text. No secret
     </script>
 </body>
 </html>
+
 
