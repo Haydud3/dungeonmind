@@ -13,12 +13,18 @@ const Sidebar = ({ view, setView, onExit }) => {
 
     return (
         <aside className="hidden md:flex w-20 flex-col items-center bg-slate-900 border-r border-slate-800 py-4 z-20 h-full shrink-0">
-            <div className="mb-2 text-amber-500">
-                <Icon name="dungeon" size={32} />
+            {/* LOGO SECTION */}
+            <div className="mb-6 mt-2 relative group cursor-pointer" title="DungeonMind">
+                <div className="absolute inset-0 bg-amber-500 blur-lg opacity-20 group-hover:opacity-40 transition-opacity rounded-full"></div>
+                <img 
+                    src={`${import.meta.env.BASE_URL}logo.png`} 
+                    alt="DungeonMind" 
+                    className="w-12 h-12 rounded-full border-2 border-amber-500/50 shadow-lg relative z-10 object-cover"
+                />
             </div>
             
             {/* Navigation Buttons */}
-            <nav className="flex-1 flex flex-col gap-4 w-full mt-6">
+            <nav className="flex-1 flex flex-col gap-4 w-full">
                 {navItems.map(item => (
                     <button 
                         key={item.id} 
@@ -31,7 +37,7 @@ const Sidebar = ({ view, setView, onExit }) => {
                 ))}
             </nav>
 
-            <button onClick={onExit} className="mb-4 text-red-500 hover:bg-red-900/30 p-2 rounded" title="Sign Out">
+            <button onClick={onExit} className="mb-4 text-red-500 hover:bg-red-900/30 p-2 rounded transition-colors" title="Sign Out">
                 <Icon name="log-out" size={20}/>
             </button>
         </aside>

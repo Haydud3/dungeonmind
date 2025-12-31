@@ -53,7 +53,14 @@ const Lobby = ({ fb, user, onJoin, onOffline }) => {
         <div className="h-screen w-full flex items-center justify-center bg-[url('https://images.unsplash.com/photo-1519074069444-1ba4fff66d16?q=80&w=2544&auto=format&fit=crop')] bg-cover bg-center relative">
             <div className="absolute inset-0 bg-slate-900/80 backdrop-blur-sm"></div>
             <div className="relative z-10 w-full max-w-md p-8 glass-panel md:rounded-2xl shadow-2xl border-none md:border border-slate-700 h-full md:h-auto flex flex-col justify-center bg-slate-900/50">
-                <div className="text-center mb-6">
+                
+                <div className="text-center mb-6 flex flex-col items-center">
+                    {/* LOGO ADDED HERE */}
+                    <img 
+                        src={`${import.meta.env.BASE_URL}logo.png`} 
+                        className="w-24 h-24 rounded-full border-4 border-amber-500/30 shadow-[0_0_30px_rgba(217,119,6,0.3)] mb-4 object-cover" 
+                        alt="Logo"
+                    />
                     <h1 className="text-4xl fantasy-font text-amber-500 mb-2 text-shadow">DungeonMind</h1>
                     <p className="text-slate-400 text-sm">AI-Enhanced TTRPG Assistant</p>
                 </div>
