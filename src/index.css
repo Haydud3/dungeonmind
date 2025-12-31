@@ -1,0 +1,133 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* --- GLOBAL THEME & FONTS --- */
+:root {
+  --bg-dark: #0f172a;   /* Slate 900 */
+  --bg-panel: #1e293b;  /* Slate 800 */
+  --accent: #d97706;    /* Amber 600 */
+}
+
+body {
+  font-family: 'Lato', sans-serif;
+  background-color: var(--bg-dark);
+  color: #e2e8f0;
+  overflow: hidden; /* App-like feel, prevents body scroll */
+  touch-action: manipulation;
+}
+
+h1, h2, h3, .fantasy-font {
+  font-family: 'Cinzel', serif;
+}
+
+.mono-font {
+  font-family: 'Fira Code', monospace;
+}
+
+/* --- UTILITIES --- */
+.glass-panel {
+  background: rgba(30, 41, 59, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* Custom Scrollbar (Crucial for Dark Mode feel) */
+.custom-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+.custom-scroll::-webkit-scrollbar-track { background: #0f172a; }
+.custom-scroll::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+.custom-scroll::-webkit-scrollbar-thumb:hover { background: #475569; }
+
+/* Simple Animation */
+.animate-in { animation: fadeIn 0.3s ease-out; }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+/* --- REACT QUILL EDITOR OVERRIDES (Dark Mode Fixes) --- */
+/* This fixes the white background/black text issue */
+
+.quill {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+/* Toolbar Styling */
+.ql-toolbar {
+    background-color: #1e293b !important; /* Slate-800 */
+    border-color: #334155 !important; /* Slate-700 */
+    border-top-left-radius: 0.5rem;
+    border-top-right-radius: 0.5rem;
+    font-family: 'Lato', sans-serif !important;
+}
+
+/* Editor Content Area */
+.ql-container {
+    flex: 1;
+    background-color: rgba(30, 41, 59, 0.5) !important; /* Slate-900/50 */
+    border-color: #334155 !important;
+    border-bottom-left-radius: 0.5rem;
+    border-bottom-right-radius: 0.5rem;
+    color: #e2e8f0 !important; /* Light Text */
+    font-family: 'Lato', sans-serif !important;
+    font-size: 16px !important;
+    overflow-y: auto;
+}
+
+/* Scrollbar specifically for Editor */
+.ql-editor::-webkit-scrollbar { width: 6px; }
+.ql-editor::-webkit-scrollbar-track { background: transparent; }
+.ql-editor::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+
+/* Toolbar Icons Color Fix */
+.ql-stroke { stroke: #94a3b8 !important; }
+.ql-fill { fill: #94a3b8 !important; }
+.ql-picker { color: #94a3b8 !important; }
+
+/* Active/Hover States */
+.ql-active .ql-stroke { stroke: #d97706 !important; } /* Amber-600 */
+.ql-active .ql-fill { fill: #d97706 !important; }
+.ql-picker-label:hover { color: #d97706 !important; }
+
+/* Dropdown Menus (Size, Header) Background */
+.ql-picker-options {
+    background-color: #1e293b !important;
+    border-color: #334155 !important;
+    color: #e2e8f0 !important;
+}
+
+/* Typography inside the Editor */
+.ql-editor h1 {
+    font-family: 'Cinzel', serif;
+    color: #fbbf24;
+    font-size: 2em;
+    border-bottom: 1px solid #475569;
+    margin-bottom: 0.5em;
+}
+.ql-editor h2 {
+    font-family: 'Cinzel', serif;
+    color: #fcd34d;
+    font-size: 1.5em;
+    margin-top: 1em;
+}
+.ql-editor strong { color: #fcd34d; }
+.ql-editor blockquote {
+    border-left: 4px solid #d97706;
+    padding-left: 1em;
+    color: #94a3b8;
+    font-style: italic;
+    background: rgba(255,255,255,0.05);
+    padding: 8px;
+    border-radius: 4px;
+}
+
+/* Images */
+.ql-editor img {
+    max-width: 100%;
+    border-radius: 4px;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
+    display: block;
+    margin: 10px 0;
+}
+
+/* Clean Tables */
+.ql-editor table { width: 100%; border-collapse: collapse; margin: 1em 0; }
+.ql-editor td, .ql-editor th { border: 1px solid #475569; padding: 8px; vertical-align: top; }
