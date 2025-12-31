@@ -2,8 +2,8 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DungeonMind v26 | Official Campaigns</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>DungeonMind v26 | Mobile Enhanced</title>
     
     <!-- GLOBAL ERROR HANDLER -->
     <script>
@@ -79,11 +79,16 @@
         body { font-family: 'Lato', sans-serif; background-color: var(--bg-dark); color: #e2e8f0; overflow: hidden; touch-action: manipulation; }
         h1, h2, h3, .fantasy-font { font-family: 'Cinzel', serif; }
         .mono-font { font-family: 'Fira Code', monospace; }
-        .custom-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+        .custom-scroll::-webkit-scrollbar { width: 4px; height: 4px; }
         .custom-scroll::-webkit-scrollbar-track { background: #0f172a; }
         .custom-scroll::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
         .glass-panel { background: rgba(30, 41, 59, 0.95); border: 1px solid rgba(255, 255, 255, 0.05); }
+        /* Fix text size on mobile to prevent zoom */
         input, textarea, select { font-size: 16px !important; }
+        
+        /* Mobile height fix */
+        .h-dvh { height: 100vh; height: 100dvh; }
+        
         #app-loader { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #0f172a; z-index: 9999; display: flex; flex-direction: column; align-items: center; justify-content: center; color: white; transition: opacity 0.5s; }
         .loader-spinner { border: 4px solid rgba(255,255,255,0.1); border-top: 4px solid #d97706; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
@@ -100,6 +105,12 @@
         .status-saved { color: #4ade80; background: rgba(74, 222, 128, 0.1); }
         .status-saving { color: #facc15; background: rgba(250, 204, 21, 0.1); }
         .status-error { color: #ef4444; background: rgba(239, 68, 68, 0.1); }
+        
+        /* Mobile specific adjustments */
+        @media (max-width: 768px) {
+            .mobile-full-height { height: calc(100dvh - 60px); } /* Account for bottom nav */
+            .glass-panel { border: none; }
+        }
     </style>
 </head>
 <body>
@@ -221,7 +232,7 @@
             const [step, setStep] = useState(1);
             const [data, setData] = useState({ sourceMode: 'new', campaignName: '', tone: 'Adventurous', conceptDesc: '', conflict: '', loreText: '' });
             const [isThinking, setIsThinking] = useState(false);
-            const [verificationData, setVerificationData] = useState(null); // { question, answer, summary, conflict }
+            const [verificationData, setVerificationData] = useState(null); 
 
             const steps = [{ id: 1, title: 'Source', icon: 'book' }, { id: 2, title: 'Tone', icon: 'music' }, { id: 3, title: 'Lore', icon: 'lightbulb' }, { id: 4, title: 'Conflict', icon: 'sword' }];
 
@@ -248,7 +259,7 @@
                         setVerificationData(vData);
                     } else {
                         alert("AI couldn't verify. Please enter details manually.");
-                        setData({...data, sourceMode: 'new'}); // Fallback
+                        setData({...data, sourceMode: 'new'}); 
                         setStep(s => s + 1);
                     }
                 } catch(e) {
@@ -258,15 +269,14 @@
             };
 
             const confirmVerification = (isYes) => {
-                // If yes, populate data and move on
                 if (isYes) {
                     setData(p => ({ ...p, loreText: verificationData.lore, conflict: verificationData.conflict }));
                     setVerificationData(null);
-                    setStep(2); // Go to Tone
+                    setStep(2); 
                 } else {
                     alert("Let's try manual entry then.");
                     setVerificationData(null);
-                    setData(p => ({ ...p, sourceMode: 'new', campaignName: '' })); // Fallback to manual
+                    setData(p => ({ ...p, sourceMode: 'new', campaignName: '' })); 
                 }
             };
 
@@ -312,7 +322,6 @@
                                 </div>
                             )}
 
-                            {/* Step 1.5: Verification */}
                             {step === 1 && verificationData && (
                                 <div className="space-y-6 flex flex-col items-center text-center justify-center h-full">
                                     <Icon name="shield-check" size={48} className="text-green-500 mb-4"/>
@@ -328,13 +337,10 @@
                                 </div>
                             )}
 
-                            {/* Step 2: Tone */}
                             {step === 2 && (<div className="space-y-6"><div className="flex items-center gap-3 text-amber-400 mb-2"><Icon name="music" size={24}/><h3 className="text-xl font-bold">2. Define the Tone</h3></div><div className="grid grid-cols-2 md:grid-cols-4 gap-4">{['Heroic', 'Epic', 'Gritty', 'Comedic', 'Horror', 'Mystery'].map(t => (<button key={t} onClick={() => setData({...data, tone: t})} className={`p-4 rounded-lg border text-center transition-all ${data.tone === t ? 'bg-amber-600 border-amber-400 text-white' : 'bg-slate-700 border-slate-600 hover:border-amber-500/50'}`}>{t}</button>))}</div><input value={data.tone} onChange={e => setData({...data, tone: e.target.value})} className="w-full bg-slate-900 border border-slate-600 p-3 rounded text-slate-200" placeholder="Or type custom tone..."/></div>)}
                             
-                            {/* Step 3: Lore */}
                             {step === 3 && (<div className="space-y-6"><div className="flex items-center gap-3 text-amber-400 mb-2"><Icon name="lightbulb" size={24}/><h3 className="text-xl font-bold">3. {data.sourceMode === 'official' ? "Review Lore" : "The Lore"}</h3></div>{data.sourceMode === 'new' ? (<div><p className="text-slate-300 mb-4">Core premise?</p><textarea value={data.conceptDesc} onChange={e => setData({...data, conceptDesc: e.target.value})} className="w-full h-48 bg-slate-900 border border-slate-600 p-3 rounded text-slate-200 resize-none" placeholder="Enter your campaign pitch..."/></div>) : (<div><p className="text-slate-300 mb-4">Auto-generated from module. Edit if needed:</p><textarea value={data.loreText} onChange={e => setData({...data, loreText: e.target.value})} className="w-full h-64 bg-slate-900 border border-slate-600 p-3 rounded text-slate-200 resize-none custom-scroll" placeholder="Campaign Lore..."/></div>)}</div>)}
                             
-                            {/* Step 4: Conflict */}
                             {step === 4 && (<div className="space-y-6"><div className="flex items-center gap-3 text-amber-400 mb-2"><Icon name="sword" size={24}/><h3 className="text-xl font-bold">4. Central Conflict</h3></div><div className="relative"><textarea value={data.conflict} onChange={e => setData({...data, conflict: e.target.value})} className="w-full h-40 bg-slate-900 border border-slate-600 p-3 rounded text-slate-200 resize-none" placeholder="An evil empire? A tournament?"/>{data.sourceMode === 'new' && (<button onClick={handleBrainstorm} disabled={isThinking} className="absolute right-2 bottom-2 bg-indigo-600/80 hover:bg-indigo-500 text-white px-3 py-1 rounded text-xs font-bold flex items-center gap-1">{isThinking ? <Icon name="loader-2" size={12} className="animate-spin"/> : <Icon name="wand-2" size={12}/>} AI Suggest</button>)}</div></div>)}
                         </div>
                         
@@ -375,18 +381,24 @@
                 <div className="flex flex-col h-full bg-slate-900/50">
                     <div className="p-3 md:p-4 border-b border-slate-700 flex justify-between items-center bg-slate-800/80">
                         <div className="flex items-center gap-2 overflow-hidden">
-                            <button onClick={onBack} className="md:hidden text-slate-400 hover:text-white p-1 -ml-1">
-                                <Icon name="arrow-left" size={20} />
+                            <button onClick={onBack} className="md:hidden text-slate-400 hover:text-white p-2 -ml-2">
+                                <Icon name="arrow-left" size={24} />
                             </button>
-                            <h3 className="font-bold text-base md:text-lg text-slate-200 truncate max-w-[150px] md:max-w-xs">{page.title}</h3>
+                            <h3 className="font-bold text-base md:text-lg text-slate-200 truncate max-w-[140px] md:max-w-xs">{page.title}</h3>
                             <button onClick={toggleVisibility} className={`text-[10px] md:text-xs px-2 py-1 rounded flex items-center gap-1 transition-colors flex-shrink-0 ${page.isPublic ? 'bg-green-900/30 text-green-400 border border-green-800' : 'bg-red-900/30 text-red-400 border border-red-800'}`}>
                                 <Icon name={page.isPublic ? "eye" : "eye-off"} size={12}/> <span className="hidden sm:inline">{page.isPublic ? "Public" : "Private"}</span>
                             </button>
                             <span className={`collab-status text-[10px] hidden sm:inline-block ${saveStatus === 'saved' ? 'status-saved' : 'status-saving'}`}>{saveStatus === 'saved' ? 'Saved' : 'Saving...'}</span>
                         </div>
-                        <button onClick={() => onDelete(page.id)} className="text-slate-500 hover:text-red-500 flex-shrink-0"><Icon name="trash-2" size={18}/></button>
+                        <button onClick={() => onDelete(page.id)} className="text-slate-500 hover:text-red-500 flex-shrink-0 p-2"><Icon name="trash-2" size={20}/></button>
                     </div>
-                    <textarea value={localContent} onChange={e => handleChange(e.target.value)} className="flex-1 bg-transparent p-4 md:p-6 resize-none focus:outline-none font-sans text-base md:text-lg text-slate-300 leading-relaxed custom-scroll" placeholder="Write your entry here..."/>
+                    {/* Updated Textarea for full mobile height */}
+                    <textarea 
+                        value={localContent} 
+                        onChange={e => handleChange(e.target.value)} 
+                        className="flex-1 w-full bg-transparent p-4 md:p-6 resize-none focus:outline-none font-sans text-base md:text-lg text-slate-300 leading-relaxed custom-scroll pb-20 md:pb-4" 
+                        placeholder="Write your entry here..."
+                    />
                 </div>
             );
         };
@@ -401,6 +413,7 @@
             const availablePages = Object.values(pages).filter(p => p.isPublic || p.ownerId === userId).sort((a,b) => b.created - a.created);
 
             useEffect(() => {
+                // Only auto-select on Desktop
                 if (window.innerWidth >= 768 && availablePages.length > 0 && !selectedPageId) setSelectedPageId(availablePages[0].id);
             }, [availablePages.length]);
 
@@ -426,32 +439,33 @@
             };
 
             return (
-                <div className="flex h-full max-w-7xl mx-auto glass-panel rounded-none md:rounded-xl overflow-hidden m-0 md:m-6 border-0 md:border border-slate-700">
-                    <div className={`flex-col bg-slate-900 border-r border-slate-700 w-full md:w-64 ${selectedPageId ? 'hidden md:flex' : 'flex'}`}>
+                <div className="flex h-full w-full max-w-7xl mx-auto md:glass-panel md:rounded-xl overflow-hidden m-0 md:m-6 md:border border-slate-700">
+                    {/* List View - Hidden on Mobile if page selected */}
+                    <div className={`flex-col bg-slate-900 border-r border-slate-700 w-full md:w-64 ${selectedPageId ? 'hidden md:flex' : 'flex'} h-full`}>
                         <div className="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-800/50">
                             <h3 className="fantasy-font text-amber-500 text-lg">Journal</h3>
-                            <button onClick={() => setIsCreating(true)} className="bg-amber-600 hover:bg-amber-500 text-white p-1 rounded"><Icon name="plus" size={18}/></button>
+                            <button onClick={() => setIsCreating(true)} className="bg-amber-600 hover:bg-amber-500 text-white p-2 rounded"><Icon name="plus" size={20}/></button>
                         </div>
                         
                         {isCreating && (
                             <div className="p-3 bg-slate-800 border-b border-slate-700">
-                                <input autoFocus value={newPageTitle} onChange={e=>setNewPageTitle(e.target.value)} className="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1 text-sm text-white mb-2" placeholder="Page Title"/>
+                                <input autoFocus value={newPageTitle} onChange={e=>setNewPageTitle(e.target.value)} className="w-full bg-slate-900 border border-slate-600 rounded px-2 py-2 text-base text-white mb-2" placeholder="Page Title"/>
                                 <div className="flex justify-between items-center mb-2">
                                     <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
-                                        <input type="checkbox" checked={newPagePublic} onChange={e=>setNewPagePublic(e.target.checked)} className="rounded bg-slate-700 border-slate-500"/>
+                                        <input type="checkbox" checked={newPagePublic} onChange={e=>setNewPagePublic(e.target.checked)} className="rounded bg-slate-700 border-slate-500 w-4 h-4"/>
                                         Public?
                                     </label>
                                 </div>
                                 <div className="flex gap-2">
-                                    <button onClick={handleCreate} className="flex-1 bg-green-700 hover:bg-green-600 text-white text-xs py-1 rounded">Create</button>
-                                    <button onClick={() => setIsCreating(false)} className="flex-1 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs py-1 rounded">Cancel</button>
+                                    <button onClick={handleCreate} className="flex-1 bg-green-700 hover:bg-green-600 text-white text-xs py-2 rounded">Create</button>
+                                    <button onClick={() => setIsCreating(false)} className="flex-1 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs py-2 rounded">Cancel</button>
                                 </div>
                             </div>
                         )}
 
-                        <div className="flex-1 overflow-y-auto custom-scroll">
+                        <div className="flex-1 overflow-y-auto custom-scroll pb-20 md:pb-0">
                             {availablePages.map(page => (
-                                <div key={page.id} onClick={() => setSelectedPageId(page.id)} className={`p-4 md:p-3 border-b border-slate-800 cursor-pointer hover:bg-slate-800 transition-colors ${selectedPageId === page.id ? 'bg-slate-800 border-l-4 border-l-amber-500' : 'border-l-4 border-l-transparent'}`}>
+                                <div key={page.id} onClick={() => setSelectedPageId(page.id)} className={`p-4 border-b border-slate-800 cursor-pointer hover:bg-slate-800 transition-colors ${selectedPageId === page.id ? 'bg-slate-800 border-l-4 border-l-amber-500' : 'border-l-4 border-l-transparent'}`}>
                                     <div className="font-bold text-slate-200 text-base md:text-sm truncate">{page.title}</div>
                                     <div className="flex justify-between items-center mt-1">
                                         <span className="text-xs md:text-[10px] text-slate-500">{new Date(page.created).toLocaleDateString()}</span>
@@ -463,7 +477,8 @@
                         </div>
                     </div>
 
-                    <div className={`flex-1 h-full overflow-hidden bg-slate-900/30 ${selectedPageId ? 'flex' : 'hidden md:flex'}`}>
+                    {/* Editor View - Full Screen on Mobile */}
+                    <div className={`flex-1 h-full overflow-hidden bg-slate-900/30 ${selectedPageId ? 'flex' : 'hidden md:flex'} flex-col`}>
                         {selectedPageId && pages[selectedPageId] ? (
                             <JournalPageEditor page={pages[selectedPageId]} onSave={handleSavePage} onDelete={handleDeletePage} onBack={() => setSelectedPageId(null)} />
                         ) : (
@@ -480,13 +495,13 @@
         const DiceTray = ({ diceLog, handleDiceRoll }) => (
             <div className="glass-panel p-4 rounded-lg mb-4">
                 <h3 className="text-xs font-bold text-slate-500 uppercase mb-2">Dice Roller</h3>
-                <div className="grid grid-cols-4 gap-2 mb-3">{[4, 6, 8, 10, 12, 20, 100].map(d => (<button key={d} onClick={() => handleDiceRoll(d)} className="bg-slate-700 hover:bg-amber-700 text-xs font-mono py-1 rounded border border-slate-600 transition-colors">d{d}</button>))}</div>
+                <div className="grid grid-cols-4 gap-2 mb-3">{[4, 6, 8, 10, 12, 20, 100].map(d => (<button key={d} onClick={() => handleDiceRoll(d)} className="bg-slate-700 hover:bg-amber-700 text-xs font-mono py-2 rounded border border-slate-600 transition-colors">d{d}</button>))}</div>
                 <div className="h-24 overflow-y-auto custom-scroll bg-slate-900/50 rounded p-2 font-mono text-xs space-y-1">{diceLog.map(log => (<div key={log.id} className="flex justify-between border-b border-slate-800 pb-1"><span className="text-slate-400">{log.die}</span><span className={`font-bold ${log.result == 20 && log.die == 'd20' ? 'text-green-400' : log.result == 1 && log.die == 'd20' ? 'text-red-400' : 'text-amber-400'}`}>{log.result}</span></div>))}</div>
             </div>
         );
         
-        const Sidebar = ({ view, setView, role, code, showTools, setShowTools, onExit }) => (
-            <aside className="w-16 md:w-20 min-w-[4rem] flex flex-col items-center bg-slate-900 border-r border-slate-800 py-4 z-20">
+        const DesktopSidebar = ({ view, setView, code, showTools, setShowTools, onExit }) => (
+            <aside className="hidden md:flex w-20 flex-col items-center bg-slate-900 border-r border-slate-800 py-4 z-20 h-full">
                 <div className="mb-2 text-amber-500"><Icon name="dungeon" size={32} /></div>
                 <div className="text-[10px] font-mono text-slate-500 mb-6 bg-slate-800 px-1 rounded">{code || "LOCAL"}</div>
                 <nav className="flex-1 flex flex-col gap-4 w-full">
@@ -501,6 +516,17 @@
             </aside>
         );
 
+        const MobileNav = ({ view, setView, code, onExit }) => (
+            <nav className="md:hidden fixed bottom-0 left-0 right-0 h-16 bg-slate-900 border-t border-slate-800 flex items-center justify-around z-50 pb-safe">
+                 {['session', 'journal', 'world', 'party', 'npcs', 'settings'].map(v => (
+                    <button key={v} onClick={() => setView(v)} className={`p-2 flex flex-col items-center justify-center ${view === v ? 'text-amber-500' : 'text-slate-500'}`}>
+                        <Icon name={v === 'session' ? 'scroll-text' : v === 'journal' ? 'book-open-text' : v === 'world' ? 'map' : v === 'party' ? 'users' : v === 'npcs' ? 'skull' : 'settings-2'} size={20} />
+                        <span className="text-[9px] uppercase mt-1">{v === 'npcs' ? 'NPCs' : v}</span>
+                    </button>
+                ))}
+            </nav>
+        );
+
         const WorldView = ({ data, setData, role, updateCloud, generateLoc }) => {
             const [genType, setGenType] = useState("Town");
             const [genNote, setGenNote] = useState("");
@@ -511,19 +537,19 @@
             const handleGen = async () => { if(isGenerating) return; setIsGenerating(true); const loc = await generateLoc(genType, genNote, genesis); if(loc) { const nd = { ...data, locations: [{id:Date.now(), ...loc}, ...locations] }; setData(nd); updateCloud(nd); } setIsGenerating(false); };
             const deleteLoc = (id) => { if(confirm("Delete Location?")) { const nd = { ...data, locations: locations.filter(l => l.id !== id) }; setData(nd); updateCloud(nd); } };
             return (
-                <div className="max-w-7xl mx-auto p-4 md:p-6 h-full flex flex-col md:flex-row gap-6 overflow-hidden">
+                <div className="max-w-7xl mx-auto p-4 md:p-6 h-full flex flex-col md:flex-row gap-6 overflow-hidden pb-20 md:pb-6">
                     <div className="w-full md:w-1/3 flex flex-col glass-panel rounded-xl overflow-hidden max-h-full">
                         <div className="p-4 border-b border-slate-700 bg-slate-800/50"><h3 className="fantasy-font text-xl text-amber-500 mb-2">Campaign Bible</h3><p className="text-xs text-slate-400">The core truths of your world.</p></div>
                         <div className="flex-1 overflow-y-auto custom-scroll p-4 space-y-4">
-                            <div><label className="text-xs font-bold text-slate-500 uppercase">Tone</label><input disabled={role!=='dm'} value={genesis.tone || ""} onChange={e => updateGenesis('tone', e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-slate-200"/></div>
-                            <div><label className="text-xs font-bold text-slate-500 uppercase">Conflict</label><textarea disabled={role!=='dm'} value={genesis.conflict || ""} onChange={e => updateGenesis('conflict', e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-slate-200 h-24 resize-none"/></div>
-                            <div><label className="text-xs font-bold text-slate-500 uppercase">Lore / Concept</label><textarea disabled={role!=='dm'} value={genesis.loreText || genesis.conceptDesc || ""} onChange={e => updateGenesis(genesis.loreText ? 'loreText' : 'conceptDesc', e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-slate-200 h-64 resize-none custom-scroll"/></div>
+                            <div><label className="text-xs font-bold text-slate-500 uppercase">Tone</label><input disabled={role!=='dm'} value={genesis.tone || ""} onChange={e => updateGenesis('tone', e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-2 text-sm text-slate-200"/></div>
+                            <div><label className="text-xs font-bold text-slate-500 uppercase">Conflict</label><textarea disabled={role!=='dm'} value={genesis.conflict || ""} onChange={e => updateGenesis('conflict', e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-2 text-sm text-slate-200 h-24 resize-none"/></div>
+                            <div><label className="text-xs font-bold text-slate-500 uppercase">Lore / Concept</label><textarea disabled={role!=='dm'} value={genesis.loreText || genesis.conceptDesc || ""} onChange={e => updateGenesis(genesis.loreText ? 'loreText' : 'conceptDesc', e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-2 text-sm text-slate-200 h-64 resize-none custom-scroll"/></div>
                         </div>
                     </div>
                     <div className="flex-1 flex flex-col glass-panel rounded-xl overflow-hidden max-h-full">
                         <div className="p-4 border-b border-slate-700 bg-slate-800/50 flex justify-between items-center"><h3 className="fantasy-font text-xl text-amber-500">Atlas</h3></div>
-                        {role === 'dm' && (<div className="p-4 bg-slate-900/30 border-b border-slate-700 flex gap-2"><select value={genType} onChange={e => setGenType(e.target.value)} className="bg-slate-800 border border-slate-600 rounded px-3 py-2 text-sm text-white outline-none"><option value="Town">Town</option><option value="Dungeon">Dungeon</option><option value="Region">Region</option><option value="Shop">Shop</option></select><input value={genNote} onChange={e => setGenNote(e.target.value)} placeholder="Optional theme" className="flex-1 bg-slate-800 border border-slate-600 rounded px-3 py-2 text-sm text-white outline-none"/><button onClick={handleGen} disabled={isGenerating} className="bg-amber-600 hover:bg-amber-500 text-white px-4 py-2 rounded font-bold text-sm flex items-center gap-2">{isGenerating ? <Icon name="loader-2" size={16} className="animate-spin"/> : <Icon name="wand-2" size={16}/>} Generate</button></div>)}
-                        <div className="flex-1 overflow-y-auto custom-scroll p-4 grid grid-cols-1 md:grid-cols-2 gap-4">{locations.map(loc => (<div key={loc.id} className="bg-slate-900/50 border border-slate-700 rounded p-4 relative hover:border-amber-500/30 transition-colors"><div className="flex justify-between items-start mb-2"><h4 className="font-bold text-amber-400">{loc.name}</h4><span className="text-[10px] uppercase bg-slate-800 px-2 py-1 rounded text-slate-400">{loc.type}</span></div><p className="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap">{loc.desc}</p>{role === 'dm' && <button onClick={() => deleteLoc(loc.id)} className="absolute bottom-2 right-2 text-slate-600 hover:text-red-500"><Icon name="trash-2" size={14}/></button>}</div>))}{locations.length === 0 && <div className="col-span-full text-center text-slate-500 mt-10">No locations mapped yet.</div>}</div>
+                        {role === 'dm' && (<div className="p-4 bg-slate-900/30 border-b border-slate-700 flex flex-col md:flex-row gap-2"><div className="flex gap-2"><select value={genType} onChange={e => setGenType(e.target.value)} className="bg-slate-800 border border-slate-600 rounded px-3 py-2 text-sm text-white outline-none"><option value="Town">Town</option><option value="Dungeon">Dungeon</option><option value="Region">Region</option><option value="Shop">Shop</option></select><input value={genNote} onChange={e => setGenNote(e.target.value)} placeholder="Optional theme" className="flex-1 bg-slate-800 border border-slate-600 rounded px-3 py-2 text-sm text-white outline-none"/></div><button onClick={handleGen} disabled={isGenerating} className="bg-amber-600 hover:bg-amber-500 text-white px-4 py-2 rounded font-bold text-sm flex items-center justify-center gap-2">{isGenerating ? <Icon name="loader-2" size={16} className="animate-spin"/> : <Icon name="wand-2" size={16}/>} Generate</button></div>)}
+                        <div className="flex-1 overflow-y-auto custom-scroll p-4 grid grid-cols-1 md:grid-cols-2 gap-4">{locations.map(loc => (<div key={loc.id} className="bg-slate-900/50 border border-slate-700 rounded p-4 relative hover:border-amber-500/30 transition-colors"><div className="flex justify-between items-start mb-2"><h4 className="font-bold text-amber-400">{loc.name}</h4><span className="text-[10px] uppercase bg-slate-800 px-2 py-1 rounded text-slate-400">{loc.type}</span></div><p className="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap">{loc.desc}</p>{role === 'dm' && <button onClick={() => deleteLoc(loc.id)} className="absolute bottom-2 right-2 text-slate-600 hover:text-red-500 p-2"><Icon name="trash-2" size={16}/></button>}</div>))}{locations.length === 0 && <div className="col-span-full text-center text-slate-500 mt-10">No locations mapped yet.</div>}</div>
                     </div>
                 </div>
             );
@@ -566,16 +592,18 @@
             };
 
             return (
-                <div className="max-w-7xl mx-auto p-4 md:p-6 h-full flex flex-col md:flex-row gap-6">
-                    <div className="w-full md:w-1/3 flex flex-col glass-panel rounded-xl overflow-hidden max-h-full">
-                        <div className="p-4 border-b border-slate-700 bg-slate-800/50"><h3 className="fantasy-font text-xl text-amber-500 mb-2">NPC Registry</h3>{role === 'dm' && (<div className="space-y-2 p-3 bg-slate-900/50 rounded border border-slate-700"><div className="text-xs font-bold text-slate-400 uppercase">Generator</div><input value={genName} onChange={e=>setGenName(e.target.value)} placeholder="Name (e.g. 'Strahd')" className="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1 text-sm text-white"/><input value={genContext} onChange={e=>setGenContext(e.target.value)} placeholder="Role/Context (e.g. Shopkeeper)" className="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1 text-sm text-white"/><button onClick={handleGen} disabled={isGenerating} className="w-full bg-amber-700 hover:bg-amber-600 text-white text-xs font-bold py-2 rounded flex justify-center gap-2 items-center">{isGenerating ? <Icon name="loader-2" size={14} className="animate-spin"/> : <Icon name="wand-2" size={14}/>} Generate NPC</button></div>)}</div>
+                <div className="max-w-7xl mx-auto p-4 md:p-6 h-full flex flex-col md:flex-row gap-6 pb-20 md:pb-6">
+                    <div className={`${selectedNpc ? 'hidden md:flex' : 'flex'} w-full md:w-1/3 flex-col glass-panel rounded-xl overflow-hidden max-h-full`}>
+                        <div className="p-4 border-b border-slate-700 bg-slate-800/50"><h3 className="fantasy-font text-xl text-amber-500 mb-2">NPC Registry</h3>{role === 'dm' && (<div className="space-y-2 p-3 bg-slate-900/50 rounded border border-slate-700"><div className="text-xs font-bold text-slate-400 uppercase">Generator</div><input value={genName} onChange={e=>setGenName(e.target.value)} placeholder="Name (e.g. 'Strahd')" className="w-full bg-slate-800 border border-slate-600 rounded px-2 py-2 text-sm text-white"/><input value={genContext} onChange={e=>setGenContext(e.target.value)} placeholder="Role/Context (e.g. Shopkeeper)" className="w-full bg-slate-800 border border-slate-600 rounded px-2 py-2 text-sm text-white"/><button onClick={handleGen} disabled={isGenerating} className="w-full bg-amber-700 hover:bg-amber-600 text-white text-xs font-bold py-3 rounded flex justify-center gap-2 items-center">{isGenerating ? <Icon name="loader-2" size={14} className="animate-spin"/> : <Icon name="wand-2" size={14}/>} Generate NPC</button></div>)}</div>
                         <div className="flex-1 overflow-y-auto custom-scroll p-2 space-y-2">{visibleNpcs.map(npc => (<div key={npc.id} onClick={() => { setSelectedNpc(npc); setIsEditing(false); }} className={`p-3 rounded cursor-pointer border transition-all relative group ${selectedNpc?.id === npc.id ? 'bg-amber-900/20 border-amber-500' : 'bg-slate-800 border-slate-700 hover:border-slate-500'} ${npc.isHidden ? 'opacity-50' : ''}`}><div className="font-bold text-slate-200 flex items-center gap-2">{npc.name}{role === 'dm' && npc.isHidden && <Icon name="eye-off" size={14} className="text-slate-500"/>}</div><div className="text-xs text-slate-500 truncate">{npc.race} {npc.class}</div>{role === 'dm' && (<button onClick={(e) => deleteNpc(npc.id, e)} className="absolute top-2 right-2 text-slate-600 hover:text-red-500 p-1 opacity-0 group-hover:opacity-100 transition-opacity"><Icon name="trash-2" size={14}/></button>)}</div>))}{visibleNpcs.length === 0 && <div className="text-center text-slate-500 text-xs mt-4">No NPCs recorded.</div>}</div>
                     </div>
-                    <div className="flex-1 glass-panel rounded-xl p-6 overflow-y-auto custom-scroll">
+                    
+                    <div className={`${selectedNpc ? 'flex' : 'hidden md:flex'} flex-1 glass-panel rounded-xl p-4 md:p-6 overflow-y-auto custom-scroll relative flex-col`}>
+                        {selectedNpc && <button onClick={() => setSelectedNpc(null)} className="md:hidden absolute top-4 left-4 text-slate-400 bg-slate-800 rounded-full p-2 z-10"><Icon name="arrow-left" size={20}/></button>}
                         {selectedNpc ? (
-                            <div className="space-y-4">
-                                <div className="flex justify-between items-start border-b border-slate-700 pb-4">
-                                    <div className="flex-1 mr-4">
+                            <div className="space-y-4 pt-10 md:pt-0">
+                                <div className="flex flex-col md:flex-row justify-between items-start border-b border-slate-700 pb-4 gap-4">
+                                    <div className="flex-1 w-full">
                                         {isEditing ? (
                                             <div className="space-y-2">
                                                 <input className="text-3xl font-bold bg-slate-900 border border-slate-600 rounded px-2 py-1 w-full text-white" value={selectedNpc.name} onChange={e => updateNpcField('name', e.target.value)} placeholder="Name"/>
@@ -591,15 +619,15 @@
                                             </>
                                         )}
                                     </div>
-                                    <div className="flex gap-2">
+                                    <div className="flex gap-2 w-full md:w-auto justify-end">
                                         {role === 'dm' && (
                                             <>
-                                                <button onClick={() => toggleHidden(selectedNpc)} className={`p-2 rounded text-sm ${selectedNpc.isHidden ? 'bg-slate-700 text-slate-300' : 'bg-green-900/50 text-green-300'}`} title="Toggle Visibility"><Icon name={selectedNpc.isHidden ? "eye-off" : "eye"} size={16}/></button>
-                                                <button onClick={() => setIsEditing(!isEditing)} className={`p-2 rounded text-sm ${isEditing ? 'bg-amber-600 text-white' : 'bg-slate-700 text-slate-300'}`} title="Edit NPC"><Icon name={isEditing ? "check" : "pencil"} size={16}/></button>
+                                                <button onClick={() => toggleHidden(selectedNpc)} className={`p-3 rounded text-sm ${selectedNpc.isHidden ? 'bg-slate-700 text-slate-300' : 'bg-green-900/50 text-green-300'}`} title="Toggle Visibility"><Icon name={selectedNpc.isHidden ? "eye-off" : "eye"} size={16}/></button>
+                                                <button onClick={() => setIsEditing(!isEditing)} className={`p-3 rounded text-sm ${isEditing ? 'bg-amber-600 text-white' : 'bg-slate-700 text-slate-300'}`} title="Edit NPC"><Icon name={isEditing ? "check" : "pencil"} size={16}/></button>
                                             </>
                                         )}
-                                        <button onClick={() => { setChatInput(`(Playing as ${selectedNpc.name}) `); setView('session'); }} className="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1 rounded text-sm flex items-center gap-2"><Icon name="message-circle" size={16}/> Chat</button>
-                                        {role === 'dm' && <button onClick={(e) => deleteNpc(selectedNpc.id, e)} className="bg-red-900/50 hover:bg-red-900 text-red-200 px-3 py-1 rounded text-sm"><Icon name="trash" size={16}/></button>}
+                                        <button onClick={() => { setChatInput(`(Playing as ${selectedNpc.name}) `); setView('session'); }} className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded text-sm flex items-center gap-2"><Icon name="message-circle" size={16}/> Chat</button>
+                                        {role === 'dm' && <button onClick={(e) => deleteNpc(selectedNpc.id, e)} className="bg-red-900/50 hover:bg-red-900 text-red-200 px-4 py-2 rounded text-sm"><Icon name="trash" size={16}/></button>}
                                     </div>
                                 </div>
                                 <div className="grid md:grid-cols-2 gap-4">
@@ -653,12 +681,12 @@
             const handleRestore = (e) => { const file = e.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onload = (event) => { try { const json = JSON.parse(event.target.result); if (!json.campaign || !json.players) { alert("Invalid backup file."); return; } if (confirm("Overwrite ALL data with backup?")) { setData(json); updateCloud(json); alert("Restored."); } } catch (err) { alert("Error: " + err.message); } }; reader.readAsText(file); e.target.value = null; };
 
             return (
-                <div className="max-w-3xl mx-auto p-4 md:p-8 overflow-y-auto h-full custom-scroll w-full">
+                <div className="max-w-3xl mx-auto p-4 md:p-8 overflow-y-auto h-full custom-scroll w-full pb-20 md:pb-8">
                     <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-2"><h2 className="text-3xl fantasy-font text-amber-500">Settings</h2></div>
                     <div className="glass-panel p-8 rounded-xl mb-8 flex flex-col items-center text-center border-2 border-indigo-500/30 bg-indigo-900/10 relative overflow-hidden w-full">
                         <h3 className="text-xs font-bold text-indigo-300 uppercase tracking-widest mb-2">Invite Code</h3>
                         <div className="text-4xl md:text-5xl font-mono font-bold text-white tracking-widest mb-4 drop-shadow-lg break-all">{code}</div>
-                        <div className="flex flex-wrap justify-center gap-2"><button onClick={copyCode} className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-1 rounded text-sm flex items-center gap-2 shadow-lg"><Icon name="copy" size={16}/> Copy</button>{fb && (user ? <button onClick={signOut} className="bg-slate-700 px-4 py-1 rounded text-sm">Sign Out</button> : <button onClick={signIn} className="bg-blue-600 px-4 py-1 rounded text-sm">Login</button>)}</div>
+                        <div className="flex flex-wrap justify-center gap-2"><button onClick={copyCode} className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded text-sm flex items-center gap-2 shadow-lg"><Icon name="copy" size={16}/> Copy</button>{fb && (user ? <button onClick={signOut} className="bg-slate-700 px-4 py-2 rounded text-sm">Sign Out</button> : <button onClick={signIn} className="bg-blue-600 px-4 py-2 rounded text-sm">Login</button>)}</div>
                     </div>
                     {role === 'dm' && (
                         <div className="glass-panel p-6 rounded-xl border-l-4 border-blue-500 mb-6">
@@ -722,7 +750,7 @@
             const updatePlayer = (idx, field, val) => { const newPlayers = data.players.map((p, i) => i === idx ? { ...p, [field]: val } : p); setData(prev => ({...prev, players: newPlayers})); updateCloud({...data, players: newPlayers}); };
             const addPlayer = () => { const newData = { ...data, players: [...data.players, { id: Date.now(), name: "New Hero", race: "Human", class: "Fighter", hp: 10, notes: "", backstory: "", appearance: "", motivation: "" }] }; setData(newData); updateCloud(newData); };
             return (
-                <div className="max-w-4xl mx-auto p-4 md:p-8 overflow-y-auto h-full custom-scroll">
+                <div className="max-w-4xl mx-auto p-4 md:p-8 overflow-y-auto h-full custom-scroll pb-20 md:pb-8">
                     <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-2"><h2 className="text-3xl fantasy-font text-amber-500">Party</h2>{role === 'dm' && <button onClick={addPlayer} className="bg-amber-600 px-3 py-1 rounded text-sm font-bold">+ Add</button>}</div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         {data.players?.map((p, idx) => {
@@ -731,14 +759,14 @@
                                 <div key={p.id} className={`glass-panel p-4 rounded-xl border-l-4 relative group ${activeChar == p.id ? 'border-green-500 bg-green-900/10' : 'border-amber-600'}`}>
                                     <div className="flex justify-between mb-2">
                                         <input disabled={!canEdit} className={`bg-transparent font-bold text-lg w-full outline-none ${!canEdit && 'text-slate-400'}`} value={p.name} onChange={e => updatePlayer(idx, 'name', e.target.value)} placeholder="Name"/>
-                                        {role === 'dm' && <button onClick={() => { const nd = { ...data, players: data.players.filter(pl => pl.id !== p.id) }; setData(nd); updateCloud(nd); }} className="text-slate-600 hover:text-red-500"><Icon name="trash-2" size={16}/></button>}
+                                        {role === 'dm' && <button onClick={() => { const nd = { ...data, players: data.players.filter(pl => pl.id !== p.id) }; setData(nd); updateCloud(nd); }} className="text-slate-600 hover:text-red-500 p-2"><Icon name="trash-2" size={16}/></button>}
                                         {activeChar == p.id && <span className="text-xs text-green-400 font-bold">YOU</span>}
                                     </div>
-                                    <div className="flex gap-2 mb-2"><input disabled={!canEdit} className="w-1/2 bg-slate-800/50 rounded p-1 text-sm border border-transparent focus:border-amber-500 outline-none" value={p.race} placeholder="Race" onChange={e => updatePlayer(idx, 'race', e.target.value)}/><input disabled={!canEdit} className="w-1/2 bg-slate-800/50 rounded p-1 text-sm border border-transparent focus:border-amber-500 outline-none" value={p.class} placeholder="Class" onChange={e => updatePlayer(idx, 'class', e.target.value)}/></div>
+                                    <div className="flex gap-2 mb-2"><input disabled={!canEdit} className="w-1/2 bg-slate-800/50 rounded p-2 text-sm border border-transparent focus:border-amber-500 outline-none" value={p.race} placeholder="Race" onChange={e => updatePlayer(idx, 'race', e.target.value)}/><input disabled={!canEdit} className="w-1/2 bg-slate-800/50 rounded p-2 text-sm border border-transparent focus:border-amber-500 outline-none" value={p.class} placeholder="Class" onChange={e => updatePlayer(idx, 'class', e.target.value)}/></div>
                                     <div className="flex border-b border-slate-700 mb-2">
-                                        <button onClick={() => setViewMode('stats')} className={`flex-1 text-xs py-1 ${viewMode === 'stats' ? 'text-amber-400 border-b-2 border-amber-400' : 'text-slate-500'}`}>Stats</button>
-                                        <button onClick={() => setViewMode('appearance')} className={`flex-1 text-xs py-1 ${viewMode === 'appearance' ? 'text-amber-400 border-b-2 border-amber-400' : 'text-slate-500'}`}>Looks</button>
-                                        <button onClick={() => setViewMode('bio')} className={`flex-1 text-xs py-1 ${viewMode === 'bio' ? 'text-amber-400 border-b-2 border-amber-400' : 'text-slate-500'}`}>Bio</button>
+                                        <button onClick={() => setViewMode('stats')} className={`flex-1 text-xs py-2 ${viewMode === 'stats' ? 'text-amber-400 border-b-2 border-amber-400' : 'text-slate-500'}`}>Stats</button>
+                                        <button onClick={() => setViewMode('appearance')} className={`flex-1 text-xs py-2 ${viewMode === 'appearance' ? 'text-amber-400 border-b-2 border-amber-400' : 'text-slate-500'}`}>Looks</button>
+                                        <button onClick={() => setViewMode('bio')} className={`flex-1 text-xs py-2 ${viewMode === 'bio' ? 'text-amber-400 border-b-2 border-amber-400' : 'text-slate-500'}`}>Bio</button>
                                     </div>
                                     {viewMode === 'stats' && (
                                         <textarea disabled={!canEdit} className="w-full bg-slate-800/30 rounded p-2 text-sm h-32 resize-none custom-scroll border border-transparent focus:border-amber-500 outline-none" value={p.notes} placeholder="Inventory, Stats, Loot..." onChange={e => updatePlayer(idx, 'notes', e.target.value)}/>
@@ -789,15 +817,15 @@
             const [showSavedSessions, setShowSavedSessions] = useState(false);
 
             return (
-                <div className="flex h-full relative">
-                    <div className="flex-1 flex flex-col h-full relative">
-                        <div className="h-12 border-b border-slate-800 flex items-center justify-between px-4 bg-slate-900/90 backdrop-blur">
+                <div className="flex h-full relative flex-col">
+                    <div className="flex-1 flex flex-col h-full relative overflow-hidden">
+                        <div className="h-12 border-b border-slate-800 flex items-center justify-between px-4 bg-slate-900/90 backdrop-blur shrink-0">
                             <div className="flex gap-2 items-center">
                                 <div className={`live-status ${syncState === 'saved' ? 'status-online' : 'status-offline'}`}></div>
                                 <span className="text-sm font-bold text-amber-500 truncate max-w-[120px]">{data.campaign?.location || "Unknown Location"}</span>
                             </div>
                             <div className="flex items-center gap-2">
-                                <button onClick={() => setShowSavedSessions(true)} className="p-1 hover:text-white text-slate-400"><Icon name="folder-open" size={18}/></button>
+                                <button onClick={() => setShowSavedSessions(true)} className="p-2 hover:text-white text-slate-400"><Icon name="folder-open" size={18}/></button>
                                 <button onClick={() => {
                                     const name = prompt("Name this session save:");
                                     if(name) {
@@ -805,7 +833,7 @@
                                         const saved = [...(data.savedSessions || []), newSession];
                                         updateCloud({...data, savedSessions: saved});
                                     }
-                                }} className="p-1 hover:text-white text-slate-400"><Icon name="save" size={18}/></button>
+                                }} className="p-2 hover:text-white text-slate-400"><Icon name="save" size={18}/></button>
                                 
                                 {data.config?.strictMode && <span className="text-[10px] bg-blue-900/30 text-blue-400 px-1 rounded border border-blue-800 hidden sm:inline">STRICT</span>}
                                 <div className={`text-xs px-2 py-1 rounded ${role === 'dm' ? 'bg-red-900/30 text-red-400' : 'bg-green-900/30 text-green-400'}`}>{role === 'dm' ? 'DM' : `PLAYER: ${charName}`}</div>
@@ -835,7 +863,7 @@
                             </div>
                         )}
 
-                        <div ref={chatEndRef} className="flex-1 overflow-y-auto custom-scroll p-4 pb-40 space-y-6 chat-content">
+                        <div className="flex-1 overflow-y-auto custom-scroll p-4 space-y-6 chat-content">
                             {chatHistory.map((msg, i) => (
                                 <div key={i} style={{textDecoration: 'none'}} className={`p-4 rounded-lg max-w-[95%] md:max-w-[85%] no-underline ${msg.role === 'user' ? 'bg-slate-800 ml-auto text-right' : msg.role === 'system' ? 'bg-slate-800/50 mx-auto text-center text-xs text-slate-500' : 'bg-indigo-900/20 border border-indigo-500/30 mr-auto'}`}>
                                     <div className="break-words" dangerouslySetInnerHTML={{__html: msg.content.replace(/~~([\s\S]*?)~~/g, '$1').replace(/<(s|strike|del)>([\s\S]*?)<\/\1>/gi, '$2').replace(/\*\*(.*?)\*\*/g, '<b>$1</b>').replace(/\n/g, '<br/>')}} />
@@ -850,43 +878,44 @@
                                 </div>
                             ))}
                             {isLoading && <div className="text-center text-xs text-slate-500 animate-pulse">Thinking...</div>}
+                            <div ref={chatEndRef}></div>
                         </div>
                         
-                        <div className="absolute bottom-0 w-full p-2 md:p-4 bg-slate-900 border-t border-slate-800 flex flex-col gap-2">
-                            <div className="flex gap-2 overflow-x-auto custom-scroll pb-1 w-full">
+                        <div className="p-2 md:p-4 bg-slate-900 border-t border-slate-800 flex flex-col gap-2 shrink-0 pb-20 md:pb-4">
+                            <div className="flex gap-2 overflow-x-auto custom-scroll pb-1 w-full no-scrollbar">
                                 {role === 'dm' ? (
                                     <>
-                                        <button onClick={() => handleAction('narrate')} className="bg-blue-900/50 hover:bg-blue-800 text-blue-200 border border-blue-700/50 rounded-full px-3 py-1 text-xs flex items-center gap-1 transition-colors whitespace-nowrap flex-shrink-0"><Icon name="eye" size={12}/> Narrate</button>
-                                        <button onClick={() => handleAction('mechanics')} className="bg-purple-900/50 hover:bg-purple-800 text-purple-200 border border-purple-700/50 rounded-full px-3 py-1 text-xs flex items-center gap-1 transition-colors whitespace-nowrap flex-shrink-0"><Icon name="settings" size={12}/> Mechanics</button>
-                                        <button onClick={() => handleAction('npc')} className="bg-amber-900/50 hover:bg-amber-800 text-amber-200 border border-amber-700/50 rounded-full px-3 py-1 text-xs flex items-center gap-1 transition-colors whitespace-nowrap flex-shrink-0"><Icon name="users" size={12}/> NPC</button>
-                                        <button onClick={() => handleAction('chaos')} className="bg-red-600/80 hover:bg-red-500 text-white border border-red-500 rounded-full px-3 py-1 text-xs flex items-center gap-1 transition-colors whitespace-nowrap flex-shrink-0 ml-auto font-bold animate-pulse"><Icon name="zap" size={12}/> CHAOS</button>
+                                        <button onClick={() => handleAction('narrate')} className="bg-blue-900/50 hover:bg-blue-800 text-blue-200 border border-blue-700/50 rounded-full px-4 py-2 text-xs flex items-center gap-1 transition-colors whitespace-nowrap flex-shrink-0"><Icon name="eye" size={14}/> Narrate</button>
+                                        <button onClick={() => handleAction('mechanics')} className="bg-purple-900/50 hover:bg-purple-800 text-purple-200 border border-purple-700/50 rounded-full px-4 py-2 text-xs flex items-center gap-1 transition-colors whitespace-nowrap flex-shrink-0"><Icon name="settings" size={14}/> Mechanics</button>
+                                        <button onClick={() => handleAction('npc')} className="bg-amber-900/50 hover:bg-amber-800 text-amber-200 border border-amber-700/50 rounded-full px-4 py-2 text-xs flex items-center gap-1 transition-colors whitespace-nowrap flex-shrink-0"><Icon name="users" size={14}/> NPC</button>
+                                        <button onClick={() => handleAction('chaos')} className="bg-red-600/80 hover:bg-red-500 text-white border border-red-500 rounded-full px-4 py-2 text-xs flex items-center gap-1 transition-colors whitespace-nowrap flex-shrink-0 ml-auto font-bold animate-pulse"><Icon name="zap" size={14}/> CHAOS</button>
                                     </>
                                 ) : (
                                     <>
-                                        <button onClick={() => handleAction('action')} className="bg-red-900/50 hover:bg-red-800 text-red-200 border border-red-700/50 rounded-full px-3 py-1 text-xs flex items-center gap-1 transition-colors whitespace-nowrap flex-shrink-0"><Icon name="sword" size={12}/> Action</button>
-                                        <button onClick={() => handleAction('speak')} className="bg-green-900/50 hover:bg-green-800 text-green-200 border border-green-700/50 rounded-full px-3 py-1 text-xs flex items-center gap-1 transition-colors whitespace-nowrap flex-shrink-0"><Icon name="message-circle" size={12}/> Speak</button>
-                                        <button onClick={() => handleAction('recall')} className="bg-indigo-900/50 hover:bg-indigo-800 text-indigo-200 border border-indigo-700/50 rounded-full px-3 py-1 text-xs flex items-center gap-1 transition-colors whitespace-nowrap flex-shrink-0"><Icon name="brain" size={12}/> Recall</button>
+                                        <button onClick={() => handleAction('action')} className="bg-red-900/50 hover:bg-red-800 text-red-200 border border-red-700/50 rounded-full px-4 py-2 text-xs flex items-center gap-1 transition-colors whitespace-nowrap flex-shrink-0"><Icon name="sword" size={14}/> Action</button>
+                                        <button onClick={() => handleAction('speak')} className="bg-green-900/50 hover:bg-green-800 text-green-200 border border-green-700/50 rounded-full px-4 py-2 text-xs flex items-center gap-1 transition-colors whitespace-nowrap flex-shrink-0"><Icon name="message-circle" size={14}/> Speak</button>
+                                        <button onClick={() => handleAction('recall')} className="bg-indigo-900/50 hover:bg-indigo-800 text-indigo-200 border border-indigo-700/50 rounded-full px-4 py-2 text-xs flex items-center gap-1 transition-colors whitespace-nowrap flex-shrink-0"><Icon name="brain" size={14}/> Recall</button>
                                     </>
                                 )}
                             </div>
 
                             <div className="relative flex gap-2">
                                 <div className="relative flex-1">
-                                    <textarea value={inputText} onChange={e => setInputText(e.target.value)} onKeyDown={e => { if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); generateResponse(); }}} placeholder={role==='dm' ? "DM Instruction..." : `What does ${charName} do?`} className="w-full bg-slate-800 text-white rounded-lg p-3 pr-20 resize-none h-14 focus:ring-1 focus:ring-amber-500 outline-none custom-scroll"/>
+                                    <textarea value={inputText} onChange={e => setInputText(e.target.value)} onKeyDown={e => { if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); generateResponse(); }}} placeholder={role==='dm' ? "DM Instruction..." : `What does ${charName} do?`} className="w-full bg-slate-800 text-white rounded-lg p-3 pr-20 resize-none h-14 focus:ring-1 focus:ring-amber-500 outline-none custom-scroll text-base"/>
                                     <div className="absolute right-2 top-2 flex gap-1">
                                         {aiProvider === 'puter' && (
-                                            <button onClick={handleImageGen} title="Generate Scene Image" className="p-2 rounded-full text-slate-400 hover:text-amber-500 transition-colors relative"><Icon name="camera" size={18}/></button>
+                                            <button onClick={handleImageGen} title="Generate Scene Image" className="p-2 rounded-full text-slate-400 hover:text-amber-500 transition-colors relative"><Icon name="camera" size={20}/></button>
                                         )}
-                                        <button onClick={toggleListening} className={`p-2 rounded-full ${isListening ? 'text-red-500 animate-pulse' : 'text-slate-400 hover:text-white'}`}><Icon name="mic" size={18}/></button>
+                                        <button onClick={toggleListening} className={`p-2 rounded-full ${isListening ? 'text-red-500 animate-pulse' : 'text-slate-400 hover:text-white'}`}><Icon name="mic" size={20}/></button>
                                     </div>
                                 </div>
-                                <button onClick={() => generateResponse()} className="bg-amber-600 hover:bg-amber-500 px-4 rounded text-white h-14 flex items-center justify-center flex-shrink-0 w-14"><Icon name="send" size={20}/></button>
+                                <button onClick={() => generateResponse()} className="bg-amber-600 hover:bg-amber-500 px-4 rounded-lg text-white h-14 flex items-center justify-center flex-shrink-0 w-14"><Icon name="send" size={24}/></button>
                             </div>
                         </div>
                     </div>
                     {showTools && (
                         <div className="absolute md:relative z-30 right-0 top-0 h-full w-64 md:w-72 bg-slate-900 border-l border-slate-800 flex flex-col p-4 gap-4 shadow-xl">
-                            <div className="flex justify-between items-center mb-2"><span className="fantasy-font text-amber-500">Tools</span><button onClick={() => setShowTools(false)}><Icon name="x" size={16}/></button></div>
+                            <div className="flex justify-between items-center mb-2"><span className="fantasy-font text-amber-500">Tools</span><button onClick={() => setShowTools(false)}><Icon name="x" size={24}/></button></div>
                             <DiceTray diceLog={diceLog} handleDiceRoll={handleDiceRoll} />
                         </div>
                     )}
@@ -955,9 +984,9 @@
             };
 
             return (
-                <div className="h-screen w-full flex items-center justify-center bg-[url('https://images.unsplash.com/photo-1519074069444-1ba4fff66d16?q=80&w=2544&auto=format&fit=crop')] bg-cover bg-center relative">
+                <div className="h-dvh w-full flex items-center justify-center bg-[url('https://images.unsplash.com/photo-1519074069444-1ba4fff66d16?q=80&w=2544&auto=format&fit=crop')] bg-cover bg-center relative">
                     <div className="absolute inset-0 bg-slate-900/80 backdrop-blur-sm"></div>
-                    <div className="relative z-10 w-full max-w-md p-8 glass-panel rounded-2xl shadow-2xl border border-slate-700 max-h-[90vh] overflow-y-auto custom-scroll">
+                    <div className="relative z-10 w-full max-w-md p-8 glass-panel md:rounded-2xl shadow-2xl border-none md:border border-slate-700 max-h-[100dvh] overflow-y-auto custom-scroll h-full md:h-auto flex flex-col justify-center">
                         <div className="text-center mb-6">
                             <h1 className="text-4xl fantasy-font text-amber-500 mb-2 text-shadow">DungeonMind</h1>
                             <p className="text-slate-400 text-sm">AI-Enhanced TTRPG Assistant</p>
@@ -1046,7 +1075,6 @@
                 const unsub = fb.onSnapshot(ref, snap => {
                     if(snap.exists()) {
                         const d = snap.data();
-                        // Migration: convert old journals to pages if they exist and pages don't
                         if (!d.journal_pages) {
                             d.journal_pages = {};
                             if (d.journal_public) d.journal_pages['legacy_public'] = { id: 'legacy_public', title: 'Public Log', content: d.journal_public, ownerId: 'system', isPublic: true, created: Date.now() };
@@ -1193,9 +1221,8 @@
                 }
 
                 const loreContext = genesis.loreText || genesis.conceptDesc || "Standard Fantasy";
-                // Gather accessible journal pages content
                 const accessiblePages = Object.values(data.journal_pages || {}).filter(p => p.isPublic || p.ownerId === userId);
-                const journalContext = accessiblePages.map(p => `[Page: ${p.title}]: ${p.content}`).join('\n').slice(-4000); // Limit context size
+                const journalContext = accessiblePages.map(p => `[Page: ${p.title}]: ${p.content}`).join('\n').slice(-4000);
 
                 const systemPrompt = `
 Role: Dungeon Master AI. 
@@ -1268,7 +1295,6 @@ Instruction: ${mode === 'narrate' ? "Narrate vividly using boxed text. No secret
                 let newData = { ...data, onboardingComplete: true };
                 if (onboardingData) {
                     newData.campaign = { ...newData.campaign, genesis: onboardingData };
-                    // Initialize Journal Pages
                     newData.journal_pages = {};
                     newData.journal_pages['genesis'] = {
                         id: 'genesis',
@@ -1285,9 +1311,10 @@ Instruction: ${mode === 'narrate' ? "Narrate vividly using boxed text. No secret
             if(!data) return <div className="h-screen flex items-center justify-center text-white">Syncing...</div>;
 
             return (
-                <div className="flex h-screen w-full bg-slate-900 text-slate-200">
-                    <Sidebar view={view} setView={setView} role={role} code={code} showTools={showTools} setShowTools={setShowTools} onExit={onExit}/>
-                    <main className="flex-1 h-full overflow-hidden relative">
+                <div className="flex h-dvh w-full bg-slate-900 text-slate-200 flex-col md:flex-row">
+                    <DesktopSidebar view={view} setView={setView} code={code} showTools={showTools} setShowTools={setShowTools} onExit={onExit}/>
+                    
+                    <main className="flex-1 h-full overflow-hidden relative w-full">
                         {view === 'session' && <SessionView data={data} chatHistory={chatHistory} setChatHistory={setChatHistory} inputText={inputText} setInputText={setInputText} isListening={isListening} toggleListening={toggleListening} generateResponse={genResponse} isLoading={isLoading} role={role} activeChar={derivedActiveChar} showTools={showTools} setShowTools={setShowTools} diceLog={diceLog} handleDiceRoll={handleDiceRoll} syncState={syncState} isPlayerFacing={isPlayerFacing} setIsPlayerFacing={setIsPlayerFacing} updateCloud={updateCloud} generateSceneImage={generateSceneImage} aiProvider={aiProvider}/>}
                         {view === 'journal' && <JournalView data={data} setData={setData} role={role} updateJournalField={updateJournalField} userId={userId}/>}
                         {view === 'world' && <WorldView data={data} setData={setData} role={role} updateCloud={updateCloud} generateLoc={generateLoc}/>}
@@ -1295,6 +1322,9 @@ Instruction: ${mode === 'narrate' ? "Narrate vividly using boxed text. No secret
                         {view === 'npcs' && <NpcView data={data} setData={setData} role={role} updateCloud={updateCloud} generateNpc={generateNpc} setChatInput={setInputText} setView={setView}/>}
                         {view === 'settings' && <SettingsView data={data} setData={setData} apiKey={apiKey} setApiKey={setKey} role={role} updateCloud={updateCloud} handlePdfUpload={handlePdf} clearPdf={()=>{const nd={...data, campaign:{...data.campaign, pdfName:null, pdfText:null}}; updateCloud(nd);}} pdfProcessing={pdfProcessing} code={code} user={user} transferDM={uid=>{if(confirm("Transfer?")){const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); fb.updateDoc(ref, {hostId:uid});}}} banPlayer={uid=>{if(confirm("Ban?")){const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); const na={...data.activeUsers}; delete na[uid]; fb.updateDoc(ref,{activeUsers:na, bannedUsers:fb.arrayUnion(uid)});}}} kickPlayer={uid=>{const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); const na={...data.activeUsers}; delete na[uid]; fb.updateDoc(ref, {activeUsers:na});}} unbanPlayer={uid=>{const ref=fb.doc(fb.db,'artifacts',fb.appId,'public','data','campaigns',code); fb.updateDoc(ref, {bannedUsers:fb.arrayRemove(uid)});}} aiProvider={aiProvider} setAiProvider={setAiProvider} fb={fb} openAiModel={openAiModel} setOpenAiModel={setOpenAiModel} puterModel={puterModel} setPuterModel={setPuterModel} isOffline={isOffline}/>}
                     </main>
+
+                    <MobileNav view={view} setView={setView} code={code} onExit={onExit} />
+
                     {showTour && <TourGuide setView={setView} onClose={() => { setShowTour(false); localStorage.setItem('dm_tour_completed', 'true'); }} />}
                     {role === 'dm' && !data.onboardingComplete && <OnboardingWizard onComplete={handleOnboardingComplete} aiHelper={queryAiService} />}
                 </div>
@@ -1305,9 +1335,9 @@ Instruction: ${mode === 'narrate' ? "Narrate vividly using boxed text. No secret
             const steps = [
                 { title: "Welcome to DungeonMind", content: "Your AI-enhanced TTRPG assistant. This tool combines chat, journaling, and world-building.", view: 'session' },
                 { title: "The Session Hub", content: "This is your main command center. Chat with the AI, roll dice, and see the story unfold.", view: 'session' },
-                { title: "Infinite Journals", content: "New in v24: Create unlimited journal pages. Toggle them Public (shared) or Private (your eyes + AI).", view: 'journal' },
+                { title: "Infinite Journals", content: "Create unlimited journal pages. Toggle them Public (shared) or Private (your eyes + AI). On mobile, the editor takes the full screen.", view: 'journal' },
                 { title: "The World Tab", content: "Your Campaign Bible and Atlas. Edit your world truths and generate locations here.", view: 'world' },
-                { title: "NPC Registry", content: "The Skull icon. Create fully fleshed-out characters. Now you can edit their details manually!", view: 'npcs' },
+                { title: "NPC Registry", content: "The Skull icon. Create fully fleshed-out characters.", view: 'npcs' },
                 { title: "DM Tools", content: "In Settings, DMs can now directly edit the core 'Lore Source' that powers the AI's world knowledge.", view: 'settings' }
             ];
 
@@ -1323,7 +1353,7 @@ Instruction: ${mode === 'narrate' ? "Narrate vividly using boxed text. No secret
             };
 
             return (
-                <div className="fixed inset-0 z-[100] pointer-events-none flex flex-col justify-end pb-6 px-4 md:pb-8">
+                <div className="fixed inset-0 z-[100] pointer-events-none flex flex-col justify-end pb-20 px-4 md:pb-8">
                     <div className="pointer-events-auto bg-slate-900/95 backdrop-blur border-t-4 border-amber-500 rounded-xl p-6 max-w-2xl w-full shadow-2xl mx-auto relative animate-in slide-in-from-bottom-10 fade-in duration-500">
                         <button onClick={onClose} className="absolute top-4 right-4 text-slate-500 hover:text-white bg-slate-800 rounded-full p-1 transition-colors"><Icon name="x" size={16}/></button>
                         <div className="flex gap-4 items-start">
