@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DungeonMind v23 | Collaborative Journaling</title>
+    <title>DungeonMind v26 | Official Campaigns</title>
     
     <!-- GLOBAL ERROR HANDLER -->
     <script>
@@ -96,7 +96,6 @@
         .onboarding-step { animation: fadeIn 0.5s ease-out; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         
-        /* Collaborative Text Area Styles */
         .collab-status { font-size: 10px; padding: 2px 6px; border-radius: 4px; font-weight: bold; text-transform: uppercase; transition: all 0.3s; }
         .status-saved { color: #4ade80; background: rgba(74, 222, 128, 0.1); }
         .status-saving { color: #facc15; background: rgba(250, 204, 21, 0.1); }
@@ -136,7 +135,7 @@
 
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
-        const { useState, useEffect, useRef, Component, useCallback } = React;
+        const { useState, useEffect, useRef, Component } = React;
 
         class ErrorBoundary extends Component {
             constructor(props) { super(props); this.state = { hasError: false, error: null }; }
@@ -164,7 +163,6 @@
 
             useEffect(() => {
                 let isMounted = true;
-
                 const handleReady = () => {
                     if (!isMounted) return;
                     if (window.fbModules) {
@@ -177,23 +175,16 @@
                         setFb({ ...window.fbModules, appId: 'dungeonmind' });
                     }
                 };
-
                 const handleOffline = () => {
                     if (!isMounted) return;
                     setIsOffline(true);
                     setIsAuthReady(true);
                 };
-
                 window.addEventListener('firebase-ready', handleReady);
                 window.addEventListener('firebase-failed', handleOffline);
                 window.addEventListener('force-offline', handleOffline);
-
                 if (window.fbModules) handleReady();
-                
-                const timer = setTimeout(() => {
-                    if (!window.fbModules && !isAuthReady) handleOffline();
-                }, 5000);
-
+                const timer = setTimeout(() => { if (!window.fbModules && !isAuthReady) handleOffline(); }, 5000);
                 return () => {
                     isMounted = false;
                     window.removeEventListener('firebase-ready', handleReady);
@@ -202,20 +193,15 @@
                     clearTimeout(timer);
                 };
             }, []);
-
             return { fb, user, isOffline, isAuthReady };
         };
-
-        // --- BASE COMPONENTS ---
 
         const Icon = ({ name, size = 20, className = "" }) => {
             const containerRef = useRef(null);
             useEffect(() => {
                 if (window.lucide && containerRef.current) {
                     window.lucide.createIcons({ 
-                        root: containerRef.current, 
-                        nameAttr: 'data-lucide', 
-                        attrs: { class: `w-${size/4} h-${size/4} ${className}`, width: size, height: size } 
+                        root: containerRef.current, nameAttr: 'data-lucide', attrs: { class: `w-${size/4} h-${size/4} ${className}`, width: size, height: size } 
                     });
                 }
             }, [name, size, className]);
@@ -231,217 +217,262 @@
             return <div className={className}>{content}</div>;
         };
 
-        // --- ONBOARDING WIZARD ---
         const OnboardingWizard = ({ onComplete, aiHelper }) => {
             const [step, setStep] = useState(1);
-            const [data, setData] = useState({
-                sourceMode: 'new', // new or existing
-                tone: 'Adventurous',
-                conceptDesc: '',
-                conflict: '',
-                loreText: ''
-            });
+            const [data, setData] = useState({ sourceMode: 'new', campaignName: '', tone: 'Adventurous', conceptDesc: '', conflict: '', loreText: '' });
             const [isThinking, setIsThinking] = useState(false);
+            const [verificationData, setVerificationData] = useState(null); // { question, answer, summary, conflict }
 
-            const steps = [
-                { id: 1, title: 'Source', icon: 'book' },
-                { id: 2, title: 'Tone', icon: 'music' },
-                { id: 3, title: 'Concept/Lore', icon: 'lightbulb' },
-                { id: 4, title: 'Conflict', icon: 'sword' }
-            ];
+            const steps = [{ id: 1, title: 'Source', icon: 'book' }, { id: 2, title: 'Tone', icon: 'music' }, { id: 3, title: 'Lore', icon: 'lightbulb' }, { id: 4, title: 'Conflict', icon: 'sword' }];
 
-            const handleNext = () => {
-                if (step < 4) setStep(s => s + 1);
-                else onComplete(data);
+            const handleNext = () => { 
+                if (step < 4) setStep(s => s + 1); 
+                else onComplete(data); 
             };
 
-            const handleBack = () => {
-                if (step > 1) setStep(s => s - 1);
+            const verifyCampaign = async () => {
+                if (!data.campaignName.trim() || isThinking) return;
+                setIsThinking(true);
+                const prompt = `Role: D&D 5e Expert. User Module: "${data.campaignName}". 
+                Task: 
+                1. Write a 1-paragraph summary of the setting/plot (max 150 words). 
+                2. Identify the central conflict/BBEG (max 2 sentences). 
+                3. Create a Yes/No trivia question to verify this is the correct campaign (e.g. "Is the setting Barovia?"). 
+                Format JSON: { "lore": "...", "conflict": "...", "question": "...", "answer": "yes/no" }`;
+                
+                try {
+                    const res = await aiHelper([{ role: "user", content: prompt }]);
+                    const jsonMatch = res.match(/\{[\s\S]*\}/);
+                    if (jsonMatch) {
+                        const vData = JSON.parse(jsonMatch[0]);
+                        setVerificationData(vData);
+                    } else {
+                        alert("AI couldn't verify. Please enter details manually.");
+                        setData({...data, sourceMode: 'new'}); // Fallback
+                        setStep(s => s + 1);
+                    }
+                } catch(e) {
+                    alert("Verification Error: " + e.message);
+                }
+                setIsThinking(false);
+            };
+
+            const confirmVerification = (isYes) => {
+                // If yes, populate data and move on
+                if (isYes) {
+                    setData(p => ({ ...p, loreText: verificationData.lore, conflict: verificationData.conflict }));
+                    setVerificationData(null);
+                    setStep(2); // Go to Tone
+                } else {
+                    alert("Let's try manual entry then.");
+                    setVerificationData(null);
+                    setData(p => ({ ...p, sourceMode: 'new', campaignName: '' })); // Fallback to manual
+                }
             };
 
             const handleBrainstorm = async () => {
-                if (isThinking) return;
-                setIsThinking(true);
-                const prompt = `Role: DM Assistant. Context: A ${data.tone} campaign. Concept: ${data.conceptDesc}. Task: Suggest a central conflict or BBEG (Big Bad Evil Guy) that fits this world. Max 2 sentences.`;
-
-                try {
-                    const res = await aiHelper([{ role: "user", content: prompt }]);
-                    if (res) setData(p => ({ ...p, conflict: res }));
-                } catch (e) {
-                    alert("AI Error: " + e.message);
-                }
+                if (isThinking) return; setIsThinking(true);
+                const prompt = `Role: DM Assistant. Context: A ${data.tone} campaign. Concept: ${data.conceptDesc}. Task: Suggest a central conflict. Max 2 sentences.`;
+                try { const res = await aiHelper([{ role: "user", content: prompt }]); if (res) setData(p => ({ ...p, conflict: res })); } catch (e) { alert("AI Error: " + e.message); }
                 setIsThinking(false);
             };
 
             return (
                 <div className="fixed inset-0 z-[60] bg-slate-900 flex flex-col items-center justify-center p-4">
                     <div className="max-w-3xl w-full bg-slate-800/90 border border-amber-500/30 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-                        {/* Header */}
-                        <div className="bg-slate-900 p-6 border-b border-slate-700 flex justify-between items-center">
-                            <div>
-                                <h2 className="text-2xl fantasy-font text-amber-500">Genesis</h2>
-                                <p className="text-slate-400 text-sm">Forging the world.</p>
-                            </div>
-                            <div className="flex gap-2">
-                                {steps.map(s => (
-                                    <div key={s.id} className={`h-2 w-8 rounded-full ${step >= s.id ? 'bg-amber-500' : 'bg-slate-700'}`}></div>
-                                ))}
-                            </div>
-                        </div>
-
-                        {/* Content */}
+                        <div className="bg-slate-900 p-6 border-b border-slate-700 flex justify-between items-center"><div><h2 className="text-2xl fantasy-font text-amber-500">Genesis</h2><p className="text-slate-400 text-sm">Forging the world.</p></div><div className="flex gap-2">{steps.map(s => (<div key={s.id} className={`h-2 w-8 rounded-full ${step >= s.id ? 'bg-amber-500' : 'bg-slate-700'}`}></div>))}</div></div>
+                        
                         <div className="flex-1 p-8 overflow-y-auto custom-scroll onboarding-step">
-                            {step === 1 && (
+                            {/* Step 1: Source */}
+                            {step === 1 && !verificationData && (
                                 <div className="space-y-6">
-                                    <div className="flex items-center gap-3 text-amber-400 mb-2">
-                                        <Icon name="book" size={24}/>
-                                        <h3 className="text-xl font-bold">1. The Source</h3>
-                                    </div>
+                                    <div className="flex items-center gap-3 text-amber-400 mb-2"><Icon name="book" size={24}/><h3 className="text-xl font-bold">1. The Source</h3></div>
                                     <div className="grid md:grid-cols-2 gap-6">
                                         <div onClick={() => setData({...data, sourceMode: 'new'})} className={`p-6 rounded-lg border cursor-pointer ${data.sourceMode === 'new' ? 'bg-amber-900/40 border-amber-500' : 'bg-slate-700/50 border-slate-600 hover:bg-slate-700'}`}>
-                                            <div className="font-bold text-lg mb-2 text-white">Forge New World</div>
-                                            <p className="text-sm text-slate-300">Brainstorm a homebrew setting from scratch using AI assistance.</p>
+                                            <div className="font-bold text-lg mb-2 text-white">Homebrew World</div>
+                                            <p className="text-sm text-slate-300">Forge a world from scratch or your own notes.</p>
                                         </div>
-                                        <div onClick={() => setData({...data, sourceMode: 'existing'})} className={`p-6 rounded-lg border cursor-pointer ${data.sourceMode === 'existing' ? 'bg-amber-900/40 border-amber-500' : 'bg-slate-700/50 border-slate-600 hover:bg-slate-700'}`}>
-                                            <div className="font-bold text-lg mb-2 text-white">Use Existing Lore</div>
-                                            <p className="text-sm text-slate-300">Input established lore (e.g., Forgotten Realms, Eberron) for the AI to follow.</p>
+                                        <div onClick={() => setData({...data, sourceMode: 'official'})} className={`p-6 rounded-lg border cursor-pointer ${data.sourceMode === 'official' ? 'bg-amber-900/40 border-amber-500' : 'bg-slate-700/50 border-slate-600 hover:bg-slate-700'}`}>
+                                            <div className="font-bold text-lg mb-2 text-white">Official Module</div>
+                                            <p className="text-sm text-slate-300">Run a published campaign (e.g. Curse of Strahd).</p>
                                         </div>
                                     </div>
-                                </div>
-                            )}
-
-                            {step === 2 && (
-                                <div className="space-y-6">
-                                    <div className="flex items-center gap-3 text-amber-400 mb-2">
-                                        <Icon name="music" size={24}/>
-                                        <h3 className="text-xl font-bold">2. Define the Tone</h3>
-                                    </div>
-                                    <p className="text-slate-300">What is the "vibe"? This aligns player expectations.</p>
-                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                                        {['Heroic', 'Epic', 'Gritty', 'Comedic', 'Horror', 'Mystery'].map(t => (
-                                            <button key={t} onClick={() => setData({...data, tone: t})} className={`p-4 rounded-lg border text-center transition-all ${data.tone === t ? 'bg-amber-600 border-amber-400 text-white' : 'bg-slate-700 border-slate-600 hover:border-amber-500/50'}`}>
-                                                {t}
-                                            </button>
-                                        ))}
-                                    </div>
-                                    <input value={data.tone} onChange={e => setData({...data, tone: e.target.value})} className="w-full bg-slate-900 border border-slate-600 p-3 rounded text-slate-200" placeholder="Or type custom tone..."/>
-                                </div>
-                            )}
-
-                            {step === 3 && (
-                                <div className="space-y-6">
-                                    <div className="flex items-center gap-3 text-amber-400 mb-2">
-                                        <Icon name="lightbulb" size={24}/>
-                                        <h3 className="text-xl font-bold">3. {data.sourceMode === 'new' ? "The Concept" : "The Lore"}</h3>
-                                    </div>
-                                    
-                                    {data.sourceMode === 'new' ? (
-                                        <div>
-                                            <p className="text-slate-300 mb-4">What is the core premise? (e.g., "A world where magic causes madness")</p>
-                                            <textarea value={data.conceptDesc} onChange={e => setData({...data, conceptDesc: e.target.value})} className="w-full h-48 bg-slate-900 border border-slate-600 p-3 rounded text-slate-200 resize-none" placeholder="Enter your campaign pitch..."/>
-                                        </div>
-                                    ) : (
-                                        <div>
-                                            <p className="text-slate-300 mb-4">Paste the essential lore, wiki text, or notes for the AI to reference. This replaces the need for a PDF.</p>
-                                            <textarea value={data.loreText} onChange={e => setData({...data, loreText: e.target.value})} className="w-full h-64 bg-slate-900 border border-slate-600 p-3 rounded text-slate-200 resize-none custom-scroll" placeholder="Paste setting info here (e.g., 'Waterdeep is a city splitt by factions...')..."/>
+                                    {data.sourceMode === 'official' && (
+                                        <div className="animate-in fade-in slide-in-from-top-4">
+                                            <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Campaign Name</label>
+                                            <div className="flex gap-2">
+                                                <input value={data.campaignName} onChange={e => setData({...data, campaignName: e.target.value})} className="flex-1 bg-slate-900 border border-slate-600 p-3 rounded text-slate-200" placeholder="e.g. Lost Mine of Phandelver"/>
+                                                <button onClick={verifyCampaign} disabled={isThinking || !data.campaignName} className="bg-indigo-600 hover:bg-indigo-500 text-white px-6 rounded font-bold flex items-center gap-2">
+                                                    {isThinking ? <Icon name="loader-2" size={18} className="animate-spin"/> : <Icon name="search" size={18}/>} Verify
+                                                </button>
+                                            </div>
+                                            <p className="text-xs text-slate-500 mt-2">The AI will check its archives to auto-fill lore.</p>
                                         </div>
                                     )}
                                 </div>
                             )}
 
-                            {step === 4 && (
-                                <div className="space-y-6">
-                                    <div className="flex items-center gap-3 text-amber-400 mb-2">
-                                        <Icon name="sword" size={24}/>
-                                        <h3 className="text-xl font-bold">4. Central Conflict</h3>
-                                    </div>
-                                    <p className="text-slate-300">Give players a clear goal or enemy right from the start.</p>
-                                    
-                                    <div className="relative">
-                                        <textarea value={data.conflict} onChange={e => setData({...data, conflict: e.target.value})} className="w-full h-40 bg-slate-900 border border-slate-600 p-3 rounded text-slate-200 resize-none" placeholder="An evil empire? A tournament? A missing god?"/>
-                                        {data.sourceMode === 'new' && (
-                                            <button onClick={handleBrainstorm} disabled={isThinking} className="absolute right-2 bottom-2 bg-indigo-600/80 hover:bg-indigo-500 text-white px-3 py-1 rounded text-xs font-bold flex items-center gap-1">
-                                                {isThinking ? <Icon name="loader-2" size={12} className="animate-spin"/> : <Icon name="wand-2" size={12}/>} AI Suggest
-                                            </button>
-                                        )}
+                            {/* Step 1.5: Verification */}
+                            {step === 1 && verificationData && (
+                                <div className="space-y-6 flex flex-col items-center text-center justify-center h-full">
+                                    <Icon name="shield-check" size={48} className="text-green-500 mb-4"/>
+                                    <h3 className="text-2xl font-bold text-white">Knowledge Check</h3>
+                                    <p className="text-slate-300 max-w-md">I found data on this campaign. To make sure it's the right one:</p>
+                                    <div className="bg-slate-900 p-6 rounded-xl border border-slate-700 max-w-lg w-full">
+                                        <p className="text-lg font-bold text-amber-400 mb-6">"{verificationData.question}"</p>
+                                        <div className="flex gap-4 justify-center">
+                                            <button onClick={() => confirmVerification(true)} className="bg-green-600 hover:bg-green-500 text-white px-8 py-3 rounded-lg font-bold">Yes</button>
+                                            <button onClick={() => confirmVerification(false)} className="bg-red-600 hover:bg-red-500 text-white px-8 py-3 rounded-lg font-bold">No</button>
+                                        </div>
                                     </div>
                                 </div>
                             )}
-                        </div>
 
-                        {/* Footer */}
+                            {/* Step 2: Tone */}
+                            {step === 2 && (<div className="space-y-6"><div className="flex items-center gap-3 text-amber-400 mb-2"><Icon name="music" size={24}/><h3 className="text-xl font-bold">2. Define the Tone</h3></div><div className="grid grid-cols-2 md:grid-cols-4 gap-4">{['Heroic', 'Epic', 'Gritty', 'Comedic', 'Horror', 'Mystery'].map(t => (<button key={t} onClick={() => setData({...data, tone: t})} className={`p-4 rounded-lg border text-center transition-all ${data.tone === t ? 'bg-amber-600 border-amber-400 text-white' : 'bg-slate-700 border-slate-600 hover:border-amber-500/50'}`}>{t}</button>))}</div><input value={data.tone} onChange={e => setData({...data, tone: e.target.value})} className="w-full bg-slate-900 border border-slate-600 p-3 rounded text-slate-200" placeholder="Or type custom tone..."/></div>)}
+                            
+                            {/* Step 3: Lore */}
+                            {step === 3 && (<div className="space-y-6"><div className="flex items-center gap-3 text-amber-400 mb-2"><Icon name="lightbulb" size={24}/><h3 className="text-xl font-bold">3. {data.sourceMode === 'official' ? "Review Lore" : "The Lore"}</h3></div>{data.sourceMode === 'new' ? (<div><p className="text-slate-300 mb-4">Core premise?</p><textarea value={data.conceptDesc} onChange={e => setData({...data, conceptDesc: e.target.value})} className="w-full h-48 bg-slate-900 border border-slate-600 p-3 rounded text-slate-200 resize-none" placeholder="Enter your campaign pitch..."/></div>) : (<div><p className="text-slate-300 mb-4">Auto-generated from module. Edit if needed:</p><textarea value={data.loreText} onChange={e => setData({...data, loreText: e.target.value})} className="w-full h-64 bg-slate-900 border border-slate-600 p-3 rounded text-slate-200 resize-none custom-scroll" placeholder="Campaign Lore..."/></div>)}</div>)}
+                            
+                            {/* Step 4: Conflict */}
+                            {step === 4 && (<div className="space-y-6"><div className="flex items-center gap-3 text-amber-400 mb-2"><Icon name="sword" size={24}/><h3 className="text-xl font-bold">4. Central Conflict</h3></div><div className="relative"><textarea value={data.conflict} onChange={e => setData({...data, conflict: e.target.value})} className="w-full h-40 bg-slate-900 border border-slate-600 p-3 rounded text-slate-200 resize-none" placeholder="An evil empire? A tournament?"/>{data.sourceMode === 'new' && (<button onClick={handleBrainstorm} disabled={isThinking} className="absolute right-2 bottom-2 bg-indigo-600/80 hover:bg-indigo-500 text-white px-3 py-1 rounded text-xs font-bold flex items-center gap-1">{isThinking ? <Icon name="loader-2" size={12} className="animate-spin"/> : <Icon name="wand-2" size={12}/>} AI Suggest</button>)}</div></div>)}
+                        </div>
+                        
                         <div className="bg-slate-900 p-6 border-t border-slate-700 flex justify-between">
-                            <button onClick={step === 1 ? () => onComplete(null) : handleBack} className="text-slate-500 hover:text-white font-bold px-4 py-2">
-                                {step === 1 ? "Skip Wizard" : "Back"}
-                            </button>
-                            <button onClick={handleNext} className="bg-amber-600 hover:bg-amber-500 text-white font-bold px-6 py-2 rounded shadow-lg shadow-amber-900/20">
-                                {step === 4 ? "Initialize Campaign" : "Next Step"}
-                            </button>
+                            {!verificationData && (
+                                <>
+                                    <button onClick={step === 1 ? () => onComplete(null) : () => setStep(s=>s-1)} className="text-slate-500 hover:text-white font-bold px-4 py-2">{step === 1 ? "Skip Wizard" : "Back"}</button>
+                                    <button onClick={handleNext} disabled={step===1 && data.sourceMode==='official'} className={`bg-amber-600 hover:bg-amber-500 text-white font-bold px-6 py-2 rounded shadow-lg shadow-amber-900/20 ${step===1 && data.sourceMode==='official' ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                                        {step === 4 ? "Initialize Campaign" : "Next Step"}
+                                    </button>
+                                </>
+                            )}
                         </div>
                     </div>
                 </div>
             );
         };
 
-        const JournalBox = ({ title, value, onSave, colorClass, type, placeholder, maximized, setMaximized, children }) => {
-            const isMax = maximized === type;
-            const [localValue, setLocalValue] = useState(value || "");
-            const [saveStatus, setSaveStatus] = useState("saved"); // saved, saving, error
+        const JournalPageEditor = ({ page, onSave, onDelete, onBack }) => {
+            const [localContent, setLocalContent] = useState(page.content || "");
+            const [saveStatus, setSaveStatus] = useState("saved");
             const timerRef = useRef(null);
 
-            // Sync local state with props when not editing for a moment
-            useEffect(() => {
-                if (saveStatus === "saved") {
-                    setLocalValue(value || "");
-                }
-            }, [value]);
+            useEffect(() => { if (saveStatus === "saved") setLocalContent(page.content || ""); }, [page.content]);
 
             const handleChange = (newVal) => {
-                setLocalValue(newVal);
+                setLocalContent(newVal);
                 setSaveStatus("saving");
-                
-                // Debounce Save
                 if (timerRef.current) clearTimeout(timerRef.current);
-                timerRef.current = setTimeout(() => {
-                    onSave(newVal);
-                    setSaveStatus("saved");
-                }, 1000); // 1 second delay
+                timerRef.current = setTimeout(() => { onSave(page.id, { ...page, content: newVal }); setSaveStatus("saved"); }, 1000);
             };
 
-            if (maximized && !isMax) return null;
-
-            const downloadTxt = (name, text) => {
-                const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
-                const link = document.createElement("a");
-                link.href = URL.createObjectURL(blob);
-                link.download = `${name}_${new Date().toISOString().split('T')[0]}.txt`;
-                link.click();
+            const toggleVisibility = () => {
+                onSave(page.id, { ...page, isPublic: !page.isPublic });
             };
 
             return (
-                <div className={`flex flex-col glass-panel rounded-xl overflow-hidden journal-expand ${isMax ? 'fixed inset-4 z-50' : 'flex-1 min-h-[300px]'} ${colorClass}`}>
-                    <div className={`p-2 text-center text-xs uppercase tracking-wider font-bold border-b flex justify-between items-center ${type === 'dm' ? 'bg-red-900/20 border-red-900/30 text-red-400' : type === 'stash' ? 'bg-amber-900/20 border-amber-900/30 text-amber-300' : type === 'personal' ? 'bg-indigo-900/20 border-indigo-900/30 text-indigo-300' : 'bg-slate-800/50 border-slate-700 text-green-400'}`}>
-                        <div className="flex gap-2 items-center">
-                            {type === 'dm' && <Icon name="eye-off" size={14}/>}
-                            {type === 'stash' && <Icon name="coins" size={14}/>}
-                            {type === 'personal' && <Icon name="user-circle" size={14}/>}
-                            {title}
-                            <span className={`collab-status ml-2 ${saveStatus === 'saved' ? 'status-saved' : 'status-saving'}`}>
-                                {saveStatus === 'saved' ? 'Saved' : 'Saving...'}
-                            </span>
+                <div className="flex flex-col h-full bg-slate-900/50">
+                    <div className="p-3 md:p-4 border-b border-slate-700 flex justify-between items-center bg-slate-800/80">
+                        <div className="flex items-center gap-2 overflow-hidden">
+                            <button onClick={onBack} className="md:hidden text-slate-400 hover:text-white p-1 -ml-1">
+                                <Icon name="arrow-left" size={20} />
+                            </button>
+                            <h3 className="font-bold text-base md:text-lg text-slate-200 truncate max-w-[150px] md:max-w-xs">{page.title}</h3>
+                            <button onClick={toggleVisibility} className={`text-[10px] md:text-xs px-2 py-1 rounded flex items-center gap-1 transition-colors flex-shrink-0 ${page.isPublic ? 'bg-green-900/30 text-green-400 border border-green-800' : 'bg-red-900/30 text-red-400 border border-red-800'}`}>
+                                <Icon name={page.isPublic ? "eye" : "eye-off"} size={12}/> <span className="hidden sm:inline">{page.isPublic ? "Public" : "Private"}</span>
+                            </button>
+                            <span className={`collab-status text-[10px] hidden sm:inline-block ${saveStatus === 'saved' ? 'status-saved' : 'status-saving'}`}>{saveStatus === 'saved' ? 'Saved' : 'Saving...'}</span>
                         </div>
-                        <div className="flex gap-2">
-                            {children}
-                            <button onClick={() => downloadTxt(title, localValue)} title="Export" className="hover:text-white"><Icon name="download" size={14}/></button>
-                            <button onClick={() => setMaximized(isMax ? null : type)} title="Toggle Fullscreen" className="hover:text-white"><Icon name={isMax ? "minimize-2" : "maximize-2"} size={14}/></button>
+                        <button onClick={() => onDelete(page.id)} className="text-slate-500 hover:text-red-500 flex-shrink-0"><Icon name="trash-2" size={18}/></button>
+                    </div>
+                    <textarea value={localContent} onChange={e => handleChange(e.target.value)} className="flex-1 bg-transparent p-4 md:p-6 resize-none focus:outline-none font-sans text-base md:text-lg text-slate-300 leading-relaxed custom-scroll" placeholder="Write your entry here..."/>
+                </div>
+            );
+        };
+
+        const JournalView = ({ data, setData, role, updateJournalField, userId }) => {
+            const pages = data.journal_pages || {};
+            const [selectedPageId, setSelectedPageId] = useState(null);
+            const [isCreating, setIsCreating] = useState(false);
+            const [newPageTitle, setNewPageTitle] = useState("");
+            const [newPagePublic, setNewPagePublic] = useState(true);
+
+            const availablePages = Object.values(pages).filter(p => p.isPublic || p.ownerId === userId).sort((a,b) => b.created - a.created);
+
+            useEffect(() => {
+                if (window.innerWidth >= 768 && availablePages.length > 0 && !selectedPageId) setSelectedPageId(availablePages[0].id);
+            }, [availablePages.length]);
+
+            const handleCreate = () => {
+                if (!newPageTitle.trim()) return;
+                const newId = "page_" + Date.now();
+                const newPage = {
+                    id: newId, title: newPageTitle, content: "", ownerId: userId, isPublic: newPagePublic, created: Date.now()
+                };
+                updateJournalField(`journal_pages.${newId}`, newPage);
+                setSelectedPageId(newId);
+                setIsCreating(false);
+                setNewPageTitle("");
+            };
+
+            const handleSavePage = (id, updatedPage) => { updateJournalField(`journal_pages.${id}`, updatedPage); };
+
+            const handleDeletePage = (id) => {
+                if(confirm("Delete this page permanently?")) {
+                    if (selectedPageId === id) setSelectedPageId(null);
+                    const newPages = { ...pages }; delete newPages[id]; updateJournalField('journal_pages', newPages);
+                }
+            };
+
+            return (
+                <div className="flex h-full max-w-7xl mx-auto glass-panel rounded-none md:rounded-xl overflow-hidden m-0 md:m-6 border-0 md:border border-slate-700">
+                    <div className={`flex-col bg-slate-900 border-r border-slate-700 w-full md:w-64 ${selectedPageId ? 'hidden md:flex' : 'flex'}`}>
+                        <div className="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-800/50">
+                            <h3 className="fantasy-font text-amber-500 text-lg">Journal</h3>
+                            <button onClick={() => setIsCreating(true)} className="bg-amber-600 hover:bg-amber-500 text-white p-1 rounded"><Icon name="plus" size={18}/></button>
+                        </div>
+                        
+                        {isCreating && (
+                            <div className="p-3 bg-slate-800 border-b border-slate-700">
+                                <input autoFocus value={newPageTitle} onChange={e=>setNewPageTitle(e.target.value)} className="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1 text-sm text-white mb-2" placeholder="Page Title"/>
+                                <div className="flex justify-between items-center mb-2">
+                                    <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+                                        <input type="checkbox" checked={newPagePublic} onChange={e=>setNewPagePublic(e.target.checked)} className="rounded bg-slate-700 border-slate-500"/>
+                                        Public?
+                                    </label>
+                                </div>
+                                <div className="flex gap-2">
+                                    <button onClick={handleCreate} className="flex-1 bg-green-700 hover:bg-green-600 text-white text-xs py-1 rounded">Create</button>
+                                    <button onClick={() => setIsCreating(false)} className="flex-1 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs py-1 rounded">Cancel</button>
+                                </div>
+                            </div>
+                        )}
+
+                        <div className="flex-1 overflow-y-auto custom-scroll">
+                            {availablePages.map(page => (
+                                <div key={page.id} onClick={() => setSelectedPageId(page.id)} className={`p-4 md:p-3 border-b border-slate-800 cursor-pointer hover:bg-slate-800 transition-colors ${selectedPageId === page.id ? 'bg-slate-800 border-l-4 border-l-amber-500' : 'border-l-4 border-l-transparent'}`}>
+                                    <div className="font-bold text-slate-200 text-base md:text-sm truncate">{page.title}</div>
+                                    <div className="flex justify-between items-center mt-1">
+                                        <span className="text-xs md:text-[10px] text-slate-500">{new Date(page.created).toLocaleDateString()}</span>
+                                        <Icon name={page.isPublic ? "eye" : "lock"} size={12} className={page.isPublic ? "text-green-500" : "text-slate-500"}/>
+                                    </div>
+                                </div>
+                            ))}
+                            {availablePages.length === 0 && <div className="p-4 text-center text-slate-500 text-xs">No pages yet.</div>}
                         </div>
                     </div>
-                    <textarea 
-                        value={localValue} 
-                        onChange={(e) => handleChange(e.target.value)} 
-                        className={`w-full flex-1 bg-transparent p-4 resize-none focus:outline-none font-sans leading-relaxed custom-scroll ${type === 'dm' ? 'text-red-100/80 placeholder-red-900/50' : type === 'stash' ? 'text-amber-100/80 placeholder-amber-900/50' : type === 'personal' ? 'text-indigo-100/80 placeholder-indigo-900/50' : 'text-slate-200'}`} 
-                        placeholder={placeholder}
-                    />
+
+                    <div className={`flex-1 h-full overflow-hidden bg-slate-900/30 ${selectedPageId ? 'flex' : 'hidden md:flex'}`}>
+                        {selectedPageId && pages[selectedPageId] ? (
+                            <JournalPageEditor page={pages[selectedPageId]} onSave={handleSavePage} onDelete={handleDeletePage} onBack={() => setSelectedPageId(null)} />
+                        ) : (
+                            <div className="h-full flex flex-col items-center justify-center text-slate-500">
+                                <Icon name="book-open" size={48} className="mb-4 opacity-20"/>
+                                <p>Select a page or create a new one.</p>
+                            </div>
+                        )}
+                    </div>
                 </div>
             );
         };
@@ -449,16 +480,8 @@
         const DiceTray = ({ diceLog, handleDiceRoll }) => (
             <div className="glass-panel p-4 rounded-lg mb-4">
                 <h3 className="text-xs font-bold text-slate-500 uppercase mb-2">Dice Roller</h3>
-                <div className="grid grid-cols-4 gap-2 mb-3">
-                    {[4, 6, 8, 10, 12, 20, 100].map(d => (
-                        <button key={d} onClick={() => handleDiceRoll(d)} className="bg-slate-700 hover:bg-amber-700 text-xs font-mono py-1 rounded border border-slate-600 transition-colors">d{d}</button>
-                    ))}
-                </div>
-                <div className="h-24 overflow-y-auto custom-scroll bg-slate-900/50 rounded p-2 font-mono text-xs space-y-1">
-                    {diceLog.map(log => (
-                        <div key={log.id} className="flex justify-between border-b border-slate-800 pb-1"><span className="text-slate-400">{log.die}</span><span className={`font-bold ${log.result == 20 && log.die == 'd20' ? 'text-green-400' : log.result == 1 && log.die == 'd20' ? 'text-red-400' : 'text-amber-400'}`}>{log.result}</span></div>
-                    ))}
-                </div>
+                <div className="grid grid-cols-4 gap-2 mb-3">{[4, 6, 8, 10, 12, 20, 100].map(d => (<button key={d} onClick={() => handleDiceRoll(d)} className="bg-slate-700 hover:bg-amber-700 text-xs font-mono py-1 rounded border border-slate-600 transition-colors">d{d}</button>))}</div>
+                <div className="h-24 overflow-y-auto custom-scroll bg-slate-900/50 rounded p-2 font-mono text-xs space-y-1">{diceLog.map(log => (<div key={log.id} className="flex justify-between border-b border-slate-800 pb-1"><span className="text-slate-400">{log.die}</span><span className={`font-bold ${log.result == 20 && log.die == 'd20' ? 'text-green-400' : log.result == 1 && log.die == 'd20' ? 'text-red-400' : 'text-amber-400'}`}>{log.result}</span></div>))}</div>
             </div>
         );
         
@@ -478,152 +501,29 @@
             </aside>
         );
 
-        // --- VIEW COMPONENTS ---
-
         const WorldView = ({ data, setData, role, updateCloud, generateLoc }) => {
             const [genType, setGenType] = useState("Town");
             const [genNote, setGenNote] = useState("");
             const [isGenerating, setIsGenerating] = useState(false);
             const locations = data.locations || [];
             const genesis = data.campaign?.genesis || {};
-
-            const updateGenesis = (field, val) => {
-                const nd = { ...data, campaign: { ...data.campaign, genesis: { ...genesis, [field]: val } } };
-                setData(nd);
-                updateCloud(nd);
-            };
-
-            const handleGen = async () => {
-                if(isGenerating) return;
-                setIsGenerating(true);
-                const loc = await generateLoc(genType, genNote, genesis);
-                if(loc) {
-                    const nd = { ...data, locations: [{id:Date.now(), ...loc}, ...locations] };
-                    setData(nd);
-                    updateCloud(nd);
-                }
-                setIsGenerating(false);
-            };
-
-            const deleteLoc = (id) => {
-                if(confirm("Delete Location?")) {
-                    const nd = { ...data, locations: locations.filter(l => l.id !== id) };
-                    setData(nd);
-                    updateCloud(nd);
-                }
-            };
-
+            const updateGenesis = (field, val) => { const nd = { ...data, campaign: { ...data.campaign, genesis: { ...genesis, [field]: val } } }; setData(nd); updateCloud(nd); };
+            const handleGen = async () => { if(isGenerating) return; setIsGenerating(true); const loc = await generateLoc(genType, genNote, genesis); if(loc) { const nd = { ...data, locations: [{id:Date.now(), ...loc}, ...locations] }; setData(nd); updateCloud(nd); } setIsGenerating(false); };
+            const deleteLoc = (id) => { if(confirm("Delete Location?")) { const nd = { ...data, locations: locations.filter(l => l.id !== id) }; setData(nd); updateCloud(nd); } };
             return (
                 <div className="max-w-7xl mx-auto p-4 md:p-6 h-full flex flex-col md:flex-row gap-6 overflow-hidden">
-                    {/* Left: Campaign Bible */}
                     <div className="w-full md:w-1/3 flex flex-col glass-panel rounded-xl overflow-hidden max-h-full">
-                        <div className="p-4 border-b border-slate-700 bg-slate-800/50">
-                            <h3 className="fantasy-font text-xl text-amber-500 mb-2">Campaign Bible</h3>
-                            <p className="text-xs text-slate-400">The core truths of your world. Edit anytime.</p>
-                        </div>
+                        <div className="p-4 border-b border-slate-700 bg-slate-800/50"><h3 className="fantasy-font text-xl text-amber-500 mb-2">Campaign Bible</h3><p className="text-xs text-slate-400">The core truths of your world.</p></div>
                         <div className="flex-1 overflow-y-auto custom-scroll p-4 space-y-4">
-                            <div>
-                                <label className="text-xs font-bold text-slate-500 uppercase">Tone</label>
-                                <input disabled={role!=='dm'} value={genesis.tone || ""} onChange={e => updateGenesis('tone', e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-slate-200"/>
-                            </div>
-                            <div>
-                                <label className="text-xs font-bold text-slate-500 uppercase">Conflict</label>
-                                <textarea disabled={role!=='dm'} value={genesis.conflict || ""} onChange={e => updateGenesis('conflict', e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-slate-200 h-24 resize-none"/>
-                            </div>
-                            <div>
-                                <label className="text-xs font-bold text-slate-500 uppercase">Lore / Concept</label>
-                                <textarea disabled={role!=='dm'} value={genesis.loreText || genesis.conceptDesc || ""} onChange={e => updateGenesis(genesis.loreText ? 'loreText' : 'conceptDesc', e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-slate-200 h-64 resize-none custom-scroll"/>
-                            </div>
+                            <div><label className="text-xs font-bold text-slate-500 uppercase">Tone</label><input disabled={role!=='dm'} value={genesis.tone || ""} onChange={e => updateGenesis('tone', e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-slate-200"/></div>
+                            <div><label className="text-xs font-bold text-slate-500 uppercase">Conflict</label><textarea disabled={role!=='dm'} value={genesis.conflict || ""} onChange={e => updateGenesis('conflict', e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-slate-200 h-24 resize-none"/></div>
+                            <div><label className="text-xs font-bold text-slate-500 uppercase">Lore / Concept</label><textarea disabled={role!=='dm'} value={genesis.loreText || genesis.conceptDesc || ""} onChange={e => updateGenesis(genesis.loreText ? 'loreText' : 'conceptDesc', e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-slate-200 h-64 resize-none custom-scroll"/></div>
                         </div>
                     </div>
-
-                    {/* Right: Atlas */}
                     <div className="flex-1 flex flex-col glass-panel rounded-xl overflow-hidden max-h-full">
-                        <div className="p-4 border-b border-slate-700 bg-slate-800/50 flex justify-between items-center">
-                            <h3 className="fantasy-font text-xl text-amber-500">Atlas</h3>
-                        </div>
-                        
-                        {role === 'dm' && (
-                            <div className="p-4 bg-slate-900/30 border-b border-slate-700 flex gap-2">
-                                <select value={genType} onChange={e => setGenType(e.target.value)} className="bg-slate-800 border border-slate-600 rounded px-3 py-2 text-sm text-white outline-none">
-                                    <option value="Town">Town</option>
-                                    <option value="Dungeon">Dungeon</option>
-                                    <option value="Region">Region</option>
-                                    <option value="Shop">Shop</option>
-                                </select>
-                                <input value={genNote} onChange={e => setGenNote(e.target.value)} placeholder="Optional theme (e.g. 'Swampy')" className="flex-1 bg-slate-800 border border-slate-600 rounded px-3 py-2 text-sm text-white outline-none"/>
-                                <button onClick={handleGen} disabled={isGenerating} className="bg-amber-600 hover:bg-amber-500 text-white px-4 py-2 rounded font-bold text-sm flex items-center gap-2">
-                                    {isGenerating ? <Icon name="loader-2" size={16} className="animate-spin"/> : <Icon name="wand-2" size={16}/>} Generate
-                                </button>
-                            </div>
-                        )}
-
-                        <div className="flex-1 overflow-y-auto custom-scroll p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-                            {locations.map(loc => (
-                                <div key={loc.id} className="bg-slate-900/50 border border-slate-700 rounded p-4 relative hover:border-amber-500/30 transition-colors">
-                                    <div className="flex justify-between items-start mb-2">
-                                        <h4 className="font-bold text-amber-400">{loc.name}</h4>
-                                        <span className="text-[10px] uppercase bg-slate-800 px-2 py-1 rounded text-slate-400">{loc.type}</span>
-                                    </div>
-                                    <p className="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap">{loc.desc}</p>
-                                    {role === 'dm' && <button onClick={() => deleteLoc(loc.id)} className="absolute bottom-2 right-2 text-slate-600 hover:text-red-500"><Icon name="trash-2" size={14}/></button>}
-                                </div>
-                            ))}
-                            {locations.length === 0 && <div className="col-span-full text-center text-slate-500 mt-10">No locations mapped yet. Brainstorm one above!</div>}
-                        </div>
-                    </div>
-                </div>
-            );
-        };
-
-        const JournalView = ({ data, setData, role, updateJournalField, userId, generateLoot }) => {
-            const [maximized, setMaximized] = useState(null); 
-            const [lootCr, setLootCr] = useState(1);
-            const [isGenerating, setIsGenerating] = useState(false);
-
-            // These save functions now trigger specific Firestore updates, NOT the whole document
-            const savePublic = (val) => updateJournalField('journal_public', val);
-            const saveStash = (val) => updateJournalField('partyStash', val);
-            const saveDm = (val) => updateJournalField('journal_dm', val);
-            const savePersonal = (val) => updateJournalField(`player_journals.${userId}`, val);
-
-            const handleLootGen = async () => {
-                if(isGenerating) return;
-                setIsGenerating(true);
-                const loot = await generateLoot(lootCr);
-                if(loot) {
-                    const ts = new Date().toLocaleTimeString();
-                    const entry = `\n[${ts}] Loot (CR ${lootCr}): ${loot}\n`;
-                    // For generated loot, we append to existing, so we need to know current value
-                    // But we can just use the specific update function which will merge
-                    const current = data.partyStash || "";
-                    updateJournalField('partyStash', current + entry);
-                }
-                setIsGenerating(false);
-            };
-
-            return (
-                <div className="max-w-7xl mx-auto p-4 md:p-6 h-full overflow-y-auto custom-scroll relative">
-                    {maximized && <div className="fixed inset-0 bg-slate-900/90 backdrop-blur z-40" onClick={() => setMaximized(null)}></div>}
-                    <div className="flex flex-col gap-6 min-h-full pb-20">
-                        {/* Row 1 */}
-                        <div className="flex flex-col md:flex-row gap-6 md:flex-1 min-h-[300px]">
-                            <JournalBox type="public" title="Public Log" value={data.journal_public} onSave={savePublic} colorClass="" placeholder="Shared campaign events..." maximized={maximized} setMaximized={setMaximized}/>
-                            <JournalBox type="stash" title="Party Stash" value={data.partyStash} onSave={saveStash} colorClass="border-amber-900/30 bg-amber-900/5" placeholder="Loot and treasure..." maximized={maximized} setMaximized={setMaximized}>
-                                {role === 'dm' && (
-                                    <div className="flex items-center gap-2 bg-amber-900/50 rounded px-2 py-0.5 border border-amber-900/50">
-                                        <span className="text-[10px] uppercase font-bold text-amber-200">CR</span>
-                                        <input type="number" min="0" max="30" value={lootCr} onChange={e => setLootCr(e.target.value)} className="w-10 bg-black/30 border border-amber-900/50 rounded text-xs text-center text-white h-5"/>
-                                        <button onClick={handleLootGen} disabled={isGenerating} className="text-amber-200 hover:text-white p-1 hover:bg-amber-800 rounded"><Icon name="sparkles" size={12} className={isGenerating ? "animate-spin" : ""}/></button>
-                                    </div>
-                                )}
-                            </JournalBox>
-                        </div>
-                        {/* Row 2 */}
-                        <div className="flex flex-col md:flex-row gap-6 md:flex-1 min-h-[300px]">
-                            <JournalBox type="personal" title="My Notes (Private + AI)" value={data.player_journals?.[userId]} onSave={savePersonal} colorClass="border-indigo-900/30 bg-indigo-900/5" placeholder="Your private thoughts (AI can see this)..." maximized={maximized} setMaximized={setMaximized}/>
-                            {role === 'dm' && <JournalBox type="dm" title="DM Secrets" value={data.journal_dm} onSave={saveDm} colorClass="border-red-900/30 bg-red-900/5" placeholder="Hidden truths..." maximized={maximized} setMaximized={setMaximized}/>}
-                        </div>
+                        <div className="p-4 border-b border-slate-700 bg-slate-800/50 flex justify-between items-center"><h3 className="fantasy-font text-xl text-amber-500">Atlas</h3></div>
+                        {role === 'dm' && (<div className="p-4 bg-slate-900/30 border-b border-slate-700 flex gap-2"><select value={genType} onChange={e => setGenType(e.target.value)} className="bg-slate-800 border border-slate-600 rounded px-3 py-2 text-sm text-white outline-none"><option value="Town">Town</option><option value="Dungeon">Dungeon</option><option value="Region">Region</option><option value="Shop">Shop</option></select><input value={genNote} onChange={e => setGenNote(e.target.value)} placeholder="Optional theme" className="flex-1 bg-slate-800 border border-slate-600 rounded px-3 py-2 text-sm text-white outline-none"/><button onClick={handleGen} disabled={isGenerating} className="bg-amber-600 hover:bg-amber-500 text-white px-4 py-2 rounded font-bold text-sm flex items-center gap-2">{isGenerating ? <Icon name="loader-2" size={16} className="animate-spin"/> : <Icon name="wand-2" size={16}/>} Generate</button></div>)}
+                        <div className="flex-1 overflow-y-auto custom-scroll p-4 grid grid-cols-1 md:grid-cols-2 gap-4">{locations.map(loc => (<div key={loc.id} className="bg-slate-900/50 border border-slate-700 rounded p-4 relative hover:border-amber-500/30 transition-colors"><div className="flex justify-between items-start mb-2"><h4 className="font-bold text-amber-400">{loc.name}</h4><span className="text-[10px] uppercase bg-slate-800 px-2 py-1 rounded text-slate-400">{loc.type}</span></div><p className="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap">{loc.desc}</p>{role === 'dm' && <button onClick={() => deleteLoc(loc.id)} className="absolute bottom-2 right-2 text-slate-600 hover:text-red-500"><Icon name="trash-2" size={14}/></button>}</div>))}{locations.length === 0 && <div className="col-span-full text-center text-slate-500 mt-10">No locations mapped yet.</div>}</div>
                     </div>
                 </div>
             );
@@ -634,159 +534,98 @@
             const [genContext, setGenContext] = useState("");
             const [isGenerating, setIsGenerating] = useState(false);
             const [selectedNpc, setSelectedNpc] = useState(null);
+            const [isEditing, setIsEditing] = useState(false);
 
             const npcs = data.npcs || [];
-            
-            // Filter NPCs for visibility
             const visibleNpcs = role === 'dm' ? npcs : npcs.filter(n => !n.isHidden);
 
             const handleGen = async () => {
-                if(isGenerating) return;
-                setIsGenerating(true);
+                if(isGenerating) return; setIsGenerating(true);
                 const npcData = await generateNpc(genName, genContext);
-                if(npcData) {
-                    const newNpc = { id: Date.now(), isHidden: false, ...npcData };
-                    const newNpcs = [...npcs, newNpc];
-                    const nd = { ...data, npcs: newNpcs };
-                    setData(nd);
-                    updateCloud(nd);
-                    setGenName("");
-                    setGenContext("");
-                    setSelectedNpc(newNpc);
-                }
+                if(npcData) { const newNpc = { id: Date.now(), isHidden: false, ...npcData }; const newNpcs = [...npcs, newNpc]; const nd = { ...data, npcs: newNpcs }; setData(nd); updateCloud(nd); setGenName(""); setGenContext(""); setSelectedNpc(newNpc); setIsEditing(false); }
                 setIsGenerating(false);
             };
 
             const deleteNpc = (id, e) => {
-                if(e) e.stopPropagation();
-                if(!confirm("Delete this NPC?")) return;
-                const newNpcs = npcs.filter(n => n.id !== id);
-                const nd = { ...data, npcs: newNpcs };
-                setData(nd);
-                updateCloud(nd);
-                if(selectedNpc?.id === id) setSelectedNpc(null);
+                if(e) e.stopPropagation(); if(!confirm("Delete this NPC?")) return;
+                const newNpcs = npcs.filter(n => n.id !== id); const nd = { ...data, npcs: newNpcs }; setData(nd); updateCloud(nd); if(selectedNpc?.id === id) setSelectedNpc(null);
             };
             
             const toggleHidden = (npc) => {
-                const updated = { ...npc, isHidden: !npc.isHidden };
-                const newNpcs = npcs.map(n => n.id === npc.id ? updated : n);
+                const updated = { ...npc, isHidden: !npc.isHidden }; const newNpcs = npcs.map(n => n.id === npc.id ? updated : n); const nd = { ...data, npcs: newNpcs }; setData(nd); updateCloud(nd); if(selectedNpc?.id === npc.id) setSelectedNpc(updated);
+            };
+
+            const updateNpcField = (field, value) => {
+                if(!selectedNpc) return;
+                const updated = { ...selectedNpc, [field]: value };
+                setSelectedNpc(updated);
+                const newNpcs = npcs.map(n => n.id === updated.id ? updated : n);
                 const nd = { ...data, npcs: newNpcs };
                 setData(nd);
                 updateCloud(nd);
-                if(selectedNpc?.id === npc.id) setSelectedNpc(updated);
-            };
-
-            const chatAsNpc = (npc) => {
-                setChatInput(`(Playing as ${npc.name}) `);
-                setView('session');
             };
 
             return (
                 <div className="max-w-7xl mx-auto p-4 md:p-6 h-full flex flex-col md:flex-row gap-6">
                     <div className="w-full md:w-1/3 flex flex-col glass-panel rounded-xl overflow-hidden max-h-full">
-                        <div className="p-4 border-b border-slate-700 bg-slate-800/50">
-                            <h3 className="fantasy-font text-xl text-amber-500 mb-2">NPC Registry</h3>
-                            {role === 'dm' && (
-                                <div className="space-y-2 p-3 bg-slate-900/50 rounded border border-slate-700">
-                                    <div className="text-xs font-bold text-slate-400 uppercase">Generator</div>
-                                    <input value={genName} onChange={e=>setGenName(e.target.value)} placeholder="Name (e.g. 'Strahd' or Random)" className="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1 text-sm text-white"/>
-                                    <input value={genContext} onChange={e=>setGenContext(e.target.value)} placeholder="Role/Context (e.g. Shopkeeper)" className="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1 text-sm text-white"/>
-                                    <button onClick={handleGen} disabled={isGenerating} className="w-full bg-amber-700 hover:bg-amber-600 text-white text-xs font-bold py-2 rounded flex justify-center gap-2 items-center">
-                                        {isGenerating ? <Icon name="loader-2" size={14} className="animate-spin"/> : <Icon name="wand-2" size={14}/>}
-                                        Generate NPC
-                                    </button>
-                                </div>
-                            )}
-                        </div>
-                        <div className="flex-1 overflow-y-auto custom-scroll p-2 space-y-2">
-                            {visibleNpcs.map(npc => (
-                                <div key={npc.id} onClick={() => setSelectedNpc(npc)} className={`p-3 rounded cursor-pointer border transition-all relative group ${selectedNpc?.id === npc.id ? 'bg-amber-900/20 border-amber-500' : 'bg-slate-800 border-slate-700 hover:border-slate-500'} ${npc.isHidden ? 'opacity-50' : ''}`}>
-                                    <div className="font-bold text-slate-200 flex items-center gap-2">
-                                        {npc.name}
-                                        {role === 'dm' && npc.isHidden && <Icon name="eye-off" size={14} className="text-slate-500"/>}
-                                    </div>
-                                    <div className="text-xs text-slate-500 truncate">{npc.race} {npc.class}</div>
-                                    {role === 'dm' && (
-                                        <button onClick={(e) => deleteNpc(npc.id, e)} className="absolute top-2 right-2 text-slate-600 hover:text-red-500 p-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                            <Icon name="trash-2" size={14}/>
-                                        </button>
-                                    )}
-                                </div>
-                            ))}
-                            {visibleNpcs.length === 0 && <div className="text-center text-slate-500 text-xs mt-4">No NPCs recorded.</div>}
-                        </div>
+                        <div className="p-4 border-b border-slate-700 bg-slate-800/50"><h3 className="fantasy-font text-xl text-amber-500 mb-2">NPC Registry</h3>{role === 'dm' && (<div className="space-y-2 p-3 bg-slate-900/50 rounded border border-slate-700"><div className="text-xs font-bold text-slate-400 uppercase">Generator</div><input value={genName} onChange={e=>setGenName(e.target.value)} placeholder="Name (e.g. 'Strahd')" className="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1 text-sm text-white"/><input value={genContext} onChange={e=>setGenContext(e.target.value)} placeholder="Role/Context (e.g. Shopkeeper)" className="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1 text-sm text-white"/><button onClick={handleGen} disabled={isGenerating} className="w-full bg-amber-700 hover:bg-amber-600 text-white text-xs font-bold py-2 rounded flex justify-center gap-2 items-center">{isGenerating ? <Icon name="loader-2" size={14} className="animate-spin"/> : <Icon name="wand-2" size={14}/>} Generate NPC</button></div>)}</div>
+                        <div className="flex-1 overflow-y-auto custom-scroll p-2 space-y-2">{visibleNpcs.map(npc => (<div key={npc.id} onClick={() => { setSelectedNpc(npc); setIsEditing(false); }} className={`p-3 rounded cursor-pointer border transition-all relative group ${selectedNpc?.id === npc.id ? 'bg-amber-900/20 border-amber-500' : 'bg-slate-800 border-slate-700 hover:border-slate-500'} ${npc.isHidden ? 'opacity-50' : ''}`}><div className="font-bold text-slate-200 flex items-center gap-2">{npc.name}{role === 'dm' && npc.isHidden && <Icon name="eye-off" size={14} className="text-slate-500"/>}</div><div className="text-xs text-slate-500 truncate">{npc.race} {npc.class}</div>{role === 'dm' && (<button onClick={(e) => deleteNpc(npc.id, e)} className="absolute top-2 right-2 text-slate-600 hover:text-red-500 p-1 opacity-0 group-hover:opacity-100 transition-opacity"><Icon name="trash-2" size={14}/></button>)}</div>))}{visibleNpcs.length === 0 && <div className="text-center text-slate-500 text-xs mt-4">No NPCs recorded.</div>}</div>
                     </div>
-
                     <div className="flex-1 glass-panel rounded-xl p-6 overflow-y-auto custom-scroll">
                         {selectedNpc ? (
                             <div className="space-y-4">
                                 <div className="flex justify-between items-start border-b border-slate-700 pb-4">
-                                    <div>
-                                        <h2 className="text-3xl fantasy-font text-white">{selectedNpc.name}</h2>
-                                        <div className="text-amber-500 font-mono text-sm">{selectedNpc.race} {selectedNpc.class}</div>
+                                    <div className="flex-1 mr-4">
+                                        {isEditing ? (
+                                            <div className="space-y-2">
+                                                <input className="text-3xl font-bold bg-slate-900 border border-slate-600 rounded px-2 py-1 w-full text-white" value={selectedNpc.name} onChange={e => updateNpcField('name', e.target.value)} placeholder="Name"/>
+                                                <div className="flex gap-2">
+                                                    <input className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-sm text-amber-500 w-1/2" value={selectedNpc.race} onChange={e => updateNpcField('race', e.target.value)} placeholder="Race"/>
+                                                    <input className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-sm text-amber-500 w-1/2" value={selectedNpc.class} onChange={e => updateNpcField('class', e.target.value)} placeholder="Class"/>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <>
+                                                <h2 className="text-3xl fantasy-font text-white">{selectedNpc.name}</h2>
+                                                <div className="text-amber-500 font-mono text-sm">{selectedNpc.race} {selectedNpc.class}</div>
+                                            </>
+                                        )}
                                     </div>
                                     <div className="flex gap-2">
                                         {role === 'dm' && (
-                                            <button onClick={() => toggleHidden(selectedNpc)} className={`px-3 py-1 rounded text-sm flex items-center gap-2 ${selectedNpc.isHidden ? 'bg-slate-700 text-slate-300' : 'bg-green-900/50 text-green-300'}`}>
-                                                <Icon name={selectedNpc.isHidden ? "eye-off" : "eye"} size={16}/> 
-                                                {selectedNpc.isHidden ? "Hidden" : "Visible"}
-                                            </button>
+                                            <>
+                                                <button onClick={() => toggleHidden(selectedNpc)} className={`p-2 rounded text-sm ${selectedNpc.isHidden ? 'bg-slate-700 text-slate-300' : 'bg-green-900/50 text-green-300'}`} title="Toggle Visibility"><Icon name={selectedNpc.isHidden ? "eye-off" : "eye"} size={16}/></button>
+                                                <button onClick={() => setIsEditing(!isEditing)} className={`p-2 rounded text-sm ${isEditing ? 'bg-amber-600 text-white' : 'bg-slate-700 text-slate-300'}`} title="Edit NPC"><Icon name={isEditing ? "check" : "pencil"} size={16}/></button>
+                                            </>
                                         )}
-                                        <button onClick={() => chatAsNpc(selectedNpc)} className="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1 rounded text-sm flex items-center gap-2"><Icon name="message-circle" size={16}/> Chat As</button>
+                                        <button onClick={() => { setChatInput(`(Playing as ${selectedNpc.name}) `); setView('session'); }} className="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1 rounded text-sm flex items-center gap-2"><Icon name="message-circle" size={16}/> Chat</button>
                                         {role === 'dm' && <button onClick={(e) => deleteNpc(selectedNpc.id, e)} className="bg-red-900/50 hover:bg-red-900 text-red-200 px-3 py-1 rounded text-sm"><Icon name="trash" size={16}/></button>}
                                     </div>
                                 </div>
                                 <div className="grid md:grid-cols-2 gap-4">
                                     <div className="bg-slate-900/50 p-3 rounded border border-slate-700">
                                         <div className="text-xs font-bold text-slate-500 uppercase mb-1">Quirk</div>
-                                        <SafeRender className="text-slate-300 text-sm">{selectedNpc.quirk}</SafeRender>
+                                        {isEditing ? <input className="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1 text-sm text-white" value={selectedNpc.quirk || ""} onChange={e => updateNpcField('quirk', e.target.value)}/> : <SafeRender className="text-slate-300 text-sm">{selectedNpc.quirk}</SafeRender>}
                                     </div>
                                     <div className="bg-slate-900/50 p-3 rounded border border-slate-700">
                                         <div className="text-xs font-bold text-slate-500 uppercase mb-1">Goal</div>
-                                        <SafeRender className="text-slate-300 text-sm">{selectedNpc.goal}</SafeRender>
+                                        {isEditing ? <input className="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1 text-sm text-white" value={selectedNpc.goal || ""} onChange={e => updateNpcField('goal', e.target.value)}/> : <SafeRender className="text-slate-300 text-sm">{selectedNpc.goal}</SafeRender>}
                                     </div>
                                 </div>
                                 <div className="bg-red-950/20 p-3 rounded border border-red-900/30">
                                     <div className="text-xs font-bold text-red-400 uppercase mb-1 flex items-center gap-2"><Icon name="eye-off" size={12}/> Secret</div>
-                                    <SafeRender className="text-slate-300 text-sm">{selectedNpc.secret}</SafeRender>
+                                    {isEditing ? <input className="w-full bg-slate-900 border border-red-900/50 rounded px-2 py-1 text-sm text-red-200" value={selectedNpc.secret || ""} onChange={e => updateNpcField('secret', e.target.value)}/> : <SafeRender className="text-slate-300 text-sm">{selectedNpc.secret}</SafeRender>}
                                 </div>
                                 <div className="bg-slate-900/30 p-4 rounded border border-slate-700">
                                     <div className="text-xs font-bold text-slate-500 uppercase mb-2 flex items-center gap-2"><Icon name="swords" size={14}/> Combat Stats & Abilities</div>
-                                    <textarea className="w-full h-48 bg-slate-900/80 border border-slate-700 rounded p-3 text-sm text-green-300 font-mono leading-relaxed resize-none focus:outline-none focus:border-amber-500" 
-                                        value={typeof selectedNpc.stats === 'object' ? JSON.stringify(selectedNpc.stats, null, 2) : (selectedNpc.stats || "No stats generated.")} 
-                                        onChange={(e) => {
-                                            const updated = { ...selectedNpc, stats: e.target.value };
-                                            setSelectedNpc(updated);
-                                            const newNpcs = npcs.map(n => n.id === updated.id ? updated : n);
-                                            const nd = { ...data, npcs: newNpcs };
-                                            setData(nd);
-                                            updateCloud(nd);
-                                        }} 
-                                    />
-                                    {selectedNpc.weapons && (
-                                        <div className="mt-2 text-sm text-slate-400">
-                                            <span className="font-bold text-slate-500">Weapons:</span> 
-                                            <SafeRender>{selectedNpc.weapons}</SafeRender>
-                                        </div>
-                                    )}
-                                    {selectedNpc.spells && (
-                                        <div className="mt-1 text-sm text-slate-400">
-                                            <span className="font-bold text-slate-500">Spells:</span> 
-                                            <SafeRender>{selectedNpc.spells}</SafeRender>
-                                        </div>
-                                    )}
+                                    <textarea className="w-full h-48 bg-slate-900/80 border border-slate-700 rounded p-3 text-sm text-green-300 font-mono leading-relaxed resize-none focus:outline-none focus:border-amber-500" value={typeof selectedNpc.stats === 'object' ? JSON.stringify(selectedNpc.stats, null, 2) : (selectedNpc.stats || "No stats generated.")} onChange={(e) => updateNpcField('stats', e.target.value)} />
                                 </div>
                                 <div>
                                     <div className="text-xs font-bold text-slate-500 uppercase mb-2">Personality Summary</div>
                                     <SafeRender className="text-slate-400 text-sm italic">{selectedNpc.personality}</SafeRender>
                                 </div>
                             </div>
-                        ) : (
-                            <div className="h-full flex flex-col items-center justify-center text-slate-500">
-                                <Icon name="skull" size={48} className="mb-4 opacity-20"/>
-                                <p>Select or Generate an NPC to view details.</p>
-                            </div>
-                        )}
+                        ) : (<div className="h-full flex flex-col items-center justify-center text-slate-500"><Icon name="skull" size={48} className="mb-4 opacity-20"/><p>Select or Generate an NPC to view details.</p></div>)}
                     </div>
                 </div>
             );
@@ -798,6 +637,14 @@
             const bannedUsers = data.bannedUsers || [];
             const userId = user ? user.uid : 'offline';
             const assignments = data.assignments || {};
+            const genesis = data.campaign?.genesis || {};
+            
+            const updateGenesis = (field, val) => {
+                const nd = { ...data, campaign: { ...data.campaign, genesis: { ...genesis, [field]: val } } };
+                setData(nd);
+                updateCloud(nd);
+            };
+
             const signIn = async () => { try { await fb.signInWithPopup(fb.auth, new fb.GoogleAuthProvider()); } catch(e){alert(e.message);} };
             const signOut = async () => { if(fb) await fb.signOut(fb.auth); };
             const updateConfig = (key, val) => { const newData = { ...data, config: { ...data.config, [key]: val } }; setData(newData); updateCloud(newData); };
@@ -813,6 +660,23 @@
                         <div className="text-4xl md:text-5xl font-mono font-bold text-white tracking-widest mb-4 drop-shadow-lg break-all">{code}</div>
                         <div className="flex flex-wrap justify-center gap-2"><button onClick={copyCode} className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-1 rounded text-sm flex items-center gap-2 shadow-lg"><Icon name="copy" size={16}/> Copy</button>{fb && (user ? <button onClick={signOut} className="bg-slate-700 px-4 py-1 rounded text-sm">Sign Out</button> : <button onClick={signIn} className="bg-blue-600 px-4 py-1 rounded text-sm">Login</button>)}</div>
                     </div>
+                    {role === 'dm' && (
+                        <div className="glass-panel p-6 rounded-xl border-l-4 border-blue-500 mb-6">
+                            <h3 className="text-lg font-bold mb-4 text-slate-200">DM Tools</h3>
+                            <div className="mb-4">
+                                <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Story Source / Lore</label>
+                                <textarea className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none h-40 resize-y custom-scroll" value={genesis.loreText || genesis.conceptDesc || ""} onChange={e => updateGenesis(genesis.loreText !== undefined ? 'loreText' : 'conceptDesc', e.target.value)} placeholder="Paste your world lore here for the AI to use..."/>
+                            </div>
+                            <div className="grid md:grid-cols-2 gap-6 mb-4">
+                                <div><label className="block text-xs font-bold text-slate-400 uppercase mb-2">Edition</label><select value={data.config?.edition || '2014'} onChange={e => updateConfig('edition', e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none"><option value="2014">5e (2014)</option><option value="2024">5e (2024 Revised)</option></select></div>
+                                <div><label className="block text-xs font-bold text-slate-400 uppercase mb-2">AI Context</label><button onClick={() => updateConfig('strictMode', !data.config?.strictMode)} className={`w-full p-3 rounded text-sm font-bold border ${data.config?.strictMode ? 'bg-green-900/50 border-green-600 text-green-400' : 'bg-slate-900 border-slate-700 text-slate-400'}`}>{data.config?.strictMode ? "Strict" : "General"}</button></div>
+                            </div>
+                            <input value={data.campaign?.location || ""} onChange={e => { const newData = {...data, campaign: {...data.campaign, location: e.target.value}}; setData(newData); updateCloud(newData); }} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none" placeholder="Current Location"/>
+                            <div className="border-2 border-dashed border-slate-700 rounded p-4 text-center mt-4">
+                                {pdfProcessing ? <div className="text-amber-500 animate-pulse">Processing...</div> : !data.campaign?.pdfName ? (<label className="cursor-pointer block w-full"><span className="text-slate-300 font-bold">Upload PDF</span><input type="file" className="hidden" accept=".pdf" onChange={handlePdfUpload}/></label>) : (<div className="flex justify-between items-center"><span className="text-green-400 truncate flex-1 mr-2">{data.campaign.pdfName}</span><button onClick={clearPdf}><Icon name="trash-2" size={16}/></button></div>)}
+                            </div>
+                        </div>
+                    )}
                     <div className="glass-panel p-6 rounded-xl mb-6">
                         <h3 className="text-lg font-bold mb-4 text-slate-200 flex items-center gap-2"><Icon name="save" size={18}/> Backup & Restore</h3>
                         <div className="flex flex-col md:flex-row gap-4"><button onClick={downloadBackup} className="flex-1 bg-slate-700 hover:bg-slate-600 p-3 rounded text-slate-200 flex items-center justify-center gap-2"><Icon name="download" size={16}/> Download</button><label className="flex-1 bg-slate-700 hover:bg-slate-600 p-3 rounded text-slate-200 flex items-center justify-center gap-2 cursor-pointer"><Icon name="upload" size={16}/> Restore<input type="file" accept=".json" onChange={handleRestore} className="hidden" /></label></div>
@@ -849,19 +713,6 @@
                             {aiProvider === 'gemini' && (<input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none" placeholder="AIza..."/>)}
                         </div>
                     </div>
-                    {role === 'dm' && (
-                        <div className="glass-panel p-6 rounded-xl border-l-4 border-blue-500">
-                            <h3 className="text-lg font-bold mb-4 text-slate-200">DM Tools</h3>
-                            <div className="grid md:grid-cols-2 gap-6 mb-4">
-                                <div><label className="block text-xs font-bold text-slate-400 uppercase mb-2">Edition</label><select value={data.config?.edition || '2014'} onChange={e => updateConfig('edition', e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none"><option value="2014">5e (2014)</option><option value="2024">5e (2024 Revised)</option></select></div>
-                                <div><label className="block text-xs font-bold text-slate-400 uppercase mb-2">AI Context</label><button onClick={() => updateConfig('strictMode', !data.config?.strictMode)} className={`w-full p-3 rounded text-sm font-bold border ${data.config?.strictMode ? 'bg-green-900/50 border-green-600 text-green-400' : 'bg-slate-900 border-slate-700 text-slate-400'}`}>{data.config?.strictMode ? "Strict" : "General"}</button></div>
-                            </div>
-                            <input value={data.campaign?.location || ""} onChange={e => { const newData = {...data, campaign: {...data.campaign, location: e.target.value}}; setData(newData); updateCloud(newData); }} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none" placeholder="Current Location"/>
-                            <div className="border-2 border-dashed border-slate-700 rounded p-4 text-center mt-4">
-                                {pdfProcessing ? <div className="text-amber-500 animate-pulse">Processing...</div> : !data.campaign?.pdfName ? (<label className="cursor-pointer block w-full"><span className="text-slate-300 font-bold">Upload PDF</span><input type="file" className="hidden" accept=".pdf" onChange={handlePdfUpload}/></label>) : (<div className="flex justify-between items-center"><span className="text-green-400 truncate flex-1 mr-2">{data.campaign.pdfName}</span><button onClick={clearPdf}><Icon name="trash-2" size={16}/></button></div>)}
-                            </div>
-                        </div>
-                    )}
                 </div>
             );
         };
@@ -1149,7 +1000,7 @@
 
         const GameSession = (props) => {
             const { fb, code, role: initRole, userId, user, isOffline, onExit } = props;
-            const DEFAULT = { hostId: userId, campaign:{ name:"New", location:"Start", tone:"Heroic", pdfName:null, pdfText:null, genesis:{}}, config:{edition:'2014', strictMode:false}, players:[], locations:[], journal_public:"", journal_dm:"", partyStash:"", player_journals:{}, npcs: [], activeUsers:{}, bannedUsers:[], assignments:{}, onboardingComplete: false };
+            const DEFAULT = { hostId: userId, campaign:{ name:"New", location:"Start", tone:"Heroic", pdfName:null, pdfText:null, genesis:{}}, config:{edition:'2014', strictMode:false}, players:[], locations:[], journal_pages: {}, npcs: [], activeUsers:{}, bannedUsers:[], assignments:{}, onboardingComplete: false };
             const [data, setData] = useState(null);
             const [view, setView] = useState('session');
             const [role, setRole] = useState(initRole);
@@ -1180,7 +1031,6 @@
             useEffect(() => { const k = localStorage.getItem(`dm_key_${aiProvider}`); setApiKey(k||''); }, [aiProvider]);
             const setKey = (v) => { setApiKey(v); localStorage.setItem(`dm_key_${aiProvider}`, v); };
 
-            // Tour Check - ONLY show if onboarding is complete or if player
             useEffect(() => {
                 const tourSeen = localStorage.getItem('dm_tour_completed');
                 if (!tourSeen && data) {
@@ -1196,6 +1046,12 @@
                 const unsub = fb.onSnapshot(ref, snap => {
                     if(snap.exists()) {
                         const d = snap.data();
+                        // Migration: convert old journals to pages if they exist and pages don't
+                        if (!d.journal_pages) {
+                            d.journal_pages = {};
+                            if (d.journal_public) d.journal_pages['legacy_public'] = { id: 'legacy_public', title: 'Public Log', content: d.journal_public, ownerId: 'system', isPublic: true, created: Date.now() };
+                            if (d.partyStash) d.journal_pages['legacy_stash'] = { id: 'legacy_stash', title: 'Party Stash', content: d.partyStash, ownerId: 'system', isPublic: true, created: Date.now() + 1 };
+                        }
                         if(d.bannedUsers?.includes(userId)) { alert("Banned"); onExit(); return; }
                         setData(d);
                         if(d.hostId === userId) setRole('dm'); else setRole('player');
@@ -1222,47 +1078,49 @@
                 register();
             }, [data?.campaign?.name]); 
 
-            // General Cloud Update - saves entire state (Use sparingly)
             const updateCloud = (nd) => {
                 setData(nd);
                 if(isOffline) { localStorage.setItem('dm_loc', JSON.stringify(nd)); return; }
                 if(saveTimer.current) clearTimeout(saveTimer.current);
                 saveTimer.current = setTimeout(() => {
                     const ref = fb.doc(fb.db, 'artifacts', fb.appId, 'public', 'data', 'campaigns', code);
-                    if(role === 'player') fb.updateDoc(ref, { players: nd.players, journal_public: nd.journal_public, partyStash: nd.partyStash, [`player_journals.${userId}`]: nd.player_journals[userId] || "" });
+                    if(role === 'player') fb.updateDoc(ref, { players: nd.players, journal_pages: nd.journal_pages });
                     else fb.setDoc(ref, nd, { merge: true, savedSessions: nd.savedSessions || [] }); 
                 }, 1000);
             };
 
-            // Granular Journal Update - Specific for concurrent editing
             const updateJournalField = (field, value) => {
-                // Optimistic UI update
-                if (field.startsWith('player_journals')) {
-                   const journalId = field.split('.')[1];
-                   setData(prev => ({...prev, player_journals: {...prev.player_journals, [journalId]: value}}));
+                if (field.startsWith('journal_pages')) {
+                    const parts = field.split('.');
+                    if(parts.length === 2) {
+                        const pageId = parts[1];
+                        setData(prev => ({...prev, journal_pages: {...prev.journal_pages, [pageId]: value}}));
+                    } else if (field === 'journal_pages') {
+                        setData(prev => ({...prev, journal_pages: value}));
+                    }
                 } else {
                    setData(prev => ({...prev, [field]: value}));
                 }
 
                 if(isOffline) {
-                    const nd = {...data, [field]: value}; // Simple merge for offline
+                    const nd = {...data};
+                    if (field === 'journal_pages') nd.journal_pages = value;
+                    else if (field.startsWith('journal_pages.')) {
+                        const parts = field.split('.');
+                        nd.journal_pages[parts[1]] = value;
+                    } else nd[field] = value;
                     localStorage.setItem('dm_loc', JSON.stringify(nd));
                     return;
                 }
 
                 const ref = fb.doc(fb.db, 'artifacts', fb.appId, 'public', 'data', 'campaigns', code);
-                // Directly update the specific field in Firestore
-                // This prevents overwriting the whole document with stale data from other fields
                 fb.updateDoc(ref, { [field]: value }).catch(err => console.error("Save failed", err));
             };
 
             const queryAiService = async (messages) => {
                 const hasKey = aiProvider === 'puter' || apiKey;
                 if (!hasKey) throw new Error("No API Key or Provider");
-                
-                let attempts = 0;
-                const maxRetries = 2;
-                
+                let attempts = 0; const maxRetries = 2;
                 while(attempts < maxRetries) {
                     try {
                         attempts++;
@@ -1303,7 +1161,7 @@
                         const desc = p.appearance ? `Appearance: ${p.appearance}` : "No physical description provided.";
                         return `${p.name} (${p.race} ${p.class}). ${desc}.`;
                     }).join(" | ");
-                    const journalContext = data.journal_public ? data.journal_public.slice(0, 500) : "";
+                    const journalContext = Object.values(data.journal_pages || {}).filter(p => p.isPublic).map(p => p.content).join(" ").slice(0, 500);
                     const chatContext = chatHistory.slice(-5).map(m => m.content).join(" ");
                     const metaPrompt = `Role: Art Director. Context: D&D. Characters: ${knownCharacters}. Log: ${journalContext}. Situation: ${chatContext}. Task: Write a vivid image prompt (max 50 words). Style: Digital Fantasy Art.`;
                     const imagePrompt = await queryAiService([{role: 'system', content: metaPrompt}, {role: 'user', content: 'Generate prompt.'}]);
@@ -1335,7 +1193,9 @@
                 }
 
                 const loreContext = genesis.loreText || genesis.conceptDesc || "Standard Fantasy";
-                const pdfContext = data.campaign.pdfText ? `PDF Content: ${data.campaign.pdfText.slice(0, 20000)}...` : "";
+                // Gather accessible journal pages content
+                const accessiblePages = Object.values(data.journal_pages || {}).filter(p => p.isPublic || p.ownerId === userId);
+                const journalContext = accessiblePages.map(p => `[Page: ${p.title}]: ${p.content}`).join('\n').slice(-4000); // Limit context size
 
                 const systemPrompt = `
 Role: Dungeon Master AI. 
@@ -1343,8 +1203,7 @@ User: ${iden}.
 World Context: Tone: ${genesis.tone || "Generic"}. Conflict: ${genesis.conflict || "None"}. Lore: ${loreContext}.
 Location: ${data.campaign.location}.
 Party: ${partyContext}.
-Public Log: ${data.journal_public.slice(-2000)}.
-${role === 'dm' ? `DM Secrets: ${data.journal_dm}. ${pdfContext}` : `Private Notes: ${data.player_journals?.[userId] || "None"}`}
+Journals: ${journalContext}.
 Rules: 5e (${data.config.edition}).
 Instruction: ${mode === 'narrate' ? "Narrate vividly using boxed text. No secrets." : mode === 'mechanics' ? "Explain rules/DCs. Show math." : mode === 'npc' ? "Roleplay NPC." : mode === 'chaos' ? "Inject sudden random event. Bold text." : "Answer as DM."}
 `;
@@ -1364,20 +1223,11 @@ Instruction: ${mode === 'narrate' ? "Narrate vividly using boxed text. No secret
                 const prompt = `Create 5e NPC. Name: ${name}. Context: ${context}. Campaign Tone: ${genesis.tone}. Campaign Lore: ${genesis.loreText}. Include simplified 5e Statblock (AC, HP, Speed, Abilities) as a STRING, Weapons/Attacks as ARRAY of strings, and Spells as ARRAY of strings if applicable. Return JSON: {name, race, class, quirk, secret, goal, stats, personality, weapons, spells}`;
                 try {
                     const txt = await queryAiService([{ role: "system", content: prompt }, { role: "user", content: "Gen"}]);
-                    const start = txt.indexOf('{');
-                    const end = txt.lastIndexOf('}');
-                    if(start === -1 || end === -1) throw new Error("No JSON found");
-                    const jsonStr = txt.substring(start, end + 1);
-                    const parsed = JSON.parse(jsonStr);
-                    // Sanitize stats to ensure string
-                    if (typeof parsed.stats === 'object') {
-                        parsed.stats = JSON.stringify(parsed.stats, null, 2).replace(/["{}]/g, '');
-                    }
+                    const start = txt.indexOf('{'); const end = txt.lastIndexOf('}'); if(start === -1 || end === -1) throw new Error("No JSON found");
+                    const jsonStr = txt.substring(start, end + 1); const parsed = JSON.parse(jsonStr);
+                    if (typeof parsed.stats === 'object') { parsed.stats = JSON.stringify(parsed.stats, null, 2).replace(/["{}]/g, ''); }
                     return parsed;
-                } catch(e) { 
-                    console.error("NPC Gen Error", e);
-                    return null; 
-                }
+                } catch(e) { console.error("NPC Gen Error", e); return null; }
             };
 
             const generateLoc = async (type, note, genesis) => {
@@ -1400,15 +1250,9 @@ Instruction: ${mode === 'narrate' ? "Narrate vividly using boxed text. No secret
             const toggleListening = () => {
                 if (!recognitionRef.current && ('webkitSpeechRecognition' in window)) {
                     const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
-                    recognitionRef.current = new Speech();
-                    recognitionRef.current.continuous = true;
-                    recognitionRef.current.lang = 'en-US';
-                    recognitionRef.current.onresult = (e) => {
-                        let t = ''; for(let i=e.resultIndex;i<e.results.length;++i) if(e.results[i].isFinal) t+=e.results[i][0].transcript;
-                        if(t) setInputText(p=>p+' '+t);
-                    };
-                    recognitionRef.current.start();
-                    setIsListening(true);
+                    recognitionRef.current = new Speech(); recognitionRef.current.continuous = true; recognitionRef.current.lang = 'en-US';
+                    recognitionRef.current.onresult = (e) => { let t = ''; for(let i=e.resultIndex;i<e.results.length;++i) if(e.results[i].isFinal) t+=e.results[i][0].transcript; if(t) setInputText(p=>p+' '+t); };
+                    recognitionRef.current.start(); setIsListening(true);
                 } else { if(isListening) { recognitionRef.current.stop(); setIsListening(false); } else { recognitionRef.current.start(); setIsListening(true); } }
             };
             
@@ -1424,8 +1268,16 @@ Instruction: ${mode === 'narrate' ? "Narrate vividly using boxed text. No secret
                 let newData = { ...data, onboardingComplete: true };
                 if (onboardingData) {
                     newData.campaign = { ...newData.campaign, genesis: onboardingData };
-                    const setupSummary = `\n[GENESIS] New Campaign Initialized.\nTone: ${onboardingData.tone}\nConflict: ${onboardingData.conflict}\n`;
-                    newData.journal_public = (newData.journal_public || "") + setupSummary;
+                    // Initialize Journal Pages
+                    newData.journal_pages = {};
+                    newData.journal_pages['genesis'] = {
+                        id: 'genesis',
+                        title: 'Campaign Setup',
+                        content: `Tone: ${onboardingData.tone}\nConflict: ${onboardingData.conflict}\nLore: ${onboardingData.loreText || onboardingData.conceptDesc}`,
+                        ownerId: 'system',
+                        isPublic: true,
+                        created: Date.now()
+                    };
                 }
                 updateCloud(newData);
             };
@@ -1437,7 +1289,7 @@ Instruction: ${mode === 'narrate' ? "Narrate vividly using boxed text. No secret
                     <Sidebar view={view} setView={setView} role={role} code={code} showTools={showTools} setShowTools={setShowTools} onExit={onExit}/>
                     <main className="flex-1 h-full overflow-hidden relative">
                         {view === 'session' && <SessionView data={data} chatHistory={chatHistory} setChatHistory={setChatHistory} inputText={inputText} setInputText={setInputText} isListening={isListening} toggleListening={toggleListening} generateResponse={genResponse} isLoading={isLoading} role={role} activeChar={derivedActiveChar} showTools={showTools} setShowTools={setShowTools} diceLog={diceLog} handleDiceRoll={handleDiceRoll} syncState={syncState} isPlayerFacing={isPlayerFacing} setIsPlayerFacing={setIsPlayerFacing} updateCloud={updateCloud} generateSceneImage={generateSceneImage} aiProvider={aiProvider}/>}
-                        {view === 'journal' && <JournalView data={data} setData={setData} role={role} updateJournalField={updateJournalField} userId={userId} generateLoot={generateLoot}/>}
+                        {view === 'journal' && <JournalView data={data} setData={setData} role={role} updateJournalField={updateJournalField} userId={userId}/>}
                         {view === 'world' && <WorldView data={data} setData={setData} role={role} updateCloud={updateCloud} generateLoc={generateLoc}/>}
                         {view === 'party' && <PartyView data={data} setData={setData} role={role} activeChar={derivedActiveChar} updateCloud={updateCloud}/>}
                         {view === 'npcs' && <NpcView data={data} setData={setData} role={role} updateCloud={updateCloud} generateNpc={generateNpc} setChatInput={setInputText} setView={setView}/>}
@@ -1453,12 +1305,10 @@ Instruction: ${mode === 'narrate' ? "Narrate vividly using boxed text. No secret
             const steps = [
                 { title: "Welcome to DungeonMind", content: "Your AI-enhanced TTRPG assistant. This tool combines chat, journaling, and world-building.", view: 'session' },
                 { title: "The Session Hub", content: "This is your main command center. Chat with the AI, roll dice, and see the story unfold.", view: 'session' },
-                { title: "The World Tab", content: "New in v21: The Map Icon. This is your Campaign Bible (Tone, Lore) and your Atlas. Edit your world truths and generate locations here.", view: 'world' },
-                { title: "Visuals & Voice", content: "See that Camera icon near the input box? Click it to generate scene images. The Mic icon enables voice-to-text input.", view: 'session' },
-                { title: "Journals & Secrets", content: "The Book icon. Keep public logs and private notes. The AI reads your private notes for context.", view: 'journal' },
-                { title: "The Party", content: "The 'Party' tab. Update your character's Motivation here so the AI can weave your story into the plot.", view: 'party' },
-                { title: "NPC Registry", content: "The Skull icon. Create fully fleshed-out characters instantly.", view: 'npcs' },
-                { title: "Settings & Cloud", content: "Configure your AI model (Puter, OpenAI, Gemini) and save your campaign data in the Settings tab.", view: 'settings' }
+                { title: "Infinite Journals", content: "New in v24: Create unlimited journal pages. Toggle them Public (shared) or Private (your eyes + AI).", view: 'journal' },
+                { title: "The World Tab", content: "Your Campaign Bible and Atlas. Edit your world truths and generate locations here.", view: 'world' },
+                { title: "NPC Registry", content: "The Skull icon. Create fully fleshed-out characters. Now you can edit their details manually!", view: 'npcs' },
+                { title: "DM Tools", content: "In Settings, DMs can now directly edit the core 'Lore Source' that powers the AI's world knowledge.", view: 'settings' }
             ];
 
             const [currentStep, setCurrentStep] = useState(0);
@@ -1551,3 +1401,4 @@ Instruction: ${mode === 'narrate' ? "Narrate vividly using boxed text. No secret
     </script>
 </body>
 </html>
+
