@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>DungeonMind v26 | Mobile Enhanced</title>
+    <title>DungeonMind v27 | Journal Pro</title>
     
     <!-- GLOBAL ERROR HANDLER -->
     <script>
@@ -37,6 +37,9 @@
 
     <!-- Puter.js -->
     <script src="https://js.puter.com/v2/"></script>
+
+    <!-- Marked.js for legacy content -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 
     <!-- Firebase Modular SDKs -->
     <script type="module">
@@ -105,6 +108,19 @@
         .status-saved { color: #4ade80; background: rgba(74, 222, 128, 0.1); }
         .status-saving { color: #facc15; background: rgba(250, 204, 21, 0.1); }
         .status-error { color: #ef4444; background: rgba(239, 68, 68, 0.1); }
+        
+        /* Rich Text Editor Styles */
+        .rich-editor { outline: none; min-height: 100%; color: #e2e8f0; line-height: 1.6; }
+        .rich-editor h1 { font-size: 2em; font-weight: bold; color: #fbbf24; margin: 0.5em 0; font-family: 'Cinzel', serif; border-bottom: 1px solid #475569; }
+        .rich-editor h2 { font-size: 1.5em; font-weight: bold; color: #fcd34d; margin: 0.5em 0; font-family: 'Cinzel', serif; }
+        .rich-editor ul { list-style-type: disc; padding-left: 1.5em; margin-bottom: 0.8em; }
+        .rich-editor ol { list-style-type: decimal; padding-left: 1.5em; margin-bottom: 0.8em; }
+        .rich-editor blockquote { border-left: 4px solid #d97706; padding-left: 1em; color: #94a3b8; font-style: italic; margin: 1em 0; background: rgba(255,255,255,0.05); padding: 8px; border-radius: 4px; }
+        .rich-editor table { width: 100%; border-collapse: collapse; margin: 1em 0; border: 1px solid #475569; table-layout: fixed; }
+        .rich-editor th, .rich-editor td { border: 1px solid #475569; padding: 8px; vertical-align: top; }
+        .rich-editor th { background-color: rgba(30, 41, 59, 0.8); font-weight: bold; color: #fbbf24; }
+        .rich-editor img { max-width: 100%; height: auto; border-radius: 4px; border: 1px solid #475569; display: block; margin: 10px 0; cursor: pointer; }
+        .rich-editor b, .rich-editor strong { color: #fcd34d; }
         
         /* Mobile specific adjustments */
         @media (max-width: 768px) {
@@ -293,7 +309,6 @@
                         <div className="bg-slate-900 p-6 border-b border-slate-700 flex justify-between items-center"><div><h2 className="text-2xl fantasy-font text-amber-500">Genesis</h2><p className="text-slate-400 text-sm">Forging the world.</p></div><div className="flex gap-2">{steps.map(s => (<div key={s.id} className={`h-2 w-8 rounded-full ${step >= s.id ? 'bg-amber-500' : 'bg-slate-700'}`}></div>))}</div></div>
                         
                         <div className="flex-1 p-8 overflow-y-auto custom-scroll onboarding-step">
-                            {/* Step 1: Source */}
                             {step === 1 && !verificationData && (
                                 <div className="space-y-6">
                                     <div className="flex items-center gap-3 text-amber-400 mb-2"><Icon name="book" size={24}/><h3 className="text-xl font-bold">1. The Source</h3></div>
@@ -359,32 +374,104 @@
             );
         };
 
-        const JournalPageEditor = ({ page, onSave, onDelete, onBack }) => {
-            const [localContent, setLocalContent] = useState(page.content || "");
+        const JournalPageEditor = ({ page, onSave, onDelete, onBack, aiHelper }) => {
             const [saveStatus, setSaveStatus] = useState("saved");
+            const [aiWorking, setAiWorking] = useState(false);
+            const editorRef = useRef(null);
             const timerRef = useRef(null);
+            const fileInputRef = useRef(null);
 
-            useEffect(() => { if (saveStatus === "saved") setLocalContent(page.content || ""); }, [page.content]);
+            // On Mount: Load Content. Handle Legacy Markdown vs HTML.
+            useEffect(() => {
+                if (editorRef.current) {
+                    const content = page.content || "";
+                    // Simple heuristic: if it contains HTML tags, treat as HTML. Else, convert MD.
+                    if (content.trim().startsWith('<') || content.includes('<div>') || content.includes('<p>')) {
+                        editorRef.current.innerHTML = content;
+                    } else {
+                        editorRef.current.innerHTML = marked.parse(content);
+                    }
+                }
+            }, [page.id]); // Re-run only when page changes
 
-            const handleChange = (newVal) => {
-                setLocalContent(newVal);
+            const handleInput = () => {
                 setSaveStatus("saving");
                 if (timerRef.current) clearTimeout(timerRef.current);
-                timerRef.current = setTimeout(() => { onSave(page.id, { ...page, content: newVal }); setSaveStatus("saved"); }, 1000);
+                timerRef.current = setTimeout(() => {
+                    if (editorRef.current) {
+                        onSave(page.id, { ...page, content: editorRef.current.innerHTML });
+                        setSaveStatus("saved");
+                    }
+                }, 1000);
             };
 
-            const toggleVisibility = () => {
-                onSave(page.id, { ...page, isPublic: !page.isPublic });
+            const toggleVisibility = () => { onSave(page.id, { ...page, isPublic: !page.isPublic }); };
+
+            const execCmd = (cmd, val = null) => {
+                document.execCommand(cmd, false, val);
+                editorRef.current.focus();
+            };
+
+            const handleInsertTable = () => {
+                const rows = 3;
+                const cols = 3;
+                let html = '<table style="width:100%; border-collapse: collapse; border: 1px solid #475569; margin: 10px 0;"><tbody>';
+                for(let r=0; r<rows; r++) {
+                    html += '<tr>';
+                    for(let c=0; c<cols; c++) {
+                        html += '<td style="border: 1px solid #475569; padding: 8px; min-width: 50px;">Use Item</td>';
+                    }
+                    html += '</tr>';
+                }
+                html += '</tbody></table><p><br/></p>'; // Add break after
+                execCmd('insertHTML', html);
+            };
+
+            const handleImageUpload = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        const canvas = document.createElement('canvas');
+                        const ctx = canvas.getContext('2d');
+                        const MAX_WIDTH = 800;
+                        const scaleSize = MAX_WIDTH / img.width;
+                        canvas.width = MAX_WIDTH;
+                        canvas.height = img.height * scaleSize;
+                        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                        const dataUrl = canvas.toDataURL('image/jpeg', 0.7); // Compress
+                        execCmd('insertHTML', `<img src="${dataUrl}" style="max-width:100%; border-radius:4px; margin:10px 0;" /><p><br/></p>`);
+                    };
+                    img.src = event.target.result;
+                };
+                reader.readAsDataURL(file);
+                e.target.value = null; // Reset
+            };
+
+            const handleAiSpark = async (mode) => {
+                if(aiWorking || !aiHelper) return;
+                setAiWorking(true);
+                const currentText = editorRef.current.innerText;
+                try {
+                    const prompt = mode === 'expand' 
+                        ? `Continue this D&D text. Maintain tone. Max 3 sentences:\n\n${currentText.slice(-500)}`
+                        : `Generate 3 bullet points about: ${prompt("Topic?", "Magic Items")}.`;
+                    
+                    const res = await aiHelper([{role: 'user', content: prompt}]);
+                    if(res) execCmd('insertHTML', `<p>${res.replace(/\n/g, '<br/>')}</p>`);
+                } catch(e) { alert("AI Brainstorm Failed"); }
+                setAiWorking(false);
             };
 
             return (
                 <div className="flex flex-col h-full bg-slate-900/50">
-                    <div className="p-3 md:p-4 border-b border-slate-700 flex justify-between items-center bg-slate-800/80">
+                    <div className="p-2 md:p-4 border-b border-slate-700 flex justify-between items-center bg-slate-800/80 shrink-0">
                         <div className="flex items-center gap-2 overflow-hidden">
-                            <button onClick={onBack} className="md:hidden text-slate-400 hover:text-white p-2 -ml-2">
-                                <Icon name="arrow-left" size={24} />
-                            </button>
-                            <h3 className="font-bold text-base md:text-lg text-slate-200 truncate max-w-[140px] md:max-w-xs">{page.title}</h3>
+                            <button onClick={onBack} className="md:hidden text-slate-400 hover:text-white p-2 -ml-2"><Icon name="arrow-left" size={24} /></button>
+                            <h3 className="font-bold text-base md:text-lg text-slate-200 truncate max-w-[120px] md:max-w-xs">{page.title}</h3>
                             <button onClick={toggleVisibility} className={`text-[10px] md:text-xs px-2 py-1 rounded flex items-center gap-1 transition-colors flex-shrink-0 ${page.isPublic ? 'bg-green-900/30 text-green-400 border border-green-800' : 'bg-red-900/30 text-red-400 border border-red-800'}`}>
                                 <Icon name={page.isPublic ? "eye" : "eye-off"} size={12}/> <span className="hidden sm:inline">{page.isPublic ? "Public" : "Private"}</span>
                             </button>
@@ -392,18 +479,35 @@
                         </div>
                         <button onClick={() => onDelete(page.id)} className="text-slate-500 hover:text-red-500 flex-shrink-0 p-2"><Icon name="trash-2" size={20}/></button>
                     </div>
-                    {/* Updated Textarea for full mobile height */}
-                    <textarea 
-                        value={localContent} 
-                        onChange={e => handleChange(e.target.value)} 
-                        className="flex-1 w-full bg-transparent p-4 md:p-6 resize-none focus:outline-none font-sans text-base md:text-lg text-slate-300 leading-relaxed custom-scroll pb-20 md:pb-4" 
-                        placeholder="Write your entry here..."
+                    
+                    {/* Toolbar */}
+                    <div className="px-2 py-2 bg-slate-800 border-b border-slate-700 flex gap-2 items-center overflow-x-auto custom-scroll shrink-0">
+                        <button onClick={() => execCmd('bold')} className="p-1.5 text-slate-400 hover:bg-slate-700 rounded"><Icon name="bold" size={18}/></button>
+                        <button onClick={() => execCmd('italic')} className="p-1.5 text-slate-400 hover:bg-slate-700 rounded"><Icon name="italic" size={18}/></button>
+                        <button onClick={() => execCmd('formatBlock', '<h2>')} className="p-1.5 text-slate-400 hover:bg-slate-700 rounded"><Icon name="heading" size={18}/></button>
+                        <button onClick={() => execCmd('insertUnorderedList')} className="p-1.5 text-slate-400 hover:bg-slate-700 rounded"><Icon name="list" size={18}/></button>
+                        <div className="w-px h-6 bg-slate-600"></div>
+                        <label className="p-1.5 text-sky-400 hover:bg-slate-700 rounded cursor-pointer" title="Insert Image File">
+                            <Icon name="image-plus" size={18}/>
+                            <input type="file" accept="image/*" className="hidden" ref={fileInputRef} onChange={handleImageUpload} />
+                        </label>
+                        <button onClick={handleInsertTable} className="p-1.5 text-sky-400 hover:bg-slate-700 rounded" title="Insert Grid Table"><Icon name="table" size={18}/></button>
+                        <div className="w-px h-6 bg-slate-600"></div>
+                        <button onClick={() => handleAiSpark('expand')} disabled={aiWorking} className={`flex items-center gap-1 px-2 py-1 text-xs font-bold rounded ${aiWorking ? 'bg-slate-700 text-slate-500' : 'bg-indigo-600 text-white'}`}><Icon name="sparkles" size={14}/> AI</button>
+                    </div>
+
+                    <div 
+                        ref={editorRef}
+                        contentEditable
+                        onInput={handleInput}
+                        className="flex-1 w-full bg-transparent p-4 md:p-8 overflow-y-auto custom-scroll rich-editor pb-40 outline-none focus:outline-none"
+                        spellCheck="false"
                     />
                 </div>
             );
         };
 
-        const JournalView = ({ data, setData, role, updateJournalField, userId }) => {
+        const JournalView = ({ data, setData, role, updateJournalField, userId, aiHelper }) => {
             const pages = data.journal_pages || {};
             const [selectedPageId, setSelectedPageId] = useState(null);
             const [isCreating, setIsCreating] = useState(false);
@@ -413,7 +517,6 @@
             const availablePages = Object.values(pages).filter(p => p.isPublic || p.ownerId === userId).sort((a,b) => b.created - a.created);
 
             useEffect(() => {
-                // Only auto-select on Desktop
                 if (window.innerWidth >= 768 && availablePages.length > 0 && !selectedPageId) setSelectedPageId(availablePages[0].id);
             }, [availablePages.length]);
 
@@ -421,7 +524,7 @@
                 if (!newPageTitle.trim()) return;
                 const newId = "page_" + Date.now();
                 const newPage = {
-                    id: newId, title: newPageTitle, content: "", ownerId: userId, isPublic: newPagePublic, created: Date.now()
+                    id: newId, title: newPageTitle, content: "<p>New entry...</p>", ownerId: userId, isPublic: newPagePublic, created: Date.now()
                 };
                 updateJournalField(`journal_pages.${newId}`, newPage);
                 setSelectedPageId(newId);
@@ -440,7 +543,6 @@
 
             return (
                 <div className="flex h-full w-full max-w-7xl mx-auto md:glass-panel md:rounded-xl overflow-hidden m-0 md:m-6 md:border border-slate-700">
-                    {/* List View - Hidden on Mobile if page selected */}
                     <div className={`flex-col bg-slate-900 border-r border-slate-700 w-full md:w-64 ${selectedPageId ? 'hidden md:flex' : 'flex'} h-full`}>
                         <div className="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-800/50">
                             <h3 className="fantasy-font text-amber-500 text-lg">Journal</h3>
@@ -477,10 +579,9 @@
                         </div>
                     </div>
 
-                    {/* Editor View - Full Screen on Mobile */}
                     <div className={`flex-1 h-full overflow-hidden bg-slate-900/30 ${selectedPageId ? 'flex' : 'hidden md:flex'} flex-col`}>
                         {selectedPageId && pages[selectedPageId] ? (
-                            <JournalPageEditor page={pages[selectedPageId]} onSave={handleSavePage} onDelete={handleDeletePage} onBack={() => setSelectedPageId(null)} />
+                            <JournalPageEditor page={pages[selectedPageId]} onSave={handleSavePage} onDelete={handleDeletePage} onBack={() => setSelectedPageId(null)} aiHelper={aiHelper} />
                         ) : (
                             <div className="h-full flex flex-col items-center justify-center text-slate-500">
                                 <Icon name="book-open" size={48} className="mb-4 opacity-20"/>
@@ -820,6 +921,38 @@
 
             const [showSavedSessions, setShowSavedSessions] = useState(false);
 
+            const handleExportToJournal = () => {
+                if (chatHistory.length < 2) return alert("Nothing to save!");
+                const htmlLog = chatHistory.map(m => {
+                    if(m.role === 'system') return `<p style='color:#94a3b8; font-size:0.8em; text-align:center;'><em>${m.content}</em></p>`;
+                    const roleName = m.role === 'user' ? (role === 'dm' ? "DM" : "Player") : "AI";
+                    const color = m.role === 'ai' ? '#fbbf24' : '#e2e8f0';
+                    return `<p><strong style="color:${color}">${roleName}:</strong> ${m.content.replace(/\n/g, '<br/>')}</p>`;
+                }).join("");
+                
+                const title = prompt("New Page Title (or leave blank to append to 'Session Log'):");
+                const pageId = title ? `page_${Date.now()}` : 'session_log';
+                const pageTitle = title || "Session Log";
+                
+                let newContent = htmlLog;
+                let existing = data.journal_pages?.[pageId];
+                if (existing) {
+                    newContent = existing.content + "<hr/>" + htmlLog;
+                }
+
+                const newPage = {
+                    id: pageId,
+                    title: pageTitle,
+                    content: newContent,
+                    ownerId: activeChar || 'system',
+                    isPublic: true,
+                    created: Date.now()
+                };
+                
+                updateCloud({...data, journal_pages: {...(data.journal_pages || {}), [pageId]: newPage}});
+                alert("Saved to Journal!");
+            };
+
             return (
                 <div className="flex h-full relative flex-col">
                     <div className="flex-1 flex flex-col h-full relative overflow-hidden">
@@ -829,6 +962,7 @@
                                 <span className="text-sm font-bold text-amber-500 truncate max-w-[120px]">{data.campaign?.location || "Unknown Location"}</span>
                             </div>
                             <div className="flex items-center gap-2">
+                                <button onClick={handleExportToJournal} className="p-2 hover:text-white text-green-400" title="Export Chat to Journal"><Icon name="book-up" size={18}/></button>
                                 <button onClick={() => setShowSavedSessions(true)} className="p-2 hover:text-white text-slate-400"><Icon name="folder-open" size={18}/></button>
                                 <button onClick={() => {
                                     const name = prompt("Name this session save:");
@@ -1320,7 +1454,7 @@ Instruction: ${mode === 'narrate' ? "Narrate vividly using boxed text. No secret
                     
                     <main className="flex-1 h-full overflow-hidden relative w-full">
                         {view === 'session' && <SessionView data={data} chatHistory={chatHistory} setChatHistory={setChatHistory} inputText={inputText} setInputText={setInputText} isListening={isListening} toggleListening={toggleListening} generateResponse={genResponse} isLoading={isLoading} role={role} activeChar={derivedActiveChar} showTools={showTools} setShowTools={setShowTools} diceLog={diceLog} handleDiceRoll={handleDiceRoll} syncState={syncState} isPlayerFacing={isPlayerFacing} setIsPlayerFacing={setIsPlayerFacing} updateCloud={updateCloud} generateSceneImage={generateSceneImage} aiProvider={aiProvider}/>}
-                        {view === 'journal' && <JournalView data={data} setData={setData} role={role} updateJournalField={updateJournalField} userId={userId}/>}
+                        {view === 'journal' && <JournalView data={data} setData={setData} role={role} updateJournalField={updateJournalField} userId={userId} aiHelper={queryAiService}/>}
                         {view === 'world' && <WorldView data={data} setData={setData} role={role} updateCloud={updateCloud} generateLoc={generateLoc}/>}
                         {view === 'party' && <PartyView data={data} setData={setData} role={role} activeChar={derivedActiveChar} updateCloud={updateCloud}/>}
                         {view === 'npcs' && <NpcView data={data} setData={setData} role={role} updateCloud={updateCloud} generateNpc={generateNpc} setChatInput={setInputText} setView={setView}/>}
@@ -1338,8 +1472,8 @@ Instruction: ${mode === 'narrate' ? "Narrate vividly using boxed text. No secret
         const TourGuide = ({ onClose, setView }) => {
             const steps = [
                 { title: "Welcome to DungeonMind", content: "Your AI-enhanced TTRPG assistant. This tool combines chat, journaling, and world-building.", view: 'session' },
-                { title: "The Session Hub", content: "This is your main command center. Chat with the AI, roll dice, and see the story unfold.", view: 'session' },
-                { title: "Infinite Journals", content: "Create unlimited journal pages. Toggle them Public (shared) or Private (your eyes + AI). On mobile, the editor takes the full screen.", view: 'journal' },
+                { title: "The Session Hub", content: "Chat with the AI, roll dice, and now: click the green book icon to save your current chat directly to a journal page!", view: 'session' },
+                { title: "Journal Pro", content: "The new Journal supports full rich text. Insert images, grid tables, bold text, and more. It looks exactly like the final document while you type.", view: 'journal' },
                 { title: "The World Tab", content: "Your Campaign Bible and Atlas. Edit your world truths and generate locations here.", view: 'world' },
                 { title: "NPC Registry", content: "The Skull icon. Create fully fleshed-out characters.", view: 'npcs' },
                 { title: "DM Tools", content: "In Settings, DMs can now directly edit the core 'Lore Source' that powers the AI's world knowledge.", view: 'settings' }
@@ -1434,6 +1568,4 @@ Instruction: ${mode === 'narrate' ? "Narrate vividly using boxed text. No secret
         }
     </script>
 </body>
-</html>
-
-
+</html
