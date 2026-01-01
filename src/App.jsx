@@ -73,6 +73,7 @@ const cleanText = (html) => {
 
 // --- HELPER: Chunk String for Map-Reduce ---
 const chunkString = (str, size = 12000) => {
+    if (!str) return [];
     const numChunks = Math.ceil(str.length / size);
     const chunks = new Array(numChunks);
     for (let i = 0, o = 0; i < numChunks; ++i, o += size) {
@@ -237,18 +238,21 @@ function App() {
                const combinedPrompt = messages.map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n');
                const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({contents:[{parts:[{text:combinedPrompt}]}]}) });
                const j = await r.json();
-               if (j.error) throw new Error(j.error.message);
-               return j.candidates?.[0]?.content?.parts?.[0]?.text;
+               if (j.error) throw new Error(j.error.message || "Unknown Gemini Error");
+               const text = j.candidates?.[0]?.content?.parts?.[0]?.text;
+               if (!text) throw new Error("Gemini returned empty response (safety filter?)");
+               return text;
           } else {
               const r = await fetch('https://api.openai.com/v1/chat/completions', { method:'POST', headers:{'Content-Type':'application/json', 'Authorization':`Bearer ${apiKey}`}, body:JSON.stringify({model: openAiModel, messages: messages}) });
               const j = await r.json();
-              if (j.error) throw new Error(j.error.message);
+              if (j.error) throw new Error(j.error.message || "Unknown OpenAI Error");
               return j.choices?.[0]?.message?.content;
           }
       } catch(e) { 
           console.error(e); 
-          alert("AI Error: " + e.message); // ALERT THE USER
-          return "System Error: " + e.message; 
+          const msg = e.message || (typeof e === 'string' ? e : "Unknown AI Error");
+          alert("AI Error: " + msg); 
+          return "System Error: " + msg; 
       }
   };
 
@@ -374,7 +378,9 @@ function App() {
                        { role: 'system', content: PROMPT_CONDENSER },
                        { role: 'user', content: chunks[i] }
                    ]);
-                   condensedSummaries.push(chunkRes);
+                   if (chunkRes && !chunkRes.includes("Error")) {
+                       condensedSummaries.push(chunkRes);
+                   }
               }
 
               finalSummaryContext = condensedSummaries.join("\n\n");
@@ -402,7 +408,7 @@ function App() {
 
       } catch (e) {
           console.error(e);
-          setChatHistory(p => [...p, { role: 'system', content: `❌ Error generating recap: ${e.message}` }]);
+          setChatHistory(p => [...p, { role: 'system', content: `❌ Error generating recap: ${e.message || "Unknown Error"}` }]);
       }
       
       setIsLoading(false);
