@@ -203,48 +203,26 @@ function App() {
       } catch(e) { console.error(e); return null; }
   };
 
-  // --- BRAIN UPGRADE: Aggressive Context Injection ---
-  const getKnowledgeBase = () => {
-      const genesis = data.campaign?.genesis || {};
-      const derivedCharId = data.assignments?.[user?.uid];
-      const char = data.players.find(p => p.id === derivedCharId);
-      
-      // 1. Party Data
+  // --- HELPER: Gather All Context ---
+  const getFullContext = () => {
+      // 1. Gather ALL Journal Entries (Not just snippets)
+      const allJournals = Object.values(data.journal_pages)
+          .sort((a,b) => a.created - b.created)
+          .map(p => `--- ENTRY: ${p.title} ---\n${stripHtml(p.content)}`)
+          .join('\n\n');
+
+      // 2. Party Data
       const partyData = data.players.map(p => 
-          `- ${p.name} (${p.race} ${p.class}). Motivation: "${p.motivation}". Personality: ${p.notes || "None"}.`
+          `- ${p.name} (${p.race} ${p.class}). Motivation: ${p.motivation || "None"}. Notes: ${p.notes || "None"}.`
       ).join('\n');
 
-      // 2. Journal Data (HTML Stripped & Combined)
-      // This is the "Long Term Memory"
-      const journalData = Object.values(data.journal_pages)
-          .filter(p => p.isPublic || p.ownerId === user?.uid)
-          .sort((a,b) => b.created - a.created) // Newest first
-          .slice(0, 10) // Increase to 10 most recent pages
-          .map(p => `[JOURNAL: ${p.title}]: ${stripHtml(p.content).slice(0, 500)}`) // Clean HTML
-          .join('\n');
-
-      // 3. NPC Data (Contextual)
+      // 3. NPC Data
       const npcData = data.npcs
           .filter(n => !n.isHidden || effectiveRole === 'dm')
-          .slice(0, 10)
           .map(n => `NPC ${n.name}: ${n.personality}. ${n.quirk ? "Quirk: "+n.quirk : ""}`)
           .join('\n');
 
-      return `
-      [CAMPAIGN INFO]
-      Title: ${genesis.campaignName}
-      Location: ${data.campaign?.location || "Unknown"}
-      Tone: ${genesis.tone}
-      
-      [THE PARTY]
-      ${partyData}
-
-      [THE WORLD (CANONICAL JOURNALS)]
-      ${journalData}
-
-      [LOCAL NPCS]
-      ${npcData}
-      `;
+      return { allJournals, partyData, npcData };
   };
 
   const generateResponse = async (overrideText, mode = 'standard') => {
@@ -254,38 +232,49 @@ function App() {
       setInputText('');
       setIsLoading(true);
 
-      const knowledge = getKnowledgeBase();
+      const { allJournals, partyData, npcData } = getFullContext();
+      const genesis = data.campaign?.genesis || {};
       const derivedCharId = data.assignments?.[user?.uid];
       const char = data.players.find(p => p.id === derivedCharId);
       
       let systemPrompt = "";
       
-      // --- DEFINING THE AI PERSONA ---
       if (possessedNpcId) {
           const npc = data.npcs.find(n => n.id === possessedNpcId);
           systemPrompt = `You are POSSESSING the NPC named "${npc.name}". Act ONLY as them. Your personality: ${npc.personality}. Your secret: ${npc.secret}. Do not narrate the world, only speak/act as ${npc.name}.`;
       } else if (effectiveRole === 'dm') {
-          systemPrompt = `You are the Dungeon Master. Use the [KNOWLEDGE BASE] provided by the user to narrate the story. Be creative but consistent with the Journals.`;
+          systemPrompt = `
+          You are the Dungeon Master. 
+          Setting: ${genesis.campaignName}. Tone: ${genesis.tone}.
+          Location: ${data.campaign?.location || "Unknown"}.
+          
+          SOURCE MATERIAL (ABSOLUTE TRUTH):
+          ${allJournals.slice(0, 3000)} 
+
+          INSTRUCTIONS:
+          1. Rely entirely on the SOURCE MATERIAL for history. Do not invent new ruins, villains, or plot points unless explicitly asked to improvise.
+          2. If the user asks about the story, summarize the Journals.
+          `;
       } else {
-          // PLAYER MODE: Helper/Muse
-          systemPrompt = `You are a Roleplay Assistant for the player character: ${char ? char.name : "Adventurer"}. 
-          Your goal is to help the player come up with dialogue or ideas based on their character's Motivation: "${char ? char.motivation : "Survival"}".
-          CRITICAL: Do NOT invent plot points. Do NOT reveal secrets. Only suggest what the character might think or say.`;
+          // PLAYER MODE
+          systemPrompt = `
+          You are a Muse for the player character: ${char ? char.name : "Adventurer"}.
+          Bio: ${char ? char.backstory : ""}
+          Motivation: ${char ? char.motivation : ""}
+          
+          KNOWN HISTORY:
+          ${allJournals.slice(0, 3000)}
+
+          RULES:
+          1. Do NOT act as the DM. Do not narrate events.
+          2. Only suggest what ${char ? char.name : "I"} might think or say.
+          3. Do NOT reveal secrets or look ahead.
+          `;
       }
-
-      // --- INJECTING DATA INTO USER MESSAGE ---
-      // This forces the model to "read" the journals before answering the question
-      const augmentedUserMessage = `
-      [KNOWLEDGE BASE (READ THIS FIRST)]
-      ${knowledge}
-
-      [USER QUESTION]
-      ${q}
-      `;
 
       const res = await queryAiService([
           { role: 'system', content: systemPrompt }, 
-          { role: 'user', content: augmentedUserMessage }
+          { role: 'user', content: q }
       ]);
       
       setChatHistory(p => [...p, { role: 'ai', content: res || "AI Error." }]);
@@ -300,20 +289,29 @@ function App() {
       updateCloud(newData, true);
   };
 
+  // --- RECAP GENERATOR: STRICT HISTORIAN MODE ---
   const generateRecap = async () => {
       setIsLoading(true);
-      const knowledge = getKnowledgeBase();
-      const recentChat = chatHistory.slice(-50).map(m => `${m.role}: ${m.content}`).join('\n');
       
-      const systemPrompt = `You are the Campaign Scribe. Summarize the session based on the Chat Logs and Journals provided. Do NOT invent new events.`;
+      // Get the RAW TRUTH from the Journals
+      const { allJournals } = getFullContext();
+      
+      const systemPrompt = `
+      ROLE: Campaign Historian.
+      TASK: Summarize the D&D campaign based STRICTLY on the provided Journal Archives.
+      
+      RULES:
+      1. ABSOLUTELY NO HALLUCINATIONS. If it is not in the text below, DO NOT SAY IT.
+      2. Do NOT invent "crumbling ruins" or "glowing eyes" if they are not in the text.
+      3. Use the specific names (e.g. Gundren, Phandalin, Redbrands) found in the text.
+      4. Format with headers like: "The Journey So Far", "Key Events", "Current Situation".
+      `;
+
       const userPrompt = `
-      [EXISTING JOURNALS]
-      ${knowledge}
+      [JOURNAL ARCHIVES - THE TRUTH]
+      ${allJournals}
 
-      [RECENT CHAT LOGS]
-      ${recentChat}
-
-      TASK: Write a dramatic "Last Time On..." summary (3 paragraphs).
+      Please analyze the text above and provide a concise, factual summary of the adventure so far.
       `;
 
       const res = await queryAiService([{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }]);
