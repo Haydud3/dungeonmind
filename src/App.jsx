@@ -15,34 +15,32 @@ import WorldView from './components/WorldView';
 import NpcView from './components/NpcView';
 import MapBoard from './components/MapBoard'; 
 
-// --- SYSTEM PROMPTS ---
+// --- SYSTEM PROMPTS (Softened for Safety Filters) ---
 
 const PROMPT_CONDENSER = `
 Role: You are a D&D Scribe Assistant.
-Task: You will receive a chunk of raw session text. Your goal is to condense it into a dense list of facts. 
+Task: Condense the session text into facts.
 Rules:
-1. Remove all banter, jokes, and pauses.
-2. PRESERVE strictly: proper nouns (names/places), specific numbers (gold amounts, damage dealt), and key plot events.
-3. Do not format this as a story yet. Just output raw, factual bullet points.
+1. Keep it PG-13. Focus on plot and actions, minimize graphic descriptions of violence.
+2. PRESERVE strictly: proper nouns, numbers (gold, damage), and key events.
+3. Output raw, factual bullet points.
 `;
 
 const PROMPT_MASTER_RECAP = `
-Role: Act as a professional Tabletop RPG Dungeon Master and Campaign Manager.
-Task: You will be given a compiled list of factual notes from a game session. Convert these facts into a structured, atmospheric "Session Recap."
-
-Input Context: The input you receive is a summary of events. Do not omit any loot or quests mentioned in the summary.
+Role: Dungeon Master Assistant.
+Task: Create a structured Session Recap from the provided notes.
 
 Output Sections:
-1. Intro: A cinematic opening line addressing the party.
-2. The Story So Far: A 3-paragraph narrative summary. Group events by "Chapter" or "Location" rather than a chronological list. Use an engaging, storytelling tone.
-3. Active Quest Log: A bulleted list of unfinished business. Include the quest name, the goal, and any promised rewards or key NPCs.
-4. The Party Ledger: A clear breakdown of Currency (GP, SP, CP) and a list of "Key Inventory & Magic Items" (potions, artifacts, quest items).
-5. DM’s Note: A closing "cliffhanger" describing exactly where the party is standing right now and an interactive prompt for what they should do next.
+1. Intro: A cinematic opening line.
+2. The Story So Far: A 3-paragraph narrative summary. Use an engaging, fantasy storytelling tone.
+3. Active Quest Log: Bulleted list of unfinished business.
+4. The Party Ledger: Currency (GP, SP, CP) and Key Items.
+5. DM’s Note: A closing "cliffhanger".
 
 Style Guidelines:
-- Use Markdown for bolding and headers.
-- Use Emojis (📜, ⚔️, 💰) for visual section anchors.
-- Ensure the tone is immersive and professional.
+- Use Markdown for bolding/headers.
+- Use Emojis (📜, ⚔️, 💰).
+- Keep content PG-13 (fantasy action is okay, avoid extreme gore/violence to pass safety filters).
 `;
 
 const DEFAULT_DATA = { 
@@ -245,7 +243,6 @@ function App() {
       }, 500);
   };
 
-  // --- IMPROVED AI SERVICE HANDLER ---
   const queryAiService = async (messages) => {
       const hasKey = aiProvider === 'puter' || apiKey;
       if (!hasKey) {
@@ -265,6 +262,11 @@ function App() {
               const response = await window.puter.ai.chat(messages, { model: puterModel });
               console.log("Puter: Response received", response);
               
+              // Handle Safety Filter Error
+              if (response.success === false && response.error?.code === 'moderation_failed') {
+                  throw new Error("Puter Safety Filter Blocked this. D&D combat/violence often triggers this on the free tier. Solution: Switch to 'Google Gemini' (Free) or 'OpenAI' in Settings.");
+              }
+              
               if (!response || !response.message) throw new Error("Received empty response from Puter.");
               return response.message.content;
 
@@ -283,7 +285,7 @@ function App() {
                }
 
                const j = await r.json();
-               if (j.error) throw new Error(j.error.message || "Gemini API returned an error object");
+               if (j.error) throw new Error(j.error.message || "Unknown Gemini Error");
                
                const text = j.candidates?.[0]?.content?.parts?.[0]?.text;
                if (!text) throw new Error("Gemini returned no text (Safety Block?)");
@@ -319,9 +321,10 @@ function App() {
       }
   };
 
+  // --- SAFETY LIMITER: Returns context ---
   const getFullContext = () => {
       const allJournals = Object.values(data.journal_pages)
-          .sort((a,b) => b.created - a.created) 
+          .sort((a,b) => b.created - a.created) // Newest first
           .map(p => `[JOURNAL: ${p.title}]: ${cleanText(p.content)}`)
           .join('\n\n');
 
@@ -404,6 +407,7 @@ function App() {
       updateCloud(newData, true);
   };
 
+  // --- SMART RECAP GENERATOR (MAP-REDUCE) ---
   const generateRecap = async () => {
       setIsLoading(true);
       
@@ -442,11 +446,13 @@ function App() {
 
               finalSummaryContext = condensedSummaries.join("\n\n");
           } else {
+              // Fast Path (Small enough for one shot)
               finalSummaryContext = fullRawData;
           }
 
           setChatHistory(p => [...p, { role: 'system', content: "✨ Writing final recap..." }]);
 
+          // 2. FINAL REDUCE STEP
           const res = await queryAiService([
               { role: 'system', content: PROMPT_MASTER_RECAP }, 
               { role: 'user', content: finalSummaryContext }
