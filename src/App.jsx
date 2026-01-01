@@ -10,9 +10,12 @@ import PartyView from './components/PartyView';
 import SettingsView from './components/SettingsView';
 import OnboardingWizard from './components/OnboardingWizard';
 import TourGuide from './components/TourGuide';
-// Import the separate files now
+
+// --- CRITICAL FIX: IMPORT THE COMPONENTS ---
 import WorldView from './components/WorldView';
 import NpcView from './components/NpcView';
+import MapBoard from './components/MapBoard'; // Ensure this is imported too
+// -------------------------------------------
 
 const DEFAULT_DATA = { 
     hostId: null,
