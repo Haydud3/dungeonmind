@@ -14,6 +14,36 @@ import WorldView from './components/WorldView';
 import NpcView from './components/NpcView';
 import MapBoard from './components/MapBoard'; 
 
+// --- SYSTEM PROMPTS ---
+
+const PROMPT_CONDENSER = `
+Role: You are a D&D Scribe Assistant.
+Task: You will receive a chunk of raw session text. Your goal is to condense it into a dense list of facts. 
+Rules:
+1. Remove all banter, jokes, and pauses.
+2. PRESERVE strictly: proper nouns (names/places), specific numbers (gold amounts, damage dealt), and key plot events.
+3. Do not format this as a story yet. Just output raw, factual bullet points.
+`;
+
+const PROMPT_MASTER_RECAP = `
+Role: Act as a professional Tabletop RPG Dungeon Master and Campaign Manager.
+Task: You will be given a compiled list of factual notes from a game session. Convert these facts into a structured, atmospheric "Session Recap."
+
+Input Context: The input you receive is a summary of events. Do not omit any loot or quests mentioned in the summary.
+
+Output Sections:
+1. Intro: A cinematic opening line addressing the party.
+2. The Story So Far: A 3-paragraph narrative summary. Group events by "Chapter" or "Location" rather than a chronological list. Use an engaging, storytelling tone.
+3. Active Quest Log: A bulleted list of unfinished business. Include the quest name, the goal, and any promised rewards or key NPCs.
+4. The Party Ledger: A clear breakdown of Currency (GP, SP, CP) and a list of "Key Inventory & Magic Items" (potions, artifacts, quest items).
+5. DM’s Note: A closing "cliffhanger" describing exactly where the party is standing right now and an interactive prompt for what they should do next.
+
+Style Guidelines:
+- Use Markdown for bolding and headers.
+- Use Emojis (📜, ⚔️, 💰) for visual section anchors.
+- Ensure the tone is immersive and professional.
+`;
+
 const DEFAULT_DATA = { 
     hostId: null,
     journal_pages: {}, 
@@ -39,6 +69,16 @@ const cleanText = (html) => {
    const tmp = document.createElement("DIV");
    tmp.innerHTML = html;
    return (tmp.textContent || tmp.innerText || "").replace(/\s+/g, " ").trim();
+};
+
+// --- HELPER: Chunk String for Map-Reduce ---
+const chunkString = (str, size = 12000) => {
+    const numChunks = Math.ceil(str.length / size);
+    const chunks = new Array(numChunks);
+    for (let i = 0, o = 0; i < numChunks; ++i, o += size) {
+        chunks[i] = str.substr(o, size);
+    }
+    return chunks;
 };
 
 function App() {
@@ -228,12 +268,8 @@ function App() {
           .map(n => `NPC ${n.name}: ${n.personality}. ${n.quirk ? "Quirk: "+n.quirk : ""}`)
           .join('\n');
 
-      // UPDATED: Increased limit from 4000 to 60000 characters.
-      return { 
-          allJournals: allJournals.slice(0, 60000), 
-          partyData, 
-          npcData 
-      };
+      // Note: For Map-Reduce, we don't slice strictly, but let the generateRecap handle chunking
+      return { allJournals, partyData, npcData };
   };
 
   const generateResponse = async (overrideText, mode = 'standard') => {
@@ -244,6 +280,10 @@ function App() {
       setIsLoading(true);
 
       const { allJournals, partyData, npcData } = getFullContext();
+      
+      // For standard chat, we still limit context to avoid lag, but keep it generous (50k)
+      const safeContext = allJournals.slice(0, 50000);
+
       const genesis = data.campaign?.genesis || {};
       const derivedCharId = data.assignments?.[user?.uid];
       const char = data.players.find(p => p.id === derivedCharId);
@@ -260,7 +300,7 @@ function App() {
           Location: ${data.campaign?.location || "Unknown"}.
           
           SOURCE MATERIAL (ABSOLUTE TRUTH):
-          ${allJournals}
+          ${safeContext}
 
           INSTRUCTIONS:
           1. Rely entirely on the SOURCE MATERIAL for history. Do not invent new ruins, villains, or plot points unless explicitly asked to improvise.
@@ -274,7 +314,7 @@ function App() {
           Motivation: ${char ? char.motivation : ""}
           
           KNOWN HISTORY:
-          ${allJournals}
+          ${safeContext}
 
           RULES:
           1. Do NOT act as the DM. Do not narrate events.
@@ -282,10 +322,6 @@ function App() {
           3. Do NOT reveal secrets or look ahead.
           `;
       }
-
-      // DEBUGGING: Log what we are sending to the AI
-      console.log("--- SYSTEM PROMPT (CHECK JOURNAL CONTEXT HERE) ---");
-      console.log(systemPrompt);
 
       const res = await queryAiService([
           { role: 'system', content: systemPrompt }, 
@@ -304,43 +340,71 @@ function App() {
       updateCloud(newData, true);
   };
 
-  // --- OPTIMIZED RECAP GENERATOR ---
+  // --- SMART RECAP GENERATOR (MAP-REDUCE) ---
   const generateRecap = async () => {
       setIsLoading(true);
       
-      const { allJournals } = getFullContext();
-      // Only send the LAST 3000 chars of journals for recap to ensure recent context
-      const safeJournals = allJournals.slice(0, 3000); 
-      
-      const recentChat = chatHistory.slice(-50).map(m => `${m.role}: ${m.content}`).join('\n');
-      
-      const systemPrompt = `
-      ROLE: Campaign Scribe.
-      TASK: Summarize the recent session events.
-      
-      SOURCE 1 (ESTABLISHED LORE):
-      ${safeJournals}
+      try {
+          const { allJournals } = getFullContext();
+          const recentChat = chatHistory.slice(-100).map(m => `${m.role}: ${m.content}`).join('\n');
+          
+          // Combine all available data
+          const fullRawData = `EXISTING JOURNALS:\n${allJournals}\n\nRECENT CHAT LOG:\n${recentChat}`;
+          
+          let finalSummaryContext = "";
 
-      SOURCE 2 (WHAT JUST HAPPENED - CHAT):
-      ${recentChat}
+          // 1. CHECK SIZE - If > 15,000 chars, we split and Map-Reduce
+          if (fullRawData.length > 15000) {
+              setChatHistory(p => [...p, { role: 'system', content: "📜 Text is huge. Dividing into chunks for analysis..." }]);
+              
+              const chunks = chunkString(fullRawData, 12000); // 12k chars per chunk
+              const condensedSummaries = [];
 
-      RULES:
-      1. Prioritize SOURCE 2 (Chat) for recent events.
-      2. Use SOURCE 1 (Journals) only for context/names.
-      3. ABSOLUTELY NO HALLUCINATIONS. If it didn't happen in Source 1 or 2, do not write it.
-      4. Write 2-3 dramatic paragraphs.
-      `;
+              for (let i = 0; i < chunks.length; i++) {
+                   // Notify user of progress (Map Step)
+                   setChatHistory(p => {
+                       const last = p[p.length - 1];
+                       if (last.content.startsWith("📜 Analyzing chunk")) {
+                           return [...p.slice(0, -1), { role: 'system', content: `📜 Analyzing chunk ${i+1} of ${chunks.length}...` }];
+                       }
+                       return [...p, { role: 'system', content: `📜 Analyzing chunk ${i+1} of ${chunks.length}...` }];
+                   });
+                   
+                   const chunkRes = await queryAiService([
+                       { role: 'system', content: PROMPT_CONDENSER },
+                       { role: 'user', content: chunks[i] }
+                   ]);
+                   condensedSummaries.push(chunkRes);
+              }
 
-      const res = await queryAiService([{ role: 'system', content: systemPrompt }, { role: 'user', content: "Generate the recap now." }]);
-      
-      if (res && !res.includes("Error")) {
-          setChatHistory(p => [...p, { role: 'ai', content: `### 📜 Session Recap\n\n${res}` }]);
-          if (effectiveRole === 'dm' && confirm("Save Recap to Journal?")) {
-              const newId = `page_recap_${Date.now()}`;
-              const newPage = { id: newId, title: `Recap: ${new Date().toLocaleDateString()}`, content: `<p>${res.replace(/\n/g, '<br/>')}</p>`, ownerId: 'system', isPublic: true, created: Date.now() };
-              updateCloud({...data, journal_pages: {...data.journal_pages, [newId]: newPage}}, true);
+              finalSummaryContext = condensedSummaries.join("\n\n");
+          } else {
+              // Fast Path (Small enough for one shot)
+              finalSummaryContext = fullRawData;
           }
+
+          setChatHistory(p => [...p, { role: 'system', content: "✨ Writing final recap..." }]);
+
+          // 2. FINAL REDUCE STEP
+          const res = await queryAiService([
+              { role: 'system', content: PROMPT_MASTER_RECAP }, 
+              { role: 'user', content: finalSummaryContext }
+          ]);
+          
+          if (res && !res.includes("Error")) {
+              setChatHistory(p => [...p, { role: 'ai', content: `### 📜 Session Recap\n\n${res}` }]);
+              if (effectiveRole === 'dm' && confirm("Save Recap to Journal?")) {
+                  const newId = `page_recap_${Date.now()}`;
+                  const newPage = { id: newId, title: `Recap: ${new Date().toLocaleDateString()}`, content: `<p>${res.replace(/\n/g, '<br/>')}</p>`, ownerId: 'system', isPublic: true, created: Date.now() };
+                  updateCloud({...data, journal_pages: {...data.journal_pages, [newId]: newPage}}, true);
+              }
+          }
+
+      } catch (e) {
+          console.error(e);
+          setChatHistory(p => [...p, { role: 'system', content: `❌ Error generating recap: ${e.message}` }]);
       }
+      
       setIsLoading(false);
   };
 
