@@ -212,7 +212,7 @@ function App() {
       }
   };
 
-  // --- SAFETY LIMITER: Returns context, but capped at ~4000 chars ---
+  // --- SAFETY LIMITER: Returns context ---
   const getFullContext = () => {
       const allJournals = Object.values(data.journal_pages)
           .sort((a,b) => b.created - a.created) // Newest first
@@ -228,9 +228,9 @@ function App() {
           .map(n => `NPC ${n.name}: ${n.personality}. ${n.quirk ? "Quirk: "+n.quirk : ""}`)
           .join('\n');
 
-      // LIMIT TO 4000 CHARACTERS to prevent AI Crash
+      // UPDATED: Increased limit from 4000 to 60000 characters.
       return { 
-          allJournals: allJournals.slice(0, 4000), 
+          allJournals: allJournals.slice(0, 60000), 
           partyData, 
           npcData 
       };
@@ -283,6 +283,10 @@ function App() {
           `;
       }
 
+      // DEBUGGING: Log what we are sending to the AI
+      console.log("--- SYSTEM PROMPT (CHECK JOURNAL CONTEXT HERE) ---");
+      console.log(systemPrompt);
+
       const res = await queryAiService([
           { role: 'system', content: systemPrompt }, 
           { role: 'user', content: q }
@@ -304,10 +308,9 @@ function App() {
   const generateRecap = async () => {
       setIsLoading(true);
       
-      // OPTIMIZATION: Only send the LAST 1500 chars of journals to save memory
-      // The Recap is mostly about "What just happened", which is in the CHAT LOG.
       const { allJournals } = getFullContext();
-      const safeJournals = allJournals.slice(0, 1500); 
+      // Only send the LAST 3000 chars of journals for recap to ensure recent context
+      const safeJournals = allJournals.slice(0, 3000); 
       
       const recentChat = chatHistory.slice(-50).map(m => `${m.role}: ${m.content}`).join('\n');
       
@@ -332,7 +335,7 @@ function App() {
       
       if (res && !res.includes("Error")) {
           setChatHistory(p => [...p, { role: 'ai', content: `### 📜 Session Recap\n\n${res}` }]);
-          if (role === 'dm' && confirm("Save Recap to Journal?")) {
+          if (effectiveRole === 'dm' && confirm("Save Recap to Journal?")) {
               const newId = `page_recap_${Date.now()}`;
               const newPage = { id: newId, title: `Recap: ${new Date().toLocaleDateString()}`, content: `<p>${res.replace(/\n/g, '<br/>')}</p>`, ownerId: 'system', isPublic: true, created: Date.now() };
               updateCloud({...data, journal_pages: {...data.journal_pages, [newId]: newPage}}, true);
