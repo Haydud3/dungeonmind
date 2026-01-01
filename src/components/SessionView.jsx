@@ -22,9 +22,8 @@ const SessionView = (props) => {
         <div className="flex h-full relative flex-col">
             <div className="flex-1 flex flex-col h-full relative overflow-hidden">
                 <div className="flex-1 overflow-y-auto custom-scroll p-4 space-y-6 pb-24 md:pb-4">
-                    {/* Welcome Banner */}
                     <div className="text-center py-4 opacity-50 text-sm">
-                        {role === 'dm' ? <span className="text-amber-500">DM Mode Active - You are the Storyteller.</span> : <span className="text-blue-400">Player Mode Active - AI will assist with roleplay.</span>}
+                        {role === 'dm' ? <span className="text-amber-500 font-bold">👑 DM Mode Active</span> : <span className="text-blue-400 font-bold">🛡️ Player Mode Active</span>}
                     </div>
 
                     {chatHistory.map((msg, i) => (
@@ -42,7 +41,11 @@ const SessionView = (props) => {
                 
                 <div className="p-2 md:p-4 bg-slate-900 border-t border-slate-800 flex flex-col gap-2 shrink-0">
                     <div className="flex gap-2 overflow-x-auto custom-scroll pb-1 w-full no-scrollbar">
-                        {role === 'dm' && <button onClick={generateRecap} className="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600 rounded-full px-4 py-2 text-xs flex items-center gap-1 shrink-0"><Icon name="rewind" size={14}/> Last Time On...</button>}
+                        {role === 'dm' && (
+                            <button onClick={generateRecap} className="bg-gradient-to-r from-amber-700 to-amber-600 hover:from-amber-600 hover:to-amber-500 text-white border border-amber-500 rounded-full px-4 py-2 text-xs flex items-center gap-2 shrink-0 shadow-lg">
+                                <Icon name="scroll-text" size={14}/> Generate Recap
+                            </button>
+                        )}
                         <button onClick={() => setShowTools(!showTools)} className={`ml-auto rounded-full px-3 py-2 text-xs flex items-center gap-1 transition-colors ${showTools ? 'bg-amber-600 text-white' : 'bg-slate-800 text-slate-400'}`}><Icon name="dices" size={14}/> Dice</button>
                     </div>
 
