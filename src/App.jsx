@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import * as fb from './firebase'; 
-import { deleteField } from './firebase'; // Import deleteField
+import { deleteField } from './firebase';
 import Icon from './components/Icon';
 import Sidebar from './components/Sidebar';
 import MobileNav from './components/MobileNav';
@@ -199,21 +199,17 @@ function App() {
       }
   };
 
-  // --- NEW: SPECIAL DELETION HANDLER ---
   const deleteJournalEntry = async (id) => {
-      // 1. Update Local UI immediately (remove the key)
       const newPages = { ...data.journal_pages };
       delete newPages[id];
       const cleanData = { ...data, journal_pages: newPages };
-      setData(cleanData); // UI updates instantly
+      setData(cleanData); 
 
       if (gameParams?.isOffline) {
           localStorage.setItem('dm_local_data', JSON.stringify(cleanData));
           return;
       }
 
-      // 2. Update Cloud with deleteField()
-      // We do this manually instead of via updateCloud to avoid "merge: true" keeping the old key
       const ref = fb.doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code);
       try {
           await fb.updateDoc(ref, {
@@ -249,6 +245,7 @@ function App() {
       }, 500);
   };
 
+  // --- IMPROVED AI SERVICE HANDLER ---
   const queryAiService = async (messages) => {
       const hasKey = aiProvider === 'puter' || apiKey;
       if (!hasKey) {
@@ -257,36 +254,74 @@ function App() {
       }
       try {
           if(aiProvider === 'puter') {
-              if (!window.puter) throw new Error("Puter.js not loaded");
-              if (!window.puter.auth.isSignedIn()) await window.puter.auth.signIn();
+              if (!window.puter) throw new Error("Puter.js library not found in index.html");
+              
+              if (!window.puter.auth.isSignedIn()) {
+                  console.log("Puter: Not signed in. Attempting sign-in popup...");
+                  await window.puter.auth.signIn();
+              }
+
+              console.log("Puter: Sending...", messages);
               const response = await window.puter.ai.chat(messages, { model: puterModel });
+              console.log("Puter: Response received", response);
+              
+              if (!response || !response.message) throw new Error("Received empty response from Puter.");
               return response.message.content;
+
           } else if(aiProvider === 'gemini') {
                const combinedPrompt = messages.map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n');
-               const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({contents:[{parts:[{text:combinedPrompt}]}]}) });
+               
+               const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, { 
+                   method:'POST', 
+                   headers:{'Content-Type':'application/json'}, 
+                   body:JSON.stringify({contents:[{parts:[{text:combinedPrompt}]}]}) 
+               });
+
+               if (!r.ok) {
+                   const errText = await r.text();
+                   throw new Error(`Gemini API Error (${r.status}): ${errText}`);
+               }
+
                const j = await r.json();
-               if (j.error) throw new Error(j.error.message || "Unknown Gemini Error");
+               if (j.error) throw new Error(j.error.message || "Gemini API returned an error object");
+               
                const text = j.candidates?.[0]?.content?.parts?.[0]?.text;
-               if (!text) throw new Error("Gemini returned empty response (safety filter?)");
+               if (!text) throw new Error("Gemini returned no text (Safety Block?)");
                return text;
+
           } else {
-              const r = await fetch('https://api.openai.com/v1/chat/completions', { method:'POST', headers:{'Content-Type':'application/json', 'Authorization':`Bearer ${apiKey}`}, body:JSON.stringify({model: openAiModel, messages: messages}) });
+              // OpenAI
+              const r = await fetch('https://api.openai.com/v1/chat/completions', { 
+                  method:'POST', 
+                  headers:{'Content-Type':'application/json', 'Authorization':`Bearer ${apiKey}`}, 
+                  body:JSON.stringify({model: openAiModel, messages: messages}) 
+              });
+
+              if (!r.ok) {
+                   const errText = await r.text();
+                   throw new Error(`OpenAI API Error (${r.status}): ${errText}`);
+               }
+
               const j = await r.json();
-              if (j.error) throw new Error(j.error.message || "Unknown OpenAI Error");
+              if (j.error) throw new Error(j.error.message);
               return j.choices?.[0]?.message?.content;
           }
       } catch(e) { 
-          console.error(e); 
-          const msg = e.message || (typeof e === 'string' ? e : "Unknown AI Error");
-          alert("AI Error: " + msg); 
+          console.error("FULL AI ERROR OBJECT:", e); 
+          
+          let msg = "Unknown Error";
+          if (e instanceof Error) msg = e.message;
+          else if (typeof e === 'string') msg = e;
+          else if (typeof e === 'object') msg = JSON.stringify(e);
+          
+          alert("AI Error Details: " + msg); 
           return "System Error: " + msg; 
       }
   };
 
-  // --- SAFETY LIMITER: Returns context ---
   const getFullContext = () => {
       const allJournals = Object.values(data.journal_pages)
-          .sort((a,b) => b.created - a.created) // Newest first
+          .sort((a,b) => b.created - a.created) 
           .map(p => `[JOURNAL: ${p.title}]: ${cleanText(p.content)}`)
           .join('\n\n');
 
@@ -369,7 +404,6 @@ function App() {
       updateCloud(newData, true);
   };
 
-  // --- SMART RECAP GENERATOR (MAP-REDUCE) ---
   const generateRecap = async () => {
       setIsLoading(true);
       
@@ -408,7 +442,6 @@ function App() {
 
               finalSummaryContext = condensedSummaries.join("\n\n");
           } else {
-              // Fast Path
               finalSummaryContext = fullRawData;
           }
 
