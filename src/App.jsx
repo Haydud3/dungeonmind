@@ -10,7 +10,6 @@ import PartyView from './components/PartyView';
 import SettingsView from './components/SettingsView';
 import OnboardingWizard from './components/OnboardingWizard';
 import TourGuide from './components/TourGuide';
-// Import Components
 import WorldView from './components/WorldView';
 import NpcView from './components/NpcView';
 import MapBoard from './components/MapBoard'; 
@@ -26,7 +25,7 @@ const DEFAULT_DATA = {
     bannedUsers: [],
     assignments: {},
     onboardingComplete: false,
-    config: { edition: '2014', strictMode: false },
+    config: { edition: '2014', strictMode: true }, // Default Strict Mode to TRUE for better grounding
     campaign: { 
         genesis: { tone: 'Heroic', conflict: 'Dragon vs Kingdom', campaignName: 'New Campaign' },
         activeMap: { url: null, revealPaths: [] },
@@ -130,7 +129,6 @@ function App() {
 
   const effectiveRole = (data && user && data.hostId === user.uid) ? 'dm' : (gameParams?.role || 'player');
 
-  // --- FIXED: Immediate Save vs Debounce ---
   const updateCloud = (newData, immediate = false) => {
       setData(newData);
       if (gameParams?.isOffline) {
@@ -146,31 +144,25 @@ function App() {
       if (saveTimer.current) clearTimeout(saveTimer.current);
       
       if (immediate) {
-          doSave(); // Save INSTANTLY for deletes/creates
+          doSave(); 
       } else {
-          saveTimer.current = setTimeout(doSave, 1000); // Wait 1s for typing
+          saveTimer.current = setTimeout(doSave, 1000); 
       }
   };
 
-  // Map Sync Logic
   const updateMapState = (action, payload) => {
       const currentMap = data.campaign?.activeMap || { url: null, revealPaths: [] };
       let newMap = { ...currentMap };
 
-      if (action === 'set_image') {
-          newMap.url = payload;
-          newMap.revealPaths = [];
-      } else if (action === 'start_path') {
-          newMap.revealPaths = [...newMap.revealPaths, payload];
-      } else if (action === 'append_point') {
+      if (action === 'set_image') { newMap.url = payload; newMap.revealPaths = []; } 
+      else if (action === 'start_path') { newMap.revealPaths = [...newMap.revealPaths, payload]; } 
+      else if (action === 'append_point') {
           const lastPath = { ...newMap.revealPaths[newMap.revealPaths.length - 1] };
           lastPath.points = [...lastPath.points, payload];
           const newPaths = [...newMap.revealPaths];
           newPaths[newPaths.length - 1] = lastPath;
           newMap.revealPaths = newPaths;
-      } else if (action === 'clear_fog') {
-          newMap.revealPaths = [];
-      }
+      } else if (action === 'clear_fog') { newMap.revealPaths = []; }
 
       const newData = { ...data, campaign: { ...data.campaign, activeMap: newMap } };
       setData(newData);
@@ -182,7 +174,6 @@ function App() {
       }, 500);
   };
 
-  // AI Logic
   const queryAiService = async (messages) => {
       const hasKey = aiProvider === 'puter' || apiKey;
       if (!hasKey) throw new Error("No API Key/Provider");
@@ -205,7 +196,7 @@ function App() {
       } catch(e) { console.error(e); return null; }
   };
 
-  // --- NEW: ADVANCED AI CONTEXT ---
+  // --- BRAIN UPGRADE: Context Grounding ---
   const buildAiContext = (mode, query) => {
       let possessedNpc = null;
       if (possessedNpcId) possessedNpc = data.npcs.find(n => n.id === possessedNpcId);
@@ -214,61 +205,63 @@ function App() {
       const derivedCharId = data.assignments?.[user?.uid];
       const char = data.players.find(p => p.id === derivedCharId);
       
-      // 1. Compile Party Data
+      // 1. Party Data (Motivation/Personality)
       const partyData = data.players.map(p => 
-          `${p.name} (${p.race} ${p.class}). Motivation: ${p.motivation || "None"}. Bio/Notes: ${p.backstory || ""} ${p.notes || ""}.`
+          `- ${p.name} (${p.race} ${p.class}). Motivation: "${p.motivation}". Personality/Notes: ${p.notes || "None"}.`
       ).join('\n');
 
-      // 2. Compile NPC Data (Visible Only)
-      const npcData = data.npcs
-          .filter(n => !n.isHidden || effectiveRole === 'dm')
-          .map(n => `NPC ${n.name}: ${n.personality}. ${n.quirk ? "Quirk: "+n.quirk : ""}`)
-          .join('\n');
-
-      // 3. Compile Journal Snippets (Public Only)
+      // 2. Journal Snippets (The "Memory")
+      // Sort by newest first to give recent context
       const journalData = Object.values(data.journal_pages)
           .filter(p => p.isPublic || p.ownerId === user?.uid)
-          .map(p => `[Journal "${p.title}"]: ${p.content.replace(/<[^>]+>/g, '').slice(0, 300)}...`)
+          .sort((a,b) => b.created - a.created)
+          .slice(0, 5) // Last 5 entries only to save tokens
+          .map(p => `[JOURNAL: ${p.title}]: ${p.content.replace(/<[^>]+>/g, '').slice(0, 300)}...`)
           .join('\n');
 
       let context = "";
 
       if (effectiveRole === 'dm') {
-          // --- DM MODE (OMNISCIENT) ---
+          // --- DM MODE ---
           context = `
-          Role: Dungeon Master.
+          You are the Dungeon Master for a D&D 5e campaign.
+          Campaign Setting: ${genesis.campaignName}. Tone: ${genesis.tone}.
           Current Location: ${data.campaign?.location || "Unknown"}.
-          Tone: ${genesis.tone}. 
-          Lore: ${genesis.loreText ? genesis.loreText.slice(0, 800) : "Standard Fantasy"}.
           
-          [PARTY]
+          [THE PARTY]
           ${partyData}
-          [NPCS]
-          ${npcData}
-          [JOURNALS]
+
+          [RECENT HISTORY (CANON)]
           ${journalData}
 
-          Task: Narrate the scene, advance the plot, play NPCs.
+          INSTRUCTIONS:
+          1. Act as the narrator and NPCs.
+          2. Use the Journal History as the absolute truth. Do not contradict it.
+          3. If the players ask for a recap, summarize the Journals.
           `;
+          
           if (possessedNpc) {
-              context += `\nCRITICAL: You are POSSESSING NPC "${possessedNpc.name}". Act ONLY as them. Secret: ${possessedNpc.secret}.`;
+              context += `\nCRITICAL: You are POSSESSING "${possessedNpc.name}". Ignore DM omnipotence. You only know what they know. Personality: ${possessedNpc.personality}. Secret: ${possessedNpc.secret}.`;
           }
 
       } else {
-          // --- PLAYER MODE (ROLEPLAY ASSISTANT) ---
+          // --- PLAYER MODE (SPOILER PROTECTION) ---
           context = `
-          Role: Roleplay Assistant (Muse) for Player Character: ${char ? char.name : "Adventurer"}.
-          Character Bio: ${char ? (char.backstory + " " + char.motivation) : "Unknown"}.
-          Current Location: ${data.campaign?.location || "Unknown"}.
+          You are a Roleplay Assistant for the player character: ${char ? char.name : "Adventurer"}.
           
-          [KNOWN JOURNAL INFO]
+          [MY CHARACTER]
+          Name: ${char ? char.name : "Unknown"}
+          Bio: ${char ? char.backstory : ""}
+          Motivation: ${char ? char.motivation : ""}
+          
+          [WHAT I KNOW (JOURNALS)]
           ${journalData}
 
-          CRITICAL RULES:
-          1. Do NOT act as the DM. Do NOT narrate the world or advance the plot.
-          2. Do NOT invent new facts about the world that aren't in the journals.
-          3. YOUR GOAL: Suggest dialogue options or actions that fit ${char ? char.name : "my character"}'s personality and motivation.
-          4. Format suggestions like: "You might say..." or "Given your history with [X], you could..."
+          RULES:
+          1. You are NOT the DM. Do NOT describe the environment, other people's actions, or the results of rolls.
+          2. ONLY suggest thoughts, feelings, or dialogue lines for ${char ? char.name : "me"}.
+          3. Base suggestions on my Motivation: "${char ? char.motivation : "Survival"}".
+          4. If I ask "What happened?", summarize the [JOURNALS] section only. Do NOT invent new plot points.
           `;
       }
 
@@ -292,15 +285,41 @@ function App() {
       if (!text) return;
       const newHandout = { text, timestamp: Date.now() };
       const newData = { ...data, campaign: { ...data.campaign, activeHandout: newHandout } };
-      updateCloud(newData, true); // Immediate Save
+      updateCloud(newData, true);
   };
 
+  // --- NEW: SMART RECAP & AUTO-JOURNAL ---
   const generateRecap = async () => {
       setIsLoading(true);
+      // Grab chat history and recent journals
       const recentChat = chatHistory.slice(-50).map(m => `${m.role}: ${m.content}`).join('\n');
-      const prompt = `Generate a dramatic "Last Time On..." summary (3 paragraphs). High energy.\n\n${recentChat}`;
-      const res = await queryAiService([{ role: 'user', content: prompt }]);
-      setChatHistory(p => [...p, { role: 'ai', content: `### Last Time On...\n\n${res}` }]);
+      const systemPrompt = `
+      You are the Campaign Scribe. 
+      Task: Summarize the recent events based ONLY on the provided chat log.
+      Format: "Last Time On [Campaign Name]..." followed by 3 dramatic paragraphs.
+      Constraints: Do NOT invent facts not present in the log. If the log is empty, say "The adventure begins..."
+      `;
+      
+      const res = await queryAiService([{ role: 'system', content: systemPrompt }, { role: 'user', content: recentChat }]);
+      
+      if (res) {
+          setChatHistory(p => [...p, { role: 'ai', content: `### 📜 Session Recap\n\n${res}` }]);
+          
+          // Auto-Save Prompt
+          if (role === 'dm' && confirm("Recap generated. Save this to the Journal automatically?")) {
+              const newId = `page_recap_${Date.now()}`;
+              const newPage = { 
+                  id: newId, 
+                  title: `Recap: ${new Date().toLocaleDateString()}`, 
+                  content: `<p>${res.replace(/\n/g, '<br/>')}</p>`, 
+                  ownerId: 'system', 
+                  isPublic: true, 
+                  created: Date.now() 
+              };
+              updateCloud({...data, journal_pages: {...data.journal_pages, [newId]: newPage}}, true);
+              alert("Saved to Journal!");
+          }
+      }
       setIsLoading(false);
   };
 
