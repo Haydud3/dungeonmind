@@ -25,13 +25,20 @@ const DEFAULT_DATA = {
     bannedUsers: [],
     assignments: {},
     onboardingComplete: false,
-    config: { edition: '2014', strictMode: true }, // Default Strict Mode to TRUE for better grounding
+    config: { edition: '2014', strictMode: true },
     campaign: { 
         genesis: { tone: 'Heroic', conflict: 'Dragon vs Kingdom', campaignName: 'New Campaign' },
         activeMap: { url: null, revealPaths: [] },
         activeHandout: null,
         location: "Start" 
     }
+};
+
+// --- HELPER: Strip HTML for cleaner AI Context ---
+const stripHtml = (html) => {
+   const tmp = document.createElement("DIV");
+   tmp.innerHTML = html;
+   return tmp.textContent || tmp.innerText || "";
 };
 
 function App() {
@@ -196,76 +203,48 @@ function App() {
       } catch(e) { console.error(e); return null; }
   };
 
-  // --- BRAIN UPGRADE: Context Grounding ---
-  const buildAiContext = (mode, query) => {
-      let possessedNpc = null;
-      if (possessedNpcId) possessedNpc = data.npcs.find(n => n.id === possessedNpcId);
-
+  // --- BRAIN UPGRADE: Aggressive Context Injection ---
+  const getKnowledgeBase = () => {
       const genesis = data.campaign?.genesis || {};
       const derivedCharId = data.assignments?.[user?.uid];
       const char = data.players.find(p => p.id === derivedCharId);
       
-      // 1. Party Data (Motivation/Personality)
+      // 1. Party Data
       const partyData = data.players.map(p => 
-          `- ${p.name} (${p.race} ${p.class}). Motivation: "${p.motivation}". Personality/Notes: ${p.notes || "None"}.`
+          `- ${p.name} (${p.race} ${p.class}). Motivation: "${p.motivation}". Personality: ${p.notes || "None"}.`
       ).join('\n');
 
-      // 2. Journal Snippets (The "Memory")
-      // Sort by newest first to give recent context
+      // 2. Journal Data (HTML Stripped & Combined)
+      // This is the "Long Term Memory"
       const journalData = Object.values(data.journal_pages)
           .filter(p => p.isPublic || p.ownerId === user?.uid)
-          .sort((a,b) => b.created - a.created)
-          .slice(0, 5) // Last 5 entries only to save tokens
-          .map(p => `[JOURNAL: ${p.title}]: ${p.content.replace(/<[^>]+>/g, '').slice(0, 300)}...`)
+          .sort((a,b) => b.created - a.created) // Newest first
+          .slice(0, 10) // Increase to 10 most recent pages
+          .map(p => `[JOURNAL: ${p.title}]: ${stripHtml(p.content).slice(0, 500)}`) // Clean HTML
           .join('\n');
 
-      let context = "";
+      // 3. NPC Data (Contextual)
+      const npcData = data.npcs
+          .filter(n => !n.isHidden || effectiveRole === 'dm')
+          .slice(0, 10)
+          .map(n => `NPC ${n.name}: ${n.personality}. ${n.quirk ? "Quirk: "+n.quirk : ""}`)
+          .join('\n');
 
-      if (effectiveRole === 'dm') {
-          // --- DM MODE ---
-          context = `
-          You are the Dungeon Master for a D&D 5e campaign.
-          Campaign Setting: ${genesis.campaignName}. Tone: ${genesis.tone}.
-          Current Location: ${data.campaign?.location || "Unknown"}.
-          
-          [THE PARTY]
-          ${partyData}
+      return `
+      [CAMPAIGN INFO]
+      Title: ${genesis.campaignName}
+      Location: ${data.campaign?.location || "Unknown"}
+      Tone: ${genesis.tone}
+      
+      [THE PARTY]
+      ${partyData}
 
-          [RECENT HISTORY (CANON)]
-          ${journalData}
+      [THE WORLD (CANONICAL JOURNALS)]
+      ${journalData}
 
-          INSTRUCTIONS:
-          1. Act as the narrator and NPCs.
-          2. Use the Journal History as the absolute truth. Do not contradict it.
-          3. If the players ask for a recap, summarize the Journals.
-          `;
-          
-          if (possessedNpc) {
-              context += `\nCRITICAL: You are POSSESSING "${possessedNpc.name}". Ignore DM omnipotence. You only know what they know. Personality: ${possessedNpc.personality}. Secret: ${possessedNpc.secret}.`;
-          }
-
-      } else {
-          // --- PLAYER MODE (SPOILER PROTECTION) ---
-          context = `
-          You are a Roleplay Assistant for the player character: ${char ? char.name : "Adventurer"}.
-          
-          [MY CHARACTER]
-          Name: ${char ? char.name : "Unknown"}
-          Bio: ${char ? char.backstory : ""}
-          Motivation: ${char ? char.motivation : ""}
-          
-          [WHAT I KNOW (JOURNALS)]
-          ${journalData}
-
-          RULES:
-          1. You are NOT the DM. Do NOT describe the environment, other people's actions, or the results of rolls.
-          2. ONLY suggest thoughts, feelings, or dialogue lines for ${char ? char.name : "me"}.
-          3. Base suggestions on my Motivation: "${char ? char.motivation : "Survival"}".
-          4. If I ask "What happened?", summarize the [JOURNALS] section only. Do NOT invent new plot points.
-          `;
-      }
-
-      return context;
+      [LOCAL NPCS]
+      ${npcData}
+      `;
   };
 
   const generateResponse = async (overrideText, mode = 'standard') => {
@@ -274,8 +253,41 @@ function App() {
       setChatHistory(p => [...p, { role: 'user', content: q || "CHAOS!" }]);
       setInputText('');
       setIsLoading(true);
-      const systemPrompt = buildAiContext(mode, q);
-      const res = await queryAiService([{ role: 'system', content: systemPrompt }, { role: 'user', content: q }]);
+
+      const knowledge = getKnowledgeBase();
+      const derivedCharId = data.assignments?.[user?.uid];
+      const char = data.players.find(p => p.id === derivedCharId);
+      
+      let systemPrompt = "";
+      
+      // --- DEFINING THE AI PERSONA ---
+      if (possessedNpcId) {
+          const npc = data.npcs.find(n => n.id === possessedNpcId);
+          systemPrompt = `You are POSSESSING the NPC named "${npc.name}". Act ONLY as them. Your personality: ${npc.personality}. Your secret: ${npc.secret}. Do not narrate the world, only speak/act as ${npc.name}.`;
+      } else if (effectiveRole === 'dm') {
+          systemPrompt = `You are the Dungeon Master. Use the [KNOWLEDGE BASE] provided by the user to narrate the story. Be creative but consistent with the Journals.`;
+      } else {
+          // PLAYER MODE: Helper/Muse
+          systemPrompt = `You are a Roleplay Assistant for the player character: ${char ? char.name : "Adventurer"}. 
+          Your goal is to help the player come up with dialogue or ideas based on their character's Motivation: "${char ? char.motivation : "Survival"}".
+          CRITICAL: Do NOT invent plot points. Do NOT reveal secrets. Only suggest what the character might think or say.`;
+      }
+
+      // --- INJECTING DATA INTO USER MESSAGE ---
+      // This forces the model to "read" the journals before answering the question
+      const augmentedUserMessage = `
+      [KNOWLEDGE BASE (READ THIS FIRST)]
+      ${knowledge}
+
+      [USER QUESTION]
+      ${q}
+      `;
+
+      const res = await queryAiService([
+          { role: 'system', content: systemPrompt }, 
+          { role: 'user', content: augmentedUserMessage }
+      ]);
+      
       setChatHistory(p => [...p, { role: 'ai', content: res || "AI Error." }]);
       setIsLoading(false);
   };
@@ -288,36 +300,30 @@ function App() {
       updateCloud(newData, true);
   };
 
-  // --- NEW: SMART RECAP & AUTO-JOURNAL ---
   const generateRecap = async () => {
       setIsLoading(true);
-      // Grab chat history and recent journals
+      const knowledge = getKnowledgeBase();
       const recentChat = chatHistory.slice(-50).map(m => `${m.role}: ${m.content}`).join('\n');
-      const systemPrompt = `
-      You are the Campaign Scribe. 
-      Task: Summarize the recent events based ONLY on the provided chat log.
-      Format: "Last Time On [Campaign Name]..." followed by 3 dramatic paragraphs.
-      Constraints: Do NOT invent facts not present in the log. If the log is empty, say "The adventure begins..."
-      `;
       
-      const res = await queryAiService([{ role: 'system', content: systemPrompt }, { role: 'user', content: recentChat }]);
+      const systemPrompt = `You are the Campaign Scribe. Summarize the session based on the Chat Logs and Journals provided. Do NOT invent new events.`;
+      const userPrompt = `
+      [EXISTING JOURNALS]
+      ${knowledge}
+
+      [RECENT CHAT LOGS]
+      ${recentChat}
+
+      TASK: Write a dramatic "Last Time On..." summary (3 paragraphs).
+      `;
+
+      const res = await queryAiService([{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }]);
       
       if (res) {
           setChatHistory(p => [...p, { role: 'ai', content: `### 📜 Session Recap\n\n${res}` }]);
-          
-          // Auto-Save Prompt
-          if (role === 'dm' && confirm("Recap generated. Save this to the Journal automatically?")) {
+          if (role === 'dm' && confirm("Save Recap to Journal?")) {
               const newId = `page_recap_${Date.now()}`;
-              const newPage = { 
-                  id: newId, 
-                  title: `Recap: ${new Date().toLocaleDateString()}`, 
-                  content: `<p>${res.replace(/\n/g, '<br/>')}</p>`, 
-                  ownerId: 'system', 
-                  isPublic: true, 
-                  created: Date.now() 
-              };
+              const newPage = { id: newId, title: `Recap: ${new Date().toLocaleDateString()}`, content: `<p>${res.replace(/\n/g, '<br/>')}</p>`, ownerId: 'system', isPublic: true, created: Date.now() };
               updateCloud({...data, journal_pages: {...data.journal_pages, [newId]: newPage}}, true);
-              alert("Saved to Journal!");
           }
       }
       setIsLoading(false);
@@ -326,8 +332,7 @@ function App() {
   const generateNpc = async (name, context) => {
       if (!apiKey && aiProvider !== 'puter') { alert("Please set API Key."); return null; }
       const campaignName = data.campaign?.genesis?.campaignName || "Generic Fantasy";
-      const lore = data.campaign?.genesis?.loreText || "";
-      const prompt = `Role: D&D 5e Expert. Module: "${campaignName}". Lore: ${lore.slice(0, 800)}. Task: JSON for NPC "${name||'Random'}" context "${context}". IF CANON, USE CANON STATS. Return JSON keys: name, race, class, quirk, goal, secret, stats, personality.`;
+      const prompt = `Role: D&D 5e Expert. Module: "${campaignName}". Task: JSON for NPC "${name||'Random'}" context "${context}". Return JSON keys: name, race, class, quirk, goal, secret, stats, personality.`;
       const res = await queryAiService([{ role: 'user', content: prompt }]);
       try { return JSON.parse(res.match(/\{[\s\S]*\}/)[0]); } catch(e) { return null; }
   };
