@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import Icon from './Icon';
 import JournalPageEditor from './JournalPageEditor';
 
-const JournalView = ({ data = {}, setData, updateCloud, role, aiHelper }) => {
+const JournalView = ({ data = {}, setData, updateCloud, role, aiHelper, deleteJournalEntry }) => {
     const pages = data.journal_pages || {};
     const [selectedPageId, setSelectedPageId] = useState(null);
     const [isCreating, setIsCreating] = useState(false);
@@ -27,10 +27,16 @@ const JournalView = ({ data = {}, setData, updateCloud, role, aiHelper }) => {
     const handleDeletePage = (id) => {
         if(confirm("Delete this page permanently?")) {
             if (selectedPageId === id) setSelectedPageId(null);
-            const newPages = { ...pages };
-            delete newPages[id];
-            const newData = { ...data, journal_pages: newPages };
-            setData(newData); updateCloud(newData, true); // FIXED: Immediate Save
+            // Call the new specific delete handler
+            if (deleteJournalEntry) {
+                deleteJournalEntry(id);
+            } else {
+                // Fallback (older logic, though broken for persistence, keeps app from crashing)
+                const newPages = { ...pages };
+                delete newPages[id];
+                const newData = { ...data, journal_pages: newPages };
+                setData(newData); updateCloud(newData, true);
+            }
         }
     };
 
