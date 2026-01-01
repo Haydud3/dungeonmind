@@ -15,34 +15,6 @@ import WorldView from './components/WorldView';
 import NpcView from './components/NpcView';
 import MapBoard from './components/MapBoard'; 
 
-// --- SYSTEM PROMPTS (Softened for Safety Filters) ---
-
-const PROMPT_CONDENSER = `
-Role: You are a D&D Scribe Assistant.
-Task: Condense the session text into facts.
-Rules:
-1. Keep it PG-13. Focus on plot and actions, minimize graphic descriptions of violence.
-2. PRESERVE strictly: proper nouns, numbers (gold, damage), and key events.
-3. Output raw, factual bullet points.
-`;
-
-const PROMPT_MASTER_RECAP = `
-Role: Dungeon Master Assistant.
-Task: Create a structured Session Recap from the provided notes.
-
-Output Sections:
-1. Intro: A cinematic opening line.
-2. The Story So Far: A 3-paragraph narrative summary. Use an engaging, fantasy storytelling tone.
-3. Active Quest Log: Bulleted list of unfinished business.
-4. The Party Ledger: Currency (GP, SP, CP) and Key Items.
-5. DM’s Note: A closing "cliffhanger".
-
-Style Guidelines:
-- Use Markdown for bolding/headers.
-- Use Emojis (📜, ⚔️, 💰).
-- Keep content PG-13 (fantasy action is okay, avoid extreme gore/violence to pass safety filters).
-`;
-
 const DEFAULT_DATA = { 
     hostId: null,
     journal_pages: {}, 
@@ -68,17 +40,6 @@ const cleanText = (html) => {
    const tmp = document.createElement("DIV");
    tmp.innerHTML = html;
    return (tmp.textContent || tmp.innerText || "").replace(/\s+/g, " ").trim();
-};
-
-// --- HELPER: Chunk String for Map-Reduce ---
-const chunkString = (str, size = 12000) => {
-    if (!str) return [];
-    const numChunks = Math.ceil(str.length / size);
-    const chunks = new Array(numChunks);
-    for (let i = 0, o = 0; i < numChunks; ++i, o += size) {
-        chunks[i] = str.substr(o, size);
-    }
-    return chunks;
 };
 
 function App() {
@@ -243,157 +204,109 @@ function App() {
       }, 500);
   };
 
+  // --- RESTORED LOGIC FROM HTML FILE ---
   const queryAiService = async (messages) => {
       const hasKey = aiProvider === 'puter' || apiKey;
       if (!hasKey) {
           alert("Error: No AI Provider set. Go to Settings.");
           return "Configuration Error: No AI Key.";
       }
-      try {
-          if(aiProvider === 'puter') {
-              if (!window.puter) throw new Error("Puter.js library not found in index.html");
-              
-              if (!window.puter.auth.isSignedIn()) {
-                  console.log("Puter: Not signed in. Attempting sign-in popup...");
-                  await window.puter.auth.signIn();
+      
+      let attempts = 0; 
+      const maxRetries = 2; // HTML file had retry logic
+
+      while(attempts < maxRetries) {
+          try {
+              attempts++;
+              if(aiProvider === 'puter') {
+                  if (!window.puter) throw new Error("Puter.js not loaded");
+                  if (!window.puter.auth.isSignedIn()) await window.puter.auth.signIn();
+                  
+                  // Use the model from state (defaulting to mistral like HTML)
+                  const safeModel = puterModel || 'mistral-large-latest';
+                  const response = await window.puter.ai.chat(messages, { model: safeModel });
+                  
+                  if (!response || !response.message || !response.message.content) throw new Error("Invalid response structure from Puter AI");
+                  return response.message.content;
+
+              } else if(aiProvider === 'gemini') {
+                   const combinedPrompt = messages.map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n');
+                   const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({contents:[{parts:[{text:combinedPrompt}]}]}) });
+                   if(!r.ok) throw new Error(`Gemini Error ${r.status}`);
+                   const j = await r.json();
+                   return j.candidates?.[0]?.content?.parts?.[0]?.text;
+              } else {
+                  const r = await fetch('https://api.openai.com/v1/chat/completions', { method:'POST', headers:{'Content-Type':'application/json', 'Authorization':`Bearer ${apiKey}`}, body:JSON.stringify({model: openAiModel, messages: messages}) });
+                  if(!r.ok) throw new Error(`OpenAI Error ${r.status}`);
+                  const j = await r.json();
+                  return j.choices?.[0]?.message?.content;
               }
-
-              console.log("Puter: Sending...", messages);
-              const response = await window.puter.ai.chat(messages, { model: puterModel });
-              console.log("Puter: Response received", response);
+          } catch(e) { 
+              console.error(e); 
+              const errMsg = e instanceof Error ? e.message : (typeof e === 'string' ? e : JSON.stringify(e));
               
-              // Handle Safety Filter Error
-              if (response.success === false && response.error?.code === 'moderation_failed') {
-                  throw new Error("Puter Safety Filter Blocked this. D&D combat/violence often triggers this on the free tier. Solution: Switch to 'Google Gemini' (Free) or 'OpenAI' in Settings.");
+              // If it's the last attempt, fail loudly
+              if(attempts === maxRetries) {
+                  alert("AI Error Details: " + errMsg);
+                  return "System Error: " + errMsg;
               }
-              
-              if (!response || !response.message) throw new Error("Received empty response from Puter.");
-              return response.message.content;
-
-          } else if(aiProvider === 'gemini') {
-               const combinedPrompt = messages.map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n');
-               
-               const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, { 
-                   method:'POST', 
-                   headers:{'Content-Type':'application/json'}, 
-                   body:JSON.stringify({contents:[{parts:[{text:combinedPrompt}]}]}) 
-               });
-
-               if (!r.ok) {
-                   const errText = await r.text();
-                   throw new Error(`Gemini API Error (${r.status}): ${errText}`);
-               }
-
-               const j = await r.json();
-               if (j.error) throw new Error(j.error.message || "Unknown Gemini Error");
-               
-               const text = j.candidates?.[0]?.content?.parts?.[0]?.text;
-               if (!text) throw new Error("Gemini returned no text (Safety Block?)");
-               return text;
-
-          } else {
-              // OpenAI
-              const r = await fetch('https://api.openai.com/v1/chat/completions', { 
-                  method:'POST', 
-                  headers:{'Content-Type':'application/json', 'Authorization':`Bearer ${apiKey}`}, 
-                  body:JSON.stringify({model: openAiModel, messages: messages}) 
-              });
-
-              if (!r.ok) {
-                   const errText = await r.text();
-                   throw new Error(`OpenAI API Error (${r.status}): ${errText}`);
-               }
-
-              const j = await r.json();
-              if (j.error) throw new Error(j.error.message);
-              return j.choices?.[0]?.message?.content;
+              // Wait 1 second before retry
+              await new Promise(res => setTimeout(res, 1000));
           }
-      } catch(e) { 
-          console.error("FULL AI ERROR OBJECT:", e); 
-          
-          let msg = "Unknown Error";
-          if (e instanceof Error) msg = e.message;
-          else if (typeof e === 'string') msg = e;
-          else if (typeof e === 'object') msg = JSON.stringify(e);
-          
-          alert("AI Error Details: " + msg); 
-          return "System Error: " + msg; 
       }
   };
 
-  // --- SAFETY LIMITER: Returns context ---
-  const getFullContext = () => {
-      const allJournals = Object.values(data.journal_pages)
-          .sort((a,b) => b.created - a.created) // Newest first
-          .map(p => `[JOURNAL: ${p.title}]: ${cleanText(p.content)}`)
-          .join('\n\n');
-
-      const partyData = data.players.map(p => 
-          `- ${p.name} (${p.race} ${p.class}). Motivation: ${p.motivation || "None"}. Notes: ${p.notes || "None"}.`
-      ).join('\n');
-
-      const npcData = data.npcs
-          .filter(n => !n.isHidden || effectiveRole === 'dm')
-          .map(n => `NPC ${n.name}: ${n.personality}. ${n.quirk ? "Quirk: "+n.quirk : ""}`)
-          .join('\n');
-
-      return { allJournals, partyData, npcData };
-  };
-
+  // --- RESTORED LOGIC FROM HTML FILE (Dynamic Prompting) ---
   const generateResponse = async (overrideText, mode = 'standard') => {
       const q = overrideText || inputText;
       if (!q && mode !== 'chaos') return;
-      setChatHistory(p => [...p, { role: 'user', content: q || "CHAOS!" }]);
-      setInputText('');
+      
+      if(mode !== 'chaos') setChatHistory(p => [...p, { role: 'user', content: q }]);
+      if(mode !== 'chaos') setInputText('');
       setIsLoading(true);
 
-      const { allJournals, partyData, npcData } = getFullContext();
-      
-      const safeContext = allJournals.slice(0, 50000);
-
+      // 1. Build Context exactly like the HTML file did
       const genesis = data.campaign?.genesis || {};
       const derivedCharId = data.assignments?.[user?.uid];
       const char = data.players.find(p => p.id === derivedCharId);
       
-      let systemPrompt = "";
+      const iden = effectiveRole === 'dm' ? "DM" : (char ? `${char.name} (${char.race})` : "Player");
       
-      if (possessedNpcId) {
-          const npc = data.npcs.find(n => n.id === possessedNpcId);
-          systemPrompt = `You are POSSESSING the NPC named "${npc.name}". Act ONLY as them. Your personality: ${npc.personality}. Your secret: ${npc.secret}. Do not narrate the world, only speak/act as ${npc.name}.`;
-      } else if (effectiveRole === 'dm') {
-          systemPrompt = `
-          You are the Dungeon Master. 
-          Setting: ${genesis.campaignName}. Tone: ${genesis.tone}.
-          Location: ${data.campaign?.location || "Unknown"}.
-          
-          SOURCE MATERIAL (ABSOLUTE TRUTH):
-          ${safeContext}
-
-          INSTRUCTIONS:
-          1. Rely entirely on the SOURCE MATERIAL for history. Do not invent new ruins, villains, or plot points unless explicitly asked to improvise.
-          2. If the user asks about the story, summarize the Journals.
-          `;
+      // Construct Party Context
+      let partyContext = "";
+      if (effectiveRole === 'dm') {
+          partyContext = data.players.map(p => `${p.name} (${p.race} ${p.class}). Motivation: ${p.motivation || "None"}. Bio: ${p.backstory ? p.backstory.slice(0,100)+'...' : 'None'}`).join(' | ');
       } else {
-          // PLAYER MODE
-          systemPrompt = `
-          You are a Muse for the player character: ${char ? char.name : "Adventurer"}.
-          Bio: ${char ? char.backstory : ""}
-          Motivation: ${char ? char.motivation : ""}
-          
-          KNOWN HISTORY:
-          ${safeContext}
-
-          RULES:
-          1. Do NOT act as the DM. Do not narrate events.
-          2. Only suggest what ${char ? char.name : "I"} might think or say.
-          3. Do NOT reveal secrets or look ahead.
-          `;
+          partyContext = `Me: ${char ? `${char.name} (${char.race}). Goal: ${char.motivation}` : "Spectator"}. Party: ${data.players.map(p => p.name).join(', ')}`;
       }
 
-      const res = await queryAiService([
-          { role: 'system', content: systemPrompt }, 
-          { role: 'user', content: q }
-      ]);
+      const loreContext = genesis.loreText || genesis.conceptDesc || "Standard Fantasy";
+      
+      // Limit Journals to last 4000 characters (HTML Logic - this helps pass safety filters by reducing noise)
+      const accessiblePages = Object.values(data.journal_pages || {}).filter(p => p.isPublic || p.ownerId === user?.uid);
+      const journalContext = accessiblePages.map(p => `[Page: ${p.title}]: ${cleanText(p.content)}`).join('\n').slice(-4000);
+
+      // 2. Build the System Prompt exactly like the HTML file
+      const systemPrompt = `
+      Role: Dungeon Master AI. 
+      User: ${iden}. 
+      World Context: Tone: ${genesis.tone || "Generic"}. Conflict: ${genesis.conflict || "None"}. Lore: ${loreContext}.
+      Location: ${data.campaign.location || "Unknown"}.
+      Party: ${partyContext}.
+      Journals: ${journalContext}.
+      Rules: 5e (${data.config.edition}).
+      Instruction: ${mode === 'narrate' ? "Narrate vividly using boxed text. No secrets." : mode === 'mechanics' ? "Explain rules/DCs. Show math." : mode === 'npc' ? "Roleplay NPC." : mode === 'chaos' ? "Inject sudden random event. Bold text." : "Answer as DM."}
+      `;
+
+      // 3. Send Request
+      // Note: HTML sliced chat history to last 10 messages to save context space
+      const messages = [
+          { role: "system", content: systemPrompt },
+          ...chatHistory.slice(-10).map(m => ({role: m.role==='ai'?'assistant':m.role, content: m.content})),
+          { role: "user", content: q }
+      ];
+
+      const res = await queryAiService(messages);
       
       setChatHistory(p => [...p, { role: 'ai', content: res || "AI Error." }]);
       setIsLoading(false);
@@ -407,71 +320,36 @@ function App() {
       updateCloud(newData, true);
   };
 
-  // --- SMART RECAP GENERATOR (MAP-REDUCE) ---
+  // --- RECAP LOGIC ---
+  // Using the new simple system prompt style to avoid filters
   const generateRecap = async () => {
       setIsLoading(true);
       
-      try {
-          const { allJournals } = getFullContext();
-          const recentChat = chatHistory.slice(-100).map(m => `${m.role}: ${m.content}`).join('\n');
-          
-          const fullRawData = `EXISTING JOURNALS:\n${allJournals}\n\nRECENT CHAT LOG:\n${recentChat}`;
-          
-          let finalSummaryContext = "";
-
-          // 1. CHECK SIZE - If > 15,000 chars, we split and Map-Reduce
-          if (fullRawData.length > 15000) {
-              setChatHistory(p => [...p, { role: 'system', content: "📜 Text is huge. Dividing into chunks for analysis..." }]);
-              
-              const chunks = chunkString(fullRawData, 12000); 
-              const condensedSummaries = [];
-
-              for (let i = 0; i < chunks.length; i++) {
-                   setChatHistory(p => {
-                       const last = p[p.length - 1];
-                       if (last.content.startsWith("📜 Analyzing chunk")) {
-                           return [...p.slice(0, -1), { role: 'system', content: `📜 Analyzing chunk ${i+1} of ${chunks.length}...` }];
-                       }
-                       return [...p, { role: 'system', content: `📜 Analyzing chunk ${i+1} of ${chunks.length}...` }];
-                   });
-                   
-                   const chunkRes = await queryAiService([
-                       { role: 'system', content: PROMPT_CONDENSER },
-                       { role: 'user', content: chunks[i] }
-                   ]);
-                   if (chunkRes && !chunkRes.includes("Error")) {
-                       condensedSummaries.push(chunkRes);
-                   }
-              }
-
-              finalSummaryContext = condensedSummaries.join("\n\n");
-          } else {
-              // Fast Path (Small enough for one shot)
-              finalSummaryContext = fullRawData;
-          }
-
-          setChatHistory(p => [...p, { role: 'system', content: "✨ Writing final recap..." }]);
-
-          // 2. FINAL REDUCE STEP
-          const res = await queryAiService([
-              { role: 'system', content: PROMPT_MASTER_RECAP }, 
-              { role: 'user', content: finalSummaryContext }
-          ]);
-          
-          if (res && !res.includes("Error")) {
-              setChatHistory(p => [...p, { role: 'ai', content: `### 📜 Session Recap\n\n${res}` }]);
-              if (effectiveRole === 'dm' && confirm("Save Recap to Journal?")) {
-                  const newId = `page_recap_${Date.now()}`;
-                  const newPage = { id: newId, title: `Recap: ${new Date().toLocaleDateString()}`, content: `<p>${res.replace(/\n/g, '<br/>')}</p>`, ownerId: 'system', isPublic: true, created: Date.now() };
-                  updateCloud({...data, journal_pages: {...data.journal_pages, [newId]: newPage}}, true);
-              }
-          }
-
-      } catch (e) {
-          console.error(e);
-          setChatHistory(p => [...p, { role: 'system', content: `❌ Error generating recap: ${e.message || "Unknown Error"}` }]);
-      }
+      const accessiblePages = Object.values(data.journal_pages || {}).filter(p => p.isPublic);
+      const journalContext = accessiblePages.map(p => cleanText(p.content)).join('\n').slice(-4000);
+      const recentChat = chatHistory.slice(-30).map(m => `${m.role}: ${m.content}`).join('\n');
       
+      const systemPrompt = `
+      Role: Scribe.
+      Task: Summarize recent events (chat log + journals).
+      Style: Fantasy narrative. 
+      Rules: Keep it PG-13 (avoid graphic violence terms).
+      Context:
+      ${journalContext}
+      Chat:
+      ${recentChat}
+      `;
+
+      const res = await queryAiService([{ role: 'system', content: systemPrompt }, { role: 'user', content: "Generate Recap" }]);
+      
+      if (res && !res.includes("Error")) {
+          setChatHistory(p => [...p, { role: 'ai', content: `### 📜 Session Recap\n\n${res}` }]);
+          if (effectiveRole === 'dm' && confirm("Save Recap to Journal?")) {
+              const newId = `page_recap_${Date.now()}`;
+              const newPage = { id: newId, title: `Recap: ${new Date().toLocaleDateString()}`, content: `<p>${res.replace(/\n/g, '<br/>')}</p>`, ownerId: 'system', isPublic: true, created: Date.now() };
+              updateCloud({...data, journal_pages: {...data.journal_pages, [newId]: newPage}}, true);
+          }
+      }
       setIsLoading(false);
   };
 
