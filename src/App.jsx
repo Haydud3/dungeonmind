@@ -10,12 +10,10 @@ import PartyView from './components/PartyView';
 import SettingsView from './components/SettingsView';
 import OnboardingWizard from './components/OnboardingWizard';
 import TourGuide from './components/TourGuide';
-
-// --- CRITICAL FIX: IMPORT THE COMPONENTS ---
+// Import Components
 import WorldView from './components/WorldView';
 import NpcView from './components/NpcView';
-import MapBoard from './components/MapBoard'; // Ensure this is imported too
-// -------------------------------------------
+import MapBoard from './components/MapBoard'; 
 
 const DEFAULT_DATA = { 
     hostId: null,
@@ -32,7 +30,8 @@ const DEFAULT_DATA = {
     campaign: { 
         genesis: { tone: 'Heroic', conflict: 'Dragon vs Kingdom', campaignName: 'New Campaign' },
         activeMap: { url: null, revealPaths: [] },
-        activeHandout: null 
+        activeHandout: null,
+        location: "Start" 
     }
 };
 
@@ -108,7 +107,6 @@ function App() {
               
               setData(d);
 
-              // Handout Trigger
               if (d.campaign.activeHandout && d.campaign.activeHandout.timestamp > (Date.now() - 5000)) {
                   setShowHandout(true);
               }
@@ -132,17 +130,26 @@ function App() {
 
   const effectiveRole = (data && user && data.hostId === user.uid) ? 'dm' : (gameParams?.role || 'player');
 
-  const updateCloud = (newData) => {
+  // --- FIXED: Immediate Save vs Debounce ---
+  const updateCloud = (newData, immediate = false) => {
       setData(newData);
       if (gameParams?.isOffline) {
           localStorage.setItem('dm_local_data', JSON.stringify(newData));
           return;
       }
-      if (saveTimer.current) clearTimeout(saveTimer.current);
-      saveTimer.current = setTimeout(() => {
+      
+      const doSave = () => {
           const ref = fb.doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code);
           fb.setDoc(ref, newData, { merge: true });
-      }, 1000);
+      };
+
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+      
+      if (immediate) {
+          doSave(); // Save INSTANTLY for deletes/creates
+      } else {
+          saveTimer.current = setTimeout(doSave, 1000); // Wait 1s for typing
+      }
   };
 
   // Map Sync Logic
@@ -198,6 +205,7 @@ function App() {
       } catch(e) { console.error(e); return null; }
   };
 
+  // --- NEW: ADVANCED AI CONTEXT ---
   const buildAiContext = (mode, query) => {
       let possessedNpc = null;
       if (possessedNpcId) possessedNpc = data.npcs.find(n => n.id === possessedNpcId);
@@ -205,15 +213,65 @@ function App() {
       const genesis = data.campaign?.genesis || {};
       const derivedCharId = data.assignments?.[user?.uid];
       const char = data.players.find(p => p.id === derivedCharId);
-      const identity = effectiveRole === 'dm' ? "Dungeon Master" : (char ? `${char.name}` : "Player");
-
-      let context = `Role: ${effectiveRole === 'dm' ? 'Dungeon Master' : 'Player'}. `;
       
-      if (possessedNpc) {
-          context += `Currently POSSESSING NPC "${possessedNpc.name}". Personality: ${possessedNpc.personality}. Secret: ${possessedNpc.secret}.`;
+      // 1. Compile Party Data
+      const partyData = data.players.map(p => 
+          `${p.name} (${p.race} ${p.class}). Motivation: ${p.motivation || "None"}. Bio/Notes: ${p.backstory || ""} ${p.notes || ""}.`
+      ).join('\n');
+
+      // 2. Compile NPC Data (Visible Only)
+      const npcData = data.npcs
+          .filter(n => !n.isHidden || effectiveRole === 'dm')
+          .map(n => `NPC ${n.name}: ${n.personality}. ${n.quirk ? "Quirk: "+n.quirk : ""}`)
+          .join('\n');
+
+      // 3. Compile Journal Snippets (Public Only)
+      const journalData = Object.values(data.journal_pages)
+          .filter(p => p.isPublic || p.ownerId === user?.uid)
+          .map(p => `[Journal "${p.title}"]: ${p.content.replace(/<[^>]+>/g, '').slice(0, 300)}...`)
+          .join('\n');
+
+      let context = "";
+
+      if (effectiveRole === 'dm') {
+          // --- DM MODE (OMNISCIENT) ---
+          context = `
+          Role: Dungeon Master.
+          Current Location: ${data.campaign?.location || "Unknown"}.
+          Tone: ${genesis.tone}. 
+          Lore: ${genesis.loreText ? genesis.loreText.slice(0, 800) : "Standard Fantasy"}.
+          
+          [PARTY]
+          ${partyData}
+          [NPCS]
+          ${npcData}
+          [JOURNALS]
+          ${journalData}
+
+          Task: Narrate the scene, advance the plot, play NPCs.
+          `;
+          if (possessedNpc) {
+              context += `\nCRITICAL: You are POSSESSING NPC "${possessedNpc.name}". Act ONLY as them. Secret: ${possessedNpc.secret}.`;
+          }
+
       } else {
-          context += `Context: ${genesis.tone}. Campaign: ${genesis.campaignName}. Lore: ${genesis.loreText}.`;
+          // --- PLAYER MODE (ROLEPLAY ASSISTANT) ---
+          context = `
+          Role: Roleplay Assistant (Muse) for Player Character: ${char ? char.name : "Adventurer"}.
+          Character Bio: ${char ? (char.backstory + " " + char.motivation) : "Unknown"}.
+          Current Location: ${data.campaign?.location || "Unknown"}.
+          
+          [KNOWN JOURNAL INFO]
+          ${journalData}
+
+          CRITICAL RULES:
+          1. Do NOT act as the DM. Do NOT narrate the world or advance the plot.
+          2. Do NOT invent new facts about the world that aren't in the journals.
+          3. YOUR GOAL: Suggest dialogue options or actions that fit ${char ? char.name : "my character"}'s personality and motivation.
+          4. Format suggestions like: "You might say..." or "Given your history with [X], you could..."
+          `;
       }
+
       return context;
   };
 
@@ -234,7 +292,7 @@ function App() {
       if (!text) return;
       const newHandout = { text, timestamp: Date.now() };
       const newData = { ...data, campaign: { ...data.campaign, activeHandout: newHandout } };
-      setData(newData); updateCloud(newData);
+      updateCloud(newData, true); // Immediate Save
   };
 
   const generateRecap = async () => {
@@ -246,7 +304,6 @@ function App() {
       setIsLoading(false);
   };
 
-  // Generators
   const generateNpc = async (name, context) => {
       if (!apiKey && aiProvider !== 'puter') { alert("Please set API Key."); return null; }
       const campaignName = data.campaign?.genesis?.campaignName || "Generic Fantasy";
@@ -268,7 +325,7 @@ function App() {
       const newData = { ...data, onboardingComplete: true, campaign: { ...data.campaign, genesis: onboardingData } };
       const genId = 'genesis_doc';
       newData.journal_pages[genId] = { id: genId, title: 'Campaign Bible', content: `<h1>${onboardingData.campaignName || "New Campaign"}</h1><p>${onboardingData.loreText || onboardingData.conceptDesc}</p>`, ownerId: 'system', isPublic: true, created: Date.now() };
-      updateCloud(newData);
+      updateCloud(newData, true);
   };
 
   const handleSaveToJournal = () => {
@@ -280,13 +337,13 @@ function App() {
           const title = prompt("Page Title:"); if(!title) return;
           const newId = `page_${Date.now()}`;
           const newPage = { id: newId, title: title, content: htmlLog, ownerId: user.uid, isPublic: true, created: Date.now() };
-          updateCloud({...data, journal_pages: {...data.journal_pages, [newId]: newPage}});
+          updateCloud({...data, journal_pages: {...data.journal_pages, [newId]: newPage}}, true);
       } else {
           const existingPages = Object.values(data.journal_pages).filter(p => p.isPublic || p.ownerId === user.uid);
           const target = existingPages.find(p => p.title.toLowerCase() === choice.toLowerCase());
           if (target) {
               const updatedPage = { ...target, content: target.content + "<hr/><h3>Session Log</h3>" + htmlLog };
-              updateCloud({...data, journal_pages: {...data.journal_pages, [target.id]: updatedPage}});
+              updateCloud({...data, journal_pages: {...data.journal_pages, [target.id]: updatedPage}}, true);
           } else { alert("Page not found."); }
       }
   };
@@ -352,7 +409,7 @@ function App() {
               {currentView === 'world' && <WorldView data={data} setData={setData} role={effectiveRole} updateCloud={updateCloud} generateLoc={generateLoc} updateMapState={updateMapState} />}
               {currentView === 'party' && <PartyView data={data} setData={setData} role={effectiveRole} activeChar={data.assignments?.[user?.uid]} updateCloud={updateCloud} />}
               {currentView === 'npcs' && <NpcView data={data} setData={setData} role={effectiveRole} updateCloud={updateCloud} generateNpc={generateNpc} setChatInput={setInputText} setView={setCurrentView} onPossess={(id) => { setPossessedNpcId(id); setCurrentView('session'); }} />}
-              {currentView === 'settings' && <SettingsView data={data} setData={setData} apiKey={apiKey} setApiKey={setApiKey} role={effectiveRole} updateCloud={updateCloud} code={gameParams.code} user={user} onExit={() => { localStorage.removeItem('dm_last_code'); setGameParams(null); setData(null); }} aiProvider={aiProvider} setAiProvider={setAiProvider} openAiModel={openAiModel} setOpenAiModel={setOpenAiModel} puterModel={puterModel} setPuterModel={setPuterModel} banPlayer={(uid) => { if(!confirm("Ban?")) return; const nd = {...data, activeUsers: {...data.activeUsers}, bannedUsers: [...(data.bannedUsers||[]), uid]}; delete nd.activeUsers[uid]; updateCloud(nd); }} kickPlayer={(uid) => { const nd = {...data, activeUsers: {...data.activeUsers}}; delete nd.activeUsers[uid]; updateCloud(nd); }} unbanPlayer={(uid) => { const nd = {...data, bannedUsers: data.bannedUsers.filter(u=>u!==uid)}; updateCloud(nd); }} />}
+              {currentView === 'settings' && <SettingsView data={data} setData={setData} apiKey={apiKey} setApiKey={setApiKey} role={effectiveRole} updateCloud={updateCloud} code={gameParams.code} user={user} onExit={() => { localStorage.removeItem('dm_last_code'); setGameParams(null); setData(null); }} aiProvider={aiProvider} setAiProvider={setAiProvider} openAiModel={openAiModel} setOpenAiModel={setOpenAiModel} puterModel={puterModel} setPuterModel={setPuterModel} banPlayer={(uid) => { if(!confirm("Ban?")) return; const nd = {...data, activeUsers: {...data.activeUsers}, bannedUsers: [...(data.bannedUsers||[]), uid]}; delete nd.activeUsers[uid]; updateCloud(nd, true); }} kickPlayer={(uid) => { const nd = {...data, activeUsers: {...data.activeUsers}}; delete nd.activeUsers[uid]; updateCloud(nd, true); }} unbanPlayer={(uid) => { const nd = {...data, bannedUsers: data.bannedUsers.filter(u=>u!==uid)}; updateCloud(nd, true); }} />}
            </div>
        </main>
 
