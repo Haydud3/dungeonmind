@@ -212,28 +212,25 @@ function App() {
       }
   };
 
-  // --- BRAIN UPGRADE: Safety Limits & Sort ---
+  // --- SAFETY LIMITER: Returns context, but capped at ~4000 chars ---
   const getFullContext = () => {
-      // 1. Gather ALL Journal Entries (Limit total size)
       const allJournals = Object.values(data.journal_pages)
           .sort((a,b) => b.created - a.created) // Newest first
           .map(p => `[JOURNAL: ${p.title}]: ${cleanText(p.content)}`)
           .join('\n\n');
 
-      // 2. Party Data
       const partyData = data.players.map(p => 
           `- ${p.name} (${p.race} ${p.class}). Motivation: ${p.motivation || "None"}. Notes: ${p.notes || "None"}.`
       ).join('\n');
 
-      // 3. NPC Data
       const npcData = data.npcs
           .filter(n => !n.isHidden || effectiveRole === 'dm')
           .map(n => `NPC ${n.name}: ${n.personality}. ${n.quirk ? "Quirk: "+n.quirk : ""}`)
           .join('\n');
 
-      // TRUNCATE: Limit to ~8000 chars to prevent "Context Window" crashes
+      // LIMIT TO 4000 CHARACTERS to prevent AI Crash
       return { 
-          allJournals: allJournals.slice(0, 8000), 
+          allJournals: allJournals.slice(0, 4000), 
           partyData, 
           npcData 
       };
@@ -303,36 +300,35 @@ function App() {
       updateCloud(newData, true);
   };
 
-  // --- RECAP GENERATOR ---
+  // --- OPTIMIZED RECAP GENERATOR ---
   const generateRecap = async () => {
       setIsLoading(true);
       
-      // Get the RAW TRUTH from the Journals
+      // OPTIMIZATION: Only send the LAST 1500 chars of journals to save memory
+      // The Recap is mostly about "What just happened", which is in the CHAT LOG.
       const { allJournals } = getFullContext();
+      const safeJournals = allJournals.slice(0, 1500); 
+      
       const recentChat = chatHistory.slice(-50).map(m => `${m.role}: ${m.content}`).join('\n');
       
       const systemPrompt = `
-      ROLE: Campaign Historian.
-      TASK: Summarize the D&D campaign based STRICTLY on the provided Journal Archives.
+      ROLE: Campaign Scribe.
+      TASK: Summarize the recent session events.
       
-      RULES:
-      1. ABSOLUTELY NO HALLUCINATIONS. If it is not in the text below, DO NOT SAY IT.
-      2. Do NOT invent "crumbling ruins" or "glowing eyes" if they are not in the text.
-      3. Use the specific names (e.g. Gundren, Phandalin, Redbrands) found in the text.
-      4. Format with headers like: "The Journey So Far", "Key Events", "Current Situation".
-      `;
+      SOURCE 1 (ESTABLISHED LORE):
+      ${safeJournals}
 
-      const userPrompt = `
-      [JOURNAL ARCHIVES - THE TRUTH]
-      ${allJournals}
-
-      [RECENT CHAT]
+      SOURCE 2 (WHAT JUST HAPPENED - CHAT):
       ${recentChat}
 
-      Please analyze the text above and provide a concise, factual summary of the adventure so far.
+      RULES:
+      1. Prioritize SOURCE 2 (Chat) for recent events.
+      2. Use SOURCE 1 (Journals) only for context/names.
+      3. ABSOLUTELY NO HALLUCINATIONS. If it didn't happen in Source 1 or 2, do not write it.
+      4. Write 2-3 dramatic paragraphs.
       `;
 
-      const res = await queryAiService([{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }]);
+      const res = await queryAiService([{ role: 'system', content: systemPrompt }, { role: 'user', content: "Generate the recap now." }]);
       
       if (res && !res.includes("Error")) {
           setChatHistory(p => [...p, { role: 'ai', content: `### 📜 Session Recap\n\n${res}` }]);
