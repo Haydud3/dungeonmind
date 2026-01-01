@@ -34,11 +34,11 @@ const DEFAULT_DATA = {
     }
 };
 
-// --- HELPER: Strip HTML for cleaner AI Context ---
-const stripHtml = (html) => {
+// --- HELPER: Strip HTML & Limit Size ---
+const cleanText = (html) => {
    const tmp = document.createElement("DIV");
    tmp.innerHTML = html;
-   return tmp.textContent || tmp.innerText || "";
+   return (tmp.textContent || tmp.innerText || "").replace(/\s+/g, " ").trim();
 };
 
 function App() {
@@ -183,7 +183,10 @@ function App() {
 
   const queryAiService = async (messages) => {
       const hasKey = aiProvider === 'puter' || apiKey;
-      if (!hasKey) throw new Error("No API Key/Provider");
+      if (!hasKey) {
+          alert("Error: No AI Provider set. Go to Settings.");
+          return "Configuration Error: No AI Key.";
+      }
       try {
           if(aiProvider === 'puter') {
               if (!window.puter) throw new Error("Puter.js not loaded");
@@ -194,21 +197,27 @@ function App() {
                const combinedPrompt = messages.map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n');
                const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({contents:[{parts:[{text:combinedPrompt}]}]}) });
                const j = await r.json();
+               if (j.error) throw new Error(j.error.message);
                return j.candidates?.[0]?.content?.parts?.[0]?.text;
           } else {
               const r = await fetch('https://api.openai.com/v1/chat/completions', { method:'POST', headers:{'Content-Type':'application/json', 'Authorization':`Bearer ${apiKey}`}, body:JSON.stringify({model: openAiModel, messages: messages}) });
               const j = await r.json();
+              if (j.error) throw new Error(j.error.message);
               return j.choices?.[0]?.message?.content;
           }
-      } catch(e) { console.error(e); return null; }
+      } catch(e) { 
+          console.error(e); 
+          alert("AI Error: " + e.message); // ALERT THE USER
+          return "System Error: " + e.message; 
+      }
   };
 
-  // --- HELPER: Gather All Context ---
+  // --- BRAIN UPGRADE: Safety Limits & Sort ---
   const getFullContext = () => {
-      // 1. Gather ALL Journal Entries (Not just snippets)
+      // 1. Gather ALL Journal Entries (Limit total size)
       const allJournals = Object.values(data.journal_pages)
-          .sort((a,b) => a.created - b.created)
-          .map(p => `--- ENTRY: ${p.title} ---\n${stripHtml(p.content)}`)
+          .sort((a,b) => b.created - a.created) // Newest first
+          .map(p => `[JOURNAL: ${p.title}]: ${cleanText(p.content)}`)
           .join('\n\n');
 
       // 2. Party Data
@@ -222,7 +231,12 @@ function App() {
           .map(n => `NPC ${n.name}: ${n.personality}. ${n.quirk ? "Quirk: "+n.quirk : ""}`)
           .join('\n');
 
-      return { allJournals, partyData, npcData };
+      // TRUNCATE: Limit to ~8000 chars to prevent "Context Window" crashes
+      return { 
+          allJournals: allJournals.slice(0, 8000), 
+          partyData, 
+          npcData 
+      };
   };
 
   const generateResponse = async (overrideText, mode = 'standard') => {
@@ -249,7 +263,7 @@ function App() {
           Location: ${data.campaign?.location || "Unknown"}.
           
           SOURCE MATERIAL (ABSOLUTE TRUTH):
-          ${allJournals.slice(0, 3000)} 
+          ${allJournals}
 
           INSTRUCTIONS:
           1. Rely entirely on the SOURCE MATERIAL for history. Do not invent new ruins, villains, or plot points unless explicitly asked to improvise.
@@ -263,7 +277,7 @@ function App() {
           Motivation: ${char ? char.motivation : ""}
           
           KNOWN HISTORY:
-          ${allJournals.slice(0, 3000)}
+          ${allJournals}
 
           RULES:
           1. Do NOT act as the DM. Do not narrate events.
@@ -289,12 +303,13 @@ function App() {
       updateCloud(newData, true);
   };
 
-  // --- RECAP GENERATOR: STRICT HISTORIAN MODE ---
+  // --- RECAP GENERATOR ---
   const generateRecap = async () => {
       setIsLoading(true);
       
       // Get the RAW TRUTH from the Journals
       const { allJournals } = getFullContext();
+      const recentChat = chatHistory.slice(-50).map(m => `${m.role}: ${m.content}`).join('\n');
       
       const systemPrompt = `
       ROLE: Campaign Historian.
@@ -311,12 +326,15 @@ function App() {
       [JOURNAL ARCHIVES - THE TRUTH]
       ${allJournals}
 
+      [RECENT CHAT]
+      ${recentChat}
+
       Please analyze the text above and provide a concise, factual summary of the adventure so far.
       `;
 
       const res = await queryAiService([{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }]);
       
-      if (res) {
+      if (res && !res.includes("Error")) {
           setChatHistory(p => [...p, { role: 'ai', content: `### 📜 Session Recap\n\n${res}` }]);
           if (role === 'dm' && confirm("Save Recap to Journal?")) {
               const newId = `page_recap_${Date.now()}`;
