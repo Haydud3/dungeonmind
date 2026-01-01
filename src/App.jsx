@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import * as fb from './firebase'; 
+import { deleteField } from './firebase'; // Import deleteField
 import Icon from './components/Icon';
 import Sidebar from './components/Sidebar';
 import MobileNav from './components/MobileNav';
@@ -198,6 +199,32 @@ function App() {
       }
   };
 
+  // --- NEW: SPECIAL DELETION HANDLER ---
+  const deleteJournalEntry = async (id) => {
+      // 1. Update Local UI immediately (remove the key)
+      const newPages = { ...data.journal_pages };
+      delete newPages[id];
+      const cleanData = { ...data, journal_pages: newPages };
+      setData(cleanData); // UI updates instantly
+
+      if (gameParams?.isOffline) {
+          localStorage.setItem('dm_local_data', JSON.stringify(cleanData));
+          return;
+      }
+
+      // 2. Update Cloud with deleteField()
+      // We do this manually instead of via updateCloud to avoid "merge: true" keeping the old key
+      const ref = fb.doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code);
+      try {
+          await fb.updateDoc(ref, {
+              [`journal_pages.${id}`]: deleteField()
+          });
+      } catch (e) {
+          console.error("Delete failed:", e);
+          alert("Failed to delete journal from cloud.");
+      }
+  };
+
   const updateMapState = (action, payload) => {
       const currentMap = data.campaign?.activeMap || { url: null, revealPaths: [] };
       let newMap = { ...currentMap };
@@ -272,7 +299,6 @@ function App() {
           .map(n => `NPC ${n.name}: ${n.personality}. ${n.quirk ? "Quirk: "+n.quirk : ""}`)
           .join('\n');
 
-      // Note: For Map-Reduce, we don't slice strictly, but let the generateRecap handle chunking
       return { allJournals, partyData, npcData };
   };
 
@@ -285,7 +311,6 @@ function App() {
 
       const { allJournals, partyData, npcData } = getFullContext();
       
-      // For standard chat, we still limit context to avoid lag, but keep it generous (50k)
       const safeContext = allJournals.slice(0, 50000);
 
       const genesis = data.campaign?.genesis || {};
@@ -352,7 +377,6 @@ function App() {
           const { allJournals } = getFullContext();
           const recentChat = chatHistory.slice(-100).map(m => `${m.role}: ${m.content}`).join('\n');
           
-          // Combine all available data
           const fullRawData = `EXISTING JOURNALS:\n${allJournals}\n\nRECENT CHAT LOG:\n${recentChat}`;
           
           let finalSummaryContext = "";
@@ -361,11 +385,10 @@ function App() {
           if (fullRawData.length > 15000) {
               setChatHistory(p => [...p, { role: 'system', content: "📜 Text is huge. Dividing into chunks for analysis..." }]);
               
-              const chunks = chunkString(fullRawData, 12000); // 12k chars per chunk
+              const chunks = chunkString(fullRawData, 12000); 
               const condensedSummaries = [];
 
               for (let i = 0; i < chunks.length; i++) {
-                   // Notify user of progress (Map Step)
                    setChatHistory(p => {
                        const last = p[p.length - 1];
                        if (last.content.startsWith("📜 Analyzing chunk")) {
@@ -385,13 +408,12 @@ function App() {
 
               finalSummaryContext = condensedSummaries.join("\n\n");
           } else {
-              // Fast Path (Small enough for one shot)
+              // Fast Path
               finalSummaryContext = fullRawData;
           }
 
           setChatHistory(p => [...p, { role: 'system', content: "✨ Writing final recap..." }]);
 
-          // 2. FINAL REDUCE STEP
           const res = await queryAiService([
               { role: 'system', content: PROMPT_MASTER_RECAP }, 
               { role: 'user', content: finalSummaryContext }
@@ -514,7 +536,7 @@ function App() {
                       possessedNpcId={possessedNpcId}
                   />
               )}
-              {currentView === 'journal' && <JournalView data={data} setData={setData} updateCloud={updateCloud} role={effectiveRole} updateJournalField={()=>{}} userId={user?.uid} aiHelper={queryAiService} />}
+              {currentView === 'journal' && <JournalView data={data} setData={setData} updateCloud={updateCloud} role={effectiveRole} updateJournalField={()=>{}} userId={user?.uid} aiHelper={queryAiService} deleteJournalEntry={deleteJournalEntry} />}
               {currentView === 'world' && <WorldView data={data} setData={setData} role={effectiveRole} updateCloud={updateCloud} generateLoc={generateLoc} updateMapState={updateMapState} />}
               {currentView === 'party' && <PartyView data={data} setData={setData} role={effectiveRole} activeChar={data.assignments?.[user?.uid]} updateCloud={updateCloud} />}
               {currentView === 'npcs' && <NpcView data={data} setData={setData} role={effectiveRole} updateCloud={updateCloud} generateNpc={generateNpc} setChatInput={setInputText} setView={setCurrentView} onPossess={(id) => { setPossessedNpcId(id); setCurrentView('session'); }} />}
