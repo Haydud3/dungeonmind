@@ -28,16 +28,26 @@ const SettingsView = ({
         if(updateCloud) updateCloud(newData);
     };
 
-    // Toggle DM Status
+    // Toggle DM Status with Softlock Prevention
     const toggleDmStatus = (uid) => {
         let newDmIds = [...dmIds];
+        
         if (newDmIds.includes(uid)) {
+            // REMOVE DM
+            // Safety Check: Prevent removing the last DM
+            if (newDmIds.length <= 1) {
+                alert("You cannot remove the last DM. Please promote another player to DM before renouncing your role.");
+                return;
+            }
+
             if (!confirm("Remove DM permissions?")) return;
             newDmIds = newDmIds.filter(id => id !== uid);
         } else {
+            // ADD DM
             if (!confirm("Promote this user to DM? They will have full control.")) return;
             newDmIds.push(uid);
         }
+
         const newData = { ...data, dmIds: newDmIds };
         setData(newData);
         updateCloud(newData, true);
@@ -153,7 +163,6 @@ const SettingsView = ({
             {/* AI Settings */}
             <div className="glass-panel p-6 rounded-xl mb-6 border-l-4 border-amber-500 bg-slate-900/50">
                 <h3 className="text-lg font-bold mb-2 text-slate-200">AI Intelligence</h3>
-                {/* ... [Rest of AI Settings same as before] ... */}
                 <div className="mb-3">
                     <label className="block text-xs text-slate-400 mb-1">Provider</label>
                     <select value={aiProvider} onChange={e => setAiProvider(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none mb-3">
