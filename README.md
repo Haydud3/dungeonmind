@@ -1,11 +1,4 @@
-Here is a professional, comprehensive `README.md` file for **DungeonMind**.
-
-It covers the features, tech stack, installation instructions, and how to configure the AI and Firebase backends.
-
-### **FILE: README.md**
-
-```markdown
-# DungeonMind 🐉🧠
+DungeonMind 🐉🧠
 
 **The AI-Enhanced TTRPG Companion for Dungeons & Dragons 5e.**
 
