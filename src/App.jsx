@@ -37,6 +37,7 @@ const DEFAULT_DATA = {
     }
 };
 
+// Helper: Strip HTML & Soften Trigger Words
 const cleanText = (html) => {
    const tmp = document.createElement("DIV");
    tmp.innerHTML = html;
@@ -259,7 +260,6 @@ function App() {
       return char ? char.name : (user?.email?.split('@')[0] || "Spectator");
   };
 
-  // --- UPDATED: SEND MESSAGE WITH CONTEXT MODES ---
   const sendChatMessage = async (content, type = 'chat-public', targetId = null, contextMode = 'fast') => {
       if (!content.trim()) return;
       setIsLoading(true);
@@ -287,7 +287,6 @@ function App() {
           const accessiblePages = Object.values(data.journal_pages || {}).filter(p => p.isPublic || p.ownerId === user?.uid);
           
           // CONTEXT MODE LOGIC
-          // Fast: 4000 chars. Deep: 30000 chars (approx 7-8k tokens).
           const charLimit = contextMode === 'deep' ? 30000 : 4000;
           
           const journalContext = accessiblePages
@@ -348,7 +347,6 @@ function App() {
       updateCloud(nd, true);
   };
 
-  // Save Message to Journal
   const saveMessageToJournal = (msgContent) => {
       const title = prompt("Entry Title (e.g., 'Recap: Goblin Ambush'):", "New Entry");
       if (!title) return;
@@ -462,7 +460,7 @@ function App() {
   if (!gameParams || !data) return <Lobby fb={fb} user={user} onJoin={(c, r, u) => { localStorage.setItem('dm_last_code', c); setGameParams({code:c, role:r, isOffline:false, uid:u}) }} onOffline={() => setGameParams({code:'LOCAL', role:'dm', isOffline:true, uid:'admin'})} />;
 
   return (
-    <div className="flex h-screen w-full bg-slate-900 text-slate-200 overflow-hidden font-sans">
+    <div className="flex h-dvh w-full bg-slate-900 text-slate-200 overflow-hidden font-sans pt-safe">
        <Sidebar view={currentView} setView={setCurrentView} onExit={() => { localStorage.removeItem('dm_last_code'); setGameParams(null); setData(null); }} />
        <main className="flex-1 h-full overflow-hidden relative w-full flex flex-col mb-16 md:mb-0">
            <div className="h-12 border-b border-slate-800 flex items-center justify-between px-4 bg-slate-900/90 backdrop-blur shrink-0">
