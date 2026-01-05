@@ -18,7 +18,7 @@ import DiceOverlay from './components/DiceOverlay';
 
 const DEFAULT_DATA = { 
     hostId: null,
-    dmIds: [], // NEW: List of users with DM privileges
+    dmIds: [], 
     journal_pages: {}, 
     chatLog: [], 
     players: [], 
@@ -101,9 +101,8 @@ function App() {
                   setGameParams(null);
                   return;
               }
-              // Data migrations/defaults
               if (!d.chatLog) d.chatLog = [];
-              if (!d.dmIds) d.dmIds = d.hostId ? [d.hostId] : []; // Migration for old campaigns
+              if (!d.dmIds) d.dmIds = d.hostId ? [d.hostId] : []; 
               if (!d.journal_pages) d.journal_pages = {};
               if (!d.savedSessions) d.savedSessions = [];
               if (!d.players) d.players = [];
@@ -118,7 +117,6 @@ function App() {
               }
           } else {
               if (gameParams.role === 'dm') {
-                  // Initialize new campaign with Creator as the first DM
                   const initData = { ...DEFAULT_DATA, hostId: user?.uid, dmIds: [user?.uid] };
                   fb.setDoc(ref, initData).catch(e => alert("Create Error: " + e.message));
               } else {
@@ -134,7 +132,6 @@ function App() {
       return () => unsub();
   }, [gameParams]);
 
-  // NEW ROLE LOGIC: Check the dmIds array
   const effectiveRole = (data && user && data.dmIds?.includes(user.uid)) ? 'dm' : 'player';
 
   const updateCloud = (newData, immediate = false) => {
@@ -286,6 +283,14 @@ function App() {
       updateCloud(nd, true);
   };
 
+  // NEW: CLEAR CHAT FUNCTION
+  const clearChat = () => {
+      if(!confirm("Are you sure you want to clear the ENTIRE chat history? This cannot be undone.")) return;
+      const nd = { ...data, chatLog: [] };
+      setData(nd);
+      updateCloud(nd, true);
+  };
+
   const handleDiceRoll = (d) => {
     const result = Math.floor(Math.random() * d) + 1;
     const rollId = Date.now();
@@ -383,6 +388,7 @@ function App() {
                       role={effectiveRole}
                       user={user} 
                       generateRecap={generateRecap}
+                      clearChat={clearChat} // PASSED DOWN
                       showTools={showTools}
                       setShowTools={setShowTools}
                       diceLog={diceLog}
