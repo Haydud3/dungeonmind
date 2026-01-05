@@ -59,7 +59,7 @@ const SessionView = (props) => {
 
     return (
         <div className="flex h-full relative flex-col bg-slate-900">
-            {/* Header / Tools - OPEN TO ALL */}
+            {/* Header / Tools */}
             <div className="absolute top-2 right-4 z-20 opacity-50 hover:opacity-100 transition-opacity">
                 <button onClick={generateRecap} className="bg-slate-800 border border-slate-600 text-white px-3 py-1 rounded-full text-xs shadow-lg flex items-center gap-2 hover:bg-amber-700 hover:border-amber-500">
                     <Icon name="scroll-text" size={14}/> Generate Recap
@@ -73,8 +73,6 @@ const SessionView = (props) => {
                     {visibleMessages.map((msg, i) => {
                         const isSystem = msg.role === 'system';
                         const showHeader = i === 0 || visibleMessages[i-1].senderId !== msg.senderId || (msg.timestamp - visibleMessages[i-1].timestamp > 60000);
-                        
-                        // Permissions: DM can edit all. User can edit own. User can edit AI replies TO them.
                         const canEdit = role === 'dm' || msg.senderId === user?.uid || (msg.role === 'ai' && msg.replyTo === user?.uid);
 
                         if (isSystem) return <div key={i} className="flex justify-center my-2"><span className="text-xs text-slate-500 bg-slate-800 px-3 py-1 rounded-full">{msg.content.replace(/\*\*/g, '')}</span></div>;
@@ -108,7 +106,6 @@ const SessionView = (props) => {
                                         </div>
                                     )}
 
-                                    {/* Action Buttons (Hover) */}
                                     {canEdit && !editingId && (
                                         <div className="absolute right-0 top-0 opacity-0 group-hover:opacity-100 flex gap-1 bg-slate-900/80 rounded px-1 transition-opacity">
                                             <button onClick={() => { setEditingId(msg.id); setEditContent(msg.content); }} className="text-slate-400 hover:text-amber-400 p-1"><Icon name="pencil" size={12}/></button>
@@ -134,7 +131,15 @@ const SessionView = (props) => {
                         {sendMode === 'chat-private' && (
                             <select value={targetUser} onChange={(e) => setTargetUser(e.target.value)} className="flex-1 md:flex-none md:w-32 bg-purple-900/20 text-xs text-purple-200 border border-purple-500/50 rounded px-2 py-1.5 outline-none">
                                 <option value="">To whom?</option>
-                                {Object.entries(data.activeUsers || {}).map(([uid, email]) => (uid !== user.uid && <option key={uid} value={uid}>{email.split('@')[0]}</option>))}
+                                {Object.entries(data.activeUsers || {}).map(([uid, email]) => {
+                                    if (uid === user.uid) return null;
+                                    // Resolve name
+                                    const charId = data.assignments?.[uid];
+                                    const char = data.players?.find(p => p.id == charId);
+                                    const displayName = char ? `${char.name} (${char.class})` : email.split('@')[0];
+                                    
+                                    return <option key={uid} value={uid}>{displayName}</option>;
+                                })}
                             </select>
                         )}
                         <button onClick={() => setShowTools(!showTools)} className={`ml-auto rounded p-1.5 transition-colors ${showTools ? 'text-amber-500 bg-amber-900/20' : 'text-slate-500 hover:text-slate-300'}`}><Icon name="dices" size={20}/></button>
