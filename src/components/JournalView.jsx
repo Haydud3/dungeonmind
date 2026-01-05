@@ -55,7 +55,6 @@ const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalE
     const handleAiEnhance = async () => {
         if (!editContent.trim()) return;
         setIsAiLoading(true);
-        // Strip HTML for the prompt to save tokens and avoid confusion
         const plainText = editContent.replace(/<[^>]*>?/gm, '');
         const prompt = `Rewrite the following RPG journal entry to be more immersive, descriptive, and fix grammar. Keep the same facts.\n\n${plainText}`;
         const res = await aiHelper([{ role: "user", content: prompt }]);
@@ -65,7 +64,6 @@ const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalE
         setIsAiLoading(false);
     };
 
-    // Helper to strip HTML for the list preview
     const getPreviewText = (html) => {
         const tmp = document.createElement("DIV");
         tmp.innerHTML = html;
@@ -76,7 +74,8 @@ const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalE
     if (!activePageId) {
         return (
             <div className="h-full bg-slate-900 p-4 overflow-y-auto custom-scroll pb-24">
-                <div className="max-w-3xl mx-auto space-y-4">
+                {/* FIX: Changed max-w-3xl mx-auto -> max-w-5xl (Wider & Left Aligned for PC) */}
+                <div className="w-full max-w-5xl space-y-4">
                     <div className="flex justify-between items-center mb-6">
                         <h2 className="text-2xl text-amber-500 fantasy-font">Journal</h2>
                         <button onClick={handleCreate} className="bg-green-700 hover:bg-green-600 text-white px-3 py-1 rounded flex items-center gap-2"><Icon name="plus" size={16}/> New Entry</button>
@@ -86,9 +85,10 @@ const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalE
 
                     <div className="grid gap-3">
                         {pages.map(p => (
-                            <button key={p.id} onClick={() => setActivePageId(p.id)} className="w-full text-left bg-slate-800 border border-slate-700 p-4 rounded hover:border-amber-500 transition-colors group">
-                                <div className="flex justify-between items-start">
-                                    <div className="min-w-0 flex-1"> {/* min-w-0 allows truncate to work in flex */}
+                            // FIX: Added overflow-hidden to contain content
+                            <button key={p.id} onClick={() => setActivePageId(p.id)} className="w-full text-left bg-slate-800 border border-slate-700 p-4 rounded hover:border-amber-500 transition-colors group overflow-hidden">
+                                <div className="flex justify-between items-start w-full">
+                                    <div className="min-w-0 flex-1"> 
                                         <h3 className="font-bold text-slate-200 text-lg group-hover:text-amber-400 truncate">{p.title}</h3>
                                         <div className="text-xs text-slate-500 mt-1 flex gap-2">
                                             <span>{new Date(p.created).toLocaleDateString()}</span>
@@ -98,8 +98,8 @@ const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalE
                                     </div>
                                     <Icon name="chevron-right" size={16} className="text-slate-600 group-hover:text-amber-500 shrink-0 ml-2"/>
                                 </div>
-                                {/* FIX: Strip HTML and use break-words to ensure preview fits */}
-                                <div className="text-sm text-slate-400 mt-2 line-clamp-2 opacity-70 break-words">
+                                {/* FIX: break-words and whitespace-normal prevent horizontal scroll on mobile */}
+                                <div className="text-sm text-slate-400 mt-2 line-clamp-2 opacity-70 break-words whitespace-normal w-full">
                                     {getPreviewText(p.content)}
                                 </div>
                             </button>
@@ -164,10 +164,11 @@ const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalE
                         />
                     </div>
                 ) : (
-                    // FIX: Added break-words, w-full, overflow-hidden to prevent horizontal scroll
-                    <div className="p-6 max-w-3xl mx-auto w-full overflow-hidden">
+                    // FIX: Changed max-w-3xl -> max-w-5xl and removed mx-auto so it aligns left on PC
+                    // Added break-words to ensure long text doesn't cause scrolling
+                    <div className="p-6 w-full max-w-5xl overflow-hidden">
                         <div 
-                            className="prose prose-invert prose-p:text-slate-300 prose-headings:text-amber-500 max-w-none break-words" 
+                            className="prose prose-invert prose-p:text-slate-300 prose-headings:text-amber-500 max-w-none break-words whitespace-pre-wrap" 
                             dangerouslySetInnerHTML={{__html: activePage.content}} 
                         />
                     </div>
