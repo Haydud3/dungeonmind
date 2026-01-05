@@ -138,25 +138,27 @@ const SettingsView = ({
                                     <option value="codestral-latest">Codestral (Code/Rules)</option>
                                 </optgroup>
                                 
-                                {/* Claude Family */}
-                                <optgroup label="Anthropic Claude">
-                                    <option value="claude-3-7-sonnet-latest">Claude 3.7 Sonnet (New)</option>
-                                    <option value="claude-3-5-sonnet-latest">Claude 3.5 Sonnet</option>
-                                </optgroup>
-                                
-                                {/* DeepSeek Family */}
+                                {/* DeepSeek Family - UPDATED IDs */}
                                 <optgroup label="DeepSeek">
-                                    <option value="deepseek-v3">DeepSeek V3 (Chat)</option>
+                                    <option value="deepseek-chat">DeepSeek V3 (Chat)</option>
                                     <option value="deepseek-reasoner">DeepSeek R1 (Reasoning)</option>
                                 </optgroup>
-                                
-                                {/* Meta / Llama Family */}
-                                <optgroup label="Meta Llama">
-                                    <option value="meta-llama/meta-llama-3.1-70b-instruct">Llama 3.1 (70B)</option>
-                                    <option value="meta-llama/meta-llama-3.1-405b-instruct">Llama 3.1 (405B)</option>
+
+                                {/* Claude Family - UPDATED IDs */}
+                                <optgroup label="Anthropic Claude">
+                                    <option value="claude-3-7-sonnet-latest">Claude 3.7 Sonnet</option>
+                                    <option value="claude-3-5-sonnet-latest">Claude 3.5 Sonnet</option>
+                                    <option value="claude-3-haiku-20240307">Claude 3 Haiku</option>
                                 </optgroup>
                                 
-                                {/* OpenAI / Google via Puter */}
+                                {/* Meta / Llama Family - UPDATED IDs */}
+                                <optgroup label="Meta Llama">
+                                    <option value="meta-llama/llama-3.3-70b-instruct-turbo">Llama 3.3 (70B Turbo)</option>
+                                    <option value="meta-llama/llama-3.1-405b-instruct">Llama 3.1 (405B)</option>
+                                    <option value="meta-llama/llama-3.2-3b-instruct">Llama 3.2 (3B - Fast)</option>
+                                </optgroup>
+                                
+                                {/* Google / OpenAI */}
                                 <optgroup label="Others">
                                     <option value="gpt-4o">GPT-4o</option>
                                     <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
