@@ -37,7 +37,6 @@ const DEFAULT_DATA = {
     }
 };
 
-// Helper to strip HTML for AI processing
 const cleanText = (html) => {
    const tmp = document.createElement("DIV");
    tmp.innerHTML = html;
@@ -188,7 +187,10 @@ function App() {
   const queryAiService = async (messages) => {
       const hasKey = aiProvider === 'puter' || apiKey;
       if (!hasKey) { alert("Error: No AI Provider set."); return "Config Error."; }
-      let attempts = 0; const maxRetries = 2; 
+      
+      let attempts = 0; 
+      const maxRetries = 2; 
+
       while(attempts < maxRetries) {
           try {
               attempts++;
@@ -209,7 +211,14 @@ function App() {
                   return j.choices?.[0]?.message?.content;
               }
           } catch(e) { 
-              if(attempts === maxRetries) { alert("AI Error: " + (e.message||e)); return "System Error."; }
+              // ERROR HANDLING FIX: Stringify object errors so they are readable
+              console.error(e);
+              const errMsg = e instanceof Error ? e.message : (typeof e === 'object' ? JSON.stringify(e) : String(e));
+              
+              if(attempts === maxRetries) { 
+                  alert("AI Error: " + errMsg); 
+                  return "System Error: " + errMsg; 
+              }
               await new Promise(res => setTimeout(res, 1000));
           }
       }
@@ -249,7 +258,7 @@ function App() {
       updateCloud(updatedData, true);
 
       if (type === 'ai-public' || type === 'ai-private') {
-          // IMPORTANT: Read journals here too so normal chat is smart
+          // AI reads journal context here too for smarter general chat
           const genesis = data.campaign?.genesis || {};
           const accessiblePages = Object.values(data.journal_pages || {}).filter(p => p.isPublic || p.ownerId === user?.uid);
           const journalContext = accessiblePages.map(p => `[${p.title}]: ${cleanText(p.content)}`).join('\n').slice(-10000); 
@@ -325,7 +334,7 @@ function App() {
     }, 1000);
   };
 
-  // --- RESTORED JOURNAL-ONLY RECAP (SINGLE PROMPT) ---
+  // --- RECAP LOGIC (FIXED) ---
   const generateRecap = async () => {
       setIsLoading(true);
       
@@ -336,36 +345,38 @@ function App() {
           .sort((a,b) => a.created - b.created)
           .map(p => `--- ENTRY: ${p.title} ---\n${cleanText(p.content)}`)
           .join('\n\n')
-          .slice(-15000); // Send generous context
+          .slice(-20000); // 20k chars
       
       const genesis = data.campaign?.genesis || {};
       
       if (!journalContext.trim()) {
-          alert("No journal entries found to recap!");
+          alert("No public journal entries found to recap!");
           setIsLoading(false);
           return;
       }
 
-      // Single prompt to ensure context isn't lost
-      const prompt = `
-      You are the Campaign Historian for the D&D adventure "${genesis.campaignName || "Unknown"}".
-      
-      WORLD CONTEXT:
-      Tone: ${genesis.tone || "Fantasy"}.
-      Lore: ${genesis.loreText || "Standard D&D"}.
-      
-      YOUR TASK:
-      Read the following Journal Entries and write a cinematic "Previously on..." summary of the adventure so far. 
-      Do NOT ask for logs. The logs are provided below. Summarize the text below.
-      
-      === START JOURNAL LOGS ===
-      ${journalContext}
-      === END JOURNAL LOGS ===
-      
-      Write the summary now:
+      // We explicitly split System vs User to help models like Mistral/Claude behave
+      const systemPrompt = `
+      You are the Royal Historian for the adventure "${genesis.campaignName || "Unknown"}".
+      World Tone: ${genesis.tone || "Fantasy"}.
+      World Lore: ${genesis.loreText || ""}.
+      Task: Summarize the adventure so far based ONLY on the User's provided Journal Logs.
+      Style: Cinematic, narrative, exciting.
+      Constraint: Do NOT ask for more info. Summarize what is given.
       `;
 
-      const res = await queryAiService([{ role: 'user', content: prompt }]);
+      const userPrompt = `
+      Here are the Journal Logs:
+      
+      ${journalContext}
+      
+      Please write the recap now.
+      `;
+
+      const res = await queryAiService([
+          { role: 'system', content: systemPrompt }, 
+          { role: 'user', content: userPrompt }
+      ]);
       
       if (res && !res.includes("Error")) {
           if (effectiveRole === 'dm' && confirm("Recap generated. Save to Journal? (Cancel to just post in chat)")) {
