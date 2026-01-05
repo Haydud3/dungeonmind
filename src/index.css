@@ -51,6 +51,23 @@ h1, h2, h3, .fantasy-font {
 .animate-in { animation: fadeIn 0.3s ease-out; }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
+/* --- MOBILE & NOTCH FIXES --- */
+/* Use dynamic viewport height to avoid address bar overlap */
+.h-dvh {
+    height: 100vh; /* Fallback */
+    height: 100dvh;
+}
+
+/* Push content down from the notch (iOS Safe Area) */
+.pt-safe {
+    padding-top: env(safe-area-inset-top, 20px);
+}
+
+/* Push content up from the home bar (iOS Safe Area) */
+.pb-safe {
+    padding-bottom: env(safe-area-inset-bottom, 20px);
+}
+
 /* --- COMPONENT STYLES --- */
 
 /* 1. Parchment Handout Modal */
