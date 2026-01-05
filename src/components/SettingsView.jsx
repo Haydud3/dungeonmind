@@ -133,11 +133,11 @@ const SettingsView = ({
                             <label className="block text-xs text-slate-400 mb-1">Puter Model</label>
                             <select value={puterModel} onChange={e => setPuterModel(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none mb-3">
                                 <option value="mistral-large-latest">Mistral Large (Recommended)</option>
-                                <option value="claude-3-5-sonnet">Claude 3.5 Sonnet</option>
+                                <option value="claude-3-5-sonnet-latest">Claude 3.5 Sonnet</option>
                                 <option value="gpt-4o">GPT-4o</option>
                                 <option value="gpt-4o-mini">GPT-4o Mini</option>
-                                <option value="google-gemini-flash">Gemini 1.5 Flash</option>
-                                <option value="meta-llama-3-70b-instruct">Llama 3 (70B)</option>
+                                <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+                                <option value="meta-llama/meta-llama-3.1-70b-instruct">Llama 3.1 (70B)</option>
                                 <option value="deepseek-chat">DeepSeek V3</option>
                                 <option value="deepseek-reasoner">DeepSeek R1 (Reasoning)</option>
                             </select>
