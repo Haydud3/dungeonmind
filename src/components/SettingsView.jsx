@@ -13,6 +13,7 @@ const SettingsView = ({
     const bannedUsers = data.bannedUsers || [];
     const userId = user ? user.uid : 'offline';
     const assignments = data.assignments || {};
+    const dmIds = data.dmIds || [];
     
     const updateConfig = (key, val) => {
         const newData = { ...data, config: { ...data.config, [key]: val } };
@@ -25,6 +26,21 @@ const SettingsView = ({
         const newData = { ...data, assignments: newAssignments };
         setData(newData);
         if(updateCloud) updateCloud(newData);
+    };
+
+    // Toggle DM Status
+    const toggleDmStatus = (uid) => {
+        let newDmIds = [...dmIds];
+        if (newDmIds.includes(uid)) {
+            if (!confirm("Remove DM permissions?")) return;
+            newDmIds = newDmIds.filter(id => id !== uid);
+        } else {
+            if (!confirm("Promote this user to DM? They will have full control.")) return;
+            newDmIds.push(uid);
+        }
+        const newData = { ...data, dmIds: newDmIds };
+        setData(newData);
+        updateCloud(newData, true);
     };
 
     const downloadBackup = () => {
@@ -69,37 +85,54 @@ const SettingsView = ({
                 </div>
             </div>
 
-            {/* Moderation Panel (DM Only) */}
+            {/* Moderation Panel (Visible to DMs) */}
             {role === 'dm' && (
                 <div className="glass-panel p-6 rounded-xl mb-6 border-l-4 border-purple-500 bg-slate-900/50">
                     <h3 className="text-lg font-bold mb-4 text-slate-200 flex items-center gap-2"><Icon name="shield-alert" size={18}/> Moderation</h3>
                     <div className="space-y-3 mb-6">
-                        {Object.entries(activeUsers).map(([uid, email]) => (
-                            <div key={uid} className="flex flex-col md:flex-row justify-between items-start md:items-center bg-slate-900 p-3 rounded border border-slate-700 gap-3">
-                                <div className="text-sm w-full md:flex-1 flex flex-col">
-                                    <div className="truncate font-bold text-slate-200">
-                                        {email}{uid === userId && <span className="ml-2 text-xs text-green-500">(You)</span>}
+                        {Object.entries(activeUsers).map(([uid, email]) => {
+                            const isUserDm = dmIds.includes(uid);
+                            return (
+                                <div key={uid} className="flex flex-col md:flex-row justify-between items-start md:items-center bg-slate-900 p-3 rounded border border-slate-700 gap-3">
+                                    <div className="text-sm w-full md:flex-1 flex flex-col">
+                                        <div className="truncate font-bold text-slate-200 flex items-center gap-2">
+                                            {email}
+                                            {uid === userId && <span className="text-xs text-green-500">(You)</span>}
+                                            {isUserDm && <span className="text-[10px] bg-amber-900/50 text-amber-400 px-1 rounded border border-amber-600/50">DM</span>}
+                                        </div>
+                                        <div className="mt-2 flex items-center gap-2 w-full">
+                                            <span className="text-[10px] text-slate-500 uppercase whitespace-nowrap">Assign:</span>
+                                            <select 
+                                                className="bg-slate-800 border border-slate-600 text-xs rounded px-2 py-1 text-white outline-none w-full md:w-auto flex-1" 
+                                                value={assignments[uid] || ""} 
+                                                onChange={(e) => updateAssignment(uid, e.target.value)}
+                                            >
+                                                <option value="">Spectator</option>
+                                                {data.players.map(p => <option key={p.id} value={p.id}>{p.name} ({p.race})</option>)}
+                                            </select>
+                                        </div>
                                     </div>
-                                    <div className="mt-2 flex items-center gap-2 w-full">
-                                        <span className="text-[10px] text-slate-500 uppercase whitespace-nowrap">Assign:</span>
-                                        <select 
-                                            className="bg-slate-800 border border-slate-600 text-xs rounded px-2 py-1 text-white outline-none w-full md:w-auto flex-1" 
-                                            value={assignments[uid] || ""} 
-                                            onChange={(e) => updateAssignment(uid, e.target.value)}
+                                    
+                                    <div className="flex gap-2 w-full md:w-auto justify-end flex-wrap">
+                                        {/* DM Toggle Button */}
+                                        <button 
+                                            onClick={() => toggleDmStatus(uid)} 
+                                            className={`text-xs px-3 py-2 rounded flex-1 md:flex-none border ${isUserDm ? 'bg-amber-900/20 border-amber-700 text-amber-200 hover:bg-amber-900/40' : 'bg-slate-800 border-slate-600 text-slate-300 hover:bg-slate-700'}`}
                                         >
-                                            <option value="">Spectator</option>
-                                            {data.players.map(p => <option key={p.id} value={p.id}>{p.name} ({p.race})</option>)}
-                                        </select>
+                                            {isUserDm ? (uid === userId ? "Renounce DM" : "Revoke DM") : "Make DM"}
+                                        </button>
+
+                                        {/* Kick/Ban (Don't allow kicking self) */}
+                                        {uid !== userId && (
+                                            <>
+                                                <button onClick={() => kickPlayer(uid)} className="bg-slate-700 hover:bg-slate-600 text-xs px-3 py-2 rounded flex-1 md:flex-none text-white">Kick</button>
+                                                <button onClick={() => banPlayer(uid)} className="bg-red-900/50 hover:bg-red-800 text-xs px-3 py-2 rounded flex-1 md:flex-none text-red-200">Ban</button>
+                                            </>
+                                        )}
                                     </div>
                                 </div>
-                                {uid !== userId && (
-                                    <div className="flex gap-2 w-full md:w-auto justify-end">
-                                        <button onClick={() => kickPlayer(uid)} className="bg-amber-900/50 hover:bg-amber-800 text-xs px-3 py-2 rounded flex-1 md:flex-none text-amber-200">Kick</button>
-                                        <button onClick={() => banPlayer(uid)} className="bg-red-900/50 hover:bg-red-800 text-xs px-3 py-2 rounded flex-1 md:flex-none text-red-200">Ban</button>
-                                    </div>
-                                )}
-                            </div>
-                        ))}
+                            );
+                        })}
                         {Object.keys(activeUsers).length === 0 && <div className="text-slate-500 text-sm">No active users.</div>}
                     </div>
                     
@@ -120,6 +153,7 @@ const SettingsView = ({
             {/* AI Settings */}
             <div className="glass-panel p-6 rounded-xl mb-6 border-l-4 border-amber-500 bg-slate-900/50">
                 <h3 className="text-lg font-bold mb-2 text-slate-200">AI Intelligence</h3>
+                {/* ... [Rest of AI Settings same as before] ... */}
                 <div className="mb-3">
                     <label className="block text-xs text-slate-400 mb-1">Provider</label>
                     <select value={aiProvider} onChange={e => setAiProvider(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none mb-3">
@@ -132,67 +166,35 @@ const SettingsView = ({
                         <div>
                             <label className="block text-xs text-slate-400 mb-1">Puter Model</label>
                             <select value={puterModel} onChange={e => setPuterModel(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none mb-3">
-                                {/* Mistral Family */}
                                 <optgroup label="Mistral">
                                     <option value="mistral-large-latest">Mistral Large (Recommended)</option>
                                     <option value="codestral-latest">Codestral (Code/Rules)</option>
                                 </optgroup>
-                                
-                                {/* DeepSeek Family - UPDATED IDs */}
                                 <optgroup label="DeepSeek">
                                     <option value="deepseek-chat">DeepSeek V3 (Chat)</option>
                                     <option value="deepseek-reasoner">DeepSeek R1 (Reasoning)</option>
                                 </optgroup>
-
-                                {/* Claude Family - UPDATED IDs */}
                                 <optgroup label="Anthropic Claude">
                                     <option value="claude-3-7-sonnet-latest">Claude 3.7 Sonnet</option>
                                     <option value="claude-3-5-sonnet-latest">Claude 3.5 Sonnet</option>
-                                    <option value="claude-3-haiku-20240307">Claude 3 Haiku</option>
                                 </optgroup>
-                                
-                                {/* Meta / Llama Family - UPDATED IDs */}
                                 <optgroup label="Meta Llama">
                                     <option value="meta-llama/llama-3.3-70b-instruct-turbo">Llama 3.3 (70B Turbo)</option>
                                     <option value="meta-llama/llama-3.1-405b-instruct">Llama 3.1 (405B)</option>
-                                    <option value="meta-llama/llama-3.2-3b-instruct">Llama 3.2 (3B - Fast)</option>
                                 </optgroup>
-                                
-                                {/* Google / OpenAI */}
                                 <optgroup label="Others">
                                     <option value="gpt-4o">GPT-4o</option>
                                     <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
                                 </optgroup>
                             </select>
-                            
                             <div className="bg-blue-900/30 border border-blue-600 rounded p-3">
                                 <div className="flex items-center gap-2 text-xs text-blue-300 mb-2"><Icon name="cloud" size={14}/><span>Powered by Puter.js (Serverless & Free)</span></div>
-                                <button onClick={async () => { 
-                                    if(window.puter) {
-                                        await window.puter.auth.signIn(); 
-                                        window.location.reload(); 
-                                    } else { alert("Puter.js not loaded."); }
-                                }} className="w-full bg-blue-700 hover:bg-blue-600 text-white text-xs py-3 rounded font-bold transition-colors">
-                                    Connect / Re-Login
-                                </button>
+                                <button onClick={async () => { if(window.puter) { await window.puter.auth.signIn(); window.location.reload(); } else { alert("Puter.js not loaded."); }}} className="w-full bg-blue-700 hover:bg-blue-600 text-white text-xs py-3 rounded font-bold transition-colors">Connect / Re-Login</button>
                             </div>
                         </div>
                     )}
-
-                    {aiProvider === 'openai' && (
-                        <div>
-                            <label className="block text-xs text-slate-400 mb-1">OpenAI Model</label>
-                            <select value={openAiModel} onChange={e => setOpenAiModel(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none mb-2">
-                                <option value="gpt-4o">GPT-4o</option>
-                                <option value="gpt-4-turbo">GPT-4 Turbo</option>
-                                <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
-                            </select>
-                            <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none" placeholder="sk-..."/>
-                        </div>
-                    )}
-                    {aiProvider === 'gemini' && (
-                        <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none" placeholder="AIza..."/>
-                    )}
+                    {aiProvider === 'openai' && (<div><label className="block text-xs text-slate-400 mb-1">OpenAI Model</label><select value={openAiModel} onChange={e => setOpenAiModel(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none mb-2"><option value="gpt-4o">GPT-4o</option><option value="gpt-4-turbo">GPT-4 Turbo</option><option value="gpt-3.5-turbo">GPT-3.5 Turbo</option></select><input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none" placeholder="sk-..."/></div>)}
+                    {aiProvider === 'gemini' && (<input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none" placeholder="AIza..."/>)}
                 </div>
             </div>
 
@@ -201,19 +203,8 @@ const SettingsView = ({
                 <div className="glass-panel p-6 rounded-xl border-l-4 border-blue-500 mb-6 bg-slate-900/50">
                     <h3 className="text-lg font-bold mb-4 text-slate-200">DM Rules</h3>
                     <div className="grid md:grid-cols-2 gap-6 mb-4">
-                        <div>
-                            <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Edition</label>
-                            <select value={data.config?.edition || '2014'} onChange={e => updateConfig('edition', e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none">
-                                <option value="2014">5e (2014)</option>
-                                <option value="2024">5e (2024 Revised)</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label className="block text-xs font-bold text-slate-400 uppercase mb-2">AI Context</label>
-                            <button onClick={() => updateConfig('strictMode', !data.config?.strictMode)} className={`w-full p-3 rounded text-sm font-bold border ${data.config?.strictMode ? 'bg-green-900/50 border-green-600 text-green-400' : 'bg-slate-900 border-slate-700 text-slate-400'}`}>
-                                {data.config?.strictMode ? "Strict Rules" : "General Assist"}
-                            </button>
-                        </div>
+                        <div><label className="block text-xs font-bold text-slate-400 uppercase mb-2">Edition</label><select value={data.config?.edition || '2014'} onChange={e => updateConfig('edition', e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none"><option value="2014">5e (2014)</option><option value="2024">5e (2024 Revised)</option></select></div>
+                        <div><label className="block text-xs font-bold text-slate-400 uppercase mb-2">AI Context</label><button onClick={() => updateConfig('strictMode', !data.config?.strictMode)} className={`w-full p-3 rounded text-sm font-bold border ${data.config?.strictMode ? 'bg-green-900/50 border-green-600 text-green-400' : 'bg-slate-900 border-slate-700 text-slate-400'}`}>{data.config?.strictMode ? "Strict Rules" : "General Assist"}</button></div>
                     </div>
                 </div>
             )}
@@ -223,10 +214,7 @@ const SettingsView = ({
                 <h3 className="text-lg font-bold mb-4 text-slate-200 flex items-center gap-2"><Icon name="save" size={18}/> Backup & Restore</h3>
                 <div className="flex flex-col md:flex-row gap-4">
                     <button onClick={downloadBackup} className="flex-1 bg-slate-700 hover:bg-slate-600 p-3 rounded text-slate-200 flex items-center justify-center gap-2"><Icon name="download" size={16}/> Download JSON</button>
-                    <label className="flex-1 bg-slate-700 hover:bg-slate-600 p-3 rounded text-slate-200 flex items-center justify-center gap-2 cursor-pointer">
-                        <Icon name="upload" size={16}/> Restore JSON
-                        <input type="file" accept=".json" onChange={handleRestore} className="hidden" />
-                    </label>
+                    <label className="flex-1 bg-slate-700 hover:bg-slate-600 p-3 rounded text-slate-200 flex items-center justify-center gap-2 cursor-pointer"><Icon name="upload" size={16}/> Restore JSON<input type="file" accept=".json" onChange={handleRestore} className="hidden" /></label>
                 </div>
             </div>
         </div>
