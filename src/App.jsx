@@ -19,7 +19,7 @@ import DiceOverlay from './components/DiceOverlay';
 const DEFAULT_DATA = { 
     hostId: null,
     journal_pages: {}, 
-    chatLog: [], // NEW: Persistent Chat
+    chatLog: [], 
     players: [], 
     locations: [], 
     npcs: [], 
@@ -36,7 +36,6 @@ const DEFAULT_DATA = {
     }
 };
 
-// --- HELPER: Strip HTML & Limit Size ---
 const cleanText = (html) => {
    const tmp = document.createElement("DIV");
    tmp.innerHTML = html;
@@ -51,9 +50,7 @@ function App() {
   const [data, setData] = useState(null);
   const saveTimer = useRef(null);
 
-  // States
   const [showTour, setShowTour] = useState(false);
-  // Removed local chatHistory state, using data.chatLog now
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [showTools, setShowTools] = useState(false);
@@ -62,7 +59,6 @@ function App() {
   const [showHandout, setShowHandout] = useState(false);
   const [rollingDice, setRollingDice] = useState(null);
 
-  // AI Config
   const [apiKey, setApiKey] = useState(() => localStorage.getItem('dm_api_key') || '');
   const [aiProvider, setAiProvider] = useState(() => localStorage.getItem('dm_ai_provider') || 'puter');
   const [openAiModel, setOpenAiModel] = useState(() => localStorage.getItem('dm_openai_model') || 'gpt-4o');
@@ -85,7 +81,6 @@ function App() {
     return () => unsub();
   }, [gameParams]); 
 
-  // Data Sync
   useEffect(() => {
       if (!gameParams) return;
       const { code, isOffline, uid } = gameParams;
@@ -105,8 +100,7 @@ function App() {
                   setGameParams(null);
                   return;
               }
-              // Defaults
-              if (!d.chatLog) d.chatLog = []; // Ensure chatLog exists
+              if (!d.chatLog) d.chatLog = [];
               if (!d.journal_pages) d.journal_pages = {};
               if (!d.savedSessions) d.savedSessions = [];
               if (!d.players) d.players = [];
@@ -114,7 +108,6 @@ function App() {
               if (!d.activeUsers) d.activeUsers = {};
               if (!d.campaign) d.campaign = DEFAULT_DATA.campaign;
               if (!d.campaign.activeMap) d.campaign.activeMap = { url: null, revealPaths: [] };
-              
               setData(d);
 
               if (d.campaign.activeHandout && d.campaign.activeHandout.timestamp > (Date.now() - 5000)) {
@@ -134,7 +127,6 @@ function App() {
       if (user && !isOffline) {
           fb.updateDoc(ref, { [`activeUsers.${user.uid}`]: user.email || "Anonymous" }).catch(console.error);
       }
-
       return () => unsub();
   }, [gameParams]);
 
@@ -153,12 +145,7 @@ function App() {
       };
 
       if (saveTimer.current) clearTimeout(saveTimer.current);
-      
-      if (immediate) {
-          doSave(); 
-      } else {
-          saveTimer.current = setTimeout(doSave, 1000); 
-      }
+      if (immediate) doSave(); else saveTimer.current = setTimeout(doSave, 1000); 
   };
 
   const deleteJournalEntry = async (id) => {
@@ -166,27 +153,17 @@ function App() {
       delete newPages[id];
       const cleanData = { ...data, journal_pages: newPages };
       setData(cleanData); 
-
       if (gameParams?.isOffline) {
           localStorage.setItem('dm_local_data', JSON.stringify(cleanData));
           return;
       }
-
       const ref = fb.doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code);
-      try {
-          await fb.updateDoc(ref, {
-              [`journal_pages.${id}`]: deleteField()
-          });
-      } catch (e) {
-          console.error("Delete failed:", e);
-          alert("Failed to delete journal from cloud.");
-      }
+      try { await fb.updateDoc(ref, { [`journal_pages.${id}`]: deleteField() }); } catch (e) { alert("Failed to delete."); }
   };
 
   const updateMapState = (action, payload) => {
       const currentMap = data.campaign?.activeMap || { url: null, revealPaths: [] };
       let newMap = { ...currentMap };
-
       if (action === 'set_image') { newMap.url = payload; newMap.revealPaths = []; } 
       else if (action === 'start_path') { newMap.revealPaths = [...newMap.revealPaths, payload]; } 
       else if (action === 'append_point') {
@@ -196,10 +173,8 @@ function App() {
           newPaths[newPaths.length - 1] = lastPath;
           newMap.revealPaths = newPaths;
       } else if (action === 'clear_fog') { newMap.revealPaths = []; }
-
       const newData = { ...data, campaign: { ...data.campaign, activeMap: newMap } };
       setData(newData);
-      
       if (saveTimer.current) clearTimeout(saveTimer.current);
       saveTimer.current = setTimeout(() => {
           const ref = fb.doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code);
@@ -207,17 +182,10 @@ function App() {
       }, 500);
   };
 
-  // --- AI SERVICE WRAPPER ---
   const queryAiService = async (messages) => {
       const hasKey = aiProvider === 'puter' || apiKey;
-      if (!hasKey) {
-          alert("Error: No AI Provider set. Go to Settings.");
-          return "Configuration Error: No AI Key.";
-      }
-      
-      let attempts = 0; 
-      const maxRetries = 2; 
-
+      if (!hasKey) { alert("Error: No AI Provider set."); return "Config Error."; }
+      let attempts = 0; const maxRetries = 2; 
       while(attempts < maxRetries) {
           try {
               attempts++;
@@ -226,32 +194,36 @@ function App() {
                   if (!window.puter.auth.isSignedIn()) await window.puter.auth.signIn();
                   const safeModel = puterModel || 'mistral-large-latest';
                   const response = await window.puter.ai.chat(messages, { model: safeModel });
-                  if (!response || !response.message || !response.message.content) throw new Error("Invalid response structure from Puter AI");
-                  return response.message.content;
+                  return response?.message?.content;
               } else if(aiProvider === 'gemini') {
-                   const combinedPrompt = messages.map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n');
-                   const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({contents:[{parts:[{text:combinedPrompt}]}]}) });
-                   if(!r.ok) throw new Error(`Gemini Error ${r.status}`);
+                   const combined = messages.map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n');
+                   const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({contents:[{parts:[{text:combined}]}]}) });
                    const j = await r.json();
                    return j.candidates?.[0]?.content?.parts?.[0]?.text;
               } else {
                   const r = await fetch('https://api.openai.com/v1/chat/completions', { method:'POST', headers:{'Content-Type':'application/json', 'Authorization':`Bearer ${apiKey}`}, body:JSON.stringify({model: openAiModel, messages: messages}) });
-                  if(!r.ok) throw new Error(`OpenAI Error ${r.status}`);
                   const j = await r.json();
                   return j.choices?.[0]?.message?.content;
               }
           } catch(e) { 
-              console.error(e); 
-              if(attempts === maxRetries) {
-                  alert("AI Error: " + (e.message || e));
-                  return "System Error.";
-              }
+              if(attempts === maxRetries) { alert("AI Error: " + (e.message||e)); return "System Error."; }
               await new Promise(res => setTimeout(res, 1000));
           }
       }
   };
 
-  // --- NEW: CENTRALIZED MESSAGE SENDER ---
+  // --- IDENTITY & CHAT LOGIC ---
+  const getSenderName = () => {
+      if (effectiveRole === 'dm') return "Dungeon Master";
+      if (possessedNpcId) {
+          const npc = data.npcs?.find(n => n.id === possessedNpcId);
+          return npc ? `${npc.name} (NPC)` : "Unknown NPC";
+      }
+      const charId = data.assignments?.[user?.uid];
+      const char = data.players?.find(p => p.id === charId);
+      return char ? char.name : (user?.email?.split('@')[0] || "Spectator");
+  };
+
   const sendChatMessage = async (content, type = 'chat-public', targetId = null) => {
       if (!content.trim()) return;
       setIsLoading(true);
@@ -262,93 +234,66 @@ function App() {
           content: content,
           timestamp: Date.now(),
           senderId: user?.uid,
-          senderName: user?.email.split('@')[0],
-          type: type, // 'chat-public', 'chat-private', 'ai-public', 'ai-private'
+          senderName: getSenderName(),
+          type: type, 
           targetId: targetId
       };
 
-      // 1. Add User Message to Cloud
       let currentLog = [...(data.chatLog || [])];
       currentLog.push(newMessage);
       
-      // We optimize local update for speed, then cloud
       const updatedData = { ...data, chatLog: currentLog };
       setData(updatedData);
       updateCloud(updatedData, true);
 
-      // 2. Handle AI Logic
       if (type === 'ai-public' || type === 'ai-private') {
-          // Construct Context
           const genesis = data.campaign?.genesis || {};
-          const derivedCharId = data.assignments?.[user?.uid];
-          const char = data.players.find(p => p.id === derivedCharId);
-          const iden = effectiveRole === 'dm' ? "DM" : (char ? `${char.name} (${char.race})` : "Player");
-          
-          let partyContext = "";
-          if (effectiveRole === 'dm') {
-              partyContext = data.players.map(p => `${p.name} (${p.race} ${p.class})`).join(' | ');
-          } else {
-              partyContext = `Me: ${char ? char.name : "Spectator"}. Party: ${data.players.map(p => p.name).join(', ')}`;
-          }
-
-          const loreContext = genesis.loreText || "Generic Fantasy";
-          const recentChat = currentLog.slice(-10).map(m => `${m.senderName}: ${m.content}`).join('\n');
-
-          const systemPrompt = `
-          Role: Dungeon Master. User: ${iden}.
-          World: ${genesis.tone}. Context: ${loreContext}.
-          Location: ${data.campaign.location}.
-          Party: ${partyContext}.
-          Recent Log: ${recentChat}.
-          Action: Respond to "${content}".
-          `;
-
-          const aiRes = await queryAiService([{ role: "system", content: systemPrompt }, { role: "user", content: content }]);
+          const prompt = `Role: DM. User: ${newMessage.senderName}. Context: ${genesis.loreText||"Fantasy"}. Respond to: "${content}"`;
+          const aiRes = await queryAiService([{ role: "user", content: prompt }]);
           
           const aiMessage = {
               id: Date.now() + 1,
               role: 'ai',
-              content: aiRes || "AI Error",
+              content: aiRes || "...",
               timestamp: Date.now(),
               senderId: 'system',
               senderName: 'DungeonMind',
-              type: type // matches user intention (public vs private)
+              type: type,
+              replyTo: user?.uid // Tag who triggered it so they can delete it
           };
-
           currentLog.push(aiMessage);
           const finalData = { ...data, chatLog: currentLog };
           setData(finalData);
           updateCloud(finalData, true);
       }
-
       setIsLoading(false);
   };
 
-  const generateRecap = async () => { /* ... existing logic using chatLog instead of chatHistory ... */ };
+  const editChatMessage = (msgId, newContent) => {
+      const newLog = data.chatLog.map(m => m.id === msgId ? { ...m, content: newContent } : m);
+      const nd = { ...data, chatLog: newLog };
+      updateCloud(nd, true);
+  };
 
-  // --- UPDATED DICE LOGIC ---
-  // Now puts text into box instead of auto-sending
+  const deleteChatMessage = (msgId) => {
+      if(!confirm("Delete message?")) return;
+      const newLog = data.chatLog.filter(m => m.id !== msgId);
+      const nd = { ...data, chatLog: newLog };
+      updateCloud(nd, true);
+  };
+
   const handleDiceRoll = (d) => {
     const result = Math.floor(Math.random() * d) + 1;
     const rollId = Date.now();
     setRollingDice({ die: d, result, id: rollId });
     setShowTools(false); 
-
     setTimeout(() => {
         setDiceLog(prev => [{id: rollId, die: `d${d}`, result}, ...prev]);
-        
-        // NEW BEHAVIOR: Populate Input Box
-        if (d === 20 && result === 20) {
-            setInputText(prev => prev + `[NATURAL 20!] I critically hit! `);
-        } else if (d === 20 && result === 1) {
-            setInputText(prev => prev + `[NATURAL 1] Critical failure! `);
+        if ((d === 20 && result === 20) || (d === 20 && result === 1)) {
+            const flavor = result === 20 ? "CRITICAL HIT!" : "CRITICAL MISS!";
+            setInputText(prev => prev + `[${flavor} (Natural ${result} on d20)] `);
         } else {
-            // Optional: for normal rolls, maybe just log it or add small text?
-            // For now, let's just log normal rolls to system chat
-            const sysMsg = {
-                id: Date.now(), role: 'system', content: `Rolled d${d}: **${result}**`,
-                timestamp: Date.now(), senderId: 'system', type: 'chat-public'
-            };
+            const sysMsg = { id: Date.now(), role: 'system', content: `Rolled d${d}: **${result}**`, timestamp: Date.now(), senderId: 'system', type: 'chat-public' };
             const nd = { ...data, chatLog: [...(data.chatLog||[]), sysMsg] };
             updateCloud(nd, true);
         }
@@ -356,46 +301,84 @@ function App() {
     }, 1000);
   };
 
-  // ... [Rest of render logic] ...
-  
-  if (!isAuthReady) return <div className="h-screen bg-slate-900 flex items-center justify-center text-amber-500 font-bold animate-pulse">Summoning DungeonMind...</div>;
+  const generateRecap = async () => {
+      setIsLoading(true);
+      const recentChat = (data.chatLog || []).slice(-50).map(m => `${m.senderName}: ${m.content}`).join('\n');
+      const prompt = `Summarize this D&D session log into a narrative paragraph:\n${recentChat}`;
+      const res = await queryAiService([{ role: 'user', content: prompt }]);
+      if (res) {
+          if(confirm("Recap Generated. Add to chat?")) {
+              sendChatMessage(`**SESSION RECAP:**\n${res}`, 'chat-public');
+          }
+      }
+      setIsLoading(false);
+  };
 
-  if (!gameParams || !data) {
-      return <Lobby fb={fb} user={user} onJoin={(code, role, uid) => { localStorage.setItem('dm_last_code', code); setGameParams({code, role, isOffline:false, uid}) }} onOffline={() => setGameParams({code:'LOCAL', role:'dm', isOffline:true, uid: 'local-admin'})} />;
-  }
+  const generateNpc = async (name, context) => {
+      const prompt = `Create 5e NPC JSON: {name, race, class, quirk, goal, secret, stats, personality} for "${name} ${context}"`;
+      const res = await queryAiService([{ role: 'user', content: prompt }]);
+      try { return JSON.parse(res.match(/\{[\s\S]*\}/)[0]); } catch(e) { return null; }
+  };
+
+  const generateLoc = async (type, note, genesis) => {
+      const prompt = `Create 5e Location JSON: {name, type, desc} for "${type} ${note}"`;
+      const res = await queryAiService([{ role: 'user', content: prompt }]);
+      try { return JSON.parse(res.match(/\{[\s\S]*\}/)[0]); } catch(e) { return null; }
+  };
+
+  const handleOnboardingComplete = (onboardingData) => {
+      const newData = { ...data, onboardingComplete: true, campaign: { ...data.campaign, genesis: onboardingData } };
+      updateCloud(newData, true);
+  };
+
+  const createHandout = () => {
+      const text = prompt("Handout Text:"); if (!text) return;
+      const newData = { ...data, campaign: { ...data.campaign, activeHandout: { text, timestamp: Date.now() } } };
+      updateCloud(newData, true);
+  };
+
+  const handleSaveToJournal = () => {
+      const log = (data.chatLog || []).map(m => `<p><b>${m.senderName}:</b> ${m.content}</p>`).join("");
+      const newId = `page_${Date.now()}`;
+      const newPage = { id: newId, title: `Log ${new Date().toLocaleDateString()}`, content: log, ownerId: user.uid, isPublic: true, created: Date.now() };
+      updateCloud({...data, journal_pages: {...data.journal_pages, [newId]: newPage}}, true);
+      alert("Saved to Journal.");
+  };
+
+  if (!isAuthReady) return <div className="h-screen bg-slate-900 flex items-center justify-center text-amber-500 font-bold animate-pulse">Summoning DungeonMind...</div>;
+  if (!gameParams || !data) return <Lobby fb={fb} user={user} onJoin={(c, r, u) => { localStorage.setItem('dm_last_code', c); setGameParams({code:c, role:r, isOffline:false, uid:u}) }} onOffline={() => setGameParams({code:'LOCAL', role:'dm', isOffline:true, uid:'admin'})} />;
 
   return (
     <div className="flex h-screen w-full bg-slate-900 text-slate-200 overflow-hidden font-sans">
        <Sidebar view={currentView} setView={setCurrentView} onExit={() => { localStorage.removeItem('dm_last_code'); setGameParams(null); setData(null); }} />
-       
        <main className="flex-1 h-full overflow-hidden relative w-full flex flex-col mb-16 md:mb-0">
-           {/* Header */}
            <div className="h-12 border-b border-slate-800 flex items-center justify-between px-4 bg-slate-900/90 backdrop-blur shrink-0">
                <div className="flex gap-2 items-center">
                    <div className={`w-2 h-2 rounded-full shadow-[0_0_10px_rgba(34,197,94,0.5)] ${gameParams?.isOffline ? 'bg-slate-500' : 'bg-green-500'}`}></div>
                    <span className="text-sm font-bold text-amber-500 truncate fantasy-font tracking-wide">
-                       {gameParams?.code} • {possessedNpcId ? `POSSESSING: ${data.npcs.find(n=>n.id===possessedNpcId)?.name}` : (data?.campaign?.location || "Unknown")}
+                       {gameParams?.code} • {possessedNpcId ? `POSSESSING: ${data.npcs?.find(n=>n.id===possessedNpcId)?.name || 'NPC'}` : (data?.campaign?.location || "Unknown")}
                    </span>
                </div>
                <div className="flex gap-2">
-                   {/* ... [Header Buttons] ... */}
-                   <button onClick={() => updateCloud({...data}, true)} className="text-xs bg-slate-800 px-3 py-1 rounded hover:text-white"><Icon name="refresh-ccw" size={14}/> Sync</button>
+                   {effectiveRole === 'dm' && <button onClick={createHandout} className="text-xs bg-amber-900/50 hover:bg-amber-800 px-3 py-1 rounded border border-amber-800 text-amber-200"><Icon name="scroll" size={14}/> Handout</button>}
+                   {possessedNpcId && <button onClick={() => setPossessedNpcId(null)} className="text-xs bg-red-900/80 text-white px-3 py-1 rounded">End Possession</button>}
+                   <button onClick={handleSaveToJournal} className="text-xs bg-slate-800 hover:bg-slate-700 border border-slate-600 px-3 py-1 rounded flex items-center gap-2 text-slate-300 hover:text-white"><Icon name="save" size={14}/> Save Log</button>
                </div>
            </div>
-
            <div className="flex-1 overflow-hidden relative p-0 md:p-0">
               {currentView === 'session' && (
                   <SessionView 
                       data={data}
-                      // Pass chatLog from data now
                       chatLog={data.chatLog || []} 
                       inputText={inputText}
                       setInputText={setInputText}
                       onSendMessage={sendChatMessage}
+                      onEditMessage={editChatMessage}
+                      onDeleteMessage={deleteChatMessage}
                       isLoading={isLoading}
                       role={effectiveRole}
-                      user={user} // Needed for filtering
-                      activeChar={data.assignments?.[user?.uid]}
+                      user={user} 
+                      generateRecap={generateRecap}
                       showTools={showTools}
                       setShowTools={setShowTools}
                       diceLog={diceLog}
@@ -410,7 +393,6 @@ function App() {
               {currentView === 'settings' && <SettingsView data={data} setData={setData} apiKey={apiKey} setApiKey={setApiKey} role={effectiveRole} updateCloud={updateCloud} code={gameParams.code} user={user} onExit={() => { localStorage.removeItem('dm_last_code'); setGameParams(null); setData(null); }} aiProvider={aiProvider} setAiProvider={setAiProvider} openAiModel={openAiModel} setOpenAiModel={setOpenAiModel} puterModel={puterModel} setPuterModel={setPuterModel} banPlayer={(uid) => { if(!confirm("Ban?")) return; const nd = {...data, activeUsers: {...data.activeUsers}, bannedUsers: [...(data.bannedUsers||[]), uid]}; delete nd.activeUsers[uid]; updateCloud(nd, true); }} kickPlayer={(uid) => { const nd = {...data, activeUsers: {...data.activeUsers}}; delete nd.activeUsers[uid]; updateCloud(nd, true); }} unbanPlayer={(uid) => { const nd = {...data, bannedUsers: data.bannedUsers.filter(u=>u!==uid)}; updateCloud(nd, true); }} />}
            </div>
        </main>
-
        {showHandout && data.campaign?.activeHandout && (
            <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4" onClick={() => setShowHandout(false)}>
                <div className="parchment-modal p-8 max-w-lg w-full rounded-lg text-center transform scale-100 animate-in zoom-in duration-300 relative" onClick={e => e.stopPropagation()}>
@@ -420,14 +402,11 @@ function App() {
                </div>
            </div>
        )}
-
        {rollingDice && <DiceOverlay roll={rollingDice} />}
-
        <MobileNav view={currentView} setView={setCurrentView} />
        {showTour && <TourGuide setView={setCurrentView} onClose={() => { setShowTour(false); localStorage.setItem('dm_tour_completed', 'true'); }} />}
        {effectiveRole === 'dm' && !data.onboardingComplete && <OnboardingWizard onComplete={handleOnboardingComplete} aiHelper={queryAiService} />}
     </div>
   );
 }
-
 export default App;
