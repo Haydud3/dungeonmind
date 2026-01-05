@@ -458,10 +458,10 @@ function App() {
   if (!gameParams || !data) return <Lobby fb={fb} user={user} onJoin={(c, r, u) => { localStorage.setItem('dm_last_code', c); setGameParams({code:c, role:r, isOffline:false, uid:u}) }} onOffline={() => setGameParams({code:'LOCAL', role:'dm', isOffline:true, uid:'admin'})} />;
 
   return (
-    // FIX 1: md:flex-row restores Side-by-Side layout on Desktop/Landscape
+    // FIX 1: md:flex-row restores layout on Landscape/Desktop
     <div className="fixed inset-0 flex flex-col md:flex-row bg-slate-900 text-slate-200 font-sans overflow-hidden">
        <Sidebar view={currentView} setView={setCurrentView} onExit={() => { localStorage.removeItem('dm_last_code'); setGameParams(null); setData(null); }} />
-       <main className="flex-1 flex flex-col overflow-hidden relative w-full">
+       <main className="flex-1 flex flex-col overflow-hidden relative w-full h-full">
            
            {/* HEADER */}
            <div className="shrink-0 bg-slate-900/95 backdrop-blur border-b border-slate-800 pt-safe z-50">
@@ -520,8 +520,8 @@ function App() {
            </div>
        )}
        
-       {/* FIX 2: Z-Index high to protect dice visibility */}
-       <div className="fixed inset-0 pointer-events-none z-[9999]">
+       {/* FIX 2: Dice Overlay moved here with super high z-index to be visible */}
+       <div className="fixed inset-0 pointer-events-none z-[99999]">
            {rollingDice && <DiceOverlay roll={rollingDice} />}
        </div>
 
