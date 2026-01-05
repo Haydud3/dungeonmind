@@ -293,7 +293,6 @@ function App() {
               .join('\n')
               .slice(-charLimit); 
 
-          // FIX: Include Rich Character Details
           const partyContext = data.players.map(p => {
               const aliasStr = p.aliases ? ` (aka: ${p.aliases})` : "";
               const details = [
@@ -302,7 +301,7 @@ function App() {
                   p.backstory ? `History: ${p.backstory}` : ''
               ].filter(Boolean).join('. ');
               
-              return `• ${p.name} (${p.race} ${p.class})${aliasStr}: ${details}`;
+              return `• ${p.name} (${p.race} ${p.class} Level ${p.level || 1})${aliasStr}: ${details}`;
           }).join('\n');
 
           const systemPrompt = `
@@ -317,7 +316,7 @@ function App() {
           ${journalContext}
           
           User: ${newMessage.senderName}.
-          Action: Answer based on the journal data provided. Use the party roster to understand the characters' personalities, looks, and motivations.
+          Action: Answer based on the journal data provided.
           `;
 
           const aiRes = await queryAiService([{ role: "system", content: systemPrompt }, { role: "user", content: content }]);
@@ -518,7 +517,18 @@ function App() {
               )}
               {currentView === 'journal' && <JournalView data={data} setData={setData} updateCloud={updateCloud} role={effectiveRole} updateJournalField={()=>{}} userId={user?.uid} aiHelper={queryAiService} deleteJournalEntry={deleteJournalEntry} />}
               {currentView === 'world' && <WorldView data={data} setData={setData} role={effectiveRole} updateCloud={updateCloud} generateLoc={generateLoc} updateMapState={updateMapState} />}
-              {currentView === 'party' && <PartyView data={data} setData={setData} role={effectiveRole} activeChar={data.assignments?.[user?.uid]} updateCloud={updateCloud} />}
+              {currentView === 'party' && (
+                  <PartyView 
+                      data={data} 
+                      setData={setData} 
+                      role={effectiveRole} 
+                      activeChar={data.assignments?.[user?.uid]} 
+                      updateCloud={updateCloud}
+                      // NEW PROPS FOR LEVEL UP FEATURE
+                      setInputText={setInputText}
+                      setView={setCurrentView}
+                  />
+              )}
               {currentView === 'npcs' && <NpcView data={data} setData={setData} role={effectiveRole} updateCloud={updateCloud} generateNpc={generateNpc} setChatInput={setInputText} setView={setCurrentView} onPossess={(id) => { setPossessedNpcId(id); setCurrentView('session'); }} />}
               {currentView === 'settings' && <SettingsView data={data} setData={setData} apiKey={apiKey} setApiKey={setApiKey} role={effectiveRole} updateCloud={updateCloud} code={gameParams.code} user={user} onExit={() => { localStorage.removeItem('dm_last_code'); setGameParams(null); setData(null); }} aiProvider={aiProvider} setAiProvider={setAiProvider} openAiModel={openAiModel} setOpenAiModel={setOpenAiModel} puterModel={puterModel} setPuterModel={setPuterModel} banPlayer={(uid) => { if(!confirm("Ban?")) return; const nd = {...data, activeUsers: {...data.activeUsers}, bannedUsers: [...(data.bannedUsers||[]), uid]}; delete nd.activeUsers[uid]; updateCloud(nd, true); }} kickPlayer={(uid) => { const nd = {...data, activeUsers: {...data.activeUsers}}; delete nd.activeUsers[uid]; updateCloud(nd, true); }} unbanPlayer={(uid) => { const nd = {...data, bannedUsers: data.bannedUsers.filter(u=>u!==uid)}; updateCloud(nd, true); }} />}
            </div>
