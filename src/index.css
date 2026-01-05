@@ -2,14 +2,10 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ... [Keep your fonts and root variables] ... */
-
 :root { --bg-dark: #0f172a; --bg-panel: #1e293b; --accent: #d97706; }
 body { font-family: 'Lato', sans-serif; background-color: var(--bg-dark); color: #e2e8f0; overflow: hidden; touch-action: manipulation; }
 h1, h2, h3, .fantasy-font { font-family: 'Cinzel', serif; }
 .mono-font { font-family: 'Fira Code', monospace; }
-
-/* ... [Keep scrollbar and animation classes] ... */
 
 .glass-panel { background: rgba(30, 41, 59, 0.95); border: 1px solid rgba(255, 255, 255, 0.05); }
 .live-status { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
@@ -23,22 +19,17 @@ h1, h2, h3, .fantasy-font { font-family: 'Cinzel', serif; }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
 /* --- MOBILE FIXES --- */
+.h-dvh { height: 100vh; height: 100dvh; }
 
-/* 1. Dynamic Height: Fixes bottom address bar scrolling issues */
-.h-dvh {
-    height: 100vh; 
-    height: 100dvh;
-}
-
-/* 2. Top Safe Area: Pushes content down from the notch */
+/* FIX: Increased default fallback to 44px (iPhone notch size) if env() fails */
 .pt-safe {
-    padding-top: env(safe-area-inset-top, 20px);
+    padding-top: 44px; 
+    padding-top: env(safe-area-inset-top, 44px);
 }
 
-/* 3. Bottom Safe Area: Pushes content up from the home indicator */
 .pb-safe {
+    padding-bottom: 20px;
     padding-bottom: env(safe-area-inset-bottom, 20px);
 }
 
 /* ... [Keep all your other component styles (Parchment, Quill, Dice) exactly as they were] ... */
-/* (I have omitted the Dice/Quill CSS here for brevity, but keep them in your file!) */
