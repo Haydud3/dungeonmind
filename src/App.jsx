@@ -42,7 +42,6 @@ const cleanText = (html) => {
    const tmp = document.createElement("DIV");
    tmp.innerHTML = html;
    let text = (tmp.textContent || tmp.innerText || "").replace(/\s+/g, " ").trim();
-   // Basic sanitization to help pass strict AI filters
    return text
      .replace(/kill/gi, "defeat")
      .replace(/murder/gi, "eliminate")
@@ -191,7 +190,7 @@ function App() {
       }, 500);
   };
 
-  // --- SAFE QUERY SERVICE WITH FALLBACK ---
+  // --- AI SERVICE WITH ROBUST ERROR HANDLING ---
   const queryAiService = async (messages, allowRetry = true) => {
       const hasKey = aiProvider === 'puter' || apiKey;
       if (!hasKey) { alert("Error: No AI Provider set."); return "Config Error."; }
@@ -231,14 +230,12 @@ function App() {
 
               // 1. MODERATION ERROR (422)
               if (errStr.includes("moderation") || errStr.includes("422")) {
-                  // Fallback: If we haven't already, try ONE more time with minimal context
                   if (allowRetry) {
-                      console.warn("Moderation trigger. Retrying with minimal context...");
-                      // Strip all previous messages, keep only the last user query
+                      console.warn("Moderation trigger. Retrying without context...");
                       const lastMsg = messages[messages.length - 1];
                       return await queryAiService([{ role: 'user', content: lastMsg.content }], false);
                   }
-                  return "⚠️ Content Moderation Block. The AI refused to process this text.";
+                  return "⚠️ AI Safety Filter: Content rejected.";
               }
               
               // 2. CREDIT LIMIT
@@ -289,21 +286,30 @@ function App() {
       updateCloud(updatedData, true);
 
       if (type === 'ai-public' || type === 'ai-private') {
-          // AI reads journal context here too for smarter general chat
+          // --- NORMAL CHAT LOGIC: Last 4000 Chars Only ---
           const genesis = data.campaign?.genesis || {};
+          
+          // 1. Campaign Bible (Always important)
+          const bibleContext = `Bible: ${genesis.loreText || "Generic"} Tone: ${genesis.tone}`;
+          
+          // 2. Party Context
+          const partyContext = data.players.map(p => `${p.name} (${p.race} ${p.class})`).join(', ');
+
+          // 3. Journal Context (Strictly last 4000 chars)
           const accessiblePages = Object.values(data.journal_pages || {}).filter(p => p.isPublic || p.ownerId === user?.uid);
-          const journalContext = accessiblePages.map(p => `[${p.title}]: ${cleanText(p.content)}`).join('\n').slice(-10000); 
+          const journalText = accessiblePages.map(p => `[${p.title}]: ${cleanText(p.content)}`).join('\n');
+          const journalContext = journalText.slice(-4000); // Strict limit
 
           const systemPrompt = `
-          Role: Dungeon Master AI for "${genesis.campaignName || "D&D"}" (${genesis.tone || "Fantasy"}).
-          Lore: ${genesis.loreText || "Generic"}.
-          Location: ${data.campaign.location || "Unknown"}.
+          Role: Dungeon Master AI for "${genesis.campaignName}".
+          ${bibleContext}
+          Party: ${partyContext}
           
-          JOURNAL KNOWLEDGE:
+          RECENT JOURNAL CONTEXT (Last 4000 chars):
           ${journalContext}
           
           User: ${newMessage.senderName}.
-          Action: Answer based on the journal data.
+          Action: Answer the user using the provided context.
           `;
 
           const aiRes = await queryAiService([{ role: "system", content: systemPrompt }, { role: "user", content: content }]);
@@ -365,7 +371,7 @@ function App() {
     }, 1000);
   };
 
-  // --- RECAP GENERATOR WITH CHUNK RETRIES ---
+  // --- STRICT CHUNKING RECAP (Fixed for 422 Errors) ---
   const generateRecap = async () => {
       setIsLoading(true);
       
@@ -375,34 +381,51 @@ function App() {
           .map(p => `ENTRY: ${p.title}\n${cleanText(p.content)}`)
           .join('\n\n');
       
-      if (!allText.trim()) {
-          alert("No public journal entries found to recap!");
-          setIsLoading(false);
-          return;
-      }
+      if (!allText.trim()) { alert("No journal entries!"); setIsLoading(false); return; }
 
       const genesis = data.campaign?.genesis || {};
-      const chunkSize = 6000;
+      const chunkSize = 4000; // STRICT 4000 CHAR LIMIT per user instruction
       let finalSummary = "";
 
+      // Split into totally separate chunks
       if (allText.length > chunkSize) {
           let summaries = [];
           for (let i = 0; i < allText.length; i += chunkSize) {
               const chunk = allText.slice(i, i + chunkSize);
-              // Use queryAiService which now has auto-fallback for 422 errors
-              const res = await queryAiService([{ role: 'user', content: `Summarize this partial log:\n\n${chunk}` }]);
+              
+              // Each request is ISOLATED. The AI doesn't know they are connected yet.
+              const prompt = `
+              You are a Scribe. Summarize this specific fragment of a D&D adventure log.
+              Do not include intros or outros. Just the events.
+              
+              FRAGMENT:
+              ${chunk}
+              `;
+              
+              // We pass 'false' to allowRetry to fail fast on this specific chunk if needed
+              const res = await queryAiService([{ role: 'user', content: prompt }], false);
+              
               if (res && !res.includes("Error") && !res.includes("Safety")) {
                   summaries.push(res);
               } else {
-                  summaries.push("[Section skipped: Moderation/Content Filter]");
+                  summaries.push("[Missing segment due to AI limit]");
               }
           }
-          finalSummary = await queryAiService([{ role: 'user', content: `Create a cinematic "Previously on..." D&D recap from these notes:\n\n${summaries.join("\n")}` }]);
+          
+          // Now combine the summaries (Reduce Phase)
+          const combinedPrompt = `
+          I have several summaries of a D&D adventure. Combine them into one coherent "Previously On..." narrative.
+          
+          SUMMARIES:
+          ${summaries.join("\n\n")}
+          `;
+          finalSummary = await queryAiService([{ role: 'user', content: combinedPrompt }]);
+
       } else {
+          // It fits in one request
           const prompt = `
-          You are the Historian for "${genesis.campaignName || "Unknown"}". 
-          Tone: ${genesis.tone || "Fantasy"}. 
-          Task: Write a cinematic recap of the adventure below.
+          You are the Historian for "${genesis.campaignName}". 
+          Summarize this D&D log into a cinematic recap.
           
           LOGS:
           ${allText}
@@ -410,8 +433,8 @@ function App() {
           finalSummary = await queryAiService([{ role: 'user', content: prompt }]);
       }
 
-      if (finalSummary && !finalSummary.includes("Error") && !finalSummary.includes("Safety")) {
-          if (effectiveRole === 'dm' && confirm("Recap generated. Save to Journal? (Cancel to just post in chat)")) {
+      if (finalSummary && !finalSummary.includes("Error")) {
+          if (effectiveRole === 'dm' && confirm("Recap generated. Save to Journal?")) {
               const newId = `page_recap_${Date.now()}`;
               const newPage = { id: newId, title: `Recap: ${new Date().toLocaleDateString()}`, content: `<p>${finalSummary.replace(/\n/g, '<br/>')}</p>`, ownerId: 'system', isPublic: true, created: Date.now() };
               updateCloud({...data, journal_pages: {...data.journal_pages, [newId]: newPage}}, true);
@@ -420,8 +443,7 @@ function App() {
               sendChatMessage(`**📜 CAMPAIGN RECAP:**\n${finalSummary}`, 'chat-public');
           }
       } else {
-          // Fallback message if everything failed
-          alert("Recap failed. The AI refused to process the journal content (Moderation/Safety Filter).");
+          alert("Recap failed. Try reducing journal size or removing explicit content.");
       }
       setIsLoading(false);
   };
