@@ -13,7 +13,7 @@ const SessionView = (props) => {
 
     const [sendMode, setSendMode] = useState('chat-public'); 
     const [targetUser, setTargetUser] = useState(''); 
-    const [aiContextMode, setAiContextMode] = useState('fast'); // 'fast' or 'deep'
+    const [aiContextMode, setAiContextMode] = useState('fast'); 
     const [editingId, setEditingId] = useState(null);
     const [editContent, setEditContent] = useState('');
     const [showRecapMenu, setShowRecapMenu] = useState(false);
@@ -31,7 +31,6 @@ const SessionView = (props) => {
     const handleSend = () => {
         if (!inputText.trim()) return;
         if (sendMode === 'chat-private' && !targetUser) return alert("Select a player.");
-        // Pass aiContextMode to the send function
         onSendMessage(inputText, sendMode, targetUser, aiContextMode);
         setInputText('');
     };
@@ -62,7 +61,6 @@ const SessionView = (props) => {
 
     return (
         <div className="flex h-full relative flex-col bg-slate-900">
-            {/* Header / Tools - DM Controls */}
             {role === 'dm' && (
                 <div className="absolute top-2 right-4 z-20 flex gap-2">
                     <button onClick={clearChat} className="bg-red-900/50 border border-red-700 text-red-200 px-3 py-1 rounded-full text-xs shadow-lg flex items-center gap-1 hover:bg-red-900 hover:text-white transition-colors opacity-50 hover:opacity-100">
@@ -88,7 +86,7 @@ const SessionView = (props) => {
             )}
 
             <div className="flex-1 flex flex-col h-full relative overflow-hidden">
-                <div className="flex-1 overflow-y-auto custom-scroll p-4 space-y-1 pb-24 md:pb-4">
+                <div className="flex-1 overflow-y-auto custom-scroll p-4 space-y-1 pb-4">
                     {visibleMessages.length === 0 && <div className="text-center text-slate-600 mt-10">No messages yet.</div>}
                     
                     {visibleMessages.map((msg, i) => {
@@ -140,7 +138,6 @@ const SessionView = (props) => {
                                         </div>
                                     )}
 
-                                    {/* Action Buttons (Hover) */}
                                     <div className="absolute right-0 top-0 opacity-0 group-hover:opacity-100 flex gap-1 bg-slate-900/90 rounded px-1 transition-opacity border border-slate-700 shadow-xl z-10">
                                         <button onClick={() => saveMessageToJournal(msg.content)} className="text-slate-400 hover:text-green-400 p-1" title="Save to Journal"><Icon name="book-plus" size={12}/></button>
                                         {canEdit && !editingId && (
@@ -158,9 +155,9 @@ const SessionView = (props) => {
                     <div ref={chatEndRef}></div>
                 </div>
                 
-                <div className="p-3 bg-slate-900 border-t border-slate-800 flex flex-col gap-2 shrink-0 z-10">
+                {/* FIX: Added mb-[5.5rem] to lift this box above MobileNav on small screens */}
+                <div className="p-3 bg-slate-900 border-t border-slate-800 flex flex-col gap-2 shrink-0 z-10 mb-[5.5rem] md:mb-0 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.5)]">
                     <div className="flex items-center gap-2 flex-wrap">
-                        {/* 1. Mode Selector */}
                         <select value={sendMode} onChange={(e) => setSendMode(e.target.value)} className="w-full md:w-36 bg-slate-800 text-xs font-bold text-slate-300 border border-slate-600 rounded px-2 py-1.5 outline-none focus:border-amber-500">
                             <option value="chat-public">📢 Chat</option>
                             <option value="ai-public">🤖 AI (Public)</option>
@@ -168,15 +165,12 @@ const SessionView = (props) => {
                             <option value="chat-private">🕵️ Whisper</option>
                         </select>
 
-                        {/* 2. Target Selector (Whisper) */}
                         {sendMode === 'chat-private' && (
                             <select value={targetUser} onChange={(e) => setTargetUser(e.target.value)} className="flex-1 md:flex-none md:w-32 bg-purple-900/20 text-xs text-purple-200 border border-purple-500/50 rounded px-2 py-1.5 outline-none">
                                 <option value="">To whom?</option>
                                 {Object.entries(data.activeUsers || {}).map(([uid, email]) => {
                                     if (uid === user.uid) return null;
-                                    // Check if DM
                                     if (data.dmIds?.includes(uid)) return <option key={uid} value={uid}>Dungeon Master</option>;
-                                    // Check Character
                                     const charId = data.assignments?.[uid];
                                     const char = data.players?.find(p => p.id == charId);
                                     const displayName = char ? `${char.name} (${char.class})` : email.split('@')[0];
@@ -185,7 +179,6 @@ const SessionView = (props) => {
                             </select>
                         )}
 
-                        {/* 3. AI Context Toggle (Only when AI selected) */}
                         {(sendMode === 'ai-public' || sendMode === 'ai-private') && (
                             <button 
                                 onClick={() => setAiContextMode(prev => prev === 'fast' ? 'deep' : 'fast')}
