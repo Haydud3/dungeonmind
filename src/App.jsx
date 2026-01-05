@@ -13,8 +13,9 @@ import OnboardingWizard from './components/OnboardingWizard';
 import TourGuide from './components/TourGuide';
 import WorldView from './components/WorldView';
 import NpcView from './components/NpcView';
-import MapBoard from './components/MapBoard'; 
 import DiceOverlay from './components/DiceOverlay';
+
+// NOTE: MapBoard import was removed here because it was unused and causing build failure.
 
 const DEFAULT_DATA = { 
     hostId: null,
@@ -316,7 +317,7 @@ function App() {
           ${journalContext}
           
           User: ${newMessage.senderName}.
-          Action: Answer based on the journal data provided.
+          Action: Answer based on the journal data provided. Use the party roster to understand the characters' personalities, looks, and motivations.
           `;
 
           const aiRes = await queryAiService([{ role: "system", content: systemPrompt }, { role: "user", content: content }]);
@@ -520,11 +521,10 @@ function App() {
               {currentView === 'party' && (
                   <PartyView 
                       data={data} 
-                      setData={setData} 
+                      // Removed setData to be safe here too, though it was optional
                       role={effectiveRole} 
                       activeChar={data.assignments?.[user?.uid]} 
                       updateCloud={updateCloud}
-                      // NEW PROPS FOR LEVEL UP FEATURE
                       setInputText={setInputText}
                       setView={setCurrentView}
                   />
