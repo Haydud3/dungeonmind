@@ -75,7 +75,7 @@ const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalE
     if (!activePageId) {
         return (
             <div className="h-full bg-slate-900 p-4 overflow-y-auto custom-scroll pb-24">
-                {/* FIX: Added max-w-5xl mx-auto to center the list uniformly */}
+                {/* FIX: Added max-w-5xl mx-auto to CENTER the list on Desktop */}
                 <div className="w-full max-w-5xl mx-auto space-y-4">
                     <div className="flex justify-between items-center mb-6">
                         <h2 className="text-2xl text-amber-500 fantasy-font">Journal</h2>
@@ -117,17 +117,19 @@ const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalE
     // --- DETAIL / EDIT VIEW ---
     return (
         <div className="h-full flex flex-col bg-slate-900">
-            {/* Header Toolbar */}
-            <div className="shrink-0 h-14 border-b border-slate-700 flex items-center justify-between px-4 bg-slate-800">
-                <div className="flex items-center gap-3 overflow-hidden w-full max-w-5xl mx-auto">
-                    <button onClick={() => setActivePageId(null)} className="text-slate-400 hover:text-white shrink-0"><Icon name="arrow-left" size={20}/></button>
-                    {isEditing ? (
-                        <input className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-white font-bold w-full min-w-0" value={editTitle} onChange={e => setEditTitle(e.target.value)} />
-                    ) : (
-                        <h2 className="font-bold text-slate-200 truncate">{activePage.title}</h2>
-                    )}
-                
-                    <div className="flex gap-2 shrink-0 ml-auto">
+            {/* Header Toolbar - Centered Wrapper */}
+            <div className="shrink-0 h-14 border-b border-slate-700 bg-slate-800 flex justify-center px-4">
+                <div className="flex items-center justify-between w-full max-w-5xl">
+                    <div className="flex items-center gap-3 overflow-hidden">
+                        <button onClick={() => setActivePageId(null)} className="text-slate-400 hover:text-white shrink-0"><Icon name="arrow-left" size={20}/></button>
+                        {isEditing ? (
+                            <input className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-white font-bold w-full min-w-0" value={editTitle} onChange={e => setEditTitle(e.target.value)} />
+                        ) : (
+                            <h2 className="font-bold text-slate-200 truncate">{activePage.title}</h2>
+                        )}
+                    </div>
+                    
+                    <div className="flex gap-2 shrink-0 ml-2">
                         {isEditing ? (
                             <>
                                 <button onClick={handleAiEnhance} disabled={isAiLoading} className="text-xs bg-purple-600 hover:bg-purple-500 text-white px-3 py-1 rounded flex items-center gap-1">
@@ -158,7 +160,7 @@ const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalE
             {/* Content Area */}
             <div className="flex-1 overflow-y-auto custom-scroll bg-slate-900 pb-24">
                 {isEditing ? (
-                    // FIX: Added max-w-5xl mx-auto to center the editor
+                    // FIX: Centered the Editor View
                     <div className="h-full flex flex-col w-full max-w-5xl mx-auto">
                         <ReactQuill 
                             theme="snow" 
@@ -169,7 +171,7 @@ const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalE
                         />
                     </div>
                 ) : (
-                    // FIX: Added max-w-5xl mx-auto to center the read view
+                    // FIX: Centered the Read View
                     <div className="p-6 w-full max-w-5xl mx-auto overflow-hidden">
                         <div 
                             className="prose prose-invert prose-p:text-slate-300 prose-headings:text-amber-500 max-w-none break-words whitespace-pre-wrap" 
