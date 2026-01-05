@@ -155,8 +155,8 @@ const SessionView = (props) => {
                     <div ref={chatEndRef}></div>
                 </div>
                 
-                {/* FIX: Added mb-[5.5rem] to lift this box above MobileNav on small screens */}
-                <div className="p-3 bg-slate-900 border-t border-slate-800 flex flex-col gap-2 shrink-0 z-10 mb-[5.5rem] md:mb-0 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.5)]">
+                {/* FIX: mb-20 on mobile lifts chat above MobileNav. md:mb-0 resets it for desktop. */}
+                <div className="p-3 bg-slate-900 border-t border-slate-800 flex flex-col gap-2 shrink-0 z-10 mb-20 md:mb-0 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.5)]">
                     <div className="flex items-center gap-2 flex-wrap">
                         <select value={sendMode} onChange={(e) => setSendMode(e.target.value)} className="w-full md:w-36 bg-slate-800 text-xs font-bold text-slate-300 border border-slate-600 rounded px-2 py-1.5 outline-none focus:border-amber-500">
                             <option value="chat-public">📢 Chat</option>
