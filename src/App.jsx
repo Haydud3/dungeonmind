@@ -14,23 +14,24 @@ import TourGuide from './components/TourGuide';
 import WorldView from './components/WorldView';
 import NpcView from './components/NpcView';
 import MapBoard from './components/MapBoard'; 
+import DiceOverlay from './components/DiceOverlay'; // IMPORTED
 
 const DEFAULT_DATA = { 
     hostId: null,
     journal_pages: {}, 
     savedSessions: [], 
     players: [], 
-    locations: [],
-    npcs: [],
-    activeUsers: {},
-    bannedUsers: [],
-    assignments: {},
-    onboardingComplete: false,
-    config: { edition: '2014', strictMode: true },
+    locations: [], 
+    npcs: [], 
+    activeUsers: {}, 
+    bannedUsers: [], 
+    assignments: {}, 
+    onboardingComplete: false, 
+    config: { edition: '2014', strictMode: true }, 
     campaign: { 
-        genesis: { tone: 'Heroic', conflict: 'Dragon vs Kingdom', campaignName: 'New Campaign' },
-        activeMap: { url: null, revealPaths: [] },
-        activeHandout: null,
+        genesis: { tone: 'Heroic', conflict: 'Dragon vs Kingdom', campaignName: 'New Campaign' }, 
+        activeMap: { url: null, revealPaths: [] }, 
+        activeHandout: null, 
         location: "Start" 
     }
 };
@@ -59,6 +60,9 @@ function App() {
   const [diceLog, setDiceLog] = useState([]);
   const [possessedNpcId, setPossessedNpcId] = useState(null);
   const [showHandout, setShowHandout] = useState(false);
+  
+  // NEW STATE FOR DICE
+  const [rollingDice, setRollingDice] = useState(null);
 
   // AI Config
   const [apiKey, setApiKey] = useState(() => localStorage.getItem('dm_api_key') || '');
@@ -321,7 +325,6 @@ function App() {
   };
 
   // --- RECAP LOGIC ---
-  // Using the new simple system prompt style to avoid filters
   const generateRecap = async () => {
       setIsLoading(true);
       
@@ -396,10 +399,30 @@ function App() {
       }
   };
 
+  // --- UPDATED DICE LOGIC WITH ANIMATION ---
   const handleDiceRoll = (d) => {
     const result = Math.floor(Math.random() * d) + 1;
-    setDiceLog(prev => [{id: Date.now(), die: `d${d}`, result}, ...prev]);
-    if ((d === 20 && result === 20) || (d === 20 && result === 1)) { generateResponse(`I rolled a nat ${result} on a d20! Describe the result!`, 'narrate'); } else { setChatHistory(prev => [...prev, { role: 'system', content: `Rolled d${d}: **${result}**` }]); }
+    const rollId = Date.now();
+    
+    // 1. Trigger Animation
+    setRollingDice({ die: d, result, id: rollId });
+    setShowTools(false); // Close tray so we can see the animation
+
+    // 2. Wait for Animation to finish (1.5s land + a bit of read time)
+    setTimeout(() => {
+        // 3. Update Log
+        setDiceLog(prev => [{id: rollId, die: `d${d}`, result}, ...prev]);
+        
+        // 4. Update Chat / Trigger AI Narrator for Crits
+        if ((d === 20 && result === 20) || (d === 20 && result === 1)) { 
+            generateResponse(`I rolled a nat ${result} on a d20! Describe the result!`, 'narrate'); 
+        } else { 
+            setChatHistory(prev => [...prev, { role: 'system', content: `Rolled d${d}: **${result}**` }]); 
+        }
+
+        // 5. Clear Animation
+        setTimeout(() => setRollingDice(null), 1000); 
+    }, 1800);
   };
 
   if (!isAuthReady) return <div className="h-screen bg-slate-900 flex items-center justify-center text-amber-500 font-bold animate-pulse">Summoning DungeonMind...</div>;
@@ -470,6 +493,9 @@ function App() {
                </div>
            </div>
        )}
+
+       {/* DICE OVERLAY */}
+       {rollingDice && <DiceOverlay roll={rollingDice} />}
 
        <MobileNav view={currentView} setView={setCurrentView} />
        {showTour && <TourGuide setView={setCurrentView} onClose={() => { setShowTour(false); localStorage.setItem('dm_tour_completed', 'true'); }} />}
