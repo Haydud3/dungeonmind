@@ -6,7 +6,7 @@ const SessionView = (props) => {
     const { 
         data, chatLog, inputText, setInputText, 
         onSendMessage, onEditMessage, onDeleteMessage, 
-        isLoading, role, user, generateRecap,
+        isLoading, role, user, generateRecap, clearChat,
         showTools, setShowTools, diceLog, handleDiceRoll,
         possessedNpcId 
     } = props;
@@ -59,12 +59,17 @@ const SessionView = (props) => {
 
     return (
         <div className="flex h-full relative flex-col bg-slate-900">
-            {/* Header / Tools */}
-            <div className="absolute top-2 right-4 z-20 opacity-50 hover:opacity-100 transition-opacity">
-                <button onClick={generateRecap} className="bg-slate-800 border border-slate-600 text-white px-3 py-1 rounded-full text-xs shadow-lg flex items-center gap-2 hover:bg-amber-700 hover:border-amber-500">
-                    <Icon name="scroll-text" size={14}/> Generate Recap
-                </button>
-            </div>
+            {/* Header / Tools - DM Controls */}
+            {role === 'dm' && (
+                <div className="absolute top-2 right-4 z-20 flex gap-2">
+                    <button onClick={clearChat} className="bg-red-900/50 border border-red-700 text-red-200 px-3 py-1 rounded-full text-xs shadow-lg flex items-center gap-1 hover:bg-red-900 hover:text-white transition-colors opacity-50 hover:opacity-100">
+                        <Icon name="trash-2" size={14}/> Clear Chat
+                    </button>
+                    <button onClick={generateRecap} className="bg-slate-800 border border-slate-600 text-white px-3 py-1 rounded-full text-xs shadow-lg flex items-center gap-2 hover:bg-amber-700 hover:border-amber-500 opacity-50 hover:opacity-100 transition-opacity">
+                        <Icon name="scroll-text" size={14}/> Recap
+                    </button>
+                </div>
+            )}
 
             <div className="flex-1 flex flex-col h-full relative overflow-hidden">
                 <div className="flex-1 overflow-y-auto custom-scroll p-4 space-y-1 pb-24 md:pb-4">
@@ -75,7 +80,26 @@ const SessionView = (props) => {
                         const showHeader = i === 0 || visibleMessages[i-1].senderId !== msg.senderId || (msg.timestamp - visibleMessages[i-1].timestamp > 60000);
                         const canEdit = role === 'dm' || msg.senderId === user?.uid || (msg.role === 'ai' && msg.replyTo === user?.uid);
 
-                        if (isSystem) return <div key={i} className="flex justify-center my-2"><span className="text-xs text-slate-500 bg-slate-800 px-3 py-1 rounded-full">{msg.content.replace(/\*\*/g, '')}</span></div>;
+                        // --- UPDATED SYSTEM MESSAGE RENDERER ---
+                        if (isSystem) {
+                            return (
+                                <div key={i} className="flex justify-center my-2 group">
+                                    <span className="text-xs text-slate-500 bg-slate-800 px-3 py-1 rounded-full flex items-center gap-2 pr-2">
+                                        <span dangerouslySetInnerHTML={{__html: msg.content.replace(/\*\*/g, '')}} />
+                                        {/* Hidden delete button for DM */}
+                                        {role === 'dm' && (
+                                            <button 
+                                                onClick={() => onDeleteMessage(msg.id)} 
+                                                className="text-slate-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity -mr-1"
+                                                title="Delete this entry"
+                                            >
+                                                <Icon name="x" size={12}/>
+                                            </button>
+                                        )}
+                                    </span>
+                                </div>
+                            );
+                        }
 
                         return (
                             <div key={i} className={`group flex gap-3 px-2 py-1 rounded hover:bg-slate-800/50 ${getMessageStyle(msg)} ${showHeader ? 'mt-3' : 'mt-0.5'}`}>
@@ -106,6 +130,7 @@ const SessionView = (props) => {
                                         </div>
                                     )}
 
+                                    {/* Action Buttons (Hover) */}
                                     {canEdit && !editingId && (
                                         <div className="absolute right-0 top-0 opacity-0 group-hover:opacity-100 flex gap-1 bg-slate-900/80 rounded px-1 transition-opacity">
                                             <button onClick={() => { setEditingId(msg.id); setEditContent(msg.content); }} className="text-slate-400 hover:text-amber-400 p-1"><Icon name="pencil" size={12}/></button>
@@ -133,11 +158,9 @@ const SessionView = (props) => {
                                 <option value="">To whom?</option>
                                 {Object.entries(data.activeUsers || {}).map(([uid, email]) => {
                                     if (uid === user.uid) return null;
-                                    // Resolve name
                                     const charId = data.assignments?.[uid];
                                     const char = data.players?.find(p => p.id == charId);
                                     const displayName = char ? `${char.name} (${char.class})` : email.split('@')[0];
-                                    
                                     return <option key={uid} value={uid}>{displayName}</option>;
                                 })}
                             </select>
