@@ -283,7 +283,6 @@ function App() {
       updateCloud(nd, true);
   };
 
-  // NEW: CLEAR CHAT FUNCTION
   const clearChat = () => {
       if(!confirm("Are you sure you want to clear the ENTIRE chat history? This cannot be undone.")) return;
       const nd = { ...data, chatLog: [] };
@@ -310,14 +309,37 @@ function App() {
     }, 1000);
   };
 
+  // --- RESTORED JOURNAL-ONLY RECAP ---
   const generateRecap = async () => {
       setIsLoading(true);
-      const recentChat = (data.chatLog || []).slice(-50).map(m => `${m.senderName}: ${m.content}`).join('\n');
-      const prompt = `Summarize this D&D session log into a narrative paragraph:\n${recentChat}`;
-      const res = await queryAiService([{ role: 'user', content: prompt }]);
-      if (res) {
-          if(confirm("Recap Generated. Add to chat?")) {
-              sendChatMessage(`**SESSION RECAP:**\n${res}`, 'chat-public');
+      
+      const accessiblePages = Object.values(data.journal_pages || {}).filter(p => p.isPublic);
+      // Collect journal text only
+      const journalContext = accessiblePages.map(p => cleanText(p.content)).join('\n\n').slice(-15000); // Increased context slightly
+      const genesis = data.campaign?.genesis || {};
+      
+      const systemPrompt = `
+      Role: Royal Scribe / Historian.
+      Campaign: "${genesis.campaignName || "Unknown Adventure"}".
+      Setting: ${genesis.tone || "Fantasy"} world. ${genesis.loreText || ""}.
+      Task: Write a cinematic summary of the adventure so far based ONLY on the provided Journal Entries. Do not invent events not in the text.
+      Style: Epic, narrative, PG-13.
+      
+      JOURNAL ENTRIES:
+      ${journalContext}
+      `;
+
+      const res = await queryAiService([{ role: 'user', content: systemPrompt }]);
+      
+      if (res && !res.includes("Error")) {
+          // If DM, ask to save. If player, just show in chat.
+          if (effectiveRole === 'dm' && confirm("Recap generated. Save to Journal? (Cancel to just post in chat)")) {
+              const newId = `page_recap_${Date.now()}`;
+              const newPage = { id: newId, title: `Recap: ${new Date().toLocaleDateString()}`, content: `<p>${res.replace(/\n/g, '<br/>')}</p>`, ownerId: 'system', isPublic: true, created: Date.now() };
+              updateCloud({...data, journal_pages: {...data.journal_pages, [newId]: newPage}}, true);
+              sendChatMessage(`**NEW JOURNAL ENTRY ADDED:** Recap of recent events. Check the Journal tab!`, 'chat-public');
+          } else {
+              sendChatMessage(`**📜 CAMPAIGN RECAP:**\n${res}`, 'chat-public');
           }
       }
       setIsLoading(false);
@@ -388,7 +410,7 @@ function App() {
                       role={effectiveRole}
                       user={user} 
                       generateRecap={generateRecap}
-                      clearChat={clearChat} // PASSED DOWN
+                      clearChat={clearChat}
                       showTools={showTools}
                       setShowTools={setShowTools}
                       diceLog={diceLog}
