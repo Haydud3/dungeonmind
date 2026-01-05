@@ -184,12 +184,13 @@ function App() {
       }, 500);
   };
 
+  // --- ROBUST AI SERVICE (RETRIES & ERROR PARSING) ---
   const queryAiService = async (messages) => {
       const hasKey = aiProvider === 'puter' || apiKey;
       if (!hasKey) { alert("Error: No AI Provider set."); return "Config Error."; }
       
       let attempts = 0; 
-      const maxRetries = 2; 
+      const maxRetries = 2; // Run twice if needed
 
       while(attempts < maxRetries) {
           try {
@@ -203,22 +204,39 @@ function App() {
               } else if(aiProvider === 'gemini') {
                    const combined = messages.map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n');
                    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({contents:[{parts:[{text:combined}]}]}) });
+                   if(!r.ok) throw new Error(`Gemini Error ${r.status}`);
                    const j = await r.json();
                    return j.candidates?.[0]?.content?.parts?.[0]?.text;
               } else {
                   const r = await fetch('https://api.openai.com/v1/chat/completions', { method:'POST', headers:{'Content-Type':'application/json', 'Authorization':`Bearer ${apiKey}`}, body:JSON.stringify({model: openAiModel, messages: messages}) });
+                  if(!r.ok) throw new Error(`OpenAI Error ${r.status}`);
                   const j = await r.json();
                   return j.choices?.[0]?.message?.content;
               }
           } catch(e) { 
-              // ERROR HANDLING FIX: Stringify object errors so they are readable
-              console.error(e);
-              const errMsg = e instanceof Error ? e.message : (typeof e === 'object' ? JSON.stringify(e) : String(e));
-              
-              if(attempts === maxRetries) { 
-                  alert("AI Error: " + errMsg); 
-                  return "System Error: " + errMsg; 
+              // ERROR HANDLING: Parse Object to String
+              const errObj = e.response || e;
+              const errStr = typeof errObj === 'object' ? JSON.stringify(errObj) : String(errObj);
+              console.error("AI Attempt " + attempts + " Failed:", errStr);
+
+              // 1. MODERATION / BAD REQUEST (Do not retry)
+              if (errStr.includes("moderation") || errStr.includes("422") || errStr.includes("400")) {
+                  return "⚠️ AI Safety Filter Triggered. Some content was rejected. (Check logs for details)";
               }
+              
+              // 2. TOKEN / CREDIT LIMIT (Do not retry)
+              if (errStr.includes("credit") || errStr.includes("quota") || errStr.includes("402")) {
+                  alert("⚠️ Out of AI Credits! Please check your Puter/OpenAI account.");
+                  return "System: Out of Credits.";
+              }
+
+              // 3. SERVER / NETWORK ERROR (Retry!)
+              if(attempts === maxRetries) { 
+                  // If we failed twice on a generic error
+                  return "System Error: " + errStr.slice(0, 100); 
+              }
+              
+              // Wait 1s before retrying
               await new Promise(res => setTimeout(res, 1000));
           }
       }
@@ -258,21 +276,20 @@ function App() {
       updateCloud(updatedData, true);
 
       if (type === 'ai-public' || type === 'ai-private') {
-          // AI reads journal context here too for smarter general chat
           const genesis = data.campaign?.genesis || {};
           const accessiblePages = Object.values(data.journal_pages || {}).filter(p => p.isPublic || p.ownerId === user?.uid);
-          const journalContext = accessiblePages.map(p => `[${p.title}]: ${cleanText(p.content)}`).join('\n').slice(-10000); 
+          const journalContext = accessiblePages.map(p => `[${p.title}]: ${cleanText(p.content)}`).join('\n').slice(-8000); 
 
           const systemPrompt = `
           Role: Dungeon Master AI for "${genesis.campaignName || "D&D"}" (${genesis.tone || "Fantasy"}).
           Lore: ${genesis.loreText || "Generic"}.
           Location: ${data.campaign.location || "Unknown"}.
           
-          JOURNAL KNOWLEDGE:
+          JOURNAL CONTEXT:
           ${journalContext}
           
           User: ${newMessage.senderName}.
-          Action: Answer based on the journal data.
+          Action: Answer the user.
           `;
 
           const aiRes = await queryAiService([{ role: "system", content: systemPrompt }, { role: "user", content: content }]);
@@ -334,59 +351,78 @@ function App() {
     }, 1000);
   };
 
-  // --- RECAP LOGIC (FIXED) ---
+  // --- SMART CHUNKED RECAP GENERATOR (FIXED) ---
   const generateRecap = async () => {
       setIsLoading(true);
       
       const accessiblePages = Object.values(data.journal_pages || {}).filter(p => p.isPublic);
       
-      // Get cleaned text from all journals
-      const journalContext = accessiblePages
+      // Sort by date to keep story linear
+      const allText = accessiblePages
           .sort((a,b) => a.created - b.created)
-          .map(p => `--- ENTRY: ${p.title} ---\n${cleanText(p.content)}`)
-          .join('\n\n')
-          .slice(-20000); // 20k chars
+          .map(p => `ENTRY: ${p.title}\n${cleanText(p.content)}`)
+          .join('\n\n');
       
-      const genesis = data.campaign?.genesis || {};
-      
-      if (!journalContext.trim()) {
+      if (!allText.trim()) {
           alert("No public journal entries found to recap!");
           setIsLoading(false);
           return;
       }
 
-      // We explicitly split System vs User to help models like Mistral/Claude behave
-      const systemPrompt = `
-      You are the Royal Historian for the adventure "${genesis.campaignName || "Unknown"}".
-      World Tone: ${genesis.tone || "Fantasy"}.
-      World Lore: ${genesis.loreText || ""}.
-      Task: Summarize the adventure so far based ONLY on the User's provided Journal Logs.
-      Style: Cinematic, narrative, exciting.
-      Constraint: Do NOT ask for more info. Summarize what is given.
-      `;
+      const genesis = data.campaign?.genesis || {};
+      
+      // CHUNK STRATEGY:
+      // If text is huge (> 6000 chars), we split it to avoid 422 Errors.
+      // We also wrap each chunk in a try/catch so one bad chunk doesn't kill the process.
+      
+      const chunkSize = 6000;
+      let finalSummary = "";
 
-      const userPrompt = `
-      Here are the Journal Logs:
-      
-      ${journalContext}
-      
-      Please write the recap now.
-      `;
+      if (allText.length > chunkSize) {
+          let summaries = [];
+          for (let i = 0; i < allText.length; i += chunkSize) {
+              const chunk = allText.slice(i, i + chunkSize);
+              
+              // RETRY LOGIC FOR SPECIFIC CHUNK
+              let chunkRes = null;
+              try {
+                  chunkRes = await queryAiService([{ role: 'user', content: `Summarize this partial log:\n\n${chunk}` }]);
+              } catch (e) { console.warn("Chunk failed, skipping..."); }
 
-      const res = await queryAiService([
-          { role: 'system', content: systemPrompt }, 
-          { role: 'user', content: userPrompt }
-      ]);
-      
-      if (res && !res.includes("Error")) {
-          if (effectiveRole === 'dm' && confirm("Recap generated. Save to Journal? (Cancel to just post in chat)")) {
+              if (chunkRes && !chunkRes.includes("Error") && !chunkRes.includes("Safety")) {
+                  summaries.push(chunkRes);
+              } else {
+                  summaries.push("[Section skipped due to content filter]");
+              }
+          }
+          
+          // Final Pass
+          const combined = summaries.join("\n\n");
+          finalSummary = await queryAiService([{ role: 'user', content: `Create a cinematic summary from these notes:\n\n${combined}` }]);
+      } else {
+          // Standard Single Pass
+          const prompt = `
+          You are the Historian for "${genesis.campaignName}". 
+          Tone: ${genesis.tone}. 
+          Task: Write a cinematic recap of the adventure below.
+          
+          LOGS:
+          ${allText}
+          `;
+          finalSummary = await queryAiService([{ role: 'user', content: prompt }]);
+      }
+
+      if (finalSummary && !finalSummary.includes("Error") && !finalSummary.includes("Safety")) {
+          if (effectiveRole === 'dm' && confirm("Recap generated. Save to Journal?")) {
               const newId = `page_recap_${Date.now()}`;
-              const newPage = { id: newId, title: `Recap: ${new Date().toLocaleDateString()}`, content: `<p>${res.replace(/\n/g, '<br/>')}</p>`, ownerId: 'system', isPublic: true, created: Date.now() };
+              const newPage = { id: newId, title: `Recap: ${new Date().toLocaleDateString()}`, content: `<p>${finalSummary.replace(/\n/g, '<br/>')}</p>`, ownerId: 'system', isPublic: true, created: Date.now() };
               updateCloud({...data, journal_pages: {...data.journal_pages, [newId]: newPage}}, true);
               sendChatMessage(`**NEW JOURNAL ENTRY ADDED:** Recap of recent events. Check the Journal tab!`, 'chat-public');
           } else {
-              sendChatMessage(`**📜 CAMPAIGN RECAP:**\n${res}`, 'chat-public');
+              sendChatMessage(`**📜 CAMPAIGN RECAP:**\n${finalSummary}`, 'chat-public');
           }
+      } else {
+          alert("Recap failed (likely content filter or limit): " + finalSummary);
       }
       setIsLoading(false);
   };
