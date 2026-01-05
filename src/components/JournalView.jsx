@@ -64,12 +64,10 @@ const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalE
         setIsAiLoading(false);
     };
 
-    // FIX: Replace non-breaking spaces to ensure wrapping works
     const getPreviewText = (html) => {
         const tmp = document.createElement("DIV");
         tmp.innerHTML = html;
         let text = tmp.textContent || tmp.innerText || "";
-        // Replace non-breaking space (char 160) with regular space (char 32)
         return text.replace(/\u00A0/g, " ");
     };
 
@@ -77,8 +75,8 @@ const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalE
     if (!activePageId) {
         return (
             <div className="h-full bg-slate-900 p-4 overflow-y-auto custom-scroll pb-24">
-                {/* FIX: Removed max-w-5xl. Added max-w-none to fill screen on Desktop */}
-                <div className="w-full max-w-none space-y-4">
+                {/* FIX: Added max-w-5xl mx-auto to center the list uniformly */}
+                <div className="w-full max-w-5xl mx-auto space-y-4">
                     <div className="flex justify-between items-center mb-6">
                         <h2 className="text-2xl text-amber-500 fantasy-font">Journal</h2>
                         <button onClick={handleCreate} className="bg-green-700 hover:bg-green-600 text-white px-3 py-1 rounded flex items-center gap-2"><Icon name="plus" size={16}/> New Entry</button>
@@ -88,8 +86,6 @@ const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalE
 
                     <div className="grid gap-3">
                         {pages.map(p => (
-                            // FIX: Changed <button> to <div> with role="button" to fix flexbox/width issues
-                            // Added w-full, min-w-0 to force container to respect screen width
                             <div 
                                 key={p.id} 
                                 onClick={() => setActivePageId(p.id)} 
@@ -107,7 +103,6 @@ const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalE
                                     </div>
                                     <Icon name="chevron-right" size={16} className="text-slate-600 group-hover:text-amber-500 shrink-0 ml-2"/>
                                 </div>
-                                {/* FIX: Ensure wrapping works by breaking words and allowing normal whitespace */}
                                 <div className="text-sm text-slate-400 mt-2 line-clamp-2 opacity-70 break-words whitespace-normal w-full">
                                     {getPreviewText(p.content)}
                                 </div>
@@ -124,46 +119,47 @@ const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalE
         <div className="h-full flex flex-col bg-slate-900">
             {/* Header Toolbar */}
             <div className="shrink-0 h-14 border-b border-slate-700 flex items-center justify-between px-4 bg-slate-800">
-                <div className="flex items-center gap-3 overflow-hidden">
+                <div className="flex items-center gap-3 overflow-hidden w-full max-w-5xl mx-auto">
                     <button onClick={() => setActivePageId(null)} className="text-slate-400 hover:text-white shrink-0"><Icon name="arrow-left" size={20}/></button>
                     {isEditing ? (
                         <input className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-white font-bold w-full min-w-0" value={editTitle} onChange={e => setEditTitle(e.target.value)} />
                     ) : (
                         <h2 className="font-bold text-slate-200 truncate">{activePage.title}</h2>
                     )}
-                </div>
                 
-                <div className="flex gap-2 shrink-0 ml-2">
-                    {isEditing ? (
-                        <>
-                            <button onClick={handleAiEnhance} disabled={isAiLoading} className="text-xs bg-purple-600 hover:bg-purple-500 text-white px-3 py-1 rounded flex items-center gap-1">
-                                {isAiLoading ? <Icon name="loader-2" className="animate-spin" size={14}/> : <Icon name="sparkles" size={14}/>} AI
-                            </button>
-                            <button onClick={handleSave} className="text-xs bg-green-700 hover:bg-green-600 text-white px-3 py-1 rounded">Save</button>
-                        </>
-                    ) : (
-                        <>
-                            {(role === 'dm' || activePage.ownerId === userId) && (
-                                <>
-                                    <button onClick={() => {
-                                        const newData = {...data, journal_pages: {...data.journal_pages, [activePage.id]: {...activePage, isPublic: !activePage.isPublic}}};
-                                        updateCloud(newData, true);
-                                    }} className={`text-xs px-2 py-1 rounded border ${activePage.isPublic ? 'border-green-600 text-green-400' : 'border-slate-600 text-slate-400'}`}>
-                                        {activePage.isPublic ? 'Public' : 'Private'}
-                                    </button>
-                                    <button onClick={() => { setIsEditing(true); setEditTitle(activePage.title); setEditContent(activePage.content); }} className="text-slate-400 hover:text-amber-400 p-2"><Icon name="pencil" size={18}/></button>
-                                    <button onClick={handleDelete} className="text-slate-400 hover:text-red-400 p-2"><Icon name="trash-2" size={18}/></button>
-                                </>
-                            )}
-                        </>
-                    )}
+                    <div className="flex gap-2 shrink-0 ml-auto">
+                        {isEditing ? (
+                            <>
+                                <button onClick={handleAiEnhance} disabled={isAiLoading} className="text-xs bg-purple-600 hover:bg-purple-500 text-white px-3 py-1 rounded flex items-center gap-1">
+                                    {isAiLoading ? <Icon name="loader-2" className="animate-spin" size={14}/> : <Icon name="sparkles" size={14}/>} AI
+                                </button>
+                                <button onClick={handleSave} className="text-xs bg-green-700 hover:bg-green-600 text-white px-3 py-1 rounded">Save</button>
+                            </>
+                        ) : (
+                            <>
+                                {(role === 'dm' || activePage.ownerId === userId) && (
+                                    <>
+                                        <button onClick={() => {
+                                            const newData = {...data, journal_pages: {...data.journal_pages, [activePage.id]: {...activePage, isPublic: !activePage.isPublic}}};
+                                            updateCloud(newData, true);
+                                        }} className={`text-xs px-2 py-1 rounded border ${activePage.isPublic ? 'border-green-600 text-green-400' : 'border-slate-600 text-slate-400'}`}>
+                                            {activePage.isPublic ? 'Public' : 'Private'}
+                                        </button>
+                                        <button onClick={() => { setIsEditing(true); setEditTitle(activePage.title); setEditContent(activePage.content); }} className="text-slate-400 hover:text-amber-400 p-2"><Icon name="pencil" size={18}/></button>
+                                        <button onClick={handleDelete} className="text-slate-400 hover:text-red-400 p-2"><Icon name="trash-2" size={18}/></button>
+                                    </>
+                                )}
+                            </>
+                        )}
+                    </div>
                 </div>
             </div>
 
             {/* Content Area */}
             <div className="flex-1 overflow-y-auto custom-scroll bg-slate-900 pb-24">
                 {isEditing ? (
-                    <div className="h-full flex flex-col">
+                    // FIX: Added max-w-5xl mx-auto to center the editor
+                    <div className="h-full flex flex-col w-full max-w-5xl mx-auto">
                         <ReactQuill 
                             theme="snow" 
                             value={editContent} 
@@ -173,8 +169,8 @@ const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalE
                         />
                     </div>
                 ) : (
-                    // FIX: Full width, break-words to prevent overflow
-                    <div className="p-6 w-full max-w-none overflow-hidden">
+                    // FIX: Added max-w-5xl mx-auto to center the read view
+                    <div className="p-6 w-full max-w-5xl mx-auto overflow-hidden">
                         <div 
                             className="prose prose-invert prose-p:text-slate-300 prose-headings:text-amber-500 max-w-none break-words whitespace-pre-wrap" 
                             dangerouslySetInnerHTML={{__html: activePage.content}} 
