@@ -43,7 +43,7 @@ const SessionView = (props) => {
         if (msg.role === 'system') return true;
         if (msg.senderId === user?.uid || msg.targetId === user?.uid) return true;
         if (msg.type === 'ai-private' && msg.senderId === user?.uid) return true;
-        if (role === 'dm') return true; // DM sees all? (Optional: remove if private really means private)
+        if (role === 'dm') return true; 
         return false;
     });
 
@@ -59,14 +59,12 @@ const SessionView = (props) => {
 
     return (
         <div className="flex h-full relative flex-col bg-slate-900">
-            {/* Header / Tools for DM */}
-            {role === 'dm' && (
-                <div className="absolute top-2 right-4 z-20 opacity-50 hover:opacity-100 transition-opacity">
-                    <button onClick={generateRecap} className="bg-slate-800 border border-slate-600 text-white px-3 py-1 rounded-full text-xs shadow-lg flex items-center gap-2 hover:bg-amber-700 hover:border-amber-500">
-                        <Icon name="scroll-text" size={14}/> Generate Recap
-                    </button>
-                </div>
-            )}
+            {/* Header / Tools - OPEN TO ALL */}
+            <div className="absolute top-2 right-4 z-20 opacity-50 hover:opacity-100 transition-opacity">
+                <button onClick={generateRecap} className="bg-slate-800 border border-slate-600 text-white px-3 py-1 rounded-full text-xs shadow-lg flex items-center gap-2 hover:bg-amber-700 hover:border-amber-500">
+                    <Icon name="scroll-text" size={14}/> Generate Recap
+                </button>
+            </div>
 
             <div className="flex-1 flex flex-col h-full relative overflow-hidden">
                 <div className="flex-1 overflow-y-auto custom-scroll p-4 space-y-1 pb-24 md:pb-4">
