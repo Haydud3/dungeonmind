@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import Icon from './Icon';
 
-const PartyView = ({ data, setData, role, updateCloud }) => {
+const PartyView = ({ data, setData, role, updateCloud, setInputText, setView }) => {
     const [editingId, setEditingId] = useState(null);
     const [editForm, setEditForm] = useState({});
 
@@ -35,6 +35,23 @@ const PartyView = ({ data, setData, role, updateCloud }) => {
         updateCloud({ ...data, players: data.players.filter(p => p.id !== id) }, true);
     };
 
+    // NEW: Auto Level Up Handler
+    const handleLevelUp = (p) => {
+        const currentLevel = parseInt(p.level) || 1;
+        const newLevel = currentLevel + 1;
+        
+        // 1. Update Cloud Data
+        const newPlayers = data.players.map(pl => pl.id === p.id ? { ...pl, level: newLevel } : pl);
+        updateCloud({ ...data, players: newPlayers }, true);
+
+        // 2. Prep AI Prompt
+        const prompt = `I am leveling up my character "${p.name}" (${p.race} ${p.class}) from level ${currentLevel} to ${newLevel}.\n\nCharacter Context: ${p.personality || 'Standard build'}.\n\nCan you tell me what new abilities or spells I gain at this level? Also, give me 3 optimization suggestions that fit my character's theme.`;
+
+        // 3. Switch to Chat
+        setInputText(prompt);
+        setView('session');
+    };
+
     return (
         <div className="h-full bg-slate-900 p-4 overflow-y-auto custom-scroll pb-24">
             <div className="max-w-4xl mx-auto space-y-4">
@@ -59,8 +76,12 @@ const PartyView = ({ data, setData, role, updateCloud }) => {
                                             <input className="w-full bg-slate-900 border border-slate-600 p-2 rounded text-white text-sm" value={editForm.race} onChange={e => setEditForm({...editForm, race: e.target.value})} />
                                         </div>
                                         <div>
-                                            <label className="text-xs text-slate-400 uppercase font-bold">Class & Level</label>
-                                            <input className="w-full bg-slate-900 border border-slate-600 p-2 rounded text-white text-sm" value={editForm.class} onChange={e => setEditForm({...editForm, class: e.target.value})} placeholder="e.g. Rogue 3" />
+                                            <label className="text-xs text-slate-400 uppercase font-bold">Class</label>
+                                            <input className="w-full bg-slate-900 border border-slate-600 p-2 rounded text-white text-sm" value={editForm.class} onChange={e => setEditForm({...editForm, class: e.target.value})} />
+                                        </div>
+                                        <div>
+                                            <label className="text-xs text-slate-400 uppercase font-bold">Level</label>
+                                            <input type="number" className="w-full bg-slate-900 border border-slate-600 p-2 rounded text-white text-sm" value={editForm.level} onChange={e => setEditForm({...editForm, level: e.target.value})} />
                                         </div>
                                     </div>
 
@@ -68,7 +89,6 @@ const PartyView = ({ data, setData, role, updateCloud }) => {
                                     <div>
                                         <label className="text-xs text-slate-400 uppercase font-bold">Aliases (Comma separated)</label>
                                         <input className="w-full bg-slate-900 border border-slate-600 p-2 rounded text-white text-sm" value={editForm.aliases || ''} onChange={e => setEditForm({...editForm, aliases: e.target.value})} placeholder="e.g. Raven, Dad, The Tank" />
-                                        <p className="text-[10px] text-slate-500 mt-1">Help the AI identify this character by other names.</p>
                                     </div>
 
                                     {/* Roleplay Fields */}
@@ -79,11 +99,11 @@ const PartyView = ({ data, setData, role, updateCloud }) => {
                                         </div>
                                         <div>
                                             <label className="text-xs text-amber-500 uppercase font-bold flex items-center gap-2"><Icon name="brain" size={12}/> Personality & Motivations</label>
-                                            <textarea className="w-full bg-slate-900 border border-slate-600 p-2 rounded text-white text-sm h-24 resize-none" value={editForm.personality || ''} onChange={e => setEditForm({...editForm, personality: e.target.value})} placeholder="Brave but reckless. Wants to find the lost mine to restore family honor." />
+                                            <textarea className="w-full bg-slate-900 border border-slate-600 p-2 rounded text-white text-sm h-24 resize-none" value={editForm.personality || ''} onChange={e => setEditForm({...editForm, personality: e.target.value})} placeholder="Brave but reckless. Wants to find the lost mine..." />
                                         </div>
                                         <div>
                                             <label className="text-xs text-amber-500 uppercase font-bold flex items-center gap-2"><Icon name="book-open" size={12}/> Backstory Brief</label>
-                                            <textarea className="w-full bg-slate-900 border border-slate-600 p-2 rounded text-white text-sm h-24 resize-none" value={editForm.backstory || ''} onChange={e => setEditForm({...editForm, backstory: e.target.value})} placeholder="Exiled from the dwarven kingdom for a crime they didn't commit..." />
+                                            <textarea className="w-full bg-slate-900 border border-slate-600 p-2 rounded text-white text-sm h-24 resize-none" value={editForm.backstory || ''} onChange={e => setEditForm({...editForm, backstory: e.target.value})} placeholder="Exiled from the dwarven kingdom..." />
                                         </div>
                                     </div>
 
@@ -101,7 +121,13 @@ const PartyView = ({ data, setData, role, updateCloud }) => {
                                             </div>
                                             <div>
                                                 <h3 className="text-2xl font-bold text-slate-100 fantasy-font leading-none">{p.name}</h3>
-                                                <p className="text-amber-500 text-sm font-bold">{p.race} {p.class} <span className="text-slate-500 font-normal">| Lvl {p.level || 1}</span></p>
+                                                <div className="flex items-center gap-2 mt-1">
+                                                    <p className="text-amber-500 text-sm font-bold">{p.race} {p.class} <span className="text-slate-500 font-normal">| Lvl {p.level || 1}</span></p>
+                                                    {/* NEW: Level Up Button */}
+                                                    <button onClick={() => handleLevelUp(p)} className="bg-slate-700 hover:bg-amber-900 text-amber-500 px-2 py-0.5 rounded text-[10px] uppercase font-bold flex items-center gap-1 border border-slate-600 hover:border-amber-500 transition-colors" title="Level Up & Ask AI">
+                                                        Level Up <Icon name="arrow-up" size={10}/>
+                                                    </button>
+                                                </div>
                                                 {p.aliases && <p className="text-xs text-slate-500 mt-0.5">aka: {p.aliases}</p>}
                                             </div>
                                         </div>
