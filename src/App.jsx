@@ -293,11 +293,17 @@ function App() {
               .join('\n')
               .slice(-charLimit); 
 
-          // FIX: Include Aliases in Party Info
+          // FIX: Include Rich Character Details
           const partyContext = data.players.map(p => {
               const aliasStr = p.aliases ? ` (aka: ${p.aliases})` : "";
-              return `${p.name} (${p.race} ${p.class})${aliasStr}`;
-          }).join(', ');
+              const details = [
+                  p.appearance ? `Looks: ${p.appearance}` : '',
+                  p.personality ? `Personality: ${p.personality}` : '',
+                  p.backstory ? `History: ${p.backstory}` : ''
+              ].filter(Boolean).join('. ');
+              
+              return `• ${p.name} (${p.race} ${p.class})${aliasStr}: ${details}`;
+          }).join('\n');
 
           const systemPrompt = `
           Role: Dungeon Master AI for "${genesis.campaignName || "D&D"}" (${genesis.tone || "Fantasy"}).
@@ -311,7 +317,7 @@ function App() {
           ${journalContext}
           
           User: ${newMessage.senderName}.
-          Action: Answer based on the journal data provided. Use the party roster to identify characters by their aliases if needed.
+          Action: Answer based on the journal data provided. Use the party roster to understand the characters' personalities, looks, and motivations.
           `;
 
           const aiRes = await queryAiService([{ role: "system", content: systemPrompt }, { role: "user", content: content }]);
@@ -467,7 +473,6 @@ function App() {
   if (!gameParams || !data) return <Lobby fb={fb} user={user} onJoin={(c, r, u) => { localStorage.setItem('dm_last_code', c); setGameParams({code:c, role:r, isOffline:false, uid:u}) }} onOffline={() => setGameParams({code:'LOCAL', role:'dm', isOffline:true, uid:'admin'})} />;
 
   return (
-    // FIX: md:flex-row enables side-by-side layout on larger screens (landscape)
     <div className="fixed inset-0 flex flex-col md:flex-row bg-slate-900 text-slate-200 font-sans overflow-hidden">
        <Sidebar view={currentView} setView={setCurrentView} onExit={() => { localStorage.removeItem('dm_last_code'); setGameParams(null); setData(null); }} />
        <main className="flex-1 flex flex-col overflow-hidden relative w-full h-full">
@@ -528,7 +533,6 @@ function App() {
            </div>
        )}
        
-       {/* FIX: Dice overlay must be at the very end with huge z-index to sit on top of fixed layout layers */}
        <div className="fixed inset-0 pointer-events-none z-[99999]">
            {rollingDice && <DiceOverlay roll={rollingDice} />}
        </div>
