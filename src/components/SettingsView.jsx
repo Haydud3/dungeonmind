@@ -132,15 +132,37 @@ const SettingsView = ({
                         <div>
                             <label className="block text-xs text-slate-400 mb-1">Puter Model</label>
                             <select value={puterModel} onChange={e => setPuterModel(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none mb-3">
-                                <option value="mistral-large-latest">Mistral Large (Recommended)</option>
-                                <option value="claude-3-5-sonnet-latest">Claude 3.5 Sonnet</option>
-                                <option value="gpt-4o">GPT-4o</option>
-                                <option value="gpt-4o-mini">GPT-4o Mini</option>
-                                <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
-                                <option value="meta-llama/meta-llama-3.1-70b-instruct">Llama 3.1 (70B)</option>
-                                <option value="deepseek-chat">DeepSeek V3</option>
-                                <option value="deepseek-reasoner">DeepSeek R1 (Reasoning)</option>
+                                {/* Mistral Family */}
+                                <optgroup label="Mistral">
+                                    <option value="mistral-large-latest">Mistral Large (Recommended)</option>
+                                    <option value="codestral-latest">Codestral (Code/Rules)</option>
+                                </optgroup>
+                                
+                                {/* Claude Family */}
+                                <optgroup label="Anthropic Claude">
+                                    <option value="claude-3-7-sonnet-latest">Claude 3.7 Sonnet (New)</option>
+                                    <option value="claude-3-5-sonnet-latest">Claude 3.5 Sonnet</option>
+                                </optgroup>
+                                
+                                {/* DeepSeek Family */}
+                                <optgroup label="DeepSeek">
+                                    <option value="deepseek-v3">DeepSeek V3 (Chat)</option>
+                                    <option value="deepseek-reasoner">DeepSeek R1 (Reasoning)</option>
+                                </optgroup>
+                                
+                                {/* Meta / Llama Family */}
+                                <optgroup label="Meta Llama">
+                                    <option value="meta-llama/meta-llama-3.1-70b-instruct">Llama 3.1 (70B)</option>
+                                    <option value="meta-llama/meta-llama-3.1-405b-instruct">Llama 3.1 (405B)</option>
+                                </optgroup>
+                                
+                                {/* OpenAI / Google via Puter */}
+                                <optgroup label="Others">
+                                    <option value="gpt-4o">GPT-4o</option>
+                                    <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+                                </optgroup>
                             </select>
+                            
                             <div className="bg-blue-900/30 border border-blue-600 rounded p-3">
                                 <div className="flex items-center gap-2 text-xs text-blue-300 mb-2"><Icon name="cloud" size={14}/><span>Powered by Puter.js (Serverless & Free)</span></div>
                                 <button onClick={async () => { 
