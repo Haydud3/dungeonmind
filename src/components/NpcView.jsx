@@ -8,7 +8,8 @@ const NpcView = ({ data, setData, role, updateCloud, generateNpc, setChatInput, 
     const [selectedNpc, setSelectedNpc] = useState(null);
     const [isEditing, setIsEditing] = useState(false);
 
-    const npcs = (data.npcs || []).filter(n => n && n.id);
+    // CRASH FIX: Ensure array exists
+    const npcs = (data?.npcs || []).filter(n => n && n.id);
     const visibleNpcs = role === 'dm' ? npcs : npcs.filter(n => !n.isHidden);
     const safeText = (val) => (typeof val === 'object' && val !== null) ? (val.primary || JSON.stringify(val)) : (val || "");
 
@@ -32,7 +33,7 @@ const NpcView = ({ data, setData, role, updateCloud, generateNpc, setChatInput, 
         if(!confirm("Delete this NPC?")) return;
         const newNpcs = npcs.filter(n => n.id !== id); 
         const nd = { ...data, npcs: newNpcs }; 
-        setData(nd); updateCloud(nd, true); // FIXED: Immediate Save
+        setData(nd); updateCloud(nd, true); 
         if(selectedNpc?.id === id) setSelectedNpc(null);
     };
     
@@ -67,5 +68,4 @@ const NpcView = ({ data, setData, role, updateCloud, generateNpc, setChatInput, 
         </div>
     );
 };
-
 export default NpcView;
