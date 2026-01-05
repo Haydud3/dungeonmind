@@ -64,18 +64,21 @@ const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalE
         setIsAiLoading(false);
     };
 
+    // FIX: Replace non-breaking spaces to ensure wrapping works
     const getPreviewText = (html) => {
         const tmp = document.createElement("DIV");
         tmp.innerHTML = html;
-        return tmp.textContent || tmp.innerText || "";
+        let text = tmp.textContent || tmp.innerText || "";
+        // Replace non-breaking space (char 160) with regular space (char 32)
+        return text.replace(/\u00A0/g, " ");
     };
 
     // --- LIST VIEW ---
     if (!activePageId) {
         return (
             <div className="h-full bg-slate-900 p-4 overflow-y-auto custom-scroll pb-24">
-                {/* FIX: Changed max-w-3xl mx-auto -> max-w-5xl (Wider & Left Aligned for PC) */}
-                <div className="w-full max-w-5xl space-y-4">
+                {/* FIX: Removed max-w-5xl. Added max-w-none to fill screen on Desktop */}
+                <div className="w-full max-w-none space-y-4">
                     <div className="flex justify-between items-center mb-6">
                         <h2 className="text-2xl text-amber-500 fantasy-font">Journal</h2>
                         <button onClick={handleCreate} className="bg-green-700 hover:bg-green-600 text-white px-3 py-1 rounded flex items-center gap-2"><Icon name="plus" size={16}/> New Entry</button>
@@ -85,8 +88,14 @@ const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalE
 
                     <div className="grid gap-3">
                         {pages.map(p => (
-                            // FIX: Added overflow-hidden to contain content
-                            <button key={p.id} onClick={() => setActivePageId(p.id)} className="w-full text-left bg-slate-800 border border-slate-700 p-4 rounded hover:border-amber-500 transition-colors group overflow-hidden">
+                            // FIX: Changed <button> to <div> with role="button" to fix flexbox/width issues
+                            // Added w-full, min-w-0 to force container to respect screen width
+                            <div 
+                                key={p.id} 
+                                onClick={() => setActivePageId(p.id)} 
+                                role="button"
+                                className="w-full text-left bg-slate-800 border border-slate-700 p-4 rounded hover:border-amber-500 transition-colors group cursor-pointer min-w-0"
+                            >
                                 <div className="flex justify-between items-start w-full">
                                     <div className="min-w-0 flex-1"> 
                                         <h3 className="font-bold text-slate-200 text-lg group-hover:text-amber-400 truncate">{p.title}</h3>
@@ -98,11 +107,11 @@ const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalE
                                     </div>
                                     <Icon name="chevron-right" size={16} className="text-slate-600 group-hover:text-amber-500 shrink-0 ml-2"/>
                                 </div>
-                                {/* FIX: break-words and whitespace-normal prevent horizontal scroll on mobile */}
+                                {/* FIX: Ensure wrapping works by breaking words and allowing normal whitespace */}
                                 <div className="text-sm text-slate-400 mt-2 line-clamp-2 opacity-70 break-words whitespace-normal w-full">
                                     {getPreviewText(p.content)}
                                 </div>
-                            </button>
+                            </div>
                         ))}
                     </div>
                 </div>
@@ -164,9 +173,8 @@ const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalE
                         />
                     </div>
                 ) : (
-                    // FIX: Changed max-w-3xl -> max-w-5xl and removed mx-auto so it aligns left on PC
-                    // Added break-words to ensure long text doesn't cause scrolling
-                    <div className="p-6 w-full max-w-5xl overflow-hidden">
+                    // FIX: Full width, break-words to prevent overflow
+                    <div className="p-6 w-full max-w-none overflow-hidden">
                         <div 
                             className="prose prose-invert prose-p:text-slate-300 prose-headings:text-amber-500 max-w-none break-words whitespace-pre-wrap" 
                             dangerouslySetInnerHTML={{__html: activePage.content}} 
