@@ -192,11 +192,15 @@ function App() {
   const queryAiService = async (messages, allowRetry = true) => {
       const hasKey = aiProvider === 'puter' || apiKey;
       if (!hasKey) { alert("Error: No AI Provider set."); return "Config Error."; }
-      let attempts = 0; const maxRetries = 2; 
+      
+      let attempts = 0; 
+      const maxRetries = 2; 
+
       while(attempts < maxRetries) {
           try {
               attempts++;
               let responseText = "";
+
               if(aiProvider === 'puter') {
                   if (!window.puter) throw new Error("Puter.js not loaded");
                   if (!window.puter.auth.isSignedIn()) await window.puter.auth.signIn();
@@ -216,10 +220,12 @@ function App() {
                   responseText = j.choices?.[0]?.message?.content;
               }
               return responseText;
+
           } catch(e) { 
               const errObj = e.response || e;
               const errStr = typeof errObj === 'object' ? JSON.stringify(errObj) : String(errObj);
               console.error(`AI Attempt ${attempts} Failed:`, errStr);
+
               if (errStr.includes("moderation") || errStr.includes("422")) {
                   if (allowRetry) {
                       console.warn("Moderation trigger. Retrying without context...");
@@ -228,11 +234,15 @@ function App() {
                   }
                   return "⚠️ AI Safety Filter: Content rejected.";
               }
+              
               if (errStr.includes("credit") || errStr.includes("quota") || errStr.includes("402")) {
                   alert("⚠️ Puter.js Credit Limit Reached. Please upgrade Puter or switch providers.");
                   return "System: Out of Credits.";
               }
-              if(attempts === maxRetries) { return "AI Error: " + errStr.slice(0, 100); }
+
+              if(attempts === maxRetries) { 
+                  return "AI Error: " + errStr.slice(0, 100); 
+              }
               await new Promise(res => setTimeout(res, 1000));
           }
       }
@@ -249,7 +259,8 @@ function App() {
       return char ? char.name : (user?.email?.split('@')[0] || "Spectator");
   };
 
-  const sendChatMessage = async (content, type = 'chat-public', targetId = null) => {
+  // --- UPDATED: SEND MESSAGE WITH CONTEXT MODES ---
+  const sendChatMessage = async (content, type = 'chat-public', targetId = null, contextMode = 'fast') => {
       if (!content.trim()) return;
       setIsLoading(true);
 
@@ -274,15 +285,27 @@ function App() {
       if (type === 'ai-public' || type === 'ai-private') {
           const genesis = data.campaign?.genesis || {};
           const accessiblePages = Object.values(data.journal_pages || {}).filter(p => p.isPublic || p.ownerId === user?.uid);
-          const journalContext = accessiblePages.map(p => `[${p.title}]: ${cleanText(p.content)}`).join('\n').slice(-4000); 
+          
+          // CONTEXT MODE LOGIC
+          // Fast: 4000 chars. Deep: 30000 chars (approx 7-8k tokens).
+          const charLimit = contextMode === 'deep' ? 30000 : 4000;
+          
+          const journalContext = accessiblePages
+              .sort((a,b) => a.created - b.created)
+              .map(p => `[${p.title}]: ${cleanText(p.content)}`)
+              .join('\n')
+              .slice(-charLimit); 
 
           const systemPrompt = `
           Role: Dungeon Master AI for "${genesis.campaignName || "D&D"}" (${genesis.tone || "Fantasy"}).
           Lore: ${genesis.loreText || "Generic"}.
           Location: ${data.campaign.location || "Unknown"}.
-          JOURNAL CONTEXT: ${journalContext}
+          
+          JOURNAL KNOWLEDGE (${contextMode.toUpperCase()} CONTEXT):
+          ${journalContext}
+          
           User: ${newMessage.senderName}.
-          Action: Answer based on the journal data.
+          Action: Answer based on the journal data provided.
           `;
 
           const aiRes = await queryAiService([{ role: "system", content: systemPrompt }, { role: "user", content: content }]);
@@ -325,7 +348,7 @@ function App() {
       updateCloud(nd, true);
   };
 
-  // --- NEW: SAVE MESSAGE TO JOURNAL FUNCTION ---
+  // Save Message to Journal
   const saveMessageToJournal = (msgContent) => {
       const title = prompt("Entry Title (e.g., 'Recap: Goblin Ambush'):", "New Entry");
       if (!title) return;
@@ -365,7 +388,6 @@ function App() {
     }, 1000);
   };
 
-  // --- DUAL MODE RECAP GENERATOR ---
   const generateRecap = async (mode = 'recent') => {
       setIsLoading(true);
       
@@ -377,9 +399,7 @@ function App() {
       
       if (!allText.trim()) { alert("No journal entries!"); setIsLoading(false); return; }
 
-      // MODE SWITCH
       if (mode === 'recent') {
-          // Recent: Slice last 4000 characters
           allText = allText.slice(-4000);
       }
       
@@ -387,24 +407,19 @@ function App() {
       const chunkSize = 4000;
       let finalSummary = "";
 
-      // Logic: If 'recent' OR text is small, one pass. If 'full' and text is big, Chunk it.
       if (mode === 'full' && allText.length > chunkSize) {
-          // MAP STEP (Chunking)
           let summaries = [];
           for (let i = 0; i < allText.length; i += chunkSize) {
               const chunk = allText.slice(i, i + chunkSize);
               const res = await queryAiService([{ role: 'user', content: `Summarize this fragment:\n\n${chunk}` }], false);
               if (res && !res.includes("Error") && !res.includes("Safety")) summaries.push(res);
           }
-          // REDUCE STEP
           finalSummary = await queryAiService([{ role: 'user', content: `Combine these summaries into a narrative:\n\n${summaries.join("\n\n")}` }]);
       } else {
-          // SINGLE PASS
           finalSummary = await queryAiService([{ role: 'user', content: `Summarize this text:\n\n${allText}` }]);
       }
 
       if (finalSummary && !finalSummary.includes("Error") && !finalSummary.includes("Safety")) {
-          // DIRECTLY TO CHAT
           sendChatMessage(`**${mode === 'full' ? '📜 FULL STORY RECAP' : '⏱️ RECENT RECAP'}:**\n${finalSummary}`, 'chat-public');
       } else {
           alert("Recap failed (Content Filter or Error).");
@@ -476,8 +491,8 @@ function App() {
                       isLoading={isLoading}
                       role={effectiveRole}
                       user={user} 
-                      generateRecap={generateRecap} // Pass the function
-                      saveMessageToJournal={saveMessageToJournal} // Pass the function
+                      generateRecap={generateRecap}
+                      saveMessageToJournal={saveMessageToJournal} 
                       clearChat={clearChat}
                       showTools={showTools}
                       setShowTools={setShowTools}
