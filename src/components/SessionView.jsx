@@ -13,9 +13,10 @@ const SessionView = (props) => {
 
     const [sendMode, setSendMode] = useState('chat-public'); 
     const [targetUser, setTargetUser] = useState(''); 
+    const [aiContextMode, setAiContextMode] = useState('fast'); // 'fast' or 'deep'
     const [editingId, setEditingId] = useState(null);
     const [editContent, setEditContent] = useState('');
-    const [showRecapMenu, setShowRecapMenu] = useState(false); // NEW
+    const [showRecapMenu, setShowRecapMenu] = useState(false);
     const chatEndRef = useRef(null);
 
     useEffect(() => { if (!editingId) chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [chatLog, isLoading, editingId]);
@@ -30,7 +31,8 @@ const SessionView = (props) => {
     const handleSend = () => {
         if (!inputText.trim()) return;
         if (sendMode === 'chat-private' && !targetUser) return alert("Select a player.");
-        onSendMessage(inputText, sendMode, targetUser);
+        // Pass aiContextMode to the send function
+        onSendMessage(inputText, sendMode, targetUser, aiContextMode);
         setInputText('');
     };
 
@@ -139,7 +141,7 @@ const SessionView = (props) => {
                                     )}
 
                                     {/* Action Buttons (Hover) */}
-                                    <div className="absolute right-0 top-0 opacity-0 group-hover:opacity-100 flex gap-1 bg-slate-900/90 rounded px-1 transition-opacity border border-slate-700">
+                                    <div className="absolute right-0 top-0 opacity-0 group-hover:opacity-100 flex gap-1 bg-slate-900/90 rounded px-1 transition-opacity border border-slate-700 shadow-xl z-10">
                                         <button onClick={() => saveMessageToJournal(msg.content)} className="text-slate-400 hover:text-green-400 p-1" title="Save to Journal"><Icon name="book-plus" size={12}/></button>
                                         {canEdit && !editingId && (
                                             <>
@@ -157,21 +159,47 @@ const SessionView = (props) => {
                 </div>
                 
                 <div className="p-3 bg-slate-900 border-t border-slate-800 flex flex-col gap-2 shrink-0 z-10">
-                    <div className="flex items-center gap-2">
-                        <select value={sendMode} onChange={(e) => setSendMode(e.target.value)} className="w-full md:w-40 bg-slate-800 text-xs font-bold text-slate-300 border border-slate-600 rounded px-2 py-1.5 outline-none focus:border-amber-500">
-                            <option value="chat-public">📢 Public Chat</option>
+                    <div className="flex items-center gap-2 flex-wrap">
+                        {/* 1. Mode Selector */}
+                        <select value={sendMode} onChange={(e) => setSendMode(e.target.value)} className="w-full md:w-36 bg-slate-800 text-xs font-bold text-slate-300 border border-slate-600 rounded px-2 py-1.5 outline-none focus:border-amber-500">
+                            <option value="chat-public">📢 Chat</option>
                             <option value="ai-public">🤖 AI (Public)</option>
                             <option value="ai-private">🧠 AI (Private)</option>
                             <option value="chat-private">🕵️ Whisper</option>
                         </select>
+
+                        {/* 2. Target Selector (Whisper) */}
                         {sendMode === 'chat-private' && (
                             <select value={targetUser} onChange={(e) => setTargetUser(e.target.value)} className="flex-1 md:flex-none md:w-32 bg-purple-900/20 text-xs text-purple-200 border border-purple-500/50 rounded px-2 py-1.5 outline-none">
                                 <option value="">To whom?</option>
-                                {Object.entries(data.activeUsers || {}).map(([uid, email]) => (uid !== user.uid && <option key={uid} value={uid}>{email.split('@')[0]}</option>))}
+                                {Object.entries(data.activeUsers || {}).map(([uid, email]) => {
+                                    if (uid === user.uid) return null;
+                                    // Check if DM
+                                    if (data.dmIds?.includes(uid)) return <option key={uid} value={uid}>Dungeon Master</option>;
+                                    // Check Character
+                                    const charId = data.assignments?.[uid];
+                                    const char = data.players?.find(p => p.id == charId);
+                                    const displayName = char ? `${char.name} (${char.class})` : email.split('@')[0];
+                                    return <option key={uid} value={uid}>{displayName}</option>;
+                                })}
                             </select>
                         )}
+
+                        {/* 3. AI Context Toggle (Only when AI selected) */}
+                        {(sendMode === 'ai-public' || sendMode === 'ai-private') && (
+                            <button 
+                                onClick={() => setAiContextMode(prev => prev === 'fast' ? 'deep' : 'fast')}
+                                className={`flex items-center gap-1 px-2 py-1.5 rounded border text-xs font-bold transition-colors ${aiContextMode === 'fast' ? 'bg-blue-900/30 border-blue-700 text-blue-300' : 'bg-amber-900/30 border-amber-700 text-amber-300'}`}
+                                title={aiContextMode === 'fast' ? "Fast: Reads last 4k chars" : "Deep: Reads last 30k chars (Slower)"}
+                            >
+                                <Icon name={aiContextMode === 'fast' ? 'zap' : 'book-open'} size={12}/>
+                                {aiContextMode === 'fast' ? 'Fast' : 'Deep'}
+                            </button>
+                        )}
+
                         <button onClick={() => setShowTools(!showTools)} className={`ml-auto rounded p-1.5 transition-colors ${showTools ? 'text-amber-500 bg-amber-900/20' : 'text-slate-500 hover:text-slate-300'}`}><Icon name="dices" size={20}/></button>
                     </div>
+                    
                     <div className="relative flex gap-2 items-end bg-slate-800 rounded-lg p-2 border border-slate-700 focus-within:border-slate-500 transition-colors">
                         <textarea value={inputText} onChange={e => setInputText(e.target.value)} onKeyDown={handleKeyDown} placeholder={possessedNpcId ? `Speaking as ${data.npcs?.find(n=>n.id===possessedNpcId)?.name}...` : "Message..."} className="flex-1 bg-transparent text-slate-200 resize-none h-10 max-h-32 focus:ring-0 outline-none custom-scroll text-sm leading-relaxed py-2" rows={1} style={{ height: inputText.length > 50 ? 'auto' : '40px' }} />
                         <button onClick={handleSend} disabled={!inputText.trim()} className={`p-2 rounded-md transition-all shrink-0 ${inputText.trim() ? 'bg-indigo-600 hover:bg-indigo-500 text-white' : 'bg-slate-700 text-slate-500 cursor-not-allowed'}`}><Icon name="send" size={18}/></button>
