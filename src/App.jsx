@@ -248,9 +248,24 @@ function App() {
       updateCloud(updatedData, true);
 
       if (type === 'ai-public' || type === 'ai-private') {
+          // --- UPDATED: AI NOW READS JOURNAL CONTEXT IN CHAT TOO ---
           const genesis = data.campaign?.genesis || {};
-          const prompt = `Role: DM. User: ${newMessage.senderName}. Context: ${genesis.loreText||"Fantasy"}. Respond to: "${content}"`;
-          const aiRes = await queryAiService([{ role: "user", content: prompt }]);
+          const accessiblePages = Object.values(data.journal_pages || {}).filter(p => p.isPublic || p.ownerId === user?.uid);
+          const journalContext = accessiblePages.map(p => `[${p.title}]: ${cleanText(p.content)}`).join('\n').slice(-6000); // Limit to ~6k chars for speed
+
+          const systemPrompt = `
+          Role: Dungeon Master AI for "${genesis.campaignName || "D&D"}" (${genesis.tone || "Fantasy"}).
+          Lore: ${genesis.loreText || "Generic"}.
+          Location: ${data.campaign.location || "Unknown"}.
+          
+          RELEVANT JOURNAL ENTRIES:
+          ${journalContext}
+          
+          User: ${newMessage.senderName}.
+          Action: Answer the user's question or react to their statement based on the provided Lore and Journal entries.
+          `;
+
+          const aiRes = await queryAiService([{ role: "system", content: systemPrompt }, { role: "user", content: content }]);
           
           const aiMessage = {
               id: Date.now() + 1,
@@ -315,24 +330,26 @@ function App() {
       
       const accessiblePages = Object.values(data.journal_pages || {}).filter(p => p.isPublic);
       // Collect journal text only
-      const journalContext = accessiblePages.map(p => cleanText(p.content)).join('\n\n').slice(-15000); // Increased context slightly
+      const journalContext = accessiblePages.map(p => cleanText(p.content)).join('\n\n').slice(-15000); 
       const genesis = data.campaign?.genesis || {};
       
-      const systemPrompt = `
-      Role: Royal Scribe / Historian.
-      Campaign: "${genesis.campaignName || "Unknown Adventure"}".
-      Setting: ${genesis.tone || "Fantasy"} world. ${genesis.loreText || ""}.
-      Task: Write a cinematic summary of the adventure so far based ONLY on the provided Journal Entries. Do not invent events not in the text.
-      Style: Epic, narrative, PG-13.
-      
-      JOURNAL ENTRIES:
-      ${journalContext}
-      `;
+      // We split the System and User prompt to force the AI to read the data
+      const systemMsg = {
+          role: "system",
+          content: `You are the Campaign Scribe for "${genesis.campaignName || "Adventure"}". 
+          Setting: ${genesis.tone || "Fantasy"}. ${genesis.loreText || ""}.
+          Task: Write a cinematic summary of the adventure so far based ONLY on the provided Journal Entries.
+          Style: Epic, narrative, PG-13.`
+      };
 
-      const res = await queryAiService([{ role: 'user', content: systemPrompt }]);
+      const userMsg = {
+          role: "user",
+          content: `Here are the Journal Entries to summarize:\n\n${journalContext}\n\n---\n\nWrite the recap now.`
+      };
+
+      const res = await queryAiService([systemMsg, userMsg]);
       
       if (res && !res.includes("Error")) {
-          // If DM, ask to save. If player, just show in chat.
           if (effectiveRole === 'dm' && confirm("Recap generated. Save to Journal? (Cancel to just post in chat)")) {
               const newId = `page_recap_${Date.now()}`;
               const newPage = { id: newId, title: `Recap: ${new Date().toLocaleDateString()}`, content: `<p>${res.replace(/\n/g, '<br/>')}</p>`, ownerId: 'system', isPublic: true, created: Date.now() };
