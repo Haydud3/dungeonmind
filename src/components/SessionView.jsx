@@ -6,7 +6,7 @@ const SessionView = (props) => {
     const { 
         data, chatLog, inputText, setInputText, 
         onSendMessage, onEditMessage, onDeleteMessage, 
-        isLoading, role, user, generateRecap, clearChat,
+        isLoading, role, user, generateRecap, saveMessageToJournal, clearChat,
         showTools, setShowTools, diceLog, handleDiceRoll,
         possessedNpcId 
     } = props;
@@ -15,6 +15,7 @@ const SessionView = (props) => {
     const [targetUser, setTargetUser] = useState(''); 
     const [editingId, setEditingId] = useState(null);
     const [editContent, setEditContent] = useState('');
+    const [showRecapMenu, setShowRecapMenu] = useState(false); // NEW
     const chatEndRef = useRef(null);
 
     useEffect(() => { if (!editingId) chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [chatLog, isLoading, editingId]);
@@ -63,11 +64,24 @@ const SessionView = (props) => {
             {role === 'dm' && (
                 <div className="absolute top-2 right-4 z-20 flex gap-2">
                     <button onClick={clearChat} className="bg-red-900/50 border border-red-700 text-red-200 px-3 py-1 rounded-full text-xs shadow-lg flex items-center gap-1 hover:bg-red-900 hover:text-white transition-colors opacity-50 hover:opacity-100">
-                        <Icon name="trash-2" size={14}/> Clear Chat
+                        <Icon name="trash-2" size={14}/> Clear
                     </button>
-                    <button onClick={generateRecap} className="bg-slate-800 border border-slate-600 text-white px-3 py-1 rounded-full text-xs shadow-lg flex items-center gap-2 hover:bg-amber-700 hover:border-amber-500 opacity-50 hover:opacity-100 transition-opacity">
-                        <Icon name="scroll-text" size={14}/> Recap
-                    </button>
+                    
+                    <div className="relative">
+                        <button onClick={() => setShowRecapMenu(!showRecapMenu)} className="bg-slate-800 border border-slate-600 text-white px-3 py-1 rounded-full text-xs shadow-lg flex items-center gap-2 hover:bg-amber-700 hover:border-amber-500 transition-colors">
+                            <Icon name="scroll-text" size={14}/> Recap <Icon name="chevron-down" size={12}/>
+                        </button>
+                        {showRecapMenu && (
+                            <div className="absolute right-0 mt-2 w-48 bg-slate-800 border border-slate-600 rounded-lg shadow-xl overflow-hidden z-30">
+                                <button onClick={() => { generateRecap('full'); setShowRecapMenu(false); }} className="w-full text-left px-4 py-2 text-xs hover:bg-slate-700 text-slate-200 flex items-center gap-2">
+                                    <Icon name="book-open" size={14}/> Full Story (All)
+                                </button>
+                                <button onClick={() => { generateRecap('recent'); setShowRecapMenu(false); }} className="w-full text-left px-4 py-2 text-xs hover:bg-slate-700 text-slate-200 flex items-center gap-2">
+                                    <Icon name="clock" size={14}/> Last Session
+                                </button>
+                            </div>
+                        )}
+                    </div>
                 </div>
             )}
 
@@ -80,19 +94,13 @@ const SessionView = (props) => {
                         const showHeader = i === 0 || visibleMessages[i-1].senderId !== msg.senderId || (msg.timestamp - visibleMessages[i-1].timestamp > 60000);
                         const canEdit = role === 'dm' || msg.senderId === user?.uid || (msg.role === 'ai' && msg.replyTo === user?.uid);
 
-                        // --- UPDATED SYSTEM MESSAGE RENDERER ---
                         if (isSystem) {
                             return (
                                 <div key={i} className="flex justify-center my-2 group">
                                     <span className="text-xs text-slate-500 bg-slate-800 px-3 py-1 rounded-full flex items-center gap-2 pr-2">
                                         <span dangerouslySetInnerHTML={{__html: msg.content.replace(/\*\*/g, '')}} />
-                                        {/* Hidden delete button for DM */}
                                         {role === 'dm' && (
-                                            <button 
-                                                onClick={() => onDeleteMessage(msg.id)} 
-                                                className="text-slate-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity -mr-1"
-                                                title="Delete this entry"
-                                            >
+                                            <button onClick={() => onDeleteMessage(msg.id)} className="text-slate-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity -mr-1" title="Delete">
                                                 <Icon name="x" size={12}/>
                                             </button>
                                         )}
@@ -125,18 +133,21 @@ const SessionView = (props) => {
                                             </div>
                                         </div>
                                     ) : (
-                                        <div className="text-slate-300 text-[15px] leading-relaxed break-words whitespace-pre-wrap group-hover:text-white transition-colors">
+                                        <div className="text-slate-300 text-[15px] leading-relaxed break-words whitespace-pre-wrap group-hover:text-white transition-colors relative">
                                             <span dangerouslySetInnerHTML={{__html: msg.content.replace(/\n/g, '<br/>').replace(/\*\*(.*?)\*\*/g, '<b>$1</b>')}} />
                                         </div>
                                     )}
 
                                     {/* Action Buttons (Hover) */}
-                                    {canEdit && !editingId && (
-                                        <div className="absolute right-0 top-0 opacity-0 group-hover:opacity-100 flex gap-1 bg-slate-900/80 rounded px-1 transition-opacity">
-                                            <button onClick={() => { setEditingId(msg.id); setEditContent(msg.content); }} className="text-slate-400 hover:text-amber-400 p-1"><Icon name="pencil" size={12}/></button>
-                                            <button onClick={() => onDeleteMessage(msg.id)} className="text-slate-400 hover:text-red-400 p-1"><Icon name="trash-2" size={12}/></button>
-                                        </div>
-                                    )}
+                                    <div className="absolute right-0 top-0 opacity-0 group-hover:opacity-100 flex gap-1 bg-slate-900/90 rounded px-1 transition-opacity border border-slate-700">
+                                        <button onClick={() => saveMessageToJournal(msg.content)} className="text-slate-400 hover:text-green-400 p-1" title="Save to Journal"><Icon name="book-plus" size={12}/></button>
+                                        {canEdit && !editingId && (
+                                            <>
+                                                <button onClick={() => { setEditingId(msg.id); setEditContent(msg.content); }} className="text-slate-400 hover:text-amber-400 p-1" title="Edit"><Icon name="pencil" size={12}/></button>
+                                                <button onClick={() => onDeleteMessage(msg.id)} className="text-slate-400 hover:text-red-400 p-1" title="Delete"><Icon name="trash-2" size={12}/></button>
+                                            </>
+                                        )}
+                                    </div>
                                 </div>
                             </div>
                         );
@@ -156,13 +167,7 @@ const SessionView = (props) => {
                         {sendMode === 'chat-private' && (
                             <select value={targetUser} onChange={(e) => setTargetUser(e.target.value)} className="flex-1 md:flex-none md:w-32 bg-purple-900/20 text-xs text-purple-200 border border-purple-500/50 rounded px-2 py-1.5 outline-none">
                                 <option value="">To whom?</option>
-                                {Object.entries(data.activeUsers || {}).map(([uid, email]) => {
-                                    if (uid === user.uid) return null;
-                                    const charId = data.assignments?.[uid];
-                                    const char = data.players?.find(p => p.id == charId);
-                                    const displayName = char ? `${char.name} (${char.class})` : email.split('@')[0];
-                                    return <option key={uid} value={uid}>{displayName}</option>;
-                                })}
+                                {Object.entries(data.activeUsers || {}).map(([uid, email]) => (uid !== user.uid && <option key={uid} value={uid}>{email.split('@')[0]}</option>))}
                             </select>
                         )}
                         <button onClick={() => setShowTools(!showTools)} className={`ml-auto rounded p-1.5 transition-colors ${showTools ? 'text-amber-500 bg-amber-900/20' : 'text-slate-500 hover:text-slate-300'}`}><Icon name="dices" size={20}/></button>
