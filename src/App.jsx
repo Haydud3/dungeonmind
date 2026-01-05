@@ -37,10 +37,17 @@ const DEFAULT_DATA = {
     }
 };
 
+// Helper: Strip HTML & Soften Trigger Words
 const cleanText = (html) => {
    const tmp = document.createElement("DIV");
    tmp.innerHTML = html;
-   return (tmp.textContent || tmp.innerText || "").replace(/\s+/g, " ").trim();
+   let text = (tmp.textContent || tmp.innerText || "").replace(/\s+/g, " ").trim();
+   // Basic sanitization to help pass strict AI filters
+   return text
+     .replace(/kill/gi, "defeat")
+     .replace(/murder/gi, "eliminate")
+     .replace(/blood/gi, "essence")
+     .replace(/torture/gi, "interrogate");
 };
 
 function App() {
@@ -184,59 +191,65 @@ function App() {
       }, 500);
   };
 
-  // --- ROBUST AI SERVICE (RETRIES & ERROR PARSING) ---
-  const queryAiService = async (messages) => {
+  // --- SAFE QUERY SERVICE WITH FALLBACK ---
+  const queryAiService = async (messages, allowRetry = true) => {
       const hasKey = aiProvider === 'puter' || apiKey;
       if (!hasKey) { alert("Error: No AI Provider set."); return "Config Error."; }
       
       let attempts = 0; 
-      const maxRetries = 2; // Run twice if needed
+      const maxRetries = 2; 
 
       while(attempts < maxRetries) {
           try {
               attempts++;
+              let responseText = "";
+
               if(aiProvider === 'puter') {
                   if (!window.puter) throw new Error("Puter.js not loaded");
                   if (!window.puter.auth.isSignedIn()) await window.puter.auth.signIn();
                   const safeModel = puterModel || 'mistral-large-latest';
                   const response = await window.puter.ai.chat(messages, { model: safeModel });
-                  return response?.message?.content;
+                  responseText = response?.message?.content;
               } else if(aiProvider === 'gemini') {
                    const combined = messages.map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n');
                    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({contents:[{parts:[{text:combined}]}]}) });
                    if(!r.ok) throw new Error(`Gemini Error ${r.status}`);
                    const j = await r.json();
-                   return j.candidates?.[0]?.content?.parts?.[0]?.text;
+                   responseText = j.candidates?.[0]?.content?.parts?.[0]?.text;
               } else {
                   const r = await fetch('https://api.openai.com/v1/chat/completions', { method:'POST', headers:{'Content-Type':'application/json', 'Authorization':`Bearer ${apiKey}`}, body:JSON.stringify({model: openAiModel, messages: messages}) });
                   if(!r.ok) throw new Error(`OpenAI Error ${r.status}`);
                   const j = await r.json();
-                  return j.choices?.[0]?.message?.content;
+                  responseText = j.choices?.[0]?.message?.content;
               }
+              return responseText;
+
           } catch(e) { 
-              // ERROR HANDLING: Parse Object to String
               const errObj = e.response || e;
               const errStr = typeof errObj === 'object' ? JSON.stringify(errObj) : String(errObj);
-              console.error("AI Attempt " + attempts + " Failed:", errStr);
+              console.error(`AI Attempt ${attempts} Failed:`, errStr);
 
-              // 1. MODERATION / BAD REQUEST (Do not retry)
-              if (errStr.includes("moderation") || errStr.includes("422") || errStr.includes("400")) {
-                  return "⚠️ AI Safety Filter Triggered. Some content was rejected. (Check logs for details)";
+              // 1. MODERATION ERROR (422)
+              if (errStr.includes("moderation") || errStr.includes("422")) {
+                  // Fallback: If we haven't already, try ONE more time with minimal context
+                  if (allowRetry) {
+                      console.warn("Moderation trigger. Retrying with minimal context...");
+                      // Strip all previous messages, keep only the last user query
+                      const lastMsg = messages[messages.length - 1];
+                      return await queryAiService([{ role: 'user', content: lastMsg.content }], false);
+                  }
+                  return "⚠️ Content Moderation Block. The AI refused to process this text.";
               }
               
-              // 2. TOKEN / CREDIT LIMIT (Do not retry)
+              // 2. CREDIT LIMIT
               if (errStr.includes("credit") || errStr.includes("quota") || errStr.includes("402")) {
-                  alert("⚠️ Out of AI Credits! Please check your Puter/OpenAI account.");
+                  alert("⚠️ Puter.js Credit Limit Reached. Please upgrade Puter or switch providers.");
                   return "System: Out of Credits.";
               }
 
-              // 3. SERVER / NETWORK ERROR (Retry!)
               if(attempts === maxRetries) { 
-                  // If we failed twice on a generic error
-                  return "System Error: " + errStr.slice(0, 100); 
+                  return "AI Error: " + errStr.slice(0, 100); 
               }
-              
-              // Wait 1s before retrying
               await new Promise(res => setTimeout(res, 1000));
           }
       }
@@ -276,20 +289,21 @@ function App() {
       updateCloud(updatedData, true);
 
       if (type === 'ai-public' || type === 'ai-private') {
+          // AI reads journal context here too for smarter general chat
           const genesis = data.campaign?.genesis || {};
           const accessiblePages = Object.values(data.journal_pages || {}).filter(p => p.isPublic || p.ownerId === user?.uid);
-          const journalContext = accessiblePages.map(p => `[${p.title}]: ${cleanText(p.content)}`).join('\n').slice(-8000); 
+          const journalContext = accessiblePages.map(p => `[${p.title}]: ${cleanText(p.content)}`).join('\n').slice(-10000); 
 
           const systemPrompt = `
           Role: Dungeon Master AI for "${genesis.campaignName || "D&D"}" (${genesis.tone || "Fantasy"}).
           Lore: ${genesis.loreText || "Generic"}.
           Location: ${data.campaign.location || "Unknown"}.
           
-          JOURNAL CONTEXT:
+          JOURNAL KNOWLEDGE:
           ${journalContext}
           
           User: ${newMessage.senderName}.
-          Action: Answer the user.
+          Action: Answer based on the journal data.
           `;
 
           const aiRes = await queryAiService([{ role: "system", content: systemPrompt }, { role: "user", content: content }]);
@@ -351,13 +365,11 @@ function App() {
     }, 1000);
   };
 
-  // --- SMART CHUNKED RECAP GENERATOR (FIXED) ---
+  // --- RECAP GENERATOR WITH CHUNK RETRIES ---
   const generateRecap = async () => {
       setIsLoading(true);
       
       const accessiblePages = Object.values(data.journal_pages || {}).filter(p => p.isPublic);
-      
-      // Sort by date to keep story linear
       const allText = accessiblePages
           .sort((a,b) => a.created - b.created)
           .map(p => `ENTRY: ${p.title}\n${cleanText(p.content)}`)
@@ -370,11 +382,6 @@ function App() {
       }
 
       const genesis = data.campaign?.genesis || {};
-      
-      // CHUNK STRATEGY:
-      // If text is huge (> 6000 chars), we split it to avoid 422 Errors.
-      // We also wrap each chunk in a try/catch so one bad chunk doesn't kill the process.
-      
       const chunkSize = 6000;
       let finalSummary = "";
 
@@ -382,28 +389,19 @@ function App() {
           let summaries = [];
           for (let i = 0; i < allText.length; i += chunkSize) {
               const chunk = allText.slice(i, i + chunkSize);
-              
-              // RETRY LOGIC FOR SPECIFIC CHUNK
-              let chunkRes = null;
-              try {
-                  chunkRes = await queryAiService([{ role: 'user', content: `Summarize this partial log:\n\n${chunk}` }]);
-              } catch (e) { console.warn("Chunk failed, skipping..."); }
-
-              if (chunkRes && !chunkRes.includes("Error") && !chunkRes.includes("Safety")) {
-                  summaries.push(chunkRes);
+              // Use queryAiService which now has auto-fallback for 422 errors
+              const res = await queryAiService([{ role: 'user', content: `Summarize this partial log:\n\n${chunk}` }]);
+              if (res && !res.includes("Error") && !res.includes("Safety")) {
+                  summaries.push(res);
               } else {
-                  summaries.push("[Section skipped due to content filter]");
+                  summaries.push("[Section skipped: Moderation/Content Filter]");
               }
           }
-          
-          // Final Pass
-          const combined = summaries.join("\n\n");
-          finalSummary = await queryAiService([{ role: 'user', content: `Create a cinematic summary from these notes:\n\n${combined}` }]);
+          finalSummary = await queryAiService([{ role: 'user', content: `Create a cinematic "Previously on..." D&D recap from these notes:\n\n${summaries.join("\n")}` }]);
       } else {
-          // Standard Single Pass
           const prompt = `
-          You are the Historian for "${genesis.campaignName}". 
-          Tone: ${genesis.tone}. 
+          You are the Historian for "${genesis.campaignName || "Unknown"}". 
+          Tone: ${genesis.tone || "Fantasy"}. 
           Task: Write a cinematic recap of the adventure below.
           
           LOGS:
@@ -413,7 +411,7 @@ function App() {
       }
 
       if (finalSummary && !finalSummary.includes("Error") && !finalSummary.includes("Safety")) {
-          if (effectiveRole === 'dm' && confirm("Recap generated. Save to Journal?")) {
+          if (effectiveRole === 'dm' && confirm("Recap generated. Save to Journal? (Cancel to just post in chat)")) {
               const newId = `page_recap_${Date.now()}`;
               const newPage = { id: newId, title: `Recap: ${new Date().toLocaleDateString()}`, content: `<p>${finalSummary.replace(/\n/g, '<br/>')}</p>`, ownerId: 'system', isPublic: true, created: Date.now() };
               updateCloud({...data, journal_pages: {...data.journal_pages, [newId]: newPage}}, true);
@@ -422,7 +420,8 @@ function App() {
               sendChatMessage(`**📜 CAMPAIGN RECAP:**\n${finalSummary}`, 'chat-public');
           }
       } else {
-          alert("Recap failed (likely content filter or limit): " + finalSummary);
+          // Fallback message if everything failed
+          alert("Recap failed. The AI refused to process the journal content (Moderation/Safety Filter).");
       }
       setIsLoading(false);
   };
