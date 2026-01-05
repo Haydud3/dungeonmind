@@ -3,7 +3,6 @@ import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
 import Icon from './Icon';
 
-// FIX: Removed 'setData' from props to stop the GitHub Build Failure
 const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalEntry }) => {
     const [activePageId, setActivePageId] = useState(null);
     const [isEditing, setIsEditing] = useState(false);
@@ -29,7 +28,7 @@ const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalE
             title: 'New Entry',
             content: '',
             ownerId: userId,
-            isPublic: role === 'dm', // DMs public by default, players private
+            isPublic: role === 'dm', 
             created: Date.now()
         };
         const newData = { ...data, journal_pages: { ...data.journal_pages, [newId]: newPage } };
@@ -47,7 +46,6 @@ const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalE
     };
 
     const handleDelete = () => {
-        // Added window.confirm to satisfy linter
         if(window.confirm("Delete this page?")) {
             deleteJournalEntry(activePageId);
             setActivePageId(null);
@@ -57,12 +55,21 @@ const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalE
     const handleAiEnhance = async () => {
         if (!editContent.trim()) return;
         setIsAiLoading(true);
-        const prompt = `Rewrite the following RPG journal entry to be more immersive, descriptive, and fix grammar. Keep the same facts.\n\n${editContent.replace(/<[^>]*>?/gm, '')}`;
+        // Strip HTML for the prompt to save tokens and avoid confusion
+        const plainText = editContent.replace(/<[^>]*>?/gm, '');
+        const prompt = `Rewrite the following RPG journal entry to be more immersive, descriptive, and fix grammar. Keep the same facts.\n\n${plainText}`;
         const res = await aiHelper([{ role: "user", content: prompt }]);
         if (res && !res.includes("Error")) {
             setEditContent(prev => prev + `<br/><br/><strong>--- AI Enhanced ---</strong><br/>${res.replace(/\n/g, '<br/>')}`);
         }
         setIsAiLoading(false);
+    };
+
+    // Helper to strip HTML for the list preview
+    const getPreviewText = (html) => {
+        const tmp = document.createElement("DIV");
+        tmp.innerHTML = html;
+        return tmp.textContent || tmp.innerText || "";
     };
 
     // --- LIST VIEW ---
@@ -81,17 +88,20 @@ const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalE
                         {pages.map(p => (
                             <button key={p.id} onClick={() => setActivePageId(p.id)} className="w-full text-left bg-slate-800 border border-slate-700 p-4 rounded hover:border-amber-500 transition-colors group">
                                 <div className="flex justify-between items-start">
-                                    <div>
-                                        <h3 className="font-bold text-slate-200 text-lg group-hover:text-amber-400">{p.title}</h3>
+                                    <div className="min-w-0 flex-1"> {/* min-w-0 allows truncate to work in flex */}
+                                        <h3 className="font-bold text-slate-200 text-lg group-hover:text-amber-400 truncate">{p.title}</h3>
                                         <div className="text-xs text-slate-500 mt-1 flex gap-2">
                                             <span>{new Date(p.created).toLocaleDateString()}</span>
                                             {p.isPublic && <span className="text-green-500 bg-green-900/20 px-1 rounded">Public</span>}
                                             {!p.isPublic && <span className="text-slate-500 bg-slate-700/50 px-1 rounded">Private</span>}
                                         </div>
                                     </div>
-                                    <Icon name="chevron-right" size={16} className="text-slate-600 group-hover:text-amber-500"/>
+                                    <Icon name="chevron-right" size={16} className="text-slate-600 group-hover:text-amber-500 shrink-0 ml-2"/>
                                 </div>
-                                <div className="text-sm text-slate-400 mt-2 line-clamp-2 opacity-70" dangerouslySetInnerHTML={{__html: p.content}} />
+                                {/* FIX: Strip HTML and use break-words to ensure preview fits */}
+                                <div className="text-sm text-slate-400 mt-2 line-clamp-2 opacity-70 break-words">
+                                    {getPreviewText(p.content)}
+                                </div>
                             </button>
                         ))}
                     </div>
@@ -105,16 +115,16 @@ const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalE
         <div className="h-full flex flex-col bg-slate-900">
             {/* Header Toolbar */}
             <div className="shrink-0 h-14 border-b border-slate-700 flex items-center justify-between px-4 bg-slate-800">
-                <div className="flex items-center gap-3">
-                    <button onClick={() => setActivePageId(null)} className="text-slate-400 hover:text-white"><Icon name="arrow-left" size={20}/></button>
+                <div className="flex items-center gap-3 overflow-hidden">
+                    <button onClick={() => setActivePageId(null)} className="text-slate-400 hover:text-white shrink-0"><Icon name="arrow-left" size={20}/></button>
                     {isEditing ? (
-                        <input className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-white font-bold" value={editTitle} onChange={e => setEditTitle(e.target.value)} />
+                        <input className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-white font-bold w-full min-w-0" value={editTitle} onChange={e => setEditTitle(e.target.value)} />
                     ) : (
-                        <h2 className="font-bold text-slate-200 truncate max-w-[200px]">{activePage.title}</h2>
+                        <h2 className="font-bold text-slate-200 truncate">{activePage.title}</h2>
                     )}
                 </div>
                 
-                <div className="flex gap-2">
+                <div className="flex gap-2 shrink-0 ml-2">
                     {isEditing ? (
                         <>
                             <button onClick={handleAiEnhance} disabled={isAiLoading} className="text-xs bg-purple-600 hover:bg-purple-500 text-white px-3 py-1 rounded flex items-center gap-1">
@@ -154,8 +164,12 @@ const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalE
                         />
                     </div>
                 ) : (
-                    <div className="p-6 max-w-3xl mx-auto prose prose-invert prose-p:text-slate-300 prose-headings:text-amber-500">
-                        <div dangerouslySetInnerHTML={{__html: activePage.content}} />
+                    // FIX: Added break-words, w-full, overflow-hidden to prevent horizontal scroll
+                    <div className="p-6 max-w-3xl mx-auto w-full overflow-hidden">
+                        <div 
+                            className="prose prose-invert prose-p:text-slate-300 prose-headings:text-amber-500 max-w-none break-words" 
+                            dangerouslySetInnerHTML={{__html: activePage.content}} 
+                        />
                     </div>
                 )}
             </div>
