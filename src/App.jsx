@@ -37,7 +37,6 @@ const DEFAULT_DATA = {
     }
 };
 
-// Helper: Strip HTML & Soften Trigger Words
 const cleanText = (html) => {
    const tmp = document.createElement("DIV");
    tmp.innerHTML = html;
@@ -286,7 +285,6 @@ function App() {
           const genesis = data.campaign?.genesis || {};
           const accessiblePages = Object.values(data.journal_pages || {}).filter(p => p.isPublic || p.ownerId === user?.uid);
           
-          // CONTEXT MODE LOGIC
           const charLimit = contextMode === 'deep' ? 30000 : 4000;
           
           const journalContext = accessiblePages
@@ -460,22 +458,28 @@ function App() {
   if (!gameParams || !data) return <Lobby fb={fb} user={user} onJoin={(c, r, u) => { localStorage.setItem('dm_last_code', c); setGameParams({code:c, role:r, isOffline:false, uid:u}) }} onOffline={() => setGameParams({code:'LOCAL', role:'dm', isOffline:true, uid:'admin'})} />;
 
   return (
-    <div className="flex h-dvh w-full bg-slate-900 text-slate-200 overflow-hidden font-sans pt-safe">
+    // FIX: Using h-dvh and pt-safe on Header Container, NOT body container, to fix mobile notch issue
+    <div className="flex h-dvh w-full bg-slate-900 text-slate-200 overflow-hidden font-sans">
        <Sidebar view={currentView} setView={setCurrentView} onExit={() => { localStorage.removeItem('dm_last_code'); setGameParams(null); setData(null); }} />
        <main className="flex-1 h-full overflow-hidden relative w-full flex flex-col mb-16 md:mb-0">
-           <div className="h-12 border-b border-slate-800 flex items-center justify-between px-4 bg-slate-900/90 backdrop-blur shrink-0">
-               <div className="flex gap-2 items-center">
-                   <div className={`w-2 h-2 rounded-full shadow-[0_0_10px_rgba(34,197,94,0.5)] ${gameParams?.isOffline ? 'bg-slate-500' : 'bg-green-500'}`}></div>
-                   <span className="text-sm font-bold text-amber-500 truncate fantasy-font tracking-wide">
-                       {gameParams?.code} • {possessedNpcId ? `POSSESSING: ${data.npcs?.find(n=>n.id===possessedNpcId)?.name || 'NPC'}` : (data?.campaign?.location || "Unknown")}
-                   </span>
-               </div>
-               <div className="flex gap-2">
-                   {effectiveRole === 'dm' && <button onClick={createHandout} className="text-xs bg-amber-900/50 hover:bg-amber-800 px-3 py-1 rounded border border-amber-800 text-amber-200"><Icon name="scroll" size={14}/> Handout</button>}
-                   {possessedNpcId && <button onClick={() => setPossessedNpcId(null)} className="text-xs bg-red-900/80 text-white px-3 py-1 rounded">End Possession</button>}
-                   <button onClick={handleSaveToJournal} className="text-xs bg-slate-800 hover:bg-slate-700 border border-slate-600 px-3 py-1 rounded flex items-center gap-2 text-slate-300 hover:text-white"><Icon name="save" size={14}/> Save Log</button>
+           
+           {/* HEADER WRAPPER - This handles the notch padding */}
+           <div className="shrink-0 bg-slate-900/90 backdrop-blur border-b border-slate-800 pt-safe">
+               <div className="h-12 flex items-center justify-between px-4">
+                   <div className="flex gap-2 items-center">
+                       <div className={`w-2 h-2 rounded-full shadow-[0_0_10px_rgba(34,197,94,0.5)] ${gameParams?.isOffline ? 'bg-slate-500' : 'bg-green-500'}`}></div>
+                       <span className="text-sm font-bold text-amber-500 truncate fantasy-font tracking-wide">
+                           {gameParams?.code} • {possessedNpcId ? `POSSESSING: ${data.npcs?.find(n=>n.id===possessedNpcId)?.name || 'NPC'}` : (data?.campaign?.location || "Unknown")}
+                       </span>
+                   </div>
+                   <div className="flex gap-2">
+                       {effectiveRole === 'dm' && <button onClick={createHandout} className="text-xs bg-amber-900/50 hover:bg-amber-800 px-3 py-1 rounded border border-amber-800 text-amber-200"><Icon name="scroll" size={14}/> Handout</button>}
+                       {possessedNpcId && <button onClick={() => setPossessedNpcId(null)} className="text-xs bg-red-900/80 text-white px-3 py-1 rounded">End Possession</button>}
+                       <button onClick={handleSaveToJournal} className="text-xs bg-slate-800 hover:bg-slate-700 border border-slate-600 px-3 py-1 rounded flex items-center gap-2 text-slate-300 hover:text-white"><Icon name="save" size={14}/> Save Log</button>
+                   </div>
                </div>
            </div>
+
            <div className="flex-1 overflow-hidden relative p-0 md:p-0">
               {currentView === 'session' && (
                   <SessionView 
