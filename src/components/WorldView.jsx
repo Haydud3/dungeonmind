@@ -9,9 +9,10 @@ const WorldView = ({ data, setData, role, updateCloud, generateLoc, updateMapSta
     const [isGenerating, setIsGenerating] = useState(false);
     const [editingLoc, setEditingLoc] = useState(null);
 
-    const locations = data.locations || [];
-    const genesis = data.campaign?.genesis || {};
-    const currentLocation = data.campaign?.location || "";
+    // CRASH FIX: Ensure array exists
+    const locations = data?.locations || [];
+    const genesis = data?.campaign?.genesis || {};
+    const currentLocation = data?.campaign?.location || "";
 
     const updateGenesis = (field, val) => {
         const nd = { ...data, campaign: { ...data.campaign, genesis: { ...genesis, [field]: val } } };
@@ -43,7 +44,7 @@ const WorldView = ({ data, setData, role, updateCloud, generateLoc, updateMapSta
     const deleteLoc = (id) => {
         if(confirm("Delete Location?")) {
             const nd = { ...data, locations: locations.filter(l => l.id !== id) };
-            setData(nd); updateCloud(nd, true); // FIXED: Immediate Save
+            setData(nd); updateCloud(nd, true); 
         }
     };
 
@@ -80,5 +81,4 @@ const WorldView = ({ data, setData, role, updateCloud, generateLoc, updateMapSta
         </div>
     );
 };
-
 export default WorldView;
