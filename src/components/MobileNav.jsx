@@ -2,7 +2,7 @@ import React from 'react';
 import Icon from './Icon';
 
 const MobileNav = ({ view, setView, className = "" }) => (
-    // Reverted to h-auto / min-h with pb-safe to keep icons nicely centered and safe
+    // FIX: added items-center to center icons vertically in the blue bar
     <nav className={`md:hidden fixed bottom-0 left-0 right-0 bg-slate-900 border-t border-slate-800 flex items-center justify-around z-50 pt-2 pb-safe min-h-[4rem] ${className}`}>
          {['session', 'journal', 'world', 'party', 'npcs', 'settings'].map(v => (
             <button key={v} onClick={() => setView(v)} className={`flex flex-col items-center justify-center w-12 py-1 ${view === v ? 'text-amber-500' : 'text-slate-500'}`}>
