@@ -37,6 +37,7 @@ const DEFAULT_DATA = {
     }
 };
 
+// Helper: Strip HTML & Soften Trigger Words
 const cleanText = (html) => {
    const tmp = document.createElement("DIV");
    tmp.innerHTML = html;
@@ -458,14 +459,12 @@ function App() {
   if (!gameParams || !data) return <Lobby fb={fb} user={user} onJoin={(c, r, u) => { localStorage.setItem('dm_last_code', c); setGameParams({code:c, role:r, isOffline:false, uid:u}) }} onOffline={() => setGameParams({code:'LOCAL', role:'dm', isOffline:true, uid:'admin'})} />;
 
   return (
-    // FIX: Using fixed inset-0 to clamp layout to window
+    // FIX: fixed inset-0 prevents window bouncing
     <div className="fixed inset-0 flex flex-col bg-slate-900 text-slate-200 font-sans overflow-hidden">
        <Sidebar view={currentView} setView={setCurrentView} onExit={() => { localStorage.removeItem('dm_last_code'); setGameParams(null); setData(null); }} />
-       
-       {/* MAIN CONTENT AREA: Added pb-16 to mobile to push content ABOVE the nav bar */}
-       <main className="flex-1 flex flex-col overflow-hidden relative w-full pb-16 md:pb-0">
+       <main className="flex-1 flex flex-col overflow-hidden relative w-full">
            
-           {/* HEADER: Padded for Notch */}
+           {/* HEADER: Added z-50 and pt-safe to handle the notch visually */}
            <div className="shrink-0 bg-slate-900/95 backdrop-blur border-b border-slate-800 pt-safe z-50">
                <div className="h-14 flex items-center justify-between px-4">
                    <div className="flex gap-2 items-center">
@@ -522,10 +521,7 @@ function App() {
            </div>
        )}
        {rollingDice && <DiceOverlay roll={rollingDice} />}
-       
-       {/* NAV BAR: Added pb-safe to keep icons above home bar */}
-       <MobileNav view={currentView} setView={setCurrentView} className="pb-safe" />
-       
+       <MobileNav view={currentView} setView={setCurrentView} />
        {showTour && <TourGuide setView={setCurrentView} onClose={() => { setShowTour(false); localStorage.setItem('dm_tour_completed', 'true'); }} />}
        {effectiveRole === 'dm' && !data.onboardingComplete && <OnboardingWizard onComplete={handleOnboardingComplete} aiHelper={queryAiService} />}
     </div>
