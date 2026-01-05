@@ -293,16 +293,25 @@ function App() {
               .join('\n')
               .slice(-charLimit); 
 
+          // FIX: Include Aliases in Party Info
+          const partyContext = data.players.map(p => {
+              const aliasStr = p.aliases ? ` (aka: ${p.aliases})` : "";
+              return `${p.name} (${p.race} ${p.class})${aliasStr}`;
+          }).join(', ');
+
           const systemPrompt = `
           Role: Dungeon Master AI for "${genesis.campaignName || "D&D"}" (${genesis.tone || "Fantasy"}).
           Lore: ${genesis.loreText || "Generic"}.
           Location: ${data.campaign.location || "Unknown"}.
           
+          PARTY ROSTER:
+          ${partyContext}
+          
           JOURNAL KNOWLEDGE (${contextMode.toUpperCase()} CONTEXT):
           ${journalContext}
           
           User: ${newMessage.senderName}.
-          Action: Answer based on the journal data provided.
+          Action: Answer based on the journal data provided. Use the party roster to identify characters by their aliases if needed.
           `;
 
           const aiRes = await queryAiService([{ role: "system", content: systemPrompt }, { role: "user", content: content }]);
@@ -458,12 +467,11 @@ function App() {
   if (!gameParams || !data) return <Lobby fb={fb} user={user} onJoin={(c, r, u) => { localStorage.setItem('dm_last_code', c); setGameParams({code:c, role:r, isOffline:false, uid:u}) }} onOffline={() => setGameParams({code:'LOCAL', role:'dm', isOffline:true, uid:'admin'})} />;
 
   return (
-    // FIX 1: md:flex-row restores layout on Landscape/Desktop
+    // FIX: md:flex-row enables side-by-side layout on larger screens (landscape)
     <div className="fixed inset-0 flex flex-col md:flex-row bg-slate-900 text-slate-200 font-sans overflow-hidden">
        <Sidebar view={currentView} setView={setCurrentView} onExit={() => { localStorage.removeItem('dm_last_code'); setGameParams(null); setData(null); }} />
        <main className="flex-1 flex flex-col overflow-hidden relative w-full h-full">
            
-           {/* HEADER */}
            <div className="shrink-0 bg-slate-900/95 backdrop-blur border-b border-slate-800 pt-safe z-50">
                <div className="h-14 flex items-center justify-between px-4">
                    <div className="flex gap-2 items-center">
@@ -520,7 +528,7 @@ function App() {
            </div>
        )}
        
-       {/* FIX 2: Dice Overlay moved here with super high z-index to be visible */}
+       {/* FIX: Dice overlay must be at the very end with huge z-index to sit on top of fixed layout layers */}
        <div className="fixed inset-0 pointer-events-none z-[99999]">
            {rollingDice && <DiceOverlay roll={rollingDice} />}
        </div>
