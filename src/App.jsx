@@ -37,6 +37,7 @@ const DEFAULT_DATA = {
     }
 };
 
+// Helper to strip HTML for AI processing
 const cleanText = (html) => {
    const tmp = document.createElement("DIV");
    tmp.innerHTML = html;
@@ -248,21 +249,21 @@ function App() {
       updateCloud(updatedData, true);
 
       if (type === 'ai-public' || type === 'ai-private') {
-          // --- UPDATED: AI NOW READS JOURNAL CONTEXT IN CHAT TOO ---
+          // IMPORTANT: Read journals here too so normal chat is smart
           const genesis = data.campaign?.genesis || {};
           const accessiblePages = Object.values(data.journal_pages || {}).filter(p => p.isPublic || p.ownerId === user?.uid);
-          const journalContext = accessiblePages.map(p => `[${p.title}]: ${cleanText(p.content)}`).join('\n').slice(-6000); // Limit to ~6k chars for speed
+          const journalContext = accessiblePages.map(p => `[${p.title}]: ${cleanText(p.content)}`).join('\n').slice(-10000); 
 
           const systemPrompt = `
           Role: Dungeon Master AI for "${genesis.campaignName || "D&D"}" (${genesis.tone || "Fantasy"}).
           Lore: ${genesis.loreText || "Generic"}.
           Location: ${data.campaign.location || "Unknown"}.
           
-          RELEVANT JOURNAL ENTRIES:
+          JOURNAL KNOWLEDGE:
           ${journalContext}
           
           User: ${newMessage.senderName}.
-          Action: Answer the user's question or react to their statement based on the provided Lore and Journal entries.
+          Action: Answer based on the journal data.
           `;
 
           const aiRes = await queryAiService([{ role: "system", content: systemPrompt }, { role: "user", content: content }]);
@@ -324,30 +325,47 @@ function App() {
     }, 1000);
   };
 
-  // --- RESTORED JOURNAL-ONLY RECAP ---
+  // --- RESTORED JOURNAL-ONLY RECAP (SINGLE PROMPT) ---
   const generateRecap = async () => {
       setIsLoading(true);
       
       const accessiblePages = Object.values(data.journal_pages || {}).filter(p => p.isPublic);
-      // Collect journal text only
-      const journalContext = accessiblePages.map(p => cleanText(p.content)).join('\n\n').slice(-15000); 
+      
+      // Get cleaned text from all journals
+      const journalContext = accessiblePages
+          .sort((a,b) => a.created - b.created)
+          .map(p => `--- ENTRY: ${p.title} ---\n${cleanText(p.content)}`)
+          .join('\n\n')
+          .slice(-15000); // Send generous context
+      
       const genesis = data.campaign?.genesis || {};
       
-      // We split the System and User prompt to force the AI to read the data
-      const systemMsg = {
-          role: "system",
-          content: `You are the Campaign Scribe for "${genesis.campaignName || "Adventure"}". 
-          Setting: ${genesis.tone || "Fantasy"}. ${genesis.loreText || ""}.
-          Task: Write a cinematic summary of the adventure so far based ONLY on the provided Journal Entries.
-          Style: Epic, narrative, PG-13.`
-      };
+      if (!journalContext.trim()) {
+          alert("No journal entries found to recap!");
+          setIsLoading(false);
+          return;
+      }
 
-      const userMsg = {
-          role: "user",
-          content: `Here are the Journal Entries to summarize:\n\n${journalContext}\n\n---\n\nWrite the recap now.`
-      };
+      // Single prompt to ensure context isn't lost
+      const prompt = `
+      You are the Campaign Historian for the D&D adventure "${genesis.campaignName || "Unknown"}".
+      
+      WORLD CONTEXT:
+      Tone: ${genesis.tone || "Fantasy"}.
+      Lore: ${genesis.loreText || "Standard D&D"}.
+      
+      YOUR TASK:
+      Read the following Journal Entries and write a cinematic "Previously on..." summary of the adventure so far. 
+      Do NOT ask for logs. The logs are provided below. Summarize the text below.
+      
+      === START JOURNAL LOGS ===
+      ${journalContext}
+      === END JOURNAL LOGS ===
+      
+      Write the summary now:
+      `;
 
-      const res = await queryAiService([systemMsg, userMsg]);
+      const res = await queryAiService([{ role: 'user', content: prompt }]);
       
       if (res && !res.includes("Error")) {
           if (effectiveRole === 'dm' && confirm("Recap generated. Save to Journal? (Cancel to just post in chat)")) {
