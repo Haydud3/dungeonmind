@@ -458,23 +458,30 @@ function App() {
   if (!gameParams || !data) return <Lobby fb={fb} user={user} onJoin={(c, r, u) => { localStorage.setItem('dm_last_code', c); setGameParams({code:c, role:r, isOffline:false, uid:u}) }} onOffline={() => setGameParams({code:'LOCAL', role:'dm', isOffline:true, uid:'admin'})} />;
 
   return (
-    // FIX: Use fixed inset-0 to ensure the app always fills the viewport correctly on mobile
+    // FIX: Using fixed inset-0 to clamp layout to window
     <div className="fixed inset-0 flex flex-col bg-slate-900 text-slate-200 font-sans overflow-hidden">
        <Sidebar view={currentView} setView={setCurrentView} onExit={() => { localStorage.removeItem('dm_last_code'); setGameParams(null); setData(null); }} />
-       <main className="flex-1 flex flex-col overflow-hidden relative w-full">
-           <div className="h-12 border-b border-slate-800 flex items-center justify-between px-4 bg-slate-900/90 backdrop-blur shrink-0 z-10">
-               <div className="flex gap-2 items-center">
-                   <div className={`w-2 h-2 rounded-full shadow-[0_0_10px_rgba(34,197,94,0.5)] ${gameParams?.isOffline ? 'bg-slate-500' : 'bg-green-500'}`}></div>
-                   <span className="text-sm font-bold text-amber-500 truncate fantasy-font tracking-wide">
-                       {gameParams?.code} • {possessedNpcId ? `POSSESSING: ${data.npcs?.find(n=>n.id===possessedNpcId)?.name || 'NPC'}` : (data?.campaign?.location || "Unknown")}
-                   </span>
-               </div>
-               <div className="flex gap-2">
-                   {effectiveRole === 'dm' && <button onClick={createHandout} className="text-xs bg-amber-900/50 hover:bg-amber-800 px-3 py-1 rounded border border-amber-800 text-amber-200"><Icon name="scroll" size={14}/> Handout</button>}
-                   {possessedNpcId && <button onClick={() => setPossessedNpcId(null)} className="text-xs bg-red-900/80 text-white px-3 py-1 rounded">End Possession</button>}
-                   <button onClick={handleSaveToJournal} className="text-xs bg-slate-800 hover:bg-slate-700 border border-slate-600 px-3 py-1 rounded flex items-center gap-2 text-slate-300 hover:text-white"><Icon name="save" size={14}/> Save Log</button>
+       
+       {/* MAIN CONTENT AREA: Added pb-16 to mobile to push content ABOVE the nav bar */}
+       <main className="flex-1 flex flex-col overflow-hidden relative w-full pb-16 md:pb-0">
+           
+           {/* HEADER: Padded for Notch */}
+           <div className="shrink-0 bg-slate-900/95 backdrop-blur border-b border-slate-800 pt-safe z-50">
+               <div className="h-14 flex items-center justify-between px-4">
+                   <div className="flex gap-2 items-center">
+                       <div className={`w-2 h-2 rounded-full shadow-[0_0_10px_rgba(34,197,94,0.5)] ${gameParams?.isOffline ? 'bg-slate-500' : 'bg-green-500'}`}></div>
+                       <span className="text-sm font-bold text-amber-500 truncate fantasy-font tracking-wide">
+                           {gameParams?.code} • {possessedNpcId ? `POSSESSING: ${data.npcs?.find(n=>n.id===possessedNpcId)?.name || 'NPC'}` : (data?.campaign?.location || "Unknown")}
+                       </span>
+                   </div>
+                   <div className="flex gap-2">
+                       {effectiveRole === 'dm' && <button onClick={createHandout} className="text-xs bg-amber-900/50 hover:bg-amber-800 px-3 py-1 rounded border border-amber-800 text-amber-200"><Icon name="scroll" size={14}/> Handout</button>}
+                       {possessedNpcId && <button onClick={() => setPossessedNpcId(null)} className="text-xs bg-red-900/80 text-white px-3 py-1 rounded">End Possession</button>}
+                       <button onClick={handleSaveToJournal} className="text-xs bg-slate-800 hover:bg-slate-700 border border-slate-600 px-3 py-1 rounded flex items-center gap-2 text-slate-300 hover:text-white"><Icon name="save" size={14}/> Save Log</button>
+                   </div>
                </div>
            </div>
+
            <div className="flex-1 overflow-hidden relative p-0 md:p-0">
               {currentView === 'session' && (
                   <SessionView 
@@ -515,7 +522,10 @@ function App() {
            </div>
        )}
        {rollingDice && <DiceOverlay roll={rollingDice} />}
-       <MobileNav view={currentView} setView={setCurrentView} zIndex="z-50" /> { /* Added z-50 to ensure it's on top */ }
+       
+       {/* NAV BAR: Added pb-safe to keep icons above home bar */}
+       <MobileNav view={currentView} setView={setCurrentView} className="pb-safe" />
+       
        {showTour && <TourGuide setView={setCurrentView} onClose={() => { setShowTour(false); localStorage.setItem('dm_tour_completed', 'true'); }} />}
        {effectiveRole === 'dm' && !data.onboardingComplete && <OnboardingWizard onComplete={handleOnboardingComplete} aiHelper={queryAiService} />}
     </div>
