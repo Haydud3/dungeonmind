@@ -2,227 +2,171 @@
 @tailwind components;
 @tailwind utilities;
 
-/* --- GLOBAL THEME & FONTS --- */
+/* ... [Keep existing Global Theme, Body, etc.] ... */
+
 :root {
-  --bg-dark: #0f172a;   /* Slate 900 */
-  --bg-panel: #1e293b;  /* Slate 800 */
-  --accent: #d97706;    /* Amber 600 */
+  --bg-dark: #0f172a;
+  --bg-panel: #1e293b;
+  --accent: #d97706;
 }
 
 body {
   font-family: 'Lato', sans-serif;
   background-color: var(--bg-dark);
   color: #e2e8f0;
-  overflow: hidden; /* App-like feel, prevents body scroll */
+  overflow: hidden; 
   touch-action: manipulation;
 }
 
-h1, h2, h3, .fantasy-font {
-  font-family: 'Cinzel', serif;
-}
+h1, h2, h3, .fantasy-font { font-family: 'Cinzel', serif; }
+.mono-font { font-family: 'Fira Code', monospace; }
 
-.mono-font {
-  font-family: 'Fira Code', monospace;
-}
+/* ... [Keep existing Utils, Scrollbar, Glass Panel] ... */
 
-/* --- UTILITIES --- */
 .glass-panel {
   background: rgba(30, 41, 59, 0.95);
   border: 1px solid rgba(255, 255, 255, 0.05);
 }
 
-/* Connection Status Dot */
-.live-status {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    display: inline-block;
-}
-.status-online { background-color: #22c55e; box-shadow: 0 0 8px #22c55e; }
-.status-offline { background-color: #64748b; }
-
-/* Custom Scrollbar (Crucial for Dark Mode feel) */
 .custom-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
 .custom-scroll::-webkit-scrollbar-track { background: #0f172a; }
 .custom-scroll::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
-.custom-scroll::-webkit-scrollbar-thumb:hover { background: #475569; }
 
-/* Simple Animation */
-.animate-in { animation: fadeIn 0.3s ease-out; }
-@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-
-/* --- NEW FEATURE STYLES --- */
-
-/* 1. Parchment Handout Modal */
-.parchment-modal {
-    font-family: 'Dancing Script', cursive; /* Ensure you added this link to index.html */
-    background-color: #f5e6c8;
-    background-image: url("data:image/svg+xml,%3Csvg width='100' height='100' viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M11 18c3.866 0 7-3.134 7-7s-3.134-7-7-7-7 3.134-7 7 3.134 7 7 7zm48 25c3.866 0 7-3.134 7-7s-3.134-7-7-7-7 3.134-7 7 3.134 7 7 7zm-43-7c1.657 0 3-1.343 3-3s-1.343-3-3-3-3 1.343-3 3 1.343 3 3 3zm63 31c1.657 0 3-1.343 3-3s-1.343-3-3-3-3 1.343-3 3 1.343 3 3 3zM34 90c1.657 0 3-1.343 3-3s-1.343-3-3-3-3 1.343-3 3 1.343 3 3 3zm56-76c1.657 0 3-1.343 3-3s-1.343-3-3-3-3 1.343-3 3 1.343 3 3 3zM12 86c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm28-65c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm23-11c2.76 0 5-2.24 5-5s-2.24-5-5-5-5 2.24-5 5 2.24 5 5 5zm-6 60c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm29 22c2.76 0 5-2.24 5-5s-2.24-5-5-5-5 2.24-5 5 2.24 5 5 5zM32 63c2.76 0 5-2.24 5-5s-2.24-5-5-5-5 2.24-5 5 2.24 5 5 5zm57-13c2.76 0 5-2.24 5-5s-2.24-5-5-5-5 2.24-5 5 2.24 5 5 5zm-9-21c1.105 0 2-.895 2-2s-.895-2-2-2-2 .895-2 2 .895 2 2 2zM60 91c1.105 0 2-.895 2-2s-.895-2-2-2-2 .895-2 2 .895 2 2 2zM35 41c1.105 0 2-.895 2-2s-.895-2-2-2-2 .895-2 2 .895 2 2 2zM12 60c1.105 0 2-.895 2-2s-.895-2-2-2-2 .895-2 2 .895 2 2 2z' fill='%239C92AC' fill-opacity='0.08' fill-rule='evenodd'/%3E%3C/svg%3E");
-    color: #3f2e18;
-    box-shadow: 0 0 30px rgba(0,0,0,0.5) inset, 0 10px 20px rgba(0,0,0,0.5);
-    border: 1px solid #d4c5a9;
-}
-
-/* 2. Whisper Message (Purple) */
-.msg-whisper {
-    background: rgba(88, 28, 135, 0.25) !important; /* Purple-900/25 */
-    border: 1px solid rgba(139, 92, 246, 0.3) !important; /* Purple-500/30 */
-    border-left: 3px solid #a855f7 !important; /* Purple-500 */
-}
-
-/* 3. Fog of War Canvas */
-.fog-canvas {
-    touch-action: none; /* Prevents scrolling while drawing on mobile */
-    cursor: crosshair;
-}
-
-/* --- REACT QUILL EDITOR OVERRIDES (Dark Mode Fixes) --- */
-/* This fixes the white background/black text issue */
-
-.quill {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-}
-
-/* Toolbar Styling */
-.ql-toolbar {
-    background-color: #1e293b !important; /* Slate-800 */
-    border-color: #334155 !important; /* Slate-700 */
-    border-top-left-radius: 0.5rem;
-    border-top-right-radius: 0.5rem;
-    font-family: 'Lato', sans-serif !important;
-}
-
-/* Editor Content Area */
-.ql-container {
-    flex: 1;
-    background-color: rgba(30, 41, 59, 0.5) !important; /* Slate-900/50 */
-    border-color: #334155 !important;
-    border-bottom-left-radius: 0.5rem;
-    border-bottom-right-radius: 0.5rem;
-    color: #e2e8f0 !important; /* Light Text */
-    font-family: 'Lato', sans-serif !important;
-    font-size: 16px !important;
-    overflow-y: auto;
-}
-
-/* Scrollbar specifically for Editor */
-.ql-editor::-webkit-scrollbar { width: 6px; }
-.ql-editor::-webkit-scrollbar-track { background: transparent; }
-.ql-editor::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
-
-/* Toolbar Icons Color Fix */
+/* ... [Keep Quill Editor Overrides] ... */
+.quill { display: flex; flex-direction: column; height: 100%; }
+.ql-toolbar { background-color: #1e293b !important; border-color: #334155 !important; }
+.ql-container { flex: 1; background-color: rgba(30, 41, 59, 0.5) !important; border-color: #334155 !important; color: #e2e8f0 !important; font-size: 16px !important; overflow-y: auto; }
 .ql-stroke { stroke: #94a3b8 !important; }
 .ql-fill { fill: #94a3b8 !important; }
 .ql-picker { color: #94a3b8 !important; }
-
-/* Active/Hover States */
-.ql-active .ql-stroke { stroke: #d97706 !important; } /* Amber-600 */
-.ql-active .ql-fill { fill: #d97706 !important; }
-.ql-picker-label:hover { color: #d97706 !important; }
-
-/* Dropdown Menus (Size, Header) Background */
-.ql-picker-options {
-    background-color: #1e293b !important;
-    border-color: #334155 !important;
-    color: #e2e8f0 !important;
-}
-
-/* Typography inside the Editor */
-.ql-editor h1 {
-    font-family: 'Cinzel', serif;
-    color: #fbbf24;
-    font-size: 2em;
-    border-bottom: 1px solid #475569;
-    margin-bottom: 0.5em;
-}
-.ql-editor h2 {
-    font-family: 'Cinzel', serif;
-    color: #fcd34d;
-    font-size: 1.5em;
-    margin-top: 1em;
-}
-.ql-editor strong { color: #fcd34d; }
-.ql-editor blockquote {
-    border-left: 4px solid #d97706;
-    padding-left: 1em;
-    color: #94a3b8;
-    font-style: italic;
-    background: rgba(255,255,255,0.05);
-    padding: 8px;
-    border-radius: 4px;
-}
-
-/* Images */
-.ql-editor img {
-    max-width: 100%;
-    border-radius: 4px;
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
-    display: block;
-    margin: 10px 0;
-}
-
-/* Clean Tables */
+.ql-editor h1 { font-family: 'Cinzel', serif; color: #fbbf24; font-size: 2em; border-bottom: 1px solid #475569; }
+.ql-editor img { max-width: 100%; display: block; margin: 10px 0; }
 .ql-editor table { width: 100%; border-collapse: collapse; margin: 1em 0; }
-.ql-editor td, .ql-editor th { border: 1px solid #475569; padding: 8px; vertical-align: top; }
+.ql-editor td, .ql-editor th { border: 1px solid #475569; padding: 8px; }
 
-/* --- DICE ANIMATIONS --- */
+/* --- 3D DICE SYSTEM --- */
 
 .die-container {
     position: fixed;
     inset: 0;
     z-index: 9999;
     pointer-events: none;
-    perspective: 1000px;
+    perspective: 1200px; /* Stronger perspective for 3D depth */
     display: flex;
     align-items: center;
     justify-content: center;
 }
 
-.die-3d {
+.die-mover {
     position: absolute;
-    /* Starts off-screen */
     transform-style: preserve-3d;
     will-change: transform;
 }
 
-/* Realistic Tumble: Comes from top-left, spins wildly, lands center */
-@keyframes tumble-across {
-    0% { transform: translate3d(-50vw, -50vh, -200px) rotate3d(1, 1, 1, 0deg) scale(0.5); opacity: 0; }
+/* --- ANIMATIONS --- */
+@keyframes tumble-complex {
+    0% { transform: translate3d(-50vw, -50vh, -500px) rotate3d(1, 1, 1, 0deg) scale(0.5); opacity: 0; }
     20% { opacity: 1; }
-    70% { transform: translate3d(0, 0, 0) rotate3d(2, 3, 1, 1080deg) scale(1.1); } /* Overshoot slightly */
-    100% { transform: translate3d(0, 0, 0) rotate3d(0, 0, 0, 0deg) scale(1); }
+    60% { transform: translate3d(0, 0, 0) rotate3d(1, 2, 0.5, 720deg) scale(1.2); } 
+    100% { transform: translate3d(0, 0, 0) rotate3d(1, 0, 0, 1080deg) scale(1); }
 }
 
-/* Impact: A small bounce when it hits the "table" */
-@keyframes land-bounce {
+@keyframes land-shock {
     0% { transform: scale(1); }
-    50% { transform: scale(1.1); }
+    50% { transform: scale(1.2); }
     100% { transform: scale(1); }
 }
 
-.animate-tumble {
-    animation: tumble-across 1s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+.animate-tumble { animation: tumble-complex 1s cubic-bezier(0.25, 1, 0.5, 1) forwards; }
+.animate-land { animation: land-shock 0.3s ease-out; }
+
+/* --- REAL 3D CUBE (D6) --- */
+.cube-wrapper {
+    width: 100px;
+    height: 100px;
+    position: relative;
+    transform-style: preserve-3d;
 }
 
-.animate-land {
-    animation: land-bounce 0.3s ease-out;
+.face {
+    position: absolute;
+    width: 100px;
+    height: 100px;
+    background: linear-gradient(135deg, #1e40af, #172554); /* Blue D6 */
+    border: 2px solid #60a5fa;
+    border-radius: 12px;
+    opacity: 1;
 }
 
-/* --- DICE SHAPES (Clip Paths) --- */
+/* Position Faces */
+.face-front  { transform: rotateY(0deg) translateZ(50px); }
+.face-back   { transform: rotateY(180deg) translateZ(50px); }
+.face-right  { transform: rotateY(90deg) translateZ(50px); }
+.face-left   { transform: rotateY(-90deg) translateZ(50px); }
+.face-top    { transform: rotateX(90deg) translateZ(50px); }
+.face-bottom { transform: rotateX(-90deg) translateZ(50px); }
 
-/* d4: Triangle */
+.face-content {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 4rem;
+    font-weight: bold;
+    color: white;
+    transform: translateZ(52px); /* Push text slightly off face */
+    text-shadow: 0 4px 10px rgba(0,0,0,0.5);
+}
+
+/* --- EXTRUDED SHAPES (D4, D8, D12, D20, D100) --- */
+.extrusion-wrapper {
+    width: 120px;
+    height: 120px;
+    position: relative;
+    transform-style: preserve-3d;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.extrusion-layer {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    opacity: 0.7;
+    filter: brightness(0.7); /* Darker sides */
+}
+
+.extrusion-front {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    transform: translateZ(1px); /* Front face */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden; /* Fixes d100 grey box issue */
+}
+
+.result-text {
+    font-size: 3rem;
+    font-weight: bold;
+    color: white;
+    z-index: 10;
+    text-shadow: 0 2px 4px rgba(0,0,0,0.8);
+}
+
+.inner-shading {
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(circle at 30% 30%, rgba(255,255,255,0.2), rgba(0,0,0,0.4));
+}
+
+/* --- CLIP PATHS --- */
 .clip-tri { clip-path: polygon(50% 0%, 0% 100%, 100% 100%); }
-
-/* d8: Diamond */
 .clip-diamond { clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%); }
-
-/* d10: Kite */
 .clip-kite { clip-path: polygon(50% 0%, 100% 70%, 50% 100%, 0% 70%); }
-
-/* d12: Dodecaagon (approximated) */
 .clip-dodeca { clip-path: polygon(50% 0%, 95% 25%, 95% 75%, 50% 100%, 5% 75%, 5% 25%); }
-
-/* d20: Hexagon */
 .clip-hex { clip-path: polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%); }
+/* d100 uses standard border-radius, no clip-path needed */
