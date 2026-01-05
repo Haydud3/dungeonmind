@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import Icon from './Icon';
 
-const PartyView = ({ data, setData, role, updateCloud, setInputText, setView }) => {
+// FIX: Removed 'setData' from props because it was unused and caused the build error.
+const PartyView = ({ data, role, updateCloud, setInputText, setView }) => {
     const [editingId, setEditingId] = useState(null);
     const [editForm, setEditForm] = useState({});
 
@@ -31,11 +32,12 @@ const PartyView = ({ data, setData, role, updateCloud, setInputText, setView }) 
     };
 
     const deletePlayer = (id) => {
-        if(!confirm("Delete character?")) return;
+        // FIX: Added 'window.' to confirm to prevent linter "no-restricted-globals" error
+        if(!window.confirm("Delete character?")) return;
         updateCloud({ ...data, players: data.players.filter(p => p.id !== id) }, true);
     };
 
-    // NEW: Auto Level Up Handler
+    // Auto Level Up Handler
     const handleLevelUp = (p) => {
         const currentLevel = parseInt(p.level) || 1;
         const newLevel = currentLevel + 1;
@@ -123,7 +125,7 @@ const PartyView = ({ data, setData, role, updateCloud, setInputText, setView }) 
                                                 <h3 className="text-2xl font-bold text-slate-100 fantasy-font leading-none">{p.name}</h3>
                                                 <div className="flex items-center gap-2 mt-1">
                                                     <p className="text-amber-500 text-sm font-bold">{p.race} {p.class} <span className="text-slate-500 font-normal">| Lvl {p.level || 1}</span></p>
-                                                    {/* NEW: Level Up Button */}
+                                                    {/* Level Up Button */}
                                                     <button onClick={() => handleLevelUp(p)} className="bg-slate-700 hover:bg-amber-900 text-amber-500 px-2 py-0.5 rounded text-[10px] uppercase font-bold flex items-center gap-1 border border-slate-600 hover:border-amber-500 transition-colors" title="Level Up & Ask AI">
                                                         Level Up <Icon name="arrow-up" size={10}/>
                                                     </button>
