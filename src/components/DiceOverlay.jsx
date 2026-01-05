@@ -6,35 +6,37 @@ const DiceOverlay = ({ roll }) => {
 
     useEffect(() => {
         // Timeline:
-        // 0ms: Start Rolling (Tumble across screen)
-        // 1800ms: Land (Show result clearly)
-        // 3000ms: Fade out
+        // 0ms: Start Rolling (Tumble)
+        // 1000ms: Land (Stop tumbling, show result)
+        // 2500ms: Fade out
         
-        const landTimer = setTimeout(() => setPhase('landed'), 1500);
-        const fadeTimer = setTimeout(() => setPhase('fading'), 3500);
+        const landTimer = setTimeout(() => setPhase('landed'), 1000);
+        const fadeTimer = setTimeout(() => setPhase('fading'), 2500);
         
         return () => { clearTimeout(landTimer); clearTimeout(fadeTimer); };
     }, []);
 
-    // Determine die shape/color based on d4, d6, etc.
+    // Improved Die Styles with Gradients for 3D effect
     const getDieStyles = (d) => {
-        const base = "flex items-center justify-center font-bold text-white text-4xl shadow-inner border border-white/20 backdrop-blur-sm";
+        const common = "flex items-center justify-center font-bold text-white text-4xl shadow-2xl relative z-50";
+        
+        // We use gradients (bg-gradient-...) to simulate a spherical/3D light source
         switch(parseInt(d)) {
-            case 4: return `${base} w-24 h-24 bg-green-700/90 clip-tri pt-8`;
-            case 6: return `${base} w-24 h-24 bg-blue-700/90 rounded-lg`;
-            case 8: return `${base} w-24 h-24 bg-indigo-700/90 clip-diamond`;
-            case 10: return `${base} w-24 h-24 bg-purple-700/90 clip-diamond`; // close enough
-            case 12: return `${base} w-28 h-28 bg-orange-700/90 clip-hex`;
-            case 20: return `${base} w-32 h-32 bg-red-700/90 clip-hex`;
-            default: return `${base} w-24 h-24 bg-slate-700/90 rounded-full`;
+            case 4: return `${common} w-32 h-32 clip-tri bg-gradient-to-br from-green-500 to-green-900 pb-4`;
+            case 6: return `${common} w-32 h-32 rounded-xl bg-gradient-to-br from-blue-500 to-blue-900 border-2 border-blue-400`;
+            case 8: return `${common} w-32 h-32 clip-diamond bg-gradient-to-b from-indigo-500 to-indigo-900`;
+            case 10: return `${common} w-32 h-32 clip-kite bg-gradient-to-br from-purple-500 to-purple-900`; 
+            case 12: return `${common} w-32 h-32 clip-dodeca bg-gradient-to-br from-orange-500 to-orange-900`;
+            case 20: return `${common} w-32 h-32 clip-hex bg-gradient-to-br from-red-500 to-red-900`;
+            default: return `${common} w-32 h-32 rounded-full bg-gradient-to-br from-slate-500 to-slate-900`;
         }
     };
 
-    // Determine special visual classes for Nat 20 / Nat 1
+    // Visual pop for Crits
     const getResultClass = () => {
         if (roll.die !== 20) return "";
-        if (roll.result === 20) return "crit-success text-yellow-300 text-6xl text-shadow-lg";
-        if (roll.result === 1) return "crit-fail text-black text-6xl";
+        if (roll.result === 20) return "text-yellow-300 scale-125 transition-transform duration-300 drop-shadow-md"; // Nat 20
+        if (roll.result === 1) return "text-gray-400 scale-90"; // Nat 1
         return "";
     };
 
@@ -43,23 +45,23 @@ const DiceOverlay = ({ roll }) => {
     return (
         <div className="die-container">
             <div 
-                className={`die-3d ${phase === 'rolling' ? 'animate-[tumble-across_1.5s_ease-out_forwards]' : 'animate-[land-shake_0.3s_ease-out]'}`}
+                className={`die-3d ${phase === 'rolling' ? 'animate-tumble' : 'animate-land'}`}
                 style={{ 
-                    left: phase === 'rolling' ? '0' : '50vw', 
-                    top: phase === 'rolling' ? '0' : '50vh',
-                    transform: phase === 'landed' ? 'translate(-50%, -50%) rotate(0deg)' : undefined
+                    // While rolling, we let CSS handle the chaos. When landed, we center it.
+                    left: '50vw', 
+                    top: '50vh',
                 }}
             >
-                <div className={`${getDieStyles(roll.die)} ${phase === 'landed' ? getResultClass() : ''}`}>
-                    {phase === 'rolling' ? '?' : roll.result}
+                <div className={`${getDieStyles(roll.die)}`}>
+                    {/* Shadow overlay to fake depth */}
+                    <div className="absolute inset-0 bg-black/20 pointer-events-none mix-blend-overlay"></div>
+                    
+                    {/* The Number */}
+                    <span className={`z-10 ${phase === 'landed' ? getResultClass() : 'blur-sm'}`}>
+                        {phase === 'rolling' ? '' : roll.result}
+                    </span>
                 </div>
             </div>
-            
-            {phase === 'landed' && (
-                <div className="absolute top-2/3 left-1/2 -translate-x-1/2 text-white font-bold text-2xl fantasy-font animate-in fade-in slide-in-from-bottom-4 drop-shadow-[0_2px_10px_rgba(0,0,0,0.8)]">
-                    {roll.result}
-                </div>
-            )}
         </div>
     );
 };
