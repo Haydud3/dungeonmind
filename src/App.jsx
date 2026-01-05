@@ -458,12 +458,12 @@ function App() {
   if (!gameParams || !data) return <Lobby fb={fb} user={user} onJoin={(c, r, u) => { localStorage.setItem('dm_last_code', c); setGameParams({code:c, role:r, isOffline:false, uid:u}) }} onOffline={() => setGameParams({code:'LOCAL', role:'dm', isOffline:true, uid:'admin'})} />;
 
   return (
-    // FIX: Using h-dvh and pt-safe on Header Container, NOT body container, to fix mobile notch issue
+    // FIX: Removed pt-safe from root container to fix squash effect
     <div className="flex h-dvh w-full bg-slate-900 text-slate-200 overflow-hidden font-sans">
        <Sidebar view={currentView} setView={setCurrentView} onExit={() => { localStorage.removeItem('dm_last_code'); setGameParams(null); setData(null); }} />
        <main className="flex-1 h-full overflow-hidden relative w-full flex flex-col mb-16 md:mb-0">
            
-           {/* HEADER WRAPPER - This handles the notch padding */}
+           {/* HEADER WRAPPER - Kept padding only here if needed, but with meta=black it might just work natively */}
            <div className="shrink-0 bg-slate-900/90 backdrop-blur border-b border-slate-800 pt-safe">
                <div className="h-12 flex items-center justify-between px-4">
                    <div className="flex gap-2 items-center">
