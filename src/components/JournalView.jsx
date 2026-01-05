@@ -3,7 +3,8 @@ import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
 import Icon from './Icon';
 
-const JournalView = ({ data, setData, updateCloud, role, userId, aiHelper, deleteJournalEntry }) => {
+// FIX: Removed 'setData' from props to stop the GitHub Build Failure
+const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalEntry }) => {
     const [activePageId, setActivePageId] = useState(null);
     const [isEditing, setIsEditing] = useState(false);
     const [editTitle, setEditTitle] = useState('');
@@ -46,7 +47,8 @@ const JournalView = ({ data, setData, updateCloud, role, userId, aiHelper, delet
     };
 
     const handleDelete = () => {
-        if(confirm("Delete this page?")) {
+        // Added window.confirm to satisfy linter
+        if(window.confirm("Delete this page?")) {
             deleteJournalEntry(activePageId);
             setActivePageId(null);
         }
@@ -66,7 +68,6 @@ const JournalView = ({ data, setData, updateCloud, role, userId, aiHelper, delet
     // --- LIST VIEW ---
     if (!activePageId) {
         return (
-            // FIX: Added pb-24 to prevent the last item from hiding behind Mobile Nav
             <div className="h-full bg-slate-900 p-4 overflow-y-auto custom-scroll pb-24">
                 <div className="max-w-3xl mx-auto space-y-4">
                     <div className="flex justify-between items-center mb-6">
@@ -140,7 +141,7 @@ const JournalView = ({ data, setData, updateCloud, role, userId, aiHelper, delet
                 </div>
             </div>
 
-            {/* Content Area - FIX: Added pb-24 to inner container */}
+            {/* Content Area */}
             <div className="flex-1 overflow-y-auto custom-scroll bg-slate-900 pb-24">
                 {isEditing ? (
                     <div className="h-full flex flex-col">
