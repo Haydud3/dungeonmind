@@ -37,7 +37,6 @@ const DEFAULT_DATA = {
     }
 };
 
-// Helper: Strip HTML & Soften Trigger Words
 const cleanText = (html) => {
    const tmp = document.createElement("DIV");
    tmp.innerHTML = html;
@@ -190,19 +189,14 @@ function App() {
       }, 500);
   };
 
-  // --- AI SERVICE WITH ROBUST ERROR HANDLING ---
   const queryAiService = async (messages, allowRetry = true) => {
       const hasKey = aiProvider === 'puter' || apiKey;
       if (!hasKey) { alert("Error: No AI Provider set."); return "Config Error."; }
-      
-      let attempts = 0; 
-      const maxRetries = 2; 
-
+      let attempts = 0; const maxRetries = 2; 
       while(attempts < maxRetries) {
           try {
               attempts++;
               let responseText = "";
-
               if(aiProvider === 'puter') {
                   if (!window.puter) throw new Error("Puter.js not loaded");
                   if (!window.puter.auth.isSignedIn()) await window.puter.auth.signIn();
@@ -222,13 +216,10 @@ function App() {
                   responseText = j.choices?.[0]?.message?.content;
               }
               return responseText;
-
           } catch(e) { 
               const errObj = e.response || e;
               const errStr = typeof errObj === 'object' ? JSON.stringify(errObj) : String(errObj);
               console.error(`AI Attempt ${attempts} Failed:`, errStr);
-
-              // 1. MODERATION ERROR (422)
               if (errStr.includes("moderation") || errStr.includes("422")) {
                   if (allowRetry) {
                       console.warn("Moderation trigger. Retrying without context...");
@@ -237,16 +228,11 @@ function App() {
                   }
                   return "⚠️ AI Safety Filter: Content rejected.";
               }
-              
-              // 2. CREDIT LIMIT
               if (errStr.includes("credit") || errStr.includes("quota") || errStr.includes("402")) {
                   alert("⚠️ Puter.js Credit Limit Reached. Please upgrade Puter or switch providers.");
                   return "System: Out of Credits.";
               }
-
-              if(attempts === maxRetries) { 
-                  return "AI Error: " + errStr.slice(0, 100); 
-              }
+              if(attempts === maxRetries) { return "AI Error: " + errStr.slice(0, 100); }
               await new Promise(res => setTimeout(res, 1000));
           }
       }
@@ -286,30 +272,17 @@ function App() {
       updateCloud(updatedData, true);
 
       if (type === 'ai-public' || type === 'ai-private') {
-          // --- NORMAL CHAT LOGIC: Last 4000 Chars Only ---
           const genesis = data.campaign?.genesis || {};
-          
-          // 1. Campaign Bible (Always important)
-          const bibleContext = `Bible: ${genesis.loreText || "Generic"} Tone: ${genesis.tone}`;
-          
-          // 2. Party Context
-          const partyContext = data.players.map(p => `${p.name} (${p.race} ${p.class})`).join(', ');
-
-          // 3. Journal Context (Strictly last 4000 chars)
           const accessiblePages = Object.values(data.journal_pages || {}).filter(p => p.isPublic || p.ownerId === user?.uid);
-          const journalText = accessiblePages.map(p => `[${p.title}]: ${cleanText(p.content)}`).join('\n');
-          const journalContext = journalText.slice(-4000); // Strict limit
+          const journalContext = accessiblePages.map(p => `[${p.title}]: ${cleanText(p.content)}`).join('\n').slice(-4000); 
 
           const systemPrompt = `
-          Role: Dungeon Master AI for "${genesis.campaignName}".
-          ${bibleContext}
-          Party: ${partyContext}
-          
-          RECENT JOURNAL CONTEXT (Last 4000 chars):
-          ${journalContext}
-          
+          Role: Dungeon Master AI for "${genesis.campaignName || "D&D"}" (${genesis.tone || "Fantasy"}).
+          Lore: ${genesis.loreText || "Generic"}.
+          Location: ${data.campaign.location || "Unknown"}.
+          JOURNAL CONTEXT: ${journalContext}
           User: ${newMessage.senderName}.
-          Action: Answer the user using the provided context.
+          Action: Answer based on the journal data.
           `;
 
           const aiRes = await queryAiService([{ role: "system", content: systemPrompt }, { role: "user", content: content }]);
@@ -352,6 +325,27 @@ function App() {
       updateCloud(nd, true);
   };
 
+  // --- NEW: SAVE MESSAGE TO JOURNAL FUNCTION ---
+  const saveMessageToJournal = (msgContent) => {
+      const title = prompt("Entry Title (e.g., 'Recap: Goblin Ambush'):", "New Entry");
+      if (!title) return;
+      
+      const newId = `page_${Date.now()}`;
+      const newPage = {
+          id: newId,
+          title: title,
+          content: `<p>${msgContent.replace(/\n/g, '<br/>')}</p>`,
+          ownerId: user?.uid,
+          isPublic: true,
+          created: Date.now()
+      };
+      
+      const newData = { ...data, journal_pages: { ...data.journal_pages, [newId]: newPage } };
+      setData(newData);
+      updateCloud(newData, true);
+      alert("Saved to Journal!");
+  };
+
   const handleDiceRoll = (d) => {
     const result = Math.floor(Math.random() * d) + 1;
     const rollId = Date.now();
@@ -371,79 +365,49 @@ function App() {
     }, 1000);
   };
 
-  // --- STRICT CHUNKING RECAP (Fixed for 422 Errors) ---
-  const generateRecap = async () => {
+  // --- DUAL MODE RECAP GENERATOR ---
+  const generateRecap = async (mode = 'recent') => {
       setIsLoading(true);
       
       const accessiblePages = Object.values(data.journal_pages || {}).filter(p => p.isPublic);
-      const allText = accessiblePages
+      let allText = accessiblePages
           .sort((a,b) => a.created - b.created)
           .map(p => `ENTRY: ${p.title}\n${cleanText(p.content)}`)
           .join('\n\n');
       
       if (!allText.trim()) { alert("No journal entries!"); setIsLoading(false); return; }
 
+      // MODE SWITCH
+      if (mode === 'recent') {
+          // Recent: Slice last 4000 characters
+          allText = allText.slice(-4000);
+      }
+      
       const genesis = data.campaign?.genesis || {};
-      const chunkSize = 4000; // STRICT 4000 CHAR LIMIT per user instruction
+      const chunkSize = 4000;
       let finalSummary = "";
 
-      // Split into totally separate chunks
-      if (allText.length > chunkSize) {
+      // Logic: If 'recent' OR text is small, one pass. If 'full' and text is big, Chunk it.
+      if (mode === 'full' && allText.length > chunkSize) {
+          // MAP STEP (Chunking)
           let summaries = [];
           for (let i = 0; i < allText.length; i += chunkSize) {
               const chunk = allText.slice(i, i + chunkSize);
-              
-              // Each request is ISOLATED. The AI doesn't know they are connected yet.
-              const prompt = `
-              You are a Scribe. Summarize this specific fragment of a D&D adventure log.
-              Do not include intros or outros. Just the events.
-              
-              FRAGMENT:
-              ${chunk}
-              `;
-              
-              // We pass 'false' to allowRetry to fail fast on this specific chunk if needed
-              const res = await queryAiService([{ role: 'user', content: prompt }], false);
-              
-              if (res && !res.includes("Error") && !res.includes("Safety")) {
-                  summaries.push(res);
-              } else {
-                  summaries.push("[Missing segment due to AI limit]");
-              }
+              const res = await queryAiService([{ role: 'user', content: `Summarize this fragment:\n\n${chunk}` }], false);
+              if (res && !res.includes("Error") && !res.includes("Safety")) summaries.push(res);
           }
-          
-          // Now combine the summaries (Reduce Phase)
-          const combinedPrompt = `
-          I have several summaries of a D&D adventure. Combine them into one coherent "Previously On..." narrative.
-          
-          SUMMARIES:
-          ${summaries.join("\n\n")}
-          `;
-          finalSummary = await queryAiService([{ role: 'user', content: combinedPrompt }]);
-
+          // REDUCE STEP
+          finalSummary = await queryAiService([{ role: 'user', content: `Combine these summaries into a narrative:\n\n${summaries.join("\n\n")}` }]);
       } else {
-          // It fits in one request
-          const prompt = `
-          You are the Historian for "${genesis.campaignName}". 
-          Summarize this D&D log into a cinematic recap.
-          
-          LOGS:
-          ${allText}
-          `;
-          finalSummary = await queryAiService([{ role: 'user', content: prompt }]);
+          // SINGLE PASS
+          finalSummary = await queryAiService([{ role: 'user', content: `Summarize this text:\n\n${allText}` }]);
       }
 
-      if (finalSummary && !finalSummary.includes("Error")) {
-          if (effectiveRole === 'dm' && confirm("Recap generated. Save to Journal?")) {
-              const newId = `page_recap_${Date.now()}`;
-              const newPage = { id: newId, title: `Recap: ${new Date().toLocaleDateString()}`, content: `<p>${finalSummary.replace(/\n/g, '<br/>')}</p>`, ownerId: 'system', isPublic: true, created: Date.now() };
-              updateCloud({...data, journal_pages: {...data.journal_pages, [newId]: newPage}}, true);
-              sendChatMessage(`**NEW JOURNAL ENTRY ADDED:** Recap of recent events. Check the Journal tab!`, 'chat-public');
-          } else {
-              sendChatMessage(`**📜 CAMPAIGN RECAP:**\n${finalSummary}`, 'chat-public');
-          }
+      if (finalSummary && !finalSummary.includes("Error") && !finalSummary.includes("Safety")) {
+          // DIRECTLY TO CHAT
+          sendChatMessage(`**${mode === 'full' ? '📜 FULL STORY RECAP' : '⏱️ RECENT RECAP'}:**\n${finalSummary}`, 'chat-public');
       } else {
-          alert("Recap failed. Try reducing journal size or removing explicit content.");
+          alert("Recap failed (Content Filter or Error).");
       }
       setIsLoading(false);
   };
@@ -512,7 +476,8 @@ function App() {
                       isLoading={isLoading}
                       role={effectiveRole}
                       user={user} 
-                      generateRecap={generateRecap}
+                      generateRecap={generateRecap} // Pass the function
+                      saveMessageToJournal={saveMessageToJournal} // Pass the function
                       clearChat={clearChat}
                       showTools={showTools}
                       setShowTools={setShowTools}
