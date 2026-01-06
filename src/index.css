@@ -8,9 +8,6 @@ h1, h2, h3, .fantasy-font { font-family: 'Cinzel', serif; }
 .mono-font { font-family: 'Fira Code', monospace; }
 
 .glass-panel { background: rgba(30, 41, 59, 0.95); border: 1px solid rgba(255, 255, 255, 0.05); }
-.live-status { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-.status-online { background-color: #22c55e; box-shadow: 0 0 8px #22c55e; }
-.status-offline { background-color: #64748b; }
 .custom-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
 .custom-scroll::-webkit-scrollbar-track { background: #0f172a; }
 .custom-scroll::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
@@ -30,3 +27,41 @@ h1, h2, h3, .fantasy-font { font-family: 'Cinzel', serif; }
     padding-bottom: 20px;
     padding-bottom: env(safe-area-inset-bottom, 20px);
 }
+
+/* --- QUILL EDITOR MOBILE OVERRIDES --- */
+
+/* 1. Make toolbar scroll horizontally on small screens instead of wrapping awkwardly */
+.ql-toolbar {
+    background: #1e293b;
+    border-color: #334155 !important;
+    white-space: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    flex-shrink: 0;
+}
+.ql-toolbar::-webkit-scrollbar { height: 4px; }
+.ql-toolbar::-webkit-scrollbar-thumb { background: #475569; border-radius: 2px; }
+
+/* 2. Colorize Quill Icons */
+.ql-snow .ql-stroke { stroke: #94a3b8; }
+.ql-snow .ql-fill { fill: #94a3b8; }
+.ql-snow .ql-picker { color: #94a3b8; }
+.ql-snow .ql-picker-options { background-color: #1e293b; border-color: #334155; }
+
+/* 3. Fix the Content Container */
+.mobile-quill-fix .ql-container {
+    flex: 1;
+    overflow-y: auto;
+    background: #0f172a;
+    border: none !important;
+    font-size: 16px; /* Prevents iOS zoom on focus */
+}
+
+/* 4. Pad the bottom of the editor text so it clears the mobile nav bar */
+.mobile-quill-fix .ql-editor {
+    padding-bottom: 120px !important; /* Huge padding to clear MobileNav */
+    min-height: 100%;
+}
+
+.ql-editor p { color: #e2e8f0; line-height: 1.6; }
