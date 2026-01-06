@@ -30,7 +30,7 @@ h1, h2, h3, .fantasy-font { font-family: 'Cinzel', serif; }
 
 /* --- QUILL EDITOR MOBILE OVERRIDES --- */
 
-/* 1. Make toolbar scroll horizontally on small screens instead of wrapping awkwardly */
+/* 1. Make toolbar scroll horizontally */
 .ql-toolbar {
     background: #1e293b;
     border-color: #334155 !important;
@@ -55,12 +55,13 @@ h1, h2, h3, .fantasy-font { font-family: 'Cinzel', serif; }
     overflow-y: auto;
     background: #0f172a;
     border: none !important;
-    font-size: 16px; /* Prevents iOS zoom on focus */
+    font-size: 16px; /* Prevents iOS zoom */
 }
 
-/* 4. Pad the bottom of the editor text so it clears the mobile nav bar */
+/* 4. CRITICAL: Pad the bottom of the editor text so it clears the mobile nav bar */
+/* Using 8rem (approx 128px) to ensure it clears the bottom UI completely */
 .mobile-quill-fix .ql-editor {
-    padding-bottom: 120px !important; /* Huge padding to clear MobileNav */
+    padding-bottom: 8rem !important; 
     min-height: 100%;
 }
 
