@@ -15,8 +15,6 @@ import WorldView from './components/WorldView';
 import NpcView from './components/NpcView';
 import DiceOverlay from './components/DiceOverlay';
 
-// NOTE: MapBoard import was removed here because it was unused and causing build failure.
-
 const DEFAULT_DATA = { 
     hostId: null,
     dmIds: [], 
@@ -380,23 +378,35 @@ function App() {
       alert("Saved to Journal!");
   };
 
+  // --- FIXED DICE ROLLING ---
   const handleDiceRoll = (d) => {
-    const result = Math.floor(Math.random() * d) + 1;
-    const rollId = Date.now();
-    setRollingDice({ die: d, result, id: rollId });
-    setShowTools(false); 
+    // 1. Clear existing dice to fix double-render glitch
+    setRollingDice(null);
+    
+    // 2. Short delay to ensure unmount
     setTimeout(() => {
-        setDiceLog(prev => [{id: rollId, die: `d${d}`, result}, ...prev]);
-        if ((d === 20 && result === 20) || (d === 20 && result === 1)) {
-            const flavor = result === 20 ? "CRITICAL HIT!" : "CRITICAL MISS!";
-            setInputText(prev => prev + `[${flavor} (Natural ${result} on d20)] `);
-        } else {
-            const sysMsg = { id: Date.now(), role: 'system', content: `Rolled d${d}: **${result}**`, timestamp: Date.now(), senderId: 'system', type: 'chat-public' };
-            const nd = { ...data, chatLog: [...(data.chatLog||[]), sysMsg] };
-            updateCloud(nd, true);
-        }
-        setTimeout(() => setRollingDice(null), 1000); 
-    }, 1000);
+        const result = Math.floor(Math.random() * d) + 1;
+        const rollId = Date.now();
+        setRollingDice({ die: d, result, id: rollId });
+        setShowTools(false); 
+
+        // 3. Longer timeout for the result processing (wait for animation)
+        setTimeout(() => {
+            setDiceLog(prev => [{id: rollId, die: `d${d}`, result}, ...prev]);
+            
+            if ((d === 20 && result === 20) || (d === 20 && result === 1)) {
+                const flavor = result === 20 ? "CRITICAL HIT!" : "CRITICAL MISS!";
+                setInputText(prev => prev + `[${flavor} (Natural ${result} on d20)] `);
+            } else {
+                const sysMsg = { id: Date.now(), role: 'system', content: `Rolled d${d}: **${result}**`, timestamp: Date.now(), senderId: 'system', type: 'chat-public' };
+                const nd = { ...data, chatLog: [...(data.chatLog||[]), sysMsg] };
+                updateCloud(nd, true);
+            }
+            
+            // 4. Clear the 3D dice from screen
+            setRollingDice(null); 
+        }, 1800); // 1.8 seconds allows the "Chaotic Tumble" to finish
+    }, 50);
   };
 
   const generateRecap = async (mode = 'recent') => {
@@ -521,7 +531,6 @@ function App() {
               {currentView === 'party' && (
                   <PartyView 
                       data={data} 
-                      // Removed setData to be safe here too, though it was optional
                       role={effectiveRole} 
                       activeChar={data.assignments?.[user?.uid]} 
                       updateCloud={updateCloud}
