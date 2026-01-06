@@ -1,166 +1,158 @@
 import React, { useRef, useState, useEffect, useMemo } from 'react';
-import { Canvas, useFrame } from '@react-three/fiber';
-import { Text, Float, Environment, ContactShadows, Edges } from '@react-three/drei';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import { Text, Environment, ContactShadows, Edges, useTexture } from '@react-three/drei';
 import * as THREE from 'three';
 
-// --- HELPER: SCATTER DECOY NUMBERS ---
-// This component places random numbers on the die surface to make it look "real"
-const DecoyNumbers = ({ type, radius }) => {
-    // Generate ~12 random positions around a sphere
-    const decoys = useMemo(() => {
-        const arr = [];
-        const count = type === 20 ? 12 : 6; // More numbers for D20
-        const goldenRatio = (1 + 5 ** 0.5) / 2;
+// --- GEOMETRY & NUMBER PLACEMENT ---
+// This helper generates positions for numbers on complex shapes (D12, D20)
+// It ensures one number is always exactly on top (the result).
+const getNumberPositions = (sides, radius) => {
+    const positions = [];
+    
+    // 1. ALWAYS place the Result Number at the "North Pole" (Top)
+    // We adjust rotation later to make sure this faces the camera
+    positions.push({ pos: [0, radius, 0], isResult: true });
+
+    // 2. Generate decoys for the other sides
+    // We use a Fibonacci Sphere algorithm to distribute them evenly
+    const count = sides - 1; 
+    const goldenRatio = (1 + 5 ** 0.5) / 2;
+
+    for (let i = 0; i < count; i++) {
+        const theta = 2 * Math.PI * i / goldenRatio;
+        const phi = Math.acos(1 - 2 * (i + 1) / (count + 2)); // Offset to avoid top pole
+
+        // Convert spherical to cartesian
+        const x = radius * Math.sin(phi) * Math.cos(theta);
+        const y = radius * Math.sin(phi) * Math.sin(theta); // This creates a band around the middle
+        const z = radius * Math.cos(phi);
         
-        for (let i = 0; i < count; i++) {
-            // Fibonacci Sphere distribution (keeps them evenly spaced)
-            const theta = 2 * Math.PI * i / goldenRatio;
-            const phi = Math.acos(1 - 2 * (i + 0.5) / count);
-            
-            const x = radius * Math.sin(phi) * Math.cos(theta);
-            const y = radius * Math.sin(phi) * Math.sin(theta);
-            const z = radius * Math.cos(phi);
-
-            // Don't put a decoy on the very top (where result goes)
-            if (z > radius * 0.8) continue; 
-            if (z < -radius * 0.8) continue; // Skip bottom too
-
-            // Random number between 1 and type
-            const val = Math.floor(Math.random() * type) + 1;
-            arr.push({ pos: [x, y, z], val });
-        }
-        return arr;
-    }, [type, radius]);
-
-    return (
-        <group>
-            {decoys.map((d, i) => (
-                <Text
-                    key={i}
-                    position={d.pos}
-                    rotation={[0, 0, 0]} // Simplified rotation
-                    lookAt={d.pos.map(v => v * 2)} // Make text face outward
-                    fontSize={type === 20 ? 0.25 : 0.4}
-                    color="#fbbf24" // Amber Gold
-                    font="https://fonts.gstatic.com/s/cinzel/v11/8vIJ7ww63mVu7gt78Uk.woff" // Cinzel Font
-                    anchorX="center"
-                    anchorY="middle"
-                    fillOpacity={0.6}
-                >
-                    {d.val}
-                </Text>
-            ))}
-        </group>
-    );
+        // Flip Y to distribute them mostly on the bottom/sides (away from top result)
+        positions.push({ pos: [x, -Math.abs(z), y], isResult: false });
+    }
+    return positions;
 };
 
-const Die3D = ({ type, result }) => {
+// Explicit mapping for a D6 to ensure it looks perfect
+const D6_FACES = [
+    { pos: [0, 1.05, 0], rot: [-Math.PI/2, 0, 0], isResult: true }, // Top
+    { pos: [0, -1.05, 0], rot: [Math.PI/2, 0, 0] }, // Bottom
+    { pos: [0, 0, 1.05], rot: [0, 0, 0] }, // Front
+    { pos: [0, 0, -1.05], rot: [0, Math.PI, 0] }, // Back
+    { pos: [1.05, 0, 0], rot: [0, Math.PI/2, 0] }, // Right
+    { pos: [-1.05, 0, 0], rot: [0, -Math.PI/2, 0] }, // Left
+];
+
+const DieMesh = ({ type, result }) => {
     const meshRef = useRef();
-    const [stopped, setStopped] = useState(false);
+    const [time, setTime] = useState(0);
     
-    // Spin Logic
+    // Config based on die type
+    const config = useMemo(() => {
+        switch (parseInt(type)) {
+            case 4: return { geo: <tetrahedronGeometry args={[1.8]} />, radius: 1.1, sides: 4 };
+            case 6: return { geo: <boxGeometry args={[2, 2, 2]} />, radius: 1.1, sides: 6 };
+            case 8: return { geo: <octahedronGeometry args={[1.8]} />, radius: 1.2, sides: 8 };
+            case 10: return { geo: <octahedronGeometry args={[1.8]} />, scale: [1, 1.3, 1], radius: 1.2, sides: 10 };
+            case 12: return { geo: <dodecahedronGeometry args={[1.7]} />, radius: 1.4, sides: 12 };
+            case 20: return { geo: <icosahedronGeometry args={[1.8]} />, radius: 1.6, sides: 20 };
+            default: return { geo: <boxGeometry args={[2, 2, 2]} />, radius: 1.1, sides: 6 };
+        }
+    }, [type]);
+
+    // Generate number locations
+    const faceData = useMemo(() => {
+        if (parseInt(type) === 6) {
+            // Assign random numbers to the non-result faces
+            const others = [1,2,3,4,5,6].filter(n => n !== result);
+            return D6_FACES.map((face, i) => ({
+                ...face,
+                val: face.isResult ? result : others[i % others.length]
+            }));
+        } else {
+            const positions = getNumberPositions(config.sides, config.radius);
+            return positions.map(p => ({
+                ...p,
+                val: p.isResult ? result : Math.floor(Math.random() * parseInt(type)) + 1,
+                // LookAt calc is handled in render
+            }));
+        }
+    }, [type, result, config]);
+
+    // ANIMATION LOOP
     useFrame((state, delta) => {
         if (!meshRef.current) return;
         
-        if (!stopped) {
-            // Fast chaotic spin
-            meshRef.current.rotation.x += delta * 20;
-            meshRef.current.rotation.y += delta * 15;
-            meshRef.current.rotation.z += delta * 10;
+        // Advance time (Physics Simulation)
+        // t goes from 0 to 1 over approx 1.5 seconds
+        const speed = 1.2;
+        const newTime = Math.min(time + delta * speed, 1);
+        setTime(newTime);
+
+        const t = newTime;
+        
+        // 1. POSITION: Fly in from left (-15) to center (0)
+        // EaseOutQuart: 1 - pow(1 - x, 4)
+        const easeOut = 1 - Math.pow(1 - t, 4);
+        const startX = -12;
+        const currentX = startX + (0 - startX) * easeOut;
+        
+        // 2. BOUNCE: Bouncing ball physics (Abs Sin wave that decays)
+        // Decays as (1-t)
+        const bounceFreq = 15;
+        const bounceHeight = 6 * Math.pow(1 - t, 2); // Decay energy
+        const currentY = Math.abs(Math.sin(t * bounceFreq)) * bounceHeight;
+
+        meshRef.current.position.set(currentX, currentY, 0);
+
+        // 3. ROTATION: Spin wildly, then settle to 0,0,0
+        // Since our "Result" is at Top (0, radius, 0), stopping at 0,0,0 rotation
+        // ensures the result faces Up/Camera.
+        if (t < 1) {
+            // Spin based on remaining distance
+            const spinSpeed = (1 - t) * 20; 
+            meshRef.current.rotation.x += spinSpeed * delta;
+            meshRef.current.rotation.z -= spinSpeed * delta; // Roll forward
+            meshRef.current.rotation.y += (spinSpeed * 0.5) * delta;
         } else {
-            // Snap to 0,0,0 (Top Face Up)
-            const speed = delta * 12;
-            meshRef.current.rotation.x = THREE.MathUtils.lerp(meshRef.current.rotation.x, 0, speed);
-            meshRef.current.rotation.y = THREE.MathUtils.lerp(meshRef.current.rotation.y, 0, speed);
-            meshRef.current.rotation.z = THREE.MathUtils.lerp(meshRef.current.rotation.z, 0, speed);
+            // Snap to perfect alignment at the end
+            meshRef.current.rotation.x = THREE.MathUtils.lerp(meshRef.current.rotation.x, 0.4, delta * 10); // Tilt slightly to camera
+            meshRef.current.rotation.y = THREE.MathUtils.lerp(meshRef.current.rotation.y, 0, delta * 10);
+            meshRef.current.rotation.z = THREE.MathUtils.lerp(meshRef.current.rotation.z, 0, delta * 10);
         }
     });
 
-    useEffect(() => {
-        const timer = setTimeout(() => setStopped(true), 800);
-        return () => clearTimeout(timer);
-    }, []);
-
-    // Geometry Selection
-    let GeometryComponent = THREE.BoxGeometry;
-    let args = [2, 2, 2];
-    let radius = 1; // Approximate radius for placing numbers
-    
-    switch (parseInt(type)) {
-        case 4: 
-            GeometryComponent = THREE.TetrahedronGeometry; 
-            args = [1.8]; 
-            radius = 1.2;
-            break;
-        case 6: 
-            GeometryComponent = THREE.BoxGeometry; 
-            args = [2, 2, 2]; 
-            radius = 1.01; // Just on surface
-            break;
-        case 8: 
-            GeometryComponent = THREE.OctahedronGeometry; 
-            args = [1.8]; 
-            radius = 1.2;
-            break;
-        case 10: 
-            // D10 approximation (stretched octahedron)
-            GeometryComponent = THREE.OctahedronGeometry; 
-            args = [1.8];
-            radius = 1.2;
-            break;
-        case 12: 
-            GeometryComponent = THREE.DodecahedronGeometry; 
-            args = [1.7]; 
-            radius = 1.4;
-            break;
-        case 20: 
-            GeometryComponent = THREE.IcosahedronGeometry; 
-            args = [1.8]; 
-            radius = 1.6;
-            break;
-        default: 
-            GeometryComponent = THREE.BoxGeometry; 
-            args = [2, 2, 2];
-            radius = 1.1;
-    }
-
     return (
-        <group>
-            <Float speed={5} rotationIntensity={0.5} floatIntensity={0.5}>
-                <group ref={meshRef}>
-                    {/* THE DIE SHAPE */}
-                    <mesh>
-                        <primitive object={new GeometryComponent(...args)} />
-                        {/* Obsidian / Dark Stone Material */}
-                        <meshStandardMaterial 
-                            color="#1c1917" // Warm Black
-                            roughness={0.2}
-                            metalness={0.5}
-                            envMapIntensity={1}
-                        />
-                        {/* Gold Edges */}
-                        <Edges threshold={10} color="#b45309" />
-                    </mesh>
+        <group ref={meshRef}>
+            <mesh scale={config.scale || [1,1,1]}>
+                {config.geo}
+                {/* Material: Dark Obsidian/Onyx */}
+                <meshStandardMaterial 
+                    color="#1a1a1a"
+                    roughness={0.2}
+                    metalness={0.6}
+                    envMapIntensity={1.5}
+                />
+                <Edges threshold={15} color="#d97706" />
+            </mesh>
 
-                    {/* DECOY NUMBERS (Sides) */}
-                    <DecoyNumbers type={type} radius={radius} />
-
-                    {/* RESULT NUMBER (Always Top Face) */}
-                    <Text
-                        position={[0, 0, radius + 0.05]} // Slightly above top face
-                        rotation={[0, 0, 0]}
-                        fontSize={type === 20 ? 0.8 : 1}
-                        color="#fbbf24" // Bright Amber
-                        font="https://fonts.gstatic.com/s/cinzel/v11/8vIJ7ww63mVu7gt78Uk.woff"
-                        anchorX="center"
-                        anchorY="middle"
-                        outlineWidth={0.05}
-                        outlineColor="#451a03"
-                    >
-                        {result}
-                    </Text>
-                </group>
-            </Float>
+            {/* Render Numbers on Faces */}
+            {faceData.map((face, i) => (
+                <Text
+                    key={i}
+                    position={face.pos}
+                    rotation={face.rot || [0,0,0]}
+                    // For polygons, look at center * 2 to face outward
+                    lookAt={face.rot ? undefined : (pos) => pos.multiplyScalar(2)} 
+                    fontSize={parseInt(type) === 20 ? 0.35 : 0.6}
+                    color={face.isResult ? "#fbbf24" : "#a16207"} // Golden result, Darker decoys
+                    font="https://fonts.gstatic.com/s/cinzel/v11/8vIJ7ww63mVu7gt78Uk.woff"
+                    anchorX="center"
+                    anchorY="middle"
+                >
+                    {face.val}
+                </Text>
+            ))}
         </group>
     );
 };
@@ -170,27 +162,48 @@ const DiceOverlay = ({ roll }) => {
 
     return (
         <div className="fixed inset-0 z-[9999] pointer-events-none flex items-center justify-center">
-            {/* Dark Backdrop for Drama */}
-            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity duration-300 animate-in fade-in"></div>
+            {/* Backdrop */}
+            <div className="absolute inset-0 bg-black/50 backdrop-blur-[2px] animate-in fade-in duration-300"></div>
             
-            <div className="w-[320px] h-[320px] relative z-10 animate-in zoom-in duration-300">
-                <Canvas camera={{ position: [0, 0, 6], fov: 45 }}>
+            {/* Full Screen Canvas for the "Throw" */}
+            <div className="w-full h-full relative z-10">
+                <Canvas camera={{ position: [0, 2, 8], fov: 40 }}>
                     <ambientLight intensity={0.5} />
                     
-                    {/* Dynamic Lighting for "Magical" feel */}
-                    <pointLight position={[10, 10, 10]} intensity={1.5} color="#fbbf24" />
-                    <pointLight position={[-10, -5, -5]} intensity={1} color="#ef4444" />
+                    {/* Cinematic Lighting */}
+                    <pointLight position={[10, 10, 10]} intensity={2} color="#fbbf24" />
+                    <pointLight position={[-10, 5, -5]} intensity={1} color="#fbbf24" />
+                    <Environment preset="city" />
+
+                    <DieMesh type={roll.die} result={roll.result} />
                     
-                    <Environment preset="lobby" />
-                    
-                    <Die3D type={roll.die} result={roll.result} />
-                    
-                    {/* Shadow */}
-                    <ContactShadows position={[0, -2.5, 0]} opacity={0.6} scale={10} blur={2} far={4.5} color="#000" />
+                    {/* Shadow moves with the die logically? 
+                        No, ContactShadows renders at 0,0,0. 
+                        Since our die moves in X/Y, we want the shadow to follow X but stay on floor Y.
+                    */}
+                    <ShadowFollow />
                 </Canvas>
             </div>
         </div>
     );
 };
+
+// Helper to make shadow follow the die's X position
+const ShadowFollow = () => {
+    const shadowRef = useRef();
+    // We can cheat: since the die moves from -12 to 0, we can just animate the shadow similarly
+    // or just make a huge shadow plane. 
+    // Easier: Use a huge blur scale so it looks like a table surface.
+    return (
+         <ContactShadows 
+            position={[0, -2, 0]} 
+            opacity={0.7} 
+            scale={40} 
+            blur={2} 
+            far={4} 
+            color="#000" 
+        />
+    );
+}
 
 export default DiceOverlay;
