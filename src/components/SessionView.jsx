@@ -155,10 +155,11 @@ const SessionView = (props) => {
                     <div ref={chatEndRef}></div>
                 </div>
                 
-                {/* FIX: mb-20 on mobile lifts chat above MobileNav. md:mb-0 resets it for desktop. */}
-                <div className="p-3 bg-slate-900 border-t border-slate-800 flex flex-col gap-2 shrink-0 z-10 mb-20 md:mb-0 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.5)]">
-                    <div className="flex items-center gap-2 flex-wrap">
-                        <select value={sendMode} onChange={(e) => setSendMode(e.target.value)} className="w-full md:w-36 bg-slate-800 text-xs font-bold text-slate-300 border border-slate-600 rounded px-2 py-1.5 outline-none focus:border-amber-500">
+                {/* FIX: Condensed Bottom HUD. Reduced padding to p-2. Single row for Selectors + Fast Button + Dice. */}
+                <div className="p-2 bg-slate-900 border-t border-slate-800 flex flex-col gap-2 shrink-0 z-10 mb-20 md:mb-0 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.5)]">
+                    <div className="flex items-center gap-2">
+                        {/* FIX: sendMode is now flex-1 to share space, instead of w-full */}
+                        <select value={sendMode} onChange={(e) => setSendMode(e.target.value)} className="flex-1 min-w-0 bg-slate-800 text-xs font-bold text-slate-300 border border-slate-600 rounded px-2 py-1.5 outline-none focus:border-amber-500 md:w-36 md:flex-none">
                             <option value="chat-public">📢 Chat</option>
                             <option value="ai-public">🤖 AI (Public)</option>
                             <option value="ai-private">🧠 AI (Private)</option>
@@ -166,7 +167,7 @@ const SessionView = (props) => {
                         </select>
 
                         {sendMode === 'chat-private' && (
-                            <select value={targetUser} onChange={(e) => setTargetUser(e.target.value)} className="flex-1 md:flex-none md:w-32 bg-purple-900/20 text-xs text-purple-200 border border-purple-500/50 rounded px-2 py-1.5 outline-none">
+                            <select value={targetUser} onChange={(e) => setTargetUser(e.target.value)} className="flex-1 min-w-0 md:w-32 bg-purple-900/20 text-xs text-purple-200 border border-purple-500/50 rounded px-2 py-1.5 outline-none">
                                 <option value="">To whom?</option>
                                 {Object.entries(data.activeUsers || {}).map(([uid, email]) => {
                                     if (uid === user.uid) return null;
@@ -182,7 +183,7 @@ const SessionView = (props) => {
                         {(sendMode === 'ai-public' || sendMode === 'ai-private') && (
                             <button 
                                 onClick={() => setAiContextMode(prev => prev === 'fast' ? 'deep' : 'fast')}
-                                className={`flex items-center gap-1 px-2 py-1.5 rounded border text-xs font-bold transition-colors ${aiContextMode === 'fast' ? 'bg-blue-900/30 border-blue-700 text-blue-300' : 'bg-amber-900/30 border-amber-700 text-amber-300'}`}
+                                className={`flex items-center gap-1 px-2 py-1.5 rounded border text-xs font-bold transition-colors whitespace-nowrap ${aiContextMode === 'fast' ? 'bg-blue-900/30 border-blue-700 text-blue-300' : 'bg-amber-900/30 border-amber-700 text-amber-300'}`}
                                 title={aiContextMode === 'fast' ? "Fast: Reads last 4k chars" : "Deep: Reads last 30k chars (Slower)"}
                             >
                                 <Icon name={aiContextMode === 'fast' ? 'zap' : 'book-open'} size={12}/>
@@ -190,7 +191,7 @@ const SessionView = (props) => {
                             </button>
                         )}
 
-                        <button onClick={() => setShowTools(!showTools)} className={`ml-auto rounded p-1.5 transition-colors ${showTools ? 'text-amber-500 bg-amber-900/20' : 'text-slate-500 hover:text-slate-300'}`}><Icon name="dices" size={20}/></button>
+                        <button onClick={() => setShowTools(!showTools)} className={`rounded p-1.5 transition-colors shrink-0 ${showTools ? 'text-amber-500 bg-amber-900/20' : 'text-slate-500 hover:text-slate-300'}`}><Icon name="dices" size={20}/></button>
                     </div>
                     
                     <div className="relative flex gap-2 items-end bg-slate-800 rounded-lg p-2 border border-slate-700 focus-within:border-slate-500 transition-colors">
