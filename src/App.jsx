@@ -378,19 +378,19 @@ function App() {
       alert("Saved to Journal!");
   };
 
-  // --- FIXED DICE ROLLING ---
+  // --- UPDATED DICE LOGIC WITH 3D TIMING ---
   const handleDiceRoll = (d) => {
-    // 1. Clear existing dice to fix double-render glitch
+    // 1. Clear current dice to ensure reset
     setRollingDice(null);
     
-    // 2. Short delay to ensure unmount
+    // 2. Small delay to unmount previous canvas
     setTimeout(() => {
         const result = Math.floor(Math.random() * d) + 1;
         const rollId = Date.now();
         setRollingDice({ die: d, result, id: rollId });
         setShowTools(false); 
 
-        // 3. Longer timeout for the result processing (wait for animation)
+        // 3. Wait for 3D spin (0.8s) + Result reading time (0.7s) = 1.5s
         setTimeout(() => {
             setDiceLog(prev => [{id: rollId, die: `d${d}`, result}, ...prev]);
             
@@ -403,9 +403,9 @@ function App() {
                 updateCloud(nd, true);
             }
             
-            // 4. Clear the 3D dice from screen
+            // 4. Remove the 3D Overlay
             setRollingDice(null); 
-        }, 1800); // 1.8 seconds allows the "Chaotic Tumble" to finish
+        }, 1500); 
     }, 50);
   };
 
