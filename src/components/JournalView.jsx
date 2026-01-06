@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import ReactQuill from 'react-quill';
-import 'react-quill/dist/quill.snow.css';
+import ReactQuill from 'react-quill-new'; // CHANGED THIS
+import 'react-quill-new/dist/quill.snow.css'; // CHANGED THIS
 import Icon from './Icon';
 
 const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalEntry }) => {
@@ -67,15 +67,14 @@ const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalE
     const getPreviewText = (html) => {
         const tmp = document.createElement("DIV");
         tmp.innerHTML = html;
-        let text = tmp.textContent || tmp.innerText || "";
-        return text.replace(/\u00A0/g, " ");
+        let text = (tmp.textContent || tmp.innerText || "").replace(/\u00A0/g, " ");
+        return text;
     };
 
     // --- LIST VIEW ---
     if (!activePageId) {
         return (
             <div className="h-full bg-slate-900 p-4 overflow-y-auto custom-scroll pb-24">
-                {/* FIX: Added max-w-5xl mx-auto to CENTER the list on Desktop */}
                 <div className="w-full max-w-5xl mx-auto space-y-4">
                     <div className="flex justify-between items-center mb-6">
                         <h2 className="text-2xl text-amber-500 fantasy-font">Journal</h2>
@@ -160,7 +159,6 @@ const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalE
             {/* Content Area */}
             <div className="flex-1 overflow-y-auto custom-scroll bg-slate-900 pb-24">
                 {isEditing ? (
-                    // FIX: Centered the Editor View
                     <div className="h-full flex flex-col w-full max-w-5xl mx-auto">
                         <ReactQuill 
                             theme="snow" 
@@ -171,7 +169,6 @@ const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalE
                         />
                     </div>
                 ) : (
-                    // FIX: Centered the Read View
                     <div className="p-6 w-full max-w-5xl mx-auto overflow-hidden">
                         <div 
                             className="prose prose-invert prose-p:text-slate-300 prose-headings:text-amber-500 max-w-none break-words whitespace-pre-wrap" 
