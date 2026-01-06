@@ -32,147 +32,139 @@ h1, h2, h3, .fantasy-font { font-family: 'Cinzel', serif; }
 }
 
 /* =========================================
-   3D DICE CSS 
+   IMPROVED 3D DICE CSS 
    ========================================= */
 
-/* Container Setup */
 .die-container {
     position: fixed;
-    top: 50%; left: 50%;
-    transform: translate(-50%, -50%);
-    perspective: 1000px;
-    width: 200px; height: 200px;
+    top: 0; left: 0; right: 0; bottom: 0;
+    pointer-events: none;
+    z-index: 9999;
     display: flex;
     align-items: center;
     justify-content: center;
-    pointer-events: none;
-    z-index: 9999;
+    perspective: 1200px; /* Deeper perspective for 3D feel */
 }
 
-/* Animation Keys */
-@keyframes tumble {
-    0% { transform: rotateX(0deg) rotateY(0deg) rotateZ(0deg) scale(0.5); opacity: 0; }
-    20% { opacity: 1; }
-    100% { transform: rotateX(720deg) rotateY(360deg) rotateZ(360deg) scale(1.2); }
-}
-
-@keyframes land {
-    0% { transform: scale(1.5); opacity: 0; }
-    100% { transform: scale(1); opacity: 1; }
-}
-
-/* Common Wrapper */
 .die-mover {
-    width: 100px; height: 100px;
+    width: 120px; height: 120px;
     position: relative;
     transform-style: preserve-3d;
+    /* This ensures the die starts off-screen or chaotic */
+}
+
+/* THE ANIMAITON: Chaotic tumble -> Snap to center */
+@keyframes chaoticTumble {
+    0% { 
+        transform: translate3d(0, -500px, -500px) rotate3d(1, 1, 1, 720deg); 
+        opacity: 0; 
+    }
+    30% { opacity: 1; }
+    80% { 
+        transform: translate3d(0, 0, 0) rotate3d(1, 0.5, 0, 0deg); 
+    }
+    90% {
+        transform: scale(1.1); /* Slight bounce */
+    }
+    100% { 
+        transform: scale(1) rotate3d(0, 0, 0, 0deg); 
+    }
 }
 
 .animate-tumble {
-    animation: tumble 0.6s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+    animation: chaoticTumble 0.8s cubic-bezier(0.18, 0.89, 0.32, 1.28) forwards;
 }
 
-/* --- D6 (CUBE) --- */
-.cube-wrapper {
-    width: 100px; height: 100px;
-    position: relative;
-    transform-style: preserve-3d;
+/* Result Text Animation */
+@keyframes textPop {
+    0% { opacity: 0; transform: translateZ(20px) scale(0.5); }
+    100% { opacity: 1; transform: translateZ(30px) scale(1); }
 }
 
-.face {
-    position: absolute;
-    width: 100px; height: 100px;
-    background: linear-gradient(135deg, #d97706, #b45309);
-    border: 2px solid #fcd34d;
-    color: white;
-    font-size: 40px;
-    font-weight: bold;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-family: 'Cinzel', serif;
-    box-shadow: inset 0 0 15px rgba(0,0,0,0.5);
-    backface-visibility: hidden;
-}
-
-.face-front  { transform: translateZ(50px); }
-.face-back   { transform: rotateY(180deg) translateZ(50px); }
-.face-right  { transform: rotateY(90deg) translateZ(50px); }
-.face-left   { transform: rotateY(-90deg) translateZ(50px); }
-.face-top    { transform: rotateX(90deg) translateZ(50px); }
-.face-bottom { transform: rotateX(-90deg) translateZ(50px); }
-
-/* The result overlay for D6 */
-.face-content {
-    position: absolute;
-    top: 50%; left: 50%;
-    transform: translate(-50%, -50%) translateZ(60px);
-    font-size: 3rem;
+.result-text {
+    display: block;
+    animation: textPop 0.3s ease-out 0.6s forwards; /* Delays until die lands */
+    opacity: 0;
+    font-size: 3.5rem;
     font-weight: 900;
-    color: white;
-    text-shadow: 0 2px 4px rgba(0,0,0,0.8);
-    z-index: 10;
+    color: #fff;
+    text-shadow: 0 0 10px rgba(0,0,0,0.8), 0 0 20px #fbbf24;
 }
 
-/* --- POLYGONS (D4, D8, D12, D20) --- */
+/* --- GENERIC POLYGON STYLES (D4, D8, D12, D20) --- */
+/* We fake 3D by stacking layers (Extrusion) */
+
 .extrusion-wrapper {
     width: 100%; height: 100%;
     position: relative;
     transform-style: preserve-3d;
 }
 
-/* Layers create pseudo-3D thickness */
 .extrusion-layer {
     position: absolute;
     inset: 0;
-    width: 100%; height: 100%;
-    background-color: #d97706; /* Default Fallback */
+    /* Realistic Plastic Gradient */
+    background: radial-gradient(circle at 30% 30%, #f59e0b, #b45309);
+    border: 1px solid rgba(255,255,255,0.1);
 }
 
-.extrusion-front {
-    position: absolute;
-    inset: 0;
-    width: 100%; height: 100%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-family: 'Cinzel', serif;
-    font-weight: bold;
-    font-size: 2.5rem;
-    color: white;
-    text-shadow: 0 2px 5px black;
-    transform: translateZ(15px); /* Pop text forward */
-    z-index: 10;
+/* --- SPECIFIC SHAPES (Refined) --- */
+
+/* D20 - Hexagon approximation */
+.clip-hex {
+    clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
 }
 
-/* --- SHAPE CLIPPINGS --- */
-
-/* D4: Triangle */
-.clip-tri {
-    clip-path: polygon(50% 0%, 0% 100%, 100% 100%);
-    background: linear-gradient(to bottom, #f59e0b, #92400e);
-}
-
-/* D8: Diamond */
-.clip-diamond {
-    clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
-    background: linear-gradient(45deg, #f59e0b, #92400e);
-}
-
-/* D10: Kite shape */
-.clip-kite {
-    clip-path: polygon(50% 0%, 100% 70%, 50% 100%, 0% 70%);
-    background: linear-gradient(to bottom, #f59e0b, #78350f);
-}
-
-/* D12: Pentagon-ish */
+/* D12 - Decagon/Pentagon approx */
 .clip-dodeca {
     clip-path: polygon(50% 0%, 95% 38%, 82% 100%, 18% 100%, 5% 38%);
-    background: radial-gradient(circle, #f59e0b, #92400e);
 }
 
-/* D20: Hexagon (Simplest 2D rep of a d20 face) */
-.clip-hex {
-    clip-path: polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%);
-    background: radial-gradient(circle at 30% 30%, #fbbf24, #92400e);
+/* D10 - Kite */
+.clip-kite {
+    clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+    transform: scaleY(1.2); /* Stretch to look like D10 */
+}
+
+/* D8 - Diamond */
+.clip-diamond {
+    clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+}
+
+/* D4 - Triangle */
+.clip-tri {
+    clip-path: polygon(50% 0%, 0% 85%, 100% 85%);
+    margin-top: 10px;
+}
+
+/* --- D6 SPECIFIC (True Cube) --- */
+.cube-wrapper {
+    width: 100%; height: 100%;
+    transform-style: preserve-3d;
+}
+.face {
+    position: absolute;
+    width: 120px; height: 120px;
+    background: radial-gradient(circle at center, #f59e0b, #92400e);
+    border: 2px solid #fbbf24;
+    color: rgba(255,255,255,0.3); /* Dim numbers on side faces */
+    display: flex; align-items: center; justify-content: center;
+    font-size: 2rem; font-weight: bold;
+    backface-visibility: visible;
+}
+/* Positioning faces for a perfect cube */
+.face-front  { transform: translateZ(60px); }
+.face-back   { transform: rotateY(180deg) translateZ(60px); }
+.face-right  { transform: rotateY(90deg) translateZ(60px); }
+.face-left   { transform: rotateY(-90deg) translateZ(60px); }
+.face-top    { transform: rotateX(90deg) translateZ(60px); }
+.face-bottom { transform: rotateX(-90deg) translateZ(60px); }
+
+/* The winning face needs to shine */
+.face-result {
+    position: absolute;
+    inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    transform: translateZ(61px); /* Slightly in front */
+    z-index: 50;
 }
