@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import ReactQuill from 'react-quill-new'; // CHANGED THIS
-import 'react-quill-new/dist/quill.snow.css'; // CHANGED THIS
+import ReactQuill from 'react-quill-new';
+import 'react-quill-new/dist/quill.snow.css';
 import Icon from './Icon';
 
 const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalEntry }) => {
@@ -74,11 +74,11 @@ const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalE
     // --- LIST VIEW ---
     if (!activePageId) {
         return (
-            <div className="h-full bg-slate-900 p-4 overflow-y-auto custom-scroll pb-24">
+            <div className="h-full bg-slate-900 p-4 overflow-y-auto custom-scroll pb-32">
                 <div className="w-full max-w-5xl mx-auto space-y-4">
                     <div className="flex justify-between items-center mb-6">
                         <h2 className="text-2xl text-amber-500 fantasy-font">Journal</h2>
-                        <button onClick={handleCreate} className="bg-green-700 hover:bg-green-600 text-white px-3 py-1 rounded flex items-center gap-2"><Icon name="plus" size={16}/> New Entry</button>
+                        <button onClick={handleCreate} className="bg-green-700 hover:bg-green-600 text-white px-3 py-1 rounded flex items-center gap-2 shadow-lg"><Icon name="plus" size={16}/> <span className="hidden xs:inline">New Entry</span></button>
                     </div>
 
                     {pages.length === 0 && <div className="text-center text-slate-500 mt-10">No journal entries yet.</div>}
@@ -89,7 +89,7 @@ const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalE
                                 key={p.id} 
                                 onClick={() => setActivePageId(p.id)} 
                                 role="button"
-                                className="w-full text-left bg-slate-800 border border-slate-700 p-4 rounded hover:border-amber-500 transition-colors group cursor-pointer min-w-0"
+                                className="w-full text-left bg-slate-800 border border-slate-700 p-4 rounded hover:border-amber-500 transition-colors group cursor-pointer min-w-0 shadow-sm"
                             >
                                 <div className="flex justify-between items-start w-full">
                                     <div className="min-w-0 flex-1"> 
@@ -116,25 +116,25 @@ const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalE
     // --- DETAIL / EDIT VIEW ---
     return (
         <div className="h-full flex flex-col bg-slate-900">
-            {/* Header Toolbar - Centered Wrapper */}
-            <div className="shrink-0 h-14 border-b border-slate-700 bg-slate-800 flex justify-center px-4">
+            {/* Header Toolbar */}
+            <div className="shrink-0 h-14 border-b border-slate-700 bg-slate-800 flex justify-center px-2 z-20">
                 <div className="flex items-center justify-between w-full max-w-5xl">
-                    <div className="flex items-center gap-3 overflow-hidden">
-                        <button onClick={() => setActivePageId(null)} className="text-slate-400 hover:text-white shrink-0"><Icon name="arrow-left" size={20}/></button>
+                    <div className="flex items-center gap-2 overflow-hidden flex-1 mr-2">
+                        <button onClick={() => setActivePageId(null)} className="text-slate-400 hover:text-white shrink-0 p-2"><Icon name="arrow-left" size={20}/></button>
                         {isEditing ? (
-                            <input className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-white font-bold w-full min-w-0" value={editTitle} onChange={e => setEditTitle(e.target.value)} />
+                            <input className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-white font-bold w-full min-w-0" value={editTitle} onChange={e => setEditTitle(e.target.value)} placeholder="Entry Title" />
                         ) : (
                             <h2 className="font-bold text-slate-200 truncate">{activePage.title}</h2>
                         )}
                     </div>
                     
-                    <div className="flex gap-2 shrink-0 ml-2">
+                    <div className="flex gap-2 shrink-0">
                         {isEditing ? (
                             <>
-                                <button onClick={handleAiEnhance} disabled={isAiLoading} className="text-xs bg-purple-600 hover:bg-purple-500 text-white px-3 py-1 rounded flex items-center gap-1">
-                                    {isAiLoading ? <Icon name="loader-2" className="animate-spin" size={14}/> : <Icon name="sparkles" size={14}/>} AI
+                                <button onClick={handleAiEnhance} disabled={isAiLoading} className="text-xs bg-purple-600 hover:bg-purple-500 text-white px-3 py-1 rounded flex items-center gap-1 shadow-lg">
+                                    {isAiLoading ? <Icon name="loader-2" className="animate-spin" size={14}/> : <Icon name="sparkles" size={14}/>} <span className="hidden sm:inline">AI Fix</span>
                                 </button>
-                                <button onClick={handleSave} className="text-xs bg-green-700 hover:bg-green-600 text-white px-3 py-1 rounded">Save</button>
+                                <button onClick={handleSave} className="text-xs bg-green-700 hover:bg-green-600 text-white px-3 py-1 rounded shadow-lg font-bold">Save</button>
                             </>
                         ) : (
                             <>
@@ -143,7 +143,7 @@ const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalE
                                         <button onClick={() => {
                                             const newData = {...data, journal_pages: {...data.journal_pages, [activePage.id]: {...activePage, isPublic: !activePage.isPublic}}};
                                             updateCloud(newData, true);
-                                        }} className={`text-xs px-2 py-1 rounded border ${activePage.isPublic ? 'border-green-600 text-green-400' : 'border-slate-600 text-slate-400'}`}>
+                                        }} className={`text-xs px-2 py-1 rounded border hidden sm:block ${activePage.isPublic ? 'border-green-600 text-green-400' : 'border-slate-600 text-slate-400'}`}>
                                             {activePage.isPublic ? 'Public' : 'Private'}
                                         </button>
                                         <button onClick={() => { setIsEditing(true); setEditTitle(activePage.title); setEditContent(activePage.content); }} className="text-slate-400 hover:text-amber-400 p-2"><Icon name="pencil" size={18}/></button>
@@ -157,23 +157,34 @@ const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalE
             </div>
 
             {/* Content Area */}
-            <div className="flex-1 overflow-y-auto custom-scroll bg-slate-900 pb-24">
+            {/* PB-32 added to ensure text clears the mobile navbar */}
+            <div className="flex-1 overflow-hidden relative bg-slate-900">
                 {isEditing ? (
-                    <div className="h-full flex flex-col w-full max-w-5xl mx-auto">
+                    <div className="h-full flex flex-col w-full max-w-5xl mx-auto relative">
                         <ReactQuill 
                             theme="snow" 
                             value={editContent} 
                             onChange={setEditContent} 
-                            className="h-full flex flex-col"
-                            modules={{ toolbar: [[{ 'header': [1, 2, false] }], ['bold', 'italic', 'underline', 'blockquote'], [{'list': 'ordered'}, {'list': 'bullet'}], ['clean']] }}
+                            className="h-full flex flex-col mobile-quill-fix"
+                            // Custom modules to simplify toolbar on mobile if needed
+                            modules={{ 
+                                toolbar: [
+                                    [{ 'header': [1, 2, false] }], 
+                                    ['bold', 'italic', 'underline', 'strike'], 
+                                    [{'list': 'ordered'}, {'list': 'bullet'}],
+                                    ['clean']
+                                ] 
+                            }}
                         />
                     </div>
                 ) : (
-                    <div className="p-6 w-full max-w-5xl mx-auto overflow-hidden">
-                        <div 
-                            className="prose prose-invert prose-p:text-slate-300 prose-headings:text-amber-500 max-w-none break-words whitespace-pre-wrap" 
-                            dangerouslySetInnerHTML={{__html: activePage.content}} 
-                        />
+                    <div className="h-full overflow-y-auto custom-scroll pb-32">
+                        <div className="p-6 w-full max-w-5xl mx-auto">
+                            <div 
+                                className="prose prose-invert prose-p:text-slate-300 prose-headings:text-amber-500 max-w-none break-words whitespace-pre-wrap" 
+                                dangerouslySetInnerHTML={{__html: activePage.content}} 
+                            />
+                        </div>
                     </div>
                 )}
             </div>
