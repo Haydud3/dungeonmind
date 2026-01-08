@@ -1,171 +1,153 @@
 import React, { useState } from 'react';
 import Icon from './Icon';
+import CharacterCreator from './ai-wizard/CharacterCreator';
+import SheetContainer from './character-sheet/SheetContainer'; 
+import { useCharacterStore } from '../stores/useCharacterStore';
+import { getDebugText, parsePdf } from '../utils/dndBeyondParser'; // Import debug
 
-// FIX: Removed 'setData' from props because it was unused and caused the build error.
-const PartyView = ({ data, role, updateCloud, setInputText, setView }) => {
-    const [editingId, setEditingId] = useState(null);
-    const [editForm, setEditForm] = useState({});
+const PartyView = ({ data, role, updateCloud, setView, user, aiHelper, onDiceRoll, onLogAction }) => {
+    const [showCreator, setShowCreator] = useState(false);
+    const [viewingCharacterId, setViewingCharacterId] = useState(null);
+    const [isImporting, setIsImporting] = useState(false);
+    const [debugLog, setDebugLog] = useState("");
 
-    const handleAdd = () => {
-        const newP = { 
-            id: Date.now(), 
-            name: 'New Hero', 
-            class: 'Fighter', 
-            race: 'Human', 
-            level: 1, 
-            aliases: '',
-            appearance: '',
-            personality: '',
-            backstory: ''
-        };
-        const newData = { ...data, players: [...(data.players||[]), newP] };
-        updateCloud(newData, true);
-        startEdit(newP);
+    const openSheet = (character) => {
+        useCharacterStore.getState().loadCharacter(character);
+        setViewingCharacterId(character.id);
     };
 
-    const startEdit = (p) => { setEditingId(p.id); setEditForm(p); };
-
-    const saveEdit = () => {
-        const newPlayers = data.players.map(p => p.id === editingId ? editForm : p);
+    const handleNewCharacter = (newChar) => {
+        const charWithId = { ...newChar, id: Date.now(), ownerId: user?.uid };
+        const newPlayers = [...(data.players || []), charWithId];
         updateCloud({ ...data, players: newPlayers }, true);
-        setEditingId(null);
+        setShowCreator(false);
     };
 
-    const deletePlayer = (id) => {
-        // FIX: Added 'window.' to confirm to prevent linter "no-restricted-globals" error
-        if(!window.confirm("Delete character?")) return;
-        updateCloud({ ...data, players: data.players.filter(p => p.id !== id) }, true);
+    // --- IMPORT HANDLER ---
+    const handlePdfImport = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        setIsImporting(true);
+        try {
+            const charData = await parsePdf(file);
+            handleNewCharacter(charData);
+            alert(`Success! Imported ${charData.name}`);
+        } catch (err) {
+            console.error(err);
+            alert("Import Failed: " + err.message);
+        }
+        setIsImporting(false);
+        e.target.value = null; // Reset
     };
 
-    // Auto Level Up Handler
-    const handleLevelUp = (p) => {
-        const currentLevel = parseInt(p.level) || 1;
-        const newLevel = currentLevel + 1;
+    // --- DEBUG HANDLER ---
+    const handleDebugUpload = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        setIsImporting(true);
+        setDebugLog("Reading PDF structure...");
         
-        // 1. Update Cloud Data
-        const newPlayers = data.players.map(pl => pl.id === p.id ? { ...pl, level: newLevel } : pl);
-        updateCloud({ ...data, players: newPlayers }, true);
-
-        // 2. Prep AI Prompt
-        const prompt = `I am leveling up my character "${p.name}" (${p.race} ${p.class}) from level ${currentLevel} to ${newLevel}.\n\nCharacter Context: ${p.personality || 'Standard build'}.\n\nCan you tell me what new abilities or spells I gain at this level? Also, give me 3 optimization suggestions that fit my character's theme.`;
-
-        // 3. Switch to Chat
-        setInputText(prompt);
-        setView('session');
+        try {
+            const text = await getDebugText(file);
+            setDebugLog(text);
+        } catch (err) {
+            setDebugLog("Error: " + err.message);
+        }
+        setIsImporting(false);
+        e.target.value = null; // Reset input
     };
+
+    const deleteCharacter = (id, e) => {
+        e.stopPropagation();
+        if (!confirm("Delete this hero permanently?")) return;
+        const newPlayers = data.players.filter(p => p.id !== id);
+        updateCloud({ ...data, players: newPlayers }, true);
+    };
+
+    if (viewingCharacterId) {
+        return (
+            <div className="h-full flex flex-col relative z-10 bg-slate-950">
+                <button onClick={() => setViewingCharacterId(null)} className="absolute top-2 left-2 z-50 bg-slate-800 text-slate-400 p-2 rounded-full border border-slate-600 shadow-xl hover:text-white"><Icon name="arrow-left" size={20}/></button>
+                <SheetContainer characterId={viewingCharacterId} onSave={(updatedChar) => { const newPlayers = (data.players || []).map(p => p.id === updatedChar.id ? updatedChar : p); updateCloud({ ...data, players: newPlayers }); }} onDiceRoll={onDiceRoll} onLogAction={onLogAction} />
+            </div>
+        );
+    }
 
     return (
         <div className="h-full bg-slate-900 p-4 overflow-y-auto custom-scroll pb-24">
-            <div className="max-w-4xl mx-auto space-y-4">
-                <div className="flex justify-between items-center mb-6">
-                    <h2 className="text-2xl text-amber-500 fantasy-font">Party Roster</h2>
-                    {role === 'dm' && <button onClick={handleAdd} className="bg-green-700 hover:bg-green-600 text-white px-3 py-1 rounded flex items-center gap-2"><Icon name="plus" size={16}/> Add Character</button>}
+            <div className="max-w-6xl mx-auto space-y-6">
+                
+                {/* Header Actions */}
+                <div className="flex flex-col md:flex-row justify-between items-center gap-4 border-b border-slate-700 pb-4">
+                    <div>
+                        <h2 className="text-3xl fantasy-font text-amber-500">Heroes</h2>
+                        <p className="text-slate-400 text-sm">Manage your party roster.</p>
+                    </div>
+                    
+                    <div className="flex flex-wrap gap-2">
+                        {/* DIAGNOSTIC BUTTON (RESTORED) */}
+                        <label className="cursor-pointer bg-red-900/50 hover:bg-red-800 text-red-200 border border-red-700 px-4 py-2 rounded-lg font-bold shadow flex items-center gap-2">
+                            <Icon name="bug" size={18}/> 
+                            <span>{isImporting ? 'Scanning...' : 'Run PDF Diagnosis'}</span>
+                            <input type="file" accept=".pdf" className="hidden" onChange={handleDebugUpload} />
+                        </label>
+
+                        {/* Import PDF */}
+                        <label className={`cursor-pointer bg-slate-700 hover:bg-slate-600 text-slate-200 px-4 py-2 rounded-lg font-bold shadow flex items-center gap-2 ${isImporting ? 'opacity-50 cursor-wait' : ''}`}>
+                            <Icon name="upload" size={18}/> 
+                            <span>{isImporting ? 'Parsing...' : 'Import D&D Beyond PDF'}</span>
+                            <input type="file" accept=".pdf" className="hidden" onChange={handlePdfImport} disabled={isImporting} />
+                        </label>
+
+                        <button onClick={() => setShowCreator(true)} className="bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white px-4 py-2 rounded-lg font-bold shadow flex items-center gap-2">
+                            <Icon name="sparkles" size={18}/> <span>AI Forge</span>
+                        </button>
+                    </div>
                 </div>
 
-                <div className="grid grid-cols-1 gap-6">
+                {/* DEBUG OUTPUT AREA */}
+                {debugLog && (
+                    <div className="bg-black/50 p-4 rounded border border-amber-900/50 animate-in fade-in slide-in-from-top-4">
+                        <div className="flex justify-between items-center mb-2">
+                            <h3 className="text-amber-500 font-bold font-mono">PDF RAW DATA</h3>
+                            <button onClick={() => {navigator.clipboard.writeText(debugLog); alert("Copied to clipboard!");}} className="text-xs bg-slate-700 px-2 py-1 rounded text-white hover:bg-slate-600">Copy All</button>
+                        </div>
+                        <textarea 
+                            value={debugLog} 
+                            readOnly 
+                            className="w-full h-64 bg-slate-950 text-green-400 font-mono text-xs p-2 rounded border border-slate-800 focus:outline-none"
+                        />
+                        <p className="text-slate-400 text-xs mt-2">^ Copy this text and paste it into the chat so I can fix the parser.</p>
+                    </div>
+                )}
+
+                {/* Character Grid */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                     {(data.players || []).map(p => (
-                        <div key={p.id} className="bg-slate-800 border border-slate-700 p-6 rounded-lg shadow-lg relative group transition-all hover:border-slate-600">
-                            {editingId === p.id ? (
-                                <div className="space-y-4">
-                                    {/* Header Info */}
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <div className="col-span-2">
-                                            <label className="text-xs text-slate-400 uppercase font-bold">Name</label>
-                                            <input className="w-full bg-slate-900 border border-slate-600 p-2 rounded text-white" value={editForm.name} onChange={e => setEditForm({...editForm, name: e.target.value})} />
-                                        </div>
-                                        <div>
-                                            <label className="text-xs text-slate-400 uppercase font-bold">Race</label>
-                                            <input className="w-full bg-slate-900 border border-slate-600 p-2 rounded text-white text-sm" value={editForm.race} onChange={e => setEditForm({...editForm, race: e.target.value})} />
-                                        </div>
-                                        <div>
-                                            <label className="text-xs text-slate-400 uppercase font-bold">Class</label>
-                                            <input className="w-full bg-slate-900 border border-slate-600 p-2 rounded text-white text-sm" value={editForm.class} onChange={e => setEditForm({...editForm, class: e.target.value})} />
-                                        </div>
-                                        <div>
-                                            <label className="text-xs text-slate-400 uppercase font-bold">Level</label>
-                                            <input type="number" className="w-full bg-slate-900 border border-slate-600 p-2 rounded text-white text-sm" value={editForm.level} onChange={e => setEditForm({...editForm, level: e.target.value})} />
-                                        </div>
+                        <div key={p.id} onClick={() => openSheet(p)} className="group relative bg-slate-800 rounded-xl overflow-hidden border border-slate-700 hover:border-amber-500/50 shadow-lg cursor-pointer transition-all hover:-translate-y-1">
+                            <div className="h-32 bg-slate-700 relative overflow-hidden">
+                                {p.image ? <img src={p.image} className="w-full h-full object-cover opacity-60 group-hover:opacity-80 transition-opacity" alt={p.name} /> : <div className="w-full h-full flex items-center justify-center bg-slate-700 opacity-20"><Icon name="user" size={64}/></div>}
+                                <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-transparent to-transparent"></div>
+                                <div className="absolute top-3 right-3 bg-amber-600 text-white text-xs font-bold px-2 py-1 rounded shadow-md border border-amber-400">LVL {p.level || 1}</div>
+                            </div>
+                            <div className="p-4 relative -mt-8">
+                                <div className="flex justify-between items-end">
+                                    <div className="w-16 h-16 rounded-xl bg-slate-800 border-2 border-slate-600 shadow-2xl flex items-center justify-center overflow-hidden">
+                                        {p.image ? <img src={p.image} className="w-full h-full object-cover" /> : <span className="text-2xl font-bold text-slate-500">{p.name?.[0]}</span>}
                                     </div>
-
-                                    {/* Aliases */}
-                                    <div>
-                                        <label className="text-xs text-slate-400 uppercase font-bold">Aliases (Comma separated)</label>
-                                        <input className="w-full bg-slate-900 border border-slate-600 p-2 rounded text-white text-sm" value={editForm.aliases || ''} onChange={e => setEditForm({...editForm, aliases: e.target.value})} placeholder="e.g. Raven, Dad, The Tank" />
-                                    </div>
-
-                                    {/* Roleplay Fields */}
-                                    <div className="space-y-3 pt-2 border-t border-slate-700">
-                                        <div>
-                                            <label className="text-xs text-amber-500 uppercase font-bold flex items-center gap-2"><Icon name="user" size={12}/> Appearance</label>
-                                            <textarea className="w-full bg-slate-900 border border-slate-600 p-2 rounded text-white text-sm h-20 resize-none" value={editForm.appearance || ''} onChange={e => setEditForm({...editForm, appearance: e.target.value})} placeholder="Tall, scarred, wears a cloak of shadows..." />
-                                        </div>
-                                        <div>
-                                            <label className="text-xs text-amber-500 uppercase font-bold flex items-center gap-2"><Icon name="brain" size={12}/> Personality & Motivations</label>
-                                            <textarea className="w-full bg-slate-900 border border-slate-600 p-2 rounded text-white text-sm h-24 resize-none" value={editForm.personality || ''} onChange={e => setEditForm({...editForm, personality: e.target.value})} placeholder="Brave but reckless. Wants to find the lost mine..." />
-                                        </div>
-                                        <div>
-                                            <label className="text-xs text-amber-500 uppercase font-bold flex items-center gap-2"><Icon name="book-open" size={12}/> Backstory Brief</label>
-                                            <textarea className="w-full bg-slate-900 border border-slate-600 p-2 rounded text-white text-sm h-24 resize-none" value={editForm.backstory || ''} onChange={e => setEditForm({...editForm, backstory: e.target.value})} placeholder="Exiled from the dwarven kingdom..." />
-                                        </div>
-                                    </div>
-
-                                    <div className="flex justify-end gap-2 mt-4">
-                                        <button onClick={saveEdit} className="bg-green-700 hover:bg-green-600 px-4 py-2 rounded text-white font-bold flex items-center gap-2"><Icon name="save" size={16}/> Save</button>
-                                        <button onClick={() => setEditingId(null)} className="bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded text-white">Cancel</button>
+                                    <div className="flex-1 ml-3 mb-1">
+                                        <h3 className="text-xl font-bold text-slate-100 leading-tight group-hover:text-amber-400 truncate">{p.name}</h3>
+                                        <p className="text-xs text-amber-600 font-bold uppercase tracking-wider">{p.race} {p.class}</p>
                                     </div>
                                 </div>
-                            ) : (
-                                <>
-                                    <div className="flex justify-between items-start mb-4">
-                                        <div className="flex items-center gap-3">
-                                            <div className="w-12 h-12 bg-slate-700 rounded-full flex items-center justify-center text-xl font-bold text-amber-500 border border-slate-600 shadow-inner">
-                                                {p.name.charAt(0).toUpperCase()}
-                                            </div>
-                                            <div>
-                                                <h3 className="text-2xl font-bold text-slate-100 fantasy-font leading-none">{p.name}</h3>
-                                                <div className="flex items-center gap-2 mt-1">
-                                                    <p className="text-amber-500 text-sm font-bold">{p.race} {p.class} <span className="text-slate-500 font-normal">| Lvl {p.level || 1}</span></p>
-                                                    {/* Level Up Button */}
-                                                    <button onClick={() => handleLevelUp(p)} className="bg-slate-700 hover:bg-amber-900 text-amber-500 px-2 py-0.5 rounded text-[10px] uppercase font-bold flex items-center gap-1 border border-slate-600 hover:border-amber-500 transition-colors" title="Level Up & Ask AI">
-                                                        Level Up <Icon name="arrow-up" size={10}/>
-                                                    </button>
-                                                </div>
-                                                {p.aliases && <p className="text-xs text-slate-500 mt-0.5">aka: {p.aliases}</p>}
-                                            </div>
-                                        </div>
-                                        {role === 'dm' && <button onClick={() => startEdit(p)} className="text-slate-500 hover:text-amber-400 p-2"><Icon name="pencil" size={20}/></button>}
-                                    </div>
-
-                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm text-slate-300">
-                                        {p.appearance && (
-                                            <div className="bg-slate-900/50 p-3 rounded border border-slate-700/50">
-                                                <h4 className="text-amber-600 font-bold text-xs uppercase mb-1">Appearance</h4>
-                                                <p className="leading-relaxed">{p.appearance}</p>
-                                            </div>
-                                        )}
-                                        {p.personality && (
-                                            <div className="bg-slate-900/50 p-3 rounded border border-slate-700/50">
-                                                <h4 className="text-amber-600 font-bold text-xs uppercase mb-1">Personality</h4>
-                                                <p className="leading-relaxed">{p.personality}</p>
-                                            </div>
-                                        )}
-                                        {p.backstory && (
-                                            <div className="bg-slate-900/50 p-3 rounded border border-slate-700/50">
-                                                <h4 className="text-amber-600 font-bold text-xs uppercase mb-1">Backstory</h4>
-                                                <p className="leading-relaxed line-clamp-4 hover:line-clamp-none transition-all">{p.backstory}</p>
-                                            </div>
-                                        )}
-                                    </div>
-
-                                    {role === 'dm' && (
-                                        <button onClick={() => deletePlayer(p.id)} className="absolute bottom-4 right-4 text-slate-600 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"><Icon name="trash-2" size={18}/></button>
-                                    )}
-                                </>
-                            )}
+                            </div>
+                            {role === 'dm' && <button onClick={(e) => deleteCharacter(p.id, e)} className="absolute top-2 left-2 p-2 bg-red-900/80 text-white rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-700"><Icon name="trash-2" size={14}/></button>}
                         </div>
                     ))}
                 </div>
             </div>
+            {showCreator && <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm"><div className="max-w-2xl w-full bg-slate-900 rounded-xl overflow-hidden shadow-2xl relative border border-slate-700 h-[90vh]"><CharacterCreator aiHelper={aiHelper} onComplete={handleNewCharacter} onCancel={() => setShowCreator(false)} /></div></div>}
         </div>
     );
 };

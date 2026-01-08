@@ -14,6 +14,7 @@ import TourGuide from './components/TourGuide';
 import WorldView from './components/WorldView';
 import NpcView from './components/NpcView';
 import DiceOverlay from './components/DiceOverlay';
+import HandoutEditor from './components/HandoutEditor';
 
 const DEFAULT_DATA = { 
     hostId: null,
@@ -23,6 +24,7 @@ const DEFAULT_DATA = {
     players: [], 
     locations: [], 
     npcs: [], 
+    handouts: [],
     activeUsers: {}, 
     bannedUsers: [], 
     assignments: {}, 
@@ -62,6 +64,7 @@ function App() {
   const [diceLog, setDiceLog] = useState([]);
   const [possessedNpcId, setPossessedNpcId] = useState(null);
   const [showHandout, setShowHandout] = useState(false);
+  const [showHandoutCreator, setShowHandoutCreator] = useState(false);
   const [rollingDice, setRollingDice] = useState(null);
 
   const [apiKey, setApiKey] = useState(() => localStorage.getItem('dm_api_key') || '');
@@ -111,6 +114,7 @@ function App() {
               if (!d.savedSessions) d.savedSessions = [];
               if (!d.players) d.players = [];
               if (!d.npcs) d.npcs = [];
+              if (!d.handouts) d.handouts = [];
               if (!d.activeUsers) d.activeUsers = {};
               if (!d.campaign) d.campaign = DEFAULT_DATA.campaign;
               if (!d.campaign.activeMap) d.campaign.activeMap = { url: null, revealPaths: [] };
@@ -466,10 +470,34 @@ function App() {
       updateCloud(newData, true);
   };
 
-  const createHandout = () => {
-      const text = prompt("Handout Text:"); if (!text) return;
-      const newData = { ...data, campaign: { ...data.campaign, activeHandout: { text, timestamp: Date.now() } } };
+  // --- HANDOUT LOGIC (HISTORY AWARE) ---
+  const handleHandoutSave = (handoutData) => {
+      if (!handoutData.id) handoutData.id = Date.now();
+      let newHistory = [...(data.handouts || [])];
+      const existingIndex = newHistory.findIndex(h => h.id === handoutData.id);
+      if (existingIndex >= 0) {
+          newHistory[existingIndex] = handoutData;
+      } else {
+          newHistory.unshift(handoutData);
+      }
+      const newData = { 
+          ...data,
+          handouts: newHistory,
+          campaign: { ...data.campaign, activeHandout: handoutData } 
+      };
       updateCloud(newData, true);
+      setShowHandoutCreator(false);
+  };
+
+  const handleHandoutDelete = (id) => {
+      if (!confirm("Delete this handout from history?")) return;
+      const newHistory = (data.handouts || []).filter(h => h.id !== id);
+      const newData = { ...data, handouts: newHistory };
+      updateCloud(newData, true);
+  }
+
+  const closeHandoutViewer = () => {
+      setShowHandout(false);
   };
 
   const handleSaveToJournal = () => {
@@ -497,7 +525,14 @@ function App() {
                        </span>
                    </div>
                    <div className="flex gap-2">
-                       {effectiveRole === 'dm' && <button onClick={createHandout} className="text-xs bg-amber-900/50 hover:bg-amber-800 px-3 py-1 rounded border border-amber-800 text-amber-200"><Icon name="scroll" size={14}/> Handout</button>}
+                       {effectiveRole === 'dm' && (
+                           <button 
+                               onClick={() => setShowHandoutCreator(true)} 
+                               className="text-xs bg-amber-900/50 hover:bg-amber-800 px-3 py-1 rounded border border-amber-800 text-amber-200 flex items-center gap-2"
+                           >
+                               <Icon name="scroll" size={14}/> <span>Handout</span>
+                           </button>
+                       )}
                        {possessedNpcId && <button onClick={() => setPossessedNpcId(null)} className="text-xs bg-red-900/80 text-white px-3 py-1 rounded">End Possession</button>}
                        <button onClick={handleSaveToJournal} className="text-xs bg-slate-800 hover:bg-slate-700 border border-slate-600 px-3 py-1 rounded flex items-center gap-2 text-slate-300 hover:text-white"><Icon name="save" size={14}/> Save Log</button>
                    </div>
@@ -537,20 +572,58 @@ function App() {
                       updateCloud={updateCloud}
                       setInputText={setInputText}
                       setView={setCurrentView}
+                      user={user}
+                      aiHelper={queryAiService}
+                      onDiceRoll={handleDiceRoll} 
+                      onLogAction={(msg) => sendChatMessage(msg, 'system')}
                   />
               )}
               {currentView === 'npcs' && <NpcView data={data} setData={setData} role={effectiveRole} updateCloud={updateCloud} generateNpc={generateNpc} setChatInput={setInputText} setView={setCurrentView} onPossess={(id) => { setPossessedNpcId(id); setCurrentView('session'); }} />}
               {currentView === 'settings' && <SettingsView data={data} setData={setData} apiKey={apiKey} setApiKey={setApiKey} role={effectiveRole} updateCloud={updateCloud} code={gameParams.code} user={user} onExit={() => { localStorage.removeItem('dm_last_code'); setGameParams(null); setData(null); }} aiProvider={aiProvider} setAiProvider={setAiProvider} openAiModel={openAiModel} setOpenAiModel={setOpenAiModel} puterModel={puterModel} setPuterModel={setPuterModel} banPlayer={(uid) => { if(!confirm("Ban?")) return; const nd = {...data, activeUsers: {...data.activeUsers}, bannedUsers: [...(data.bannedUsers||[]), uid]}; delete nd.activeUsers[uid]; updateCloud(nd, true); }} kickPlayer={(uid) => { const nd = {...data, activeUsers: {...data.activeUsers}}; delete nd.activeUsers[uid]; updateCloud(nd, true); }} unbanPlayer={(uid) => { const nd = {...data, bannedUsers: data.bannedUsers.filter(u=>u!==uid)}; updateCloud(nd, true); }} />}
            </div>
        </main>
+       
+       {showHandoutCreator && (
+            <HandoutEditor 
+                savedHandouts={data.handouts || []}
+                onSave={handleHandoutSave} 
+                onDelete={handleHandoutDelete}
+                onCancel={() => setShowHandoutCreator(false)} 
+            />
+       )}
+
        {showHandout && data.campaign?.activeHandout && (
-           <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4" onClick={() => setShowHandout(false)}>
-               <div className="parchment-modal p-8 max-w-lg w-full rounded-lg text-center transform scale-100 animate-in zoom-in duration-300 relative" onClick={e => e.stopPropagation()}>
-                   <button onClick={() => setShowHandout(false)} className="absolute top-2 right-2 text-slate-800/50 hover:text-slate-800"><Icon name="x" size={24}/></button>
-                   <h2 className="text-3xl mb-4 font-bold opacity-80">Notice</h2>
-                   <div className="text-xl leading-relaxed whitespace-pre-wrap">{data.campaign.activeHandout.text}</div>
-               </div>
-           </div>
+            <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm" onClick={closeHandoutViewer}>
+                <div 
+                    className={`p-8 max-w-2xl w-full rounded-lg text-center transform scale-100 animate-in zoom-in duration-300 relative shadow-2xl handout-theme-${data.campaign.activeHandout.theme || 'parchment'}`} 
+                    onClick={e => e.stopPropagation()}
+                >
+                    <button onClick={closeHandoutViewer} className="absolute top-2 right-2 opacity-50 hover:opacity-100 transition-opacity">
+                        <Icon name="x" size={24}/>
+                    </button>
+                    
+                    <div className="flex flex-col items-center max-h-[85vh] overflow-y-auto custom-scroll">
+                        {data.campaign.activeHandout.title && (
+                            <h2 className="text-3xl mb-6 font-bold border-b-2 border-current pb-2 inline-block px-8">
+                                {data.campaign.activeHandout.title}
+                            </h2>
+                        )}
+                        
+                        {data.campaign.activeHandout.imageUrl && (
+                            <img 
+                                src={data.campaign.activeHandout.imageUrl} 
+                                className="max-h-64 object-contain mb-6 rounded shadow-md border-4 border-white/20" 
+                                alt="Handout Visual"
+                            />
+                        )}
+
+                        <div 
+                            className="text-lg leading-relaxed w-full text-left handout-content prose prose-p:text-inherit prose-headings:text-inherit max-w-none"
+                            dangerouslySetInnerHTML={{__html: data.campaign.activeHandout.content || data.campaign.activeHandout.text}} 
+                        />
+                    </div>
+                </div>
+            </div>
        )}
        
        <div className="fixed inset-0 pointer-events-none z-[99999]">

@@ -29,8 +29,6 @@ h1, h2, h3, .fantasy-font { font-family: 'Cinzel', serif; }
 }
 
 /* --- QUILL EDITOR MOBILE OVERRIDES --- */
-
-/* 1. Make toolbar scroll horizontally */
 .ql-toolbar {
     background: #1e293b;
     border-color: #334155 !important;
@@ -43,26 +41,109 @@ h1, h2, h3, .fantasy-font { font-family: 'Cinzel', serif; }
 .ql-toolbar::-webkit-scrollbar { height: 4px; }
 .ql-toolbar::-webkit-scrollbar-thumb { background: #475569; border-radius: 2px; }
 
-/* 2. Colorize Quill Icons */
 .ql-snow .ql-stroke { stroke: #94a3b8; }
 .ql-snow .ql-fill { fill: #94a3b8; }
 .ql-snow .ql-picker { color: #94a3b8; }
 .ql-snow .ql-picker-options { background-color: #1e293b; border-color: #334155; }
 
-/* 3. Fix the Content Container */
 .mobile-quill-fix .ql-container {
     flex: 1;
     overflow-y: auto;
     background: #0f172a;
     border: none !important;
-    font-size: 16px; /* Prevents iOS zoom */
+    font-size: 16px;
 }
-
-/* 4. CRITICAL: Pad the bottom of the editor text so it clears the mobile nav bar */
-/* Using 8rem (approx 128px) to ensure it clears the bottom UI completely */
 .mobile-quill-fix .ql-editor {
     padding-bottom: 8rem !important; 
     min-height: 100%;
 }
+.ql-editor p { line-height: 1.6; }
 
-.ql-editor p { color: #e2e8f0; line-height: 1.6; }
+
+/* --- HANDOUT THEMES --- */
+
+/* 1. Parchment */
+.handout-theme-parchment {
+    background-color: #f5e6c8;
+    background-image: url('https://www.transparenttextures.com/patterns/aged-paper.png');
+    color: #453823;
+    font-family: 'Cinzel', serif;
+    /* Optional: A nice border for the wrapper */
+    border: 8px double #8b5a2b; 
+}
+
+/* 2. Stone */
+.handout-theme-stone {
+    background-color: #1c1917;
+    background-image: url('https://www.transparenttextures.com/patterns/dark-stone.png');
+    color: #e7e5e4;
+    font-family: 'Lato', sans-serif;
+    border: 2px solid #57534e;
+    box-shadow: inset 0 0 20px rgba(0,0,0,0.8);
+}
+
+/* 3. Letter */
+.handout-theme-letter {
+    background-color: #fffbf0; 
+    background-image: url('https://www.transparenttextures.com/patterns/cream-paper.png');
+    color: #1a1a1a;
+    font-family: 'Dancing Script', cursive;
+    font-size: 1.4rem;
+    line-height: 1.6;
+    border: 1px solid #e5e5e5;
+}
+
+/* --- EDITOR SPECIFIC FIXES --- */
+
+/* When editing, we want the toolbar to look like "UI" (Dark),
+   but the editing area to look like "The Handout" (Parchment/Stone).
+*/
+
+.handout-editor-wrapper {
+    display: flex;
+    flex-direction: column;
+}
+
+/* Force the toolbar to stay Dark Slate regardless of theme */
+.handout-editor-wrapper .ql-toolbar {
+    background-color: #1e293b;
+    border-color: #334155 !important;
+    border-top: none !important;
+    border-left: none !important;
+    border-right: none !important;
+}
+
+/* Ensure icons remain visible in the toolbar */
+.handout-editor-wrapper .ql-toolbar .ql-stroke { stroke: #cbd5e1; }
+.handout-editor-wrapper .ql-toolbar .ql-fill { fill: #cbd5e1; }
+.handout-editor-wrapper .ql-toolbar .ql-picker { color: #cbd5e1; }
+
+/* The container holding the text should remove its own border so the theme border takes over */
+.handout-editor-wrapper .ql-container {
+    border: none !important;
+    flex: 1;
+    overflow-y: auto;
+}
+
+/* Placeholder Text Visibility Fixes */
+
+/* Dark themes (Stone) need light placeholder */
+.handout-theme-stone .ql-editor.ql-blank::before {
+    color: rgba(255, 255, 255, 0.3) !important;
+    font-style: italic;
+}
+
+/* Light themes (Parchment, Letter) need dark placeholder */
+.handout-theme-parchment .ql-editor.ql-blank::before,
+.handout-theme-letter .ql-editor.ql-blank::before {
+    color: rgba(0, 0, 0, 0.4) !important;
+    font-style: italic;
+}
+
+/* Image styling inside handouts */
+.handout-content img, .ql-editor img {
+    max-width: 100%;
+    border-radius: 4px;
+    margin: 10px 0;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+}
