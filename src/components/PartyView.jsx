@@ -6,13 +6,12 @@ import { useCharacterStore } from '../stores/useCharacterStore';
 import { getDebugText, parsePdf } from '../utils/dndBeyondParser.js'; 
 
 const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView, user, aiHelper, onDiceRoll, onLogAction, edition }) => {
-    const [showCreationMenu, setShowCreationMenu] = useState(false); // Controls the "Hub"
-    const [showAiCreator, setShowAiCreator] = useState(false);       // Controls the AI Wizard
+    const [showCreationMenu, setShowCreationMenu] = useState(false); 
+    const [showAiCreator, setShowAiCreator] = useState(false);       
     const [viewingCharacterId, setViewingCharacterId] = useState(null);
     const [isImporting, setIsImporting] = useState(false);
     const [debugLog, setDebugLog] = useState("");
     
-    // hidden file input ref
     const fileInputRef = useRef(null);
 
     const handleSheetSave = async (updatedChar) => {
@@ -40,7 +39,6 @@ const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView,
         setShowCreationMenu(false);
     };
 
-    // --- MANUAL CREATION ---
     const createManualCharacter = () => {
         const blankChar = {
             name: "New Hero",
@@ -102,10 +100,17 @@ const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView,
         }
     };
 
+    // --- FULL SCREEN OVERLAY FIX ---
+    // Added 'fixed inset-0 z-[200]' to cover the Mobile Nav Bar
     if (viewingCharacterId) {
         return (
-            <div className="h-full flex flex-col relative z-10 bg-slate-950">
-                <button onClick={() => setViewingCharacterId(null)} className="absolute top-2 left-2 z-50 bg-slate-800 text-slate-400 p-2 rounded-full border border-slate-600 shadow-xl hover:text-white"><Icon name="arrow-left" size={20}/></button>
+            <div className="fixed inset-0 z-[200] bg-slate-950 flex flex-col h-full w-full">
+                <button 
+                    onClick={() => setViewingCharacterId(null)} 
+                    className="absolute top-3 left-3 z-50 bg-slate-900/80 text-slate-400 p-2 rounded-full border border-slate-700 shadow-xl hover:text-white hover:bg-slate-800 backdrop-blur-md"
+                >
+                    <Icon name="arrow-left" size={24}/>
+                </button>
                 <SheetContainer characterId={viewingCharacterId} onSave={handleSheetSave} onDiceRoll={onDiceRoll} onLogAction={onLogAction} />
             </div>
         );
@@ -123,13 +128,11 @@ const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView,
                     </div>
                     
                     <div className="flex flex-wrap gap-2 justify-center">
-                        {/* 1. PDF DIAGNOSTIC (Small Debug Tool) */}
                         <label className="cursor-pointer bg-slate-800 hover:bg-slate-700 text-slate-500 border border-slate-700 px-3 py-2 rounded-lg flex items-center gap-2" title="Debug PDF">
                             <Icon name="bug" size={16}/> 
                             <input type="file" accept=".pdf" className="hidden" onChange={handleDebugUpload} />
                         </label>
 
-                        {/* 2. MAIN CREATE BUTTON */}
                         <button 
                             onClick={() => setShowCreationMenu(true)} 
                             className="bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white px-6 py-2 rounded-lg font-bold shadow-lg flex items-center gap-2 transform transition-all hover:scale-105"
@@ -189,52 +192,19 @@ const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView,
                         
                         <div className="p-8 text-center">
                             <h2 className="text-3xl fantasy-font text-amber-500 mb-2">Summon a Hero</h2>
-                            <p className="text-slate-400 mb-8">Choose how you want to bring your character to life.</p>
-                            
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                                {/* OPTION 1: MANUAL */}
-                                <div 
-                                    onClick={createManualCharacter}
-                                    className="bg-slate-800 border-2 border-slate-700 hover:border-green-500 rounded-xl p-6 cursor-pointer group transition-all hover:-translate-y-1"
-                                >
-                                    <div className="w-16 h-16 bg-green-900/30 text-green-500 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform">
-                                        <Icon name="pencil" size={32}/>
-                                    </div>
-                                    <h3 className="text-xl font-bold text-white mb-2">Manual Entry</h3>
-                                    <p className="text-sm text-slate-400">Start with a blank sheet and fill in the stats yourself. Good for pen & paper veterans.</p>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-8">
+                                <div onClick={createManualCharacter} className="bg-slate-800 border-2 border-slate-700 hover:border-green-500 rounded-xl p-6 cursor-pointer group">
+                                    <div className="w-16 h-16 bg-green-900/30 text-green-500 rounded-full flex items-center justify-center mx-auto mb-4"><Icon name="pencil" size={32}/></div>
+                                    <h3 className="font-bold text-white">Manual</h3>
                                 </div>
-
-                                {/* OPTION 2: D&D BEYOND */}
-                                <div 
-                                    onClick={() => fileInputRef.current.click()}
-                                    className="bg-slate-800 border-2 border-slate-700 hover:border-red-500 rounded-xl p-6 cursor-pointer group transition-all hover:-translate-y-1"
-                                >
-                                    <div className="w-16 h-16 bg-red-900/30 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform">
-                                        <Icon name="file-text" size={32}/>
-                                    </div>
-                                    <h3 className="text-xl font-bold text-white mb-2">Import PDF</h3>
-                                    <p className="text-sm text-slate-400">Upload a "Standard" PDF exported from D&D Beyond. Parses stats automatically.</p>
-                                    {/* Hidden Input */}
-                                    <input 
-                                        type="file" 
-                                        accept=".pdf" 
-                                        className="hidden" 
-                                        ref={fileInputRef} 
-                                        onChange={handlePdfImport}
-                                    />
-                                    {isImporting && <div className="mt-2 text-xs text-amber-500 animate-pulse">Processing...</div>}
+                                <div onClick={() => fileInputRef.current.click()} className="bg-slate-800 border-2 border-slate-700 hover:border-red-500 rounded-xl p-6 cursor-pointer group">
+                                    <div className="w-16 h-16 bg-red-900/30 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4"><Icon name="file-text" size={32}/></div>
+                                    <h3 className="font-bold text-white">D&D Beyond</h3>
+                                    <input type="file" accept=".pdf" className="hidden" ref={fileInputRef} onChange={handlePdfImport}/>
                                 </div>
-
-                                {/* OPTION 3: AI FORGE */}
-                                <div 
-                                    onClick={() => { setShowCreationMenu(false); setShowAiCreator(true); }}
-                                    className="bg-slate-800 border-2 border-slate-700 hover:border-purple-500 rounded-xl p-6 cursor-pointer group transition-all hover:-translate-y-1"
-                                >
-                                    <div className="w-16 h-16 bg-purple-900/30 text-purple-500 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform">
-                                        <Icon name="sparkles" size={32}/>
-                                    </div>
-                                    <h3 className="text-xl font-bold text-white mb-2">AI Forge</h3>
-                                    <p className="text-sm text-slate-400">Describe your concept and let the AI generate stats, backstory, and inventory.</p>
+                                <div onClick={() => { setShowCreationMenu(false); setShowAiCreator(true); }} className="bg-slate-800 border-2 border-slate-700 hover:border-purple-500 rounded-xl p-6 cursor-pointer group">
+                                    <div className="w-16 h-16 bg-purple-900/30 text-purple-500 rounded-full flex items-center justify-center mx-auto mb-4"><Icon name="sparkles" size={32}/></div>
+                                    <h3 className="font-bold text-white">AI Forge</h3>
                                 </div>
                             </div>
                         </div>
@@ -242,16 +212,10 @@ const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView,
                 </div>
             )}
 
-            {/* AI WIZARD MODAL */}
             {showAiCreator && (
                 <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm">
                     <div className="max-w-2xl w-full bg-slate-900 rounded-xl overflow-hidden shadow-2xl relative border border-slate-700 h-[90vh]">
-                        <CharacterCreator 
-                            aiHelper={aiHelper} 
-                            onComplete={handleNewCharacter} 
-                            onCancel={() => setShowAiCreator(false)} 
-                            edition={edition} 
-                        />
+                        <CharacterCreator aiHelper={aiHelper} onComplete={handleNewCharacter} onCancel={() => setShowAiCreator(false)} edition={edition} />
                     </div>
                 </div>
             )}
