@@ -3,14 +3,14 @@ import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
 import Icon from './Icon';
 
-const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalEntry }) => {
+// UPDATED: Now accepts onSavePage and onDeletePage props
+const JournalView = ({ data, role, userId, aiHelper, onSavePage, onDeletePage }) => {
     const [activePageId, setActivePageId] = useState(null);
     const [isEditing, setIsEditing] = useState(false);
     const [editTitle, setEditTitle] = useState('');
     const [editContent, setEditContent] = useState('');
     const [isAiLoading, setIsAiLoading] = useState(false);
 
-    // Sort by date descending
     const pages = Object.values(data.journal_pages || {}).sort((a,b) => b.created - a.created);
     const activePage = activePageId ? data.journal_pages[activePageId] : null;
 
@@ -22,7 +22,7 @@ const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalE
     }, [activePage]);
 
     const handleCreate = () => {
-        const newId = `page_${Date.now()}`;
+        const newId = Date.now().toString(); // Simple ID
         const newPage = {
             id: newId,
             title: 'New Entry',
@@ -31,8 +31,8 @@ const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalE
             isPublic: role === 'dm', 
             created: Date.now()
         };
-        const newData = { ...data, journal_pages: { ...data.journal_pages, [newId]: newPage } };
-        updateCloud(newData, true);
+        // Use the new Subcollection Save function
+        if (onSavePage) onSavePage(newId, newPage);
         setActivePageId(newId);
         setIsEditing(true);
     };
@@ -40,16 +40,22 @@ const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalE
     const handleSave = () => {
         if (!activePage) return;
         const updated = { ...activePage, title: editTitle, content: editContent };
-        const newData = { ...data, journal_pages: { ...data.journal_pages, [activePage.id]: updated } };
-        updateCloud(newData, true);
+        // Use the new Subcollection Save function
+        if (onSavePage) onSavePage(activePage.id, updated);
         setIsEditing(false);
     };
 
     const handleDelete = () => {
         if(window.confirm("Delete this page?")) {
-            deleteJournalEntry(activePageId);
+            if (onDeletePage) onDeletePage(activePageId);
             setActivePageId(null);
         }
+    };
+
+    const toggleVisibility = () => {
+        if (!activePage) return;
+        const updated = { ...activePage, isPublic: !activePage.isPublic };
+        if (onSavePage) onSavePage(activePage.id, updated);
     };
 
     const handleAiEnhance = async () => {
@@ -57,10 +63,12 @@ const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalE
         setIsAiLoading(true);
         const plainText = editContent.replace(/<[^>]*>?/gm, '');
         const prompt = `Rewrite the following RPG journal entry to be more immersive, descriptive, and fix grammar. Keep the same facts.\n\n${plainText}`;
-        const res = await aiHelper([{ role: "user", content: prompt }]);
-        if (res && !res.includes("Error")) {
-            setEditContent(prev => prev + `<br/><br/><strong>--- AI Enhanced ---</strong><br/>${res.replace(/\n/g, '<br/>')}`);
-        }
+        try {
+            const res = await aiHelper([{ role: "user", content: prompt }]);
+            if (res && !res.includes("Error")) {
+                setEditContent(prev => prev + `<br/><br/><strong>--- AI Enhanced ---</strong><br/>${res.replace(/\n/g, '<br/>')}`);
+            }
+        } catch(e) { console.error(e); }
         setIsAiLoading(false);
     };
 
@@ -114,6 +122,8 @@ const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalE
     }
 
     // --- DETAIL / EDIT VIEW ---
+    if (!activePage) return <div className="p-4 text-slate-500">Page not found or loading... <button onClick={()=>setActivePageId(null)}>Back</button></div>;
+
     return (
         <div className="h-full flex flex-col bg-slate-900">
             {/* Header Toolbar */}
@@ -140,10 +150,7 @@ const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalE
                             <>
                                 {(role === 'dm' || activePage.ownerId === userId) && (
                                     <>
-                                        <button onClick={() => {
-                                            const newData = {...data, journal_pages: {...data.journal_pages, [activePage.id]: {...activePage, isPublic: !activePage.isPublic}}};
-                                            updateCloud(newData, true);
-                                        }} className={`text-xs px-2 py-1 rounded border hidden sm:block ${activePage.isPublic ? 'border-green-600 text-green-400' : 'border-slate-600 text-slate-400'}`}>
+                                        <button onClick={toggleVisibility} className={`text-xs px-2 py-1 rounded border hidden sm:block ${activePage.isPublic ? 'border-green-600 text-green-400' : 'border-slate-600 text-slate-400'}`}>
                                             {activePage.isPublic ? 'Public' : 'Private'}
                                         </button>
                                         <button onClick={() => { setIsEditing(true); setEditTitle(activePage.title); setEditContent(activePage.content); }} className="text-slate-400 hover:text-amber-400 p-2"><Icon name="pencil" size={18}/></button>
@@ -157,7 +164,6 @@ const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalE
             </div>
 
             {/* Content Area */}
-            {/* PB-32 added to ensure text clears the mobile navbar */}
             <div className="flex-1 overflow-hidden relative bg-slate-900">
                 {isEditing ? (
                     <div className="h-full flex flex-col w-full max-w-5xl mx-auto relative">
@@ -166,7 +172,6 @@ const JournalView = ({ data, updateCloud, role, userId, aiHelper, deleteJournalE
                             value={editContent} 
                             onChange={setEditContent} 
                             className="h-full flex flex-col mobile-quill-fix"
-                            // Custom modules to simplify toolbar on mobile if needed
                             modules={{ 
                                 toolbar: [
                                     [{ 'header': [1, 2, false] }], 

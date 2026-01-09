@@ -24,25 +24,41 @@ const SKILL_LIST = [
 ];
 
 const SkillsTab = ({ onDiceRoll, onLogAction }) => {
-    const { character, getSkillBonus, toggleSkill } = useCharacterStore();
+    const { character, getModifier, toggleSkill } = useCharacterStore();
     const charSkills = character.skills || {};
+    const profBonus = character.profBonus || 2;
+
+    // Helper to calculate bonus locally so we can show the math
+    const calculateSkill = (skill) => {
+        const isProf = charSkills[skill.name];
+        const abilityMod = getModifier(skill.stat);
+        const total = abilityMod + (isProf ? profBonus : 0);
+        return { isProf, abilityMod, total };
+    };
 
     const handleRoll = async (skill) => {
         if (!onDiceRoll) return;
+
+        const { abilityMod, isProf, total } = calculateSkill(skill);
 
         try {
             const roll = await onDiceRoll(20);
             if (typeof roll !== 'number') return;
 
-            const mod = getSkillBonus(skill.name, skill.stat);
-            const total = roll + mod;
+            const finalResult = roll + total;
 
             const msg = `
-                <div class="font-bold text-white border-b border-slate-700 pb-1 mb-1">${skill.name} Check</div>
+                <div class="font-bold text-white border-b border-slate-700 pb-1 mb-1 flex justify-between">
+                    <span>${skill.name} Check</span>
+                    <span class="text-xs text-slate-400 uppercase self-center">${skill.stat}</span>
+                </div>
                 <div class="flex items-center gap-2 text-sm text-slate-300">
-                    <span class="font-mono">d20 (${roll}) ${mod >= 0 ? '+' : ''}${mod}</span>
+                    <span class="font-mono bg-slate-800 px-1 rounded">d20(${roll})</span>
+                    <span>+</span>
+                    <span class="text-xs text-slate-400">${abilityMod >= 0 ? '+' : ''}${abilityMod} (${skill.stat.substring(0,3).toUpperCase()})</span>
+                    ${isProf ? `<span>+</span> <span class="text-xs text-green-400">${profBonus} (PROF)</span>` : ''}
                     <span>=</span>
-                    <span class="text-xl text-amber-500 font-bold">${total}</span>
+                    <span class="text-xl text-amber-500 font-bold">${finalResult}</span>
                 </div>
             `;
             if (onLogAction) onLogAction(msg);
@@ -53,35 +69,58 @@ const SkillsTab = ({ onDiceRoll, onLogAction }) => {
     };
 
     return (
-        <div className="space-y-2 pb-24">
-            <div className="grid grid-cols-6 gap-2 mb-4 text-[10px] uppercase font-bold text-slate-500 px-2">
+        <div className="space-y-4 pb-24">
+            {/* Header */}
+            <div className="grid grid-cols-12 gap-2 text-[10px] uppercase font-bold text-slate-500 px-2 mt-2">
                 <div className="col-span-1">Prof</div>
-                <div className="col-span-3">Skill</div>
-                <div className="col-span-1 text-center">Stat</div>
-                <div className="col-span-1 text-right">Bonus</div>
+                <div className="col-span-4">Skill</div>
+                <div className="col-span-2 text-center">Stat</div>
+                <div className="col-span-3 text-center">Math</div>
+                <div className="col-span-2 text-right">Total</div>
             </div>
 
-            {SKILL_LIST.map((skill) => {
-                const isProf = charSkills[skill.name];
-                const bonus = getSkillBonus(skill.name, skill.stat);
-                
-                return (
-                    <div 
-                        key={skill.name} 
-                        onClick={() => handleRoll(skill)}
-                        className="bg-slate-800 border border-slate-700 rounded p-3 flex items-center hover:border-amber-500 cursor-pointer transition-colors group"
-                    >
-                        <div className="w-8 shrink-0" onClick={(e) => { e.stopPropagation(); toggleSkill(skill.name); }}>
-                            <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${isProf ? 'bg-amber-500 border-amber-500' : 'border-slate-600 group-hover:border-slate-400'}`}>
-                                {isProf && <Icon name="check" size={10} className="text-black"/>}
+            {/* Skill List */}
+            <div className="space-y-1">
+                {SKILL_LIST.map((skill) => {
+                    const { isProf, abilityMod, total } = calculateSkill(skill);
+                    
+                    return (
+                        <div 
+                            key={skill.name} 
+                            onClick={() => handleRoll(skill)}
+                            className="grid grid-cols-12 gap-2 items-center bg-slate-800/50 border border-slate-700/50 rounded-lg p-2 hover:bg-slate-800 hover:border-amber-500/50 cursor-pointer transition-all group"
+                        >
+                            {/* Proficiency Dot */}
+                            <div className="col-span-1 flex justify-center" onClick={(e) => { e.stopPropagation(); toggleSkill(skill.name); }}>
+                                <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center transition-colors ${isProf ? 'bg-amber-500 border-amber-500' : 'border-slate-600 group-hover:border-slate-400'}`}>
+                                    {isProf && <Icon name="check" size={10} className="text-black stroke-[3]"/>}
+                                </div>
+                            </div>
+
+                            {/* Skill Name */}
+                            <div className="col-span-4 font-bold text-slate-200 text-sm truncate group-hover:text-white">
+                                {skill.name}
+                            </div>
+
+                            {/* Stat Label */}
+                            <div className="col-span-2 text-center text-xs text-slate-500 uppercase font-mono">
+                                {skill.stat.substring(0,3)}
+                            </div>
+
+                            {/* The Math Breakdown */}
+                            <div className="col-span-3 text-center text-[10px] text-slate-400 font-mono flex justify-center gap-1">
+                                <span>{abilityMod >= 0 ? '+' : ''}{abilityMod}</span>
+                                {isProf && <span className="text-green-400">+{profBonus}</span>}
+                            </div>
+
+                            {/* Total Bonus */}
+                            <div className="col-span-2 text-right font-bold text-amber-500 text-sm">
+                                {total >= 0 ? '+' : ''}{total}
                             </div>
                         </div>
-                        <div className="flex-1 font-bold text-slate-200 text-sm group-hover:text-white">{skill.name}</div>
-                        <div className="w-10 text-center text-xs text-slate-500 uppercase font-mono">{skill.stat.substring(0,3)}</div>
-                        <div className="w-10 text-right font-bold text-amber-500">{bonus >= 0 ? '+' : ''}{bonus}</div>
-                    </div>
-                );
-            })}
+                    );
+                })}
+            </div>
         </div>
     );
 };

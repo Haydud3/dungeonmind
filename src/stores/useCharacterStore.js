@@ -23,11 +23,12 @@ export const useCharacterStore = create((set, get) => ({
           level: charData.level || 1,
           profBonus: charData.profBonus || 2,
           features: charData.features || [],
+          customActions: charData.customActions || [],
+          bio: charData.bio || {}
       },
       isDirty: false 
   }),
 
-  // FIX: Safely handle both strings and objects for logs
   addLogEntry: (entry) => set((state) => {
       const newLog = typeof entry === 'string' ? { message: entry } : entry;
       return {
@@ -127,4 +128,14 @@ export const useCharacterStore = create((set, get) => ({
       const s = get().character?.stats?.[stat] || 10;
       return getMod(s);
   },
+
+  // --- ADDED THIS FUNCTION TO FIX THE CRASH ---
+  getSkillBonus: (skillName, stat) => {
+      const state = get();
+      const char = state.character;
+      if (!char) return 0;
+      const modifier = state.getModifier(stat);
+      const isProficient = char.skills?.[skillName];
+      return modifier + (isProficient ? char.profBonus : 0);
+  }
 }));

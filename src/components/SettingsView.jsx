@@ -1,5 +1,8 @@
-import React from 'react';
+import React, { useState } from 'react';
 import Icon from './Icon';
+// Import Firebase tools needed for migration
+import { doc, writeBatch, deleteField } from '../firebase'; 
+import * as fb from '../firebase'; // Import main instance to access db
 
 const SettingsView = ({ 
     data, setData, apiKey, setApiKey, role, updateCloud, 
@@ -8,6 +11,8 @@ const SettingsView = ({
     banPlayer, kickPlayer, unbanPlayer 
 }) => {
     
+    const [isMigrating, setIsMigrating] = useState(false);
+
     const copyCode = () => { navigator.clipboard.writeText(code); alert("Copied: " + code); };
     const activeUsers = data.activeUsers || {};
     const bannedUsers = data.bannedUsers || [];
@@ -28,29 +33,87 @@ const SettingsView = ({
         if(updateCloud) updateCloud(newData);
     };
 
-    // Toggle DM Status with Softlock Prevention
     const toggleDmStatus = (uid) => {
         let newDmIds = [...dmIds];
-        
         if (newDmIds.includes(uid)) {
-            // REMOVE DM
-            // Safety Check: Prevent removing the last DM
-            if (newDmIds.length <= 1) {
-                alert("You cannot remove the last DM. Please promote another player to DM before renouncing your role.");
-                return;
-            }
-
+            if (newDmIds.length <= 1) return alert("Cannot remove last DM.");
             if (!confirm("Remove DM permissions?")) return;
             newDmIds = newDmIds.filter(id => id !== uid);
         } else {
-            // ADD DM
-            if (!confirm("Promote this user to DM? They will have full control.")) return;
+            if (!confirm("Promote to DM?")) return;
             newDmIds.push(uid);
         }
-
         const newData = { ...data, dmIds: newDmIds };
         setData(newData);
         updateCloud(newData, true);
+    };
+
+    // --- MIGRATION LOGIC ---
+    const handleMigration = async () => {
+        if (!confirm("⚠️ WARNING: This will reorganize your database into folders.\n\nOnly do this if you have data from the old version that is missing or causing lag.\n\nContinue?")) return;
+        
+        setIsMigrating(true);
+        const batch = writeBatch(fb.db);
+        const campaignRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', code);
+        let count = 0;
+
+        // 1. Migrate Players
+        if (Array.isArray(data.players) && data.players.length > 0) {
+            console.log("Migrating players...");
+            data.players.forEach(p => {
+                // Create ref in subcollection
+                const pRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', code, 'players', p.id.toString());
+                batch.set(pRef, p);
+                count++;
+            });
+            // Delete old array from root
+            batch.update(campaignRef, { players: deleteField() });
+        }
+
+        // 2. Migrate Journal
+        if (data.journal_pages && Object.keys(data.journal_pages).length > 0) {
+            console.log("Migrating journal...");
+            Object.values(data.journal_pages).forEach(page => {
+                const jRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', code, 'journal', page.id.toString());
+                batch.set(jRef, page);
+                count++;
+            });
+            // Delete old object from root
+            batch.update(campaignRef, { journal_pages: deleteField() });
+        }
+
+        try {
+            await batch.commit();
+            alert(`Migration Complete! Moved ${count} items to new folders.`);
+            window.location.reload(); // Reload to refresh listeners
+        } catch (e) {
+            console.error(e);
+            alert("Migration Failed: " + e.message);
+        }
+        setIsMigrating(false);
+    };
+
+    // --- EMERGENCY CLEANUP TOOLS ---
+    const clearFog = () => {
+        if(!confirm("Emergency: Clear all Map Fog data to reduce DB size?")) return;
+        const newData = { ...data, campaign: { ...data.campaign, activeMap: { ...data.campaign.activeMap, revealPaths: [] } } };
+        updateCloud(newData, true);
+        alert("Fog cleared. Try saving now.");
+    };
+
+    const clearJournal = () => {
+        if(!confirm("Emergency: Delete ALL Journal entries to reduce DB size?")) return;
+        const newData = { ...data, journal_pages: {} };
+        updateCloud(newData, true);
+        alert("Journal cleared. Try saving now.");
+    };
+
+    const nukeImages = () => {
+        if(!confirm("Emergency: Remove ALL character avatars to reduce DB size?")) return;
+        const newPlayers = data.players.map(p => ({ ...p, image: "" }));
+        const newData = { ...data, players: newPlayers };
+        updateCloud(newData, true);
+        alert("Avatars removed.");
     };
 
     const downloadBackup = () => {
@@ -86,16 +149,42 @@ const SettingsView = ({
             </div>
             
             {/* Invite Code Panel */}
-            <div className="glass-panel p-8 rounded-xl mb-8 flex flex-col items-center text-center border-2 border-indigo-500/30 bg-indigo-900/10 relative overflow-hidden w-full">
+            <div className="glass-panel p-8 rounded-xl mb-8 flex flex-col items-center text-center border-2 border-indigo-500/30 bg-indigo-900/10">
                 <h3 className="text-xs font-bold text-indigo-300 uppercase tracking-widest mb-2">Campaign Code</h3>
-                <div className="text-4xl md:text-5xl font-mono font-bold text-white tracking-widest mb-4 drop-shadow-lg break-all">{code || "LOCAL"}</div>
+                <div className="text-4xl md:text-5xl font-mono font-bold text-white tracking-widest mb-4 drop-shadow-lg select-all">{code || "LOCAL"}</div>
                 <div className="flex flex-wrap justify-center gap-2 mb-4">
                     <button onClick={copyCode} className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded text-sm flex items-center gap-2 shadow-lg"><Icon name="copy" size={16}/> Copy Code</button>
                     <button onClick={onExit} className="bg-red-900/50 hover:bg-red-900 text-red-200 border border-red-800 px-4 py-2 rounded text-sm flex items-center justify-center gap-2"><Icon name="log-out" size={16}/> Exit Campaign</button>
                 </div>
             </div>
 
-            {/* Moderation Panel (Visible to DMs) */}
+            {/* --- DATABASE MIGRATION ZONE --- */}
+            {role === 'dm' && (
+                <div className="glass-panel p-6 rounded-xl mb-6 border-l-4 border-blue-500 bg-blue-950/10">
+                    <h3 className="text-lg font-bold mb-4 text-blue-400 flex items-center gap-2"><Icon name="database" size={18}/> Database Migration</h3>
+                    <p className="text-xs text-slate-400 mb-4">
+                        Move your old data (Players, Journals) into the new scalable folder structure. This prevents the "Database Full" error.
+                    </p>
+                    <button onClick={handleMigration} disabled={isMigrating} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded text-sm font-bold flex items-center gap-2">
+                        {isMigrating ? "Moving Data..." : "Migrate Data to Folders"}
+                    </button>
+                </div>
+            )}
+
+            {/* --- EMERGENCY ZONE --- */}
+            <div className="glass-panel p-6 rounded-xl mb-6 border-l-4 border-red-500 bg-red-950/10">
+                <h3 className="text-lg font-bold mb-4 text-red-400 flex items-center gap-2"><Icon name="alert-triangle" size={18}/> Emergency Database Cleanup</h3>
+                <p className="text-xs text-slate-400 mb-4">
+                    If you get a "Document exceeds 1MB" error, your campaign is too big. Use these buttons to delete heavy data so you can save again.
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <button onClick={clearFog} className="bg-red-900 hover:bg-red-800 text-white px-3 py-2 rounded text-xs font-bold border border-red-700">Clear Fog of War</button>
+                    <button onClick={clearJournal} className="bg-red-900 hover:bg-red-800 text-white px-3 py-2 rounded text-xs font-bold border border-red-700">Clear All Journals</button>
+                    <button onClick={nukeImages} className="bg-red-900 hover:bg-red-800 text-white px-3 py-2 rounded text-xs font-bold border border-red-700">Remove All Avatars</button>
+                </div>
+            </div>
+
+            {/* Moderation Panel */}
             {role === 'dm' && (
                 <div className="glass-panel p-6 rounded-xl mb-6 border-l-4 border-purple-500 bg-slate-900/50">
                     <h3 className="text-lg font-bold mb-4 text-slate-200 flex items-center gap-2"><Icon name="shield-alert" size={18}/> Moderation</h3>
@@ -122,17 +211,13 @@ const SettingsView = ({
                                             </select>
                                         </div>
                                     </div>
-                                    
                                     <div className="flex gap-2 w-full md:w-auto justify-end flex-wrap">
-                                        {/* DM Toggle Button */}
                                         <button 
                                             onClick={() => toggleDmStatus(uid)} 
                                             className={`text-xs px-3 py-2 rounded flex-1 md:flex-none border ${isUserDm ? 'bg-amber-900/20 border-amber-700 text-amber-200 hover:bg-amber-900/40' : 'bg-slate-800 border-slate-600 text-slate-300 hover:bg-slate-700'}`}
                                         >
-                                            {isUserDm ? (uid === userId ? "Renounce DM" : "Revoke DM") : "Make DM"}
+                                            {isUserDm ? "Revoke DM" : "Make DM"}
                                         </button>
-
-                                        {/* Kick/Ban (Don't allow kicking self) */}
                                         {uid !== userId && (
                                             <>
                                                 <button onClick={() => kickPlayer(uid)} className="bg-slate-700 hover:bg-slate-600 text-xs px-3 py-2 rounded flex-1 md:flex-none text-white">Kick</button>
@@ -143,20 +228,7 @@ const SettingsView = ({
                                 </div>
                             );
                         })}
-                        {Object.keys(activeUsers).length === 0 && <div className="text-slate-500 text-sm">No active users.</div>}
                     </div>
-                    
-                    {bannedUsers.length > 0 && (
-                        <div className="space-y-2 border-t border-slate-800 pt-4">
-                            <div className="text-xs text-red-400 uppercase font-bold">Banned Users</div>
-                            {bannedUsers.map(uid => (
-                                <div key={uid} className="flex justify-between items-center bg-red-950/30 p-2 rounded border border-red-900/50">
-                                    <span className="text-xs font-mono text-red-300 truncate flex-1">{uid}</span>
-                                    <button onClick={() => unbanPlayer(uid)} className="text-xs text-slate-400 hover:text-white ml-2 bg-slate-800 px-2 py-1 rounded">Unban</button>
-                                </div>
-                            ))}
-                        </div>
-                    )}
                 </div>
             )}
 
@@ -175,34 +247,13 @@ const SettingsView = ({
                         <div>
                             <label className="block text-xs text-slate-400 mb-1">Puter Model</label>
                             <select value={puterModel} onChange={e => setPuterModel(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none mb-3">
-                                <optgroup label="Mistral">
-                                    <option value="mistral-large-latest">Mistral Large (Recommended)</option>
-                                    <option value="codestral-latest">Codestral (Code/Rules)</option>
-                                </optgroup>
-                                <optgroup label="DeepSeek">
-                                    <option value="deepseek-chat">DeepSeek V3 (Chat)</option>
-                                    <option value="deepseek-reasoner">DeepSeek R1 (Reasoning)</option>
-                                </optgroup>
-                                <optgroup label="Anthropic Claude">
-                                    <option value="claude-3-7-sonnet-latest">Claude 3.7 Sonnet</option>
-                                    <option value="claude-3-5-sonnet-latest">Claude 3.5 Sonnet</option>
-                                </optgroup>
-                                <optgroup label="Meta Llama">
-                                    <option value="meta-llama/llama-3.3-70b-instruct-turbo">Llama 3.3 (70B Turbo)</option>
-                                    <option value="meta-llama/llama-3.1-405b-instruct">Llama 3.1 (405B)</option>
-                                </optgroup>
-                                <optgroup label="Others">
-                                    <option value="gpt-4o">GPT-4o</option>
-                                    <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
-                                </optgroup>
+                                <option value="mistral-large-latest">Mistral Large (Recommended)</option>
+                                <option value="claude-3-5-sonnet-latest">Claude 3.5 Sonnet</option>
+                                <option value="gpt-4o">GPT-4o</option>
                             </select>
-                            <div className="bg-blue-900/30 border border-blue-600 rounded p-3">
-                                <div className="flex items-center gap-2 text-xs text-blue-300 mb-2"><Icon name="cloud" size={14}/><span>Powered by Puter.js (Serverless & Free)</span></div>
-                                <button onClick={async () => { if(window.puter) { await window.puter.auth.signIn(); window.location.reload(); } else { alert("Puter.js not loaded."); }}} className="w-full bg-blue-700 hover:bg-blue-600 text-white text-xs py-3 rounded font-bold transition-colors">Connect / Re-Login</button>
-                            </div>
                         </div>
                     )}
-                    {aiProvider === 'openai' && (<div><label className="block text-xs text-slate-400 mb-1">OpenAI Model</label><select value={openAiModel} onChange={e => setOpenAiModel(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none mb-2"><option value="gpt-4o">GPT-4o</option><option value="gpt-4-turbo">GPT-4 Turbo</option><option value="gpt-3.5-turbo">GPT-3.5 Turbo</option></select><input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none" placeholder="sk-..."/></div>)}
+                    {aiProvider === 'openai' && (<div><label className="block text-xs text-slate-400 mb-1">OpenAI Model</label><select value={openAiModel} onChange={e => setOpenAiModel(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none mb-2"><option value="gpt-4o">GPT-4o</option><option value="gpt-4-turbo">GPT-4 Turbo</option></select><input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none" placeholder="sk-..."/></div>)}
                     {aiProvider === 'gemini' && (<input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-slate-200 outline-none" placeholder="AIza..."/>)}
                 </div>
             </div>

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import * as fb from './firebase'; 
-import { deleteField } from './firebase';
+import { deleteField, collection, query, orderBy, limit, onSnapshot, addDoc, setDoc, deleteDoc, doc } from './firebase';
 import Icon from './components/Icon';
 import Sidebar from './components/Sidebar';
 import MobileNav from './components/MobileNav';
@@ -15,13 +15,12 @@ import WorldView from './components/WorldView';
 import NpcView from './components/NpcView';
 import DiceOverlay from './components/DiceOverlay';
 import HandoutEditor from './components/HandoutEditor';
+import { useCharacterStore } from './stores/useCharacterStore'; // Import Store for Toast
 
-const DEFAULT_DATA = { 
+// --- DATABASE CONFIG (CLEAN) ---
+const DB_INIT_DATA = { 
     hostId: null,
     dmIds: [], 
-    journal_pages: {}, 
-    chatLog: [], 
-    players: [], 
     locations: [], 
     npcs: [], 
     handouts: [],
@@ -38,15 +37,19 @@ const DEFAULT_DATA = {
     }
 };
 
+// --- APP STATE (SAFE) ---
+const INITIAL_APP_STATE = {
+    ...DB_INIT_DATA,
+    players: [],
+    journal_pages: {},
+    chatLog: []
+};
+
 const cleanText = (html) => {
    const tmp = document.createElement("DIV");
    tmp.innerHTML = html;
    let text = (tmp.textContent || tmp.innerText || "").replace(/\s+/g, " ").trim();
-   return text
-     .replace(/kill/gi, "defeat")
-     .replace(/murder/gi, "eliminate")
-     .replace(/blood/gi, "essence")
-     .replace(/torture/gi, "interrogate");
+   return text.replace(/kill/gi, "defeat").replace(/murder/gi, "eliminate");
 };
 
 function App() {
@@ -54,7 +57,7 @@ function App() {
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [currentView, setCurrentView] = useState('session'); 
   const [gameParams, setGameParams] = useState(null); 
-  const [data, setData] = useState(null);
+  const [data, setData] = useState(INITIAL_APP_STATE);
   const saveTimer = useRef(null);
 
   const [showTour, setShowTour] = useState(false);
@@ -66,6 +69,9 @@ function App() {
   const [showHandout, setShowHandout] = useState(false);
   const [showHandoutCreator, setShowHandoutCreator] = useState(false);
   const [rollingDice, setRollingDice] = useState(null);
+
+  // Access the Toast store action
+  const addLogEntry = useCharacterStore((state) => state.addLogEntry);
 
   const [apiKey, setApiKey] = useState(() => localStorage.getItem('dm_api_key') || '');
   const [aiProvider, setAiProvider] = useState(() => localStorage.getItem('dm_ai_provider') || 'puter');
@@ -89,18 +95,20 @@ function App() {
     return () => unsub();
   }, [gameParams]); 
 
+  // --- SYNC ENGINE ---
   useEffect(() => {
       if (!gameParams) return;
       const { code, isOffline, uid } = gameParams;
 
       if (isOffline) {
           const local = localStorage.getItem('dm_local_data');
-          setData(local ? JSON.parse(local) : DEFAULT_DATA);
+          setData(local ? JSON.parse(local) : INITIAL_APP_STATE);
           return;
       }
 
-      const ref = fb.doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', code);
-      const unsub = fb.onSnapshot(ref, (snap) => {
+      // Root Listener
+      const rootRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', code);
+      const unsubRoot = onSnapshot(rootRef, (snap) => {
           if (snap.exists()) {
               const d = snap.data();
               if (d.bannedUsers?.includes(uid)) {
@@ -108,67 +116,85 @@ function App() {
                   setGameParams(null);
                   return;
               }
-              if (!d.chatLog) d.chatLog = [];
-              if (!d.dmIds) d.dmIds = d.hostId ? [d.hostId] : []; 
-              if (!d.journal_pages) d.journal_pages = {};
-              if (!d.savedSessions) d.savedSessions = [];
-              if (!d.players) d.players = [];
-              if (!d.npcs) d.npcs = [];
-              if (!d.handouts) d.handouts = [];
-              if (!d.activeUsers) d.activeUsers = {};
-              if (!d.campaign) d.campaign = DEFAULT_DATA.campaign;
-              if (!d.campaign.activeMap) d.campaign.activeMap = { url: null, revealPaths: [] };
-              setData(d);
-
-              if (d.campaign.activeHandout && d.campaign.activeHandout.timestamp > (Date.now() - 5000)) {
+              setData(prev => ({ ...prev, ...d })); 
+              
+              if (d.campaign?.activeHandout && d.campaign.activeHandout.timestamp > (Date.now() - 5000)) {
                   setShowHandout(true);
               }
+          } else if (gameParams.role === 'dm') {
+              fb.setDoc(rootRef, { ...DB_INIT_DATA, hostId: user?.uid, dmIds: [user?.uid] });
           } else {
-              if (gameParams.role === 'dm') {
-                  const initData = { ...DEFAULT_DATA, hostId: user?.uid, dmIds: [user?.uid] };
-                  fb.setDoc(ref, initData).catch(e => alert("Create Error: " + e.message));
-              } else {
-                  alert("Campaign not found!");
-                  setGameParams(null);
-              }
+              alert("Campaign not found!"); setGameParams(null);
           }
       });
 
+      // Subcollection Listeners
+      const playersRef = collection(rootRef, 'players');
+      const unsubPlayers = onSnapshot(playersRef, (snap) => {
+          const playerList = snap.docs.map(d => ({id: d.id, ...d.data()}));
+          setData(prev => ({ ...prev, players: playerList }));
+      });
+
+      const journalRef = collection(rootRef, 'journal');
+      const unsubJournal = onSnapshot(journalRef, (snap) => {
+          const journalObj = {};
+          snap.docs.forEach(d => { journalObj[d.id] = {id: d.id, ...d.data()}; });
+          setData(prev => ({ ...prev, journal_pages: journalObj }));
+      });
+
+      const chatRef = query(collection(rootRef, 'chat'), orderBy('timestamp', 'asc'), limit(100));
+      const unsubChat = onSnapshot(chatRef, (snap) => {
+          const messages = snap.docs.map(d => ({id: d.id, ...d.data()}));
+          setData(prev => ({ ...prev, chatLog: messages }));
+      });
+
       if (user && !isOffline) {
-          fb.updateDoc(ref, { [`activeUsers.${user.uid}`]: user.email || "Anonymous" }).catch(console.error);
+          fb.updateDoc(rootRef, { [`activeUsers.${user.uid}`]: user.email || "Anonymous" }).catch(console.error);
       }
-      return () => unsub();
+
+      return () => { unsubRoot(); unsubPlayers(); unsubJournal(); unsubChat(); };
   }, [gameParams]);
 
   const effectiveRole = (data && user && data.dmIds?.includes(user.uid)) ? 'dm' : 'player';
 
+  // --- SUBCOLLECTION HELPERS ---
+  const savePlayer = async (player) => {
+      if(!gameParams) return;
+      const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'players', player.id.toString());
+      await setDoc(ref, player, { merge: true });
+  };
+
+  const deletePlayer = async (playerId) => {
+      const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'players', playerId.toString());
+      await deleteDoc(ref);
+  };
+
+  const saveJournalEntry = async (pageId, pageData) => {
+      const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'journal', pageId.toString());
+      await setDoc(ref, pageData, { merge: true });
+  };
+
+  const deleteJournalEntryFunc = async (pageId) => {
+      const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'journal', pageId.toString());
+      await deleteDoc(ref);
+  };
+
   const updateCloud = (newData, immediate = false) => {
-      setData(newData);
+      const { players, chatLog, journal_pages, ...rootData } = newData;
+      setData(prev => ({ ...prev, ...rootData })); 
+
       if (gameParams?.isOffline) {
           localStorage.setItem('dm_local_data', JSON.stringify(newData));
           return;
       }
       
       const doSave = () => {
-          const ref = fb.doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code);
-          fb.setDoc(ref, newData, { merge: true });
+          const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code);
+          fb.setDoc(ref, rootData, { merge: true });
       };
 
       if (saveTimer.current) clearTimeout(saveTimer.current);
       if (immediate) doSave(); else saveTimer.current = setTimeout(doSave, 1000); 
-  };
-
-  const deleteJournalEntry = async (id) => {
-      const newPages = { ...data.journal_pages };
-      delete newPages[id];
-      const cleanData = { ...data, journal_pages: newPages };
-      setData(cleanData); 
-      if (gameParams?.isOffline) {
-          localStorage.setItem('dm_local_data', JSON.stringify(cleanData));
-          return;
-      }
-      const ref = fb.doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code);
-      try { await fb.updateDoc(ref, { [`journal_pages.${id}`]: deleteField() }); } catch (e) { alert("Failed to delete."); }
   };
 
   const updateMapState = (action, payload) => {
@@ -184,12 +210,7 @@ function App() {
           newMap.revealPaths = newPaths;
       } else if (action === 'clear_fog') { newMap.revealPaths = []; }
       const newData = { ...data, campaign: { ...data.campaign, activeMap: newMap } };
-      setData(newData);
-      if (saveTimer.current) clearTimeout(saveTimer.current);
-      saveTimer.current = setTimeout(() => {
-          const ref = fb.doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code);
-          fb.updateDoc(ref, { 'campaign.activeMap': newMap });
-      }, 500);
+      updateCloud(newData);
   };
 
   const queryAiService = async (messages, allowRetry = true) => {
@@ -231,21 +252,12 @@ function App() {
 
               if (errStr.includes("moderation") || errStr.includes("422")) {
                   if (allowRetry) {
-                      console.warn("Moderation trigger. Retrying without context...");
                       const lastMsg = messages[messages.length - 1];
                       return await queryAiService([{ role: 'user', content: lastMsg.content }], false);
                   }
                   return "⚠️ AI Safety Filter: Content rejected.";
               }
-              
-              if (errStr.includes("credit") || errStr.includes("quota") || errStr.includes("402")) {
-                  alert("⚠️ Puter.js Credit Limit Reached. Please upgrade Puter or switch providers.");
-                  return "System: Out of Credits.";
-              }
-
-              if(attempts === maxRetries) { 
-                  return "AI Error: " + errStr.slice(0, 100); 
-              }
+              if(attempts === maxRetries) return "AI Error: " + errStr.slice(0, 100); 
               await new Promise(res => setTimeout(res, 1000));
           }
       }
@@ -260,6 +272,32 @@ function App() {
       const charId = data.assignments?.[user?.uid];
       const char = data.players?.find(p => p.id === charId);
       return char ? char.name : (user?.email?.split('@')[0] || "Spectator");
+  };
+
+  const buildSmartContext = (userMessage, players) => {
+      let context = "--- ACTIVE ROSTER (Always Available) ---\n";
+      const relevantPlayers = [];
+      const msgLower = userMessage.toLowerCase();
+      const forceAll = msgLower.includes("/party") || msgLower.includes("everyone") || msgLower.includes("all characters");
+
+      players.forEach(p => {
+          const alias = p.alias || p.playerName || "";
+          context += `• ${p.name} (Alias: ${alias || "None"}) | ${p.race} ${p.class} Lvl ${p.level}\n`;
+
+          if (forceAll || msgLower.includes(p.name.toLowerCase()) || (alias && msgLower.includes(alias.toLowerCase()))) {
+              relevantPlayers.push(p);
+          }
+      });
+
+      if (relevantPlayers.length > 0) {
+          context += "\n--- DETAILED SHEETS (Relevant to Query) ---\n";
+          relevantPlayers.forEach(p => {
+              const { image, ...leanPlayer } = p; 
+              context += JSON.stringify(leanPlayer, null, 2) + "\n\n";
+          });
+      }
+
+      return context;
   };
 
   const sendChatMessage = async (content, type = 'chat-public', targetId = null, contextMode = 'fast') => {
@@ -277,51 +315,16 @@ function App() {
           targetId: targetId
       };
 
-      let currentLog = [...(data.chatLog || [])];
-      currentLog.push(newMessage);
-      
-      const updatedData = { ...data, chatLog: currentLog };
-      setData(updatedData);
-      updateCloud(updatedData, true);
+      const chatRef = collection(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'chat');
+      await addDoc(chatRef, newMessage);
 
       if (type === 'ai-public' || type === 'ai-private') {
-          const genesis = data.campaign?.genesis || {};
           const accessiblePages = Object.values(data.journal_pages || {}).filter(p => p.isPublic || p.ownerId === user?.uid);
-          
-          const charLimit = contextMode === 'deep' ? 30000 : 4000;
-          
-          const journalContext = accessiblePages
-              .sort((a,b) => a.created - b.created)
-              .map(p => `[${p.title}]: ${cleanText(p.content)}`)
-              .join('\n')
-              .slice(-charLimit); 
+          const journalContext = accessiblePages.map(p => `[${p.title}]: ${cleanText(p.content)}`).join('\n').slice(-4000); 
+          const partyContext = buildSmartContext(content, data.players);
 
-          const partyContext = data.players.map(p => {
-              const aliasStr = p.aliases ? ` (aka: ${p.aliases})` : "";
-              const details = [
-                  p.appearance ? `Looks: ${p.appearance}` : '',
-                  p.personality ? `Personality: ${p.personality}` : '',
-                  p.backstory ? `History: ${p.backstory}` : ''
-              ].filter(Boolean).join('. ');
-              
-              return `• ${p.name} (${p.race} ${p.class} Level ${p.level || 1})${aliasStr}: ${details}`;
-          }).join('\n');
-
-          const systemPrompt = `
-          Role: Dungeon Master AI for "${genesis.campaignName || "D&D"}" (${genesis.tone || "Fantasy"}).
-          Lore: ${genesis.loreText || "Generic"}.
-          Location: ${data.campaign.location || "Unknown"}.
+          const systemPrompt = `Role: DM AI. Context: ${data.campaign.genesis.tone}. ${partyContext} JOURNAL: ${journalContext}.`;
           
-          PARTY ROSTER:
-          ${partyContext}
-          
-          JOURNAL KNOWLEDGE (${contextMode.toUpperCase()} CONTEXT):
-          ${journalContext}
-          
-          User: ${newMessage.senderName}.
-          Action: Answer based on the journal data provided. Use the party roster to understand the characters' personalities, looks, and motivations.
-          `;
-
           const aiRes = await queryAiService([{ role: "system", content: systemPrompt }, { role: "user", content: content }]);
           
           const aiMessage = {
@@ -334,188 +337,102 @@ function App() {
               type: type,
               replyTo: user?.uid
           };
-          currentLog.push(aiMessage);
-          const finalData = { ...data, chatLog: currentLog };
-          setData(finalData);
-          updateCloud(finalData, true);
+          await addDoc(chatRef, aiMessage);
       }
       setIsLoading(false);
   };
 
-  const editChatMessage = (msgId, newContent) => {
-      const newLog = data.chatLog.map(m => m.id === msgId ? { ...m, content: newContent } : m);
-      const nd = { ...data, chatLog: newLog };
-      updateCloud(nd, true);
+  const editChatMessage = async (msgId, newContent) => {
+      const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'chat', msgId);
+      await setDoc(ref, { content: newContent }, { merge: true });
   };
 
-  const deleteChatMessage = (msgId) => {
-      if(!confirm("Delete message?")) return;
-      const newLog = data.chatLog.filter(m => m.id !== msgId);
-      const nd = { ...data, chatLog: newLog };
-      updateCloud(nd, true);
+  const deleteChatMessage = async (msgId) => {
+      if(!confirm("Delete?")) return;
+      const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'chat', msgId);
+      await deleteDoc(ref);
   };
 
-  const clearChat = () => {
-      if(!confirm("Are you sure you want to clear the ENTIRE chat history? This cannot be undone.")) return;
-      const nd = { ...data, chatLog: [] };
-      setData(nd);
-      updateCloud(nd, true);
-  };
-
-  const saveMessageToJournal = (msgContent) => {
-      const title = prompt("Entry Title (e.g., 'Recap: Goblin Ambush'):", "New Entry");
-      if (!title) return;
-      
-      const newId = `page_${Date.now()}`;
-      const newPage = {
-          id: newId,
-          title: title,
-          content: `<p>${msgContent.replace(/\n/g, '<br/>')}</p>`,
-          ownerId: user?.uid,
-          isPublic: true,
-          created: Date.now()
-      };
-      
-      const newData = { ...data, journal_pages: { ...data.journal_pages, [newId]: newPage } };
-      setData(newData);
-      updateCloud(newData, true);
-      alert("Saved to Journal!");
-  };
-
-  // --- UPDATED DICE LOGIC ---
-  const handleDiceRoll = (d) => {
-    setRollingDice(null);
-    
-    // Tiny delay to reset
-    setTimeout(() => {
-        const result = Math.floor(Math.random() * d) + 1;
-        const rollId = Date.now();
-        setRollingDice({ die: d, result, id: rollId });
-        setShowTools(false); 
-
-        // 1. Add Log almost immediately (so user knows it registered)
-        setTimeout(() => {
-            setDiceLog(prev => [{id: rollId, die: `d${d}`, result}, ...prev]);
-            
-            if ((d === 20 && result === 20) || (d === 20 && result === 1)) {
-                const flavor = result === 20 ? "CRITICAL HIT!" : "CRITICAL MISS!";
-                setInputText(prev => prev + `[${flavor} (Natural ${result} on d20)] `);
-            } else {
-                const sysMsg = { id: Date.now(), role: 'system', content: `Rolled d${d}: **${result}**`, timestamp: Date.now(), senderId: 'system', type: 'chat-public' };
-                const nd = { ...data, chatLog: [...(data.chatLog||[]), sysMsg] };
-                updateCloud(nd, true);
-            }
-        }, 1500);
-
-        // 2. WAIT 4 SECONDS before removing the 3D dice
-        setTimeout(() => {
-            setRollingDice(null); 
-        }, 4000); 
-    }, 50);
-  };
-
-  const generateRecap = async (mode = 'recent') => {
-      setIsLoading(true);
-      
-      const accessiblePages = Object.values(data.journal_pages || {}).filter(p => p.isPublic);
-      let allText = accessiblePages
-          .sort((a,b) => a.created - b.created)
-          .map(p => `ENTRY: ${p.title}\n${cleanText(p.content)}`)
-          .join('\n\n');
-      
-      if (!allText.trim()) { alert("No journal entries!"); setIsLoading(false); return; }
-
-      if (mode === 'recent') {
-          allText = allText.slice(-4000);
-      }
-      
-      const genesis = data.campaign?.genesis || {};
-      const chunkSize = 4000;
-      let finalSummary = "";
-
-      if (mode === 'full' && allText.length > chunkSize) {
-          let summaries = [];
-          for (let i = 0; i < allText.length; i += chunkSize) {
-              const chunk = allText.slice(i, i + chunkSize);
-              const res = await queryAiService([{ role: 'user', content: `Summarize this fragment:\n\n${chunk}` }], false);
-              if (res && !res.includes("Error") && !res.includes("Safety")) summaries.push(res);
-          }
-          finalSummary = await queryAiService([{ role: 'user', content: `Combine these summaries into a narrative:\n\n${summaries.join("\n\n")}` }]);
-      } else {
-          finalSummary = await queryAiService([{ role: 'user', content: `Summarize this text:\n\n${allText}` }]);
-      }
-
-      if (finalSummary && !finalSummary.includes("Error") && !finalSummary.includes("Safety")) {
-          sendChatMessage(`**${mode === 'full' ? '📜 FULL STORY RECAP' : '⏱️ RECENT RECAP'}:**\n${finalSummary}`, 'chat-public');
-      } else {
-          alert("Recap failed (Content Filter or Error).");
-      }
-      setIsLoading(false);
-  };
-
-  const generateNpc = async (name, context) => {
-      const prompt = `Create 5e NPC JSON: {name, race, class, quirk, goal, secret, stats, personality} for "${name} ${context}"`;
-      const res = await queryAiService([{ role: 'user', content: prompt }]);
-      try { return JSON.parse(res.match(/\{[\s\S]*\}/)[0]); } catch(e) { return null; }
-  };
-
-  const generateLoc = async (type, note, genesis) => {
-      const prompt = `Create 5e Location JSON: {name, type, desc} for "${type} ${note}"`;
-      const res = await queryAiService([{ role: 'user', content: prompt }]);
-      try { return JSON.parse(res.match(/\{[\s\S]*\}/)[0]); } catch(e) { return null; }
-  };
-
-  const handleOnboardingComplete = (onboardingData) => {
-      const newData = { ...data, onboardingComplete: true, campaign: { ...data.campaign, genesis: onboardingData } };
-      updateCloud(newData, true);
-  };
-
-  // --- HANDOUT LOGIC (HISTORY AWARE) ---
-  const handleHandoutSave = (handoutData) => {
-      if (!handoutData.id) handoutData.id = Date.now();
-      let newHistory = [...(data.handouts || [])];
-      const existingIndex = newHistory.findIndex(h => h.id === handoutData.id);
-      if (existingIndex >= 0) {
-          newHistory[existingIndex] = handoutData;
-      } else {
-          newHistory.unshift(handoutData);
-      }
-      const newData = { 
-          ...data,
-          handouts: newHistory,
-          campaign: { ...data.campaign, activeHandout: handoutData } 
-      };
-      updateCloud(newData, true);
-      setShowHandoutCreator(false);
-  };
-
-  const handleHandoutDelete = (id) => {
-      if (!confirm("Delete this handout from history?")) return;
-      const newHistory = (data.handouts || []).filter(h => h.id !== id);
-      const newData = { ...data, handouts: newHistory };
-      updateCloud(newData, true);
-  }
-
-  const closeHandoutViewer = () => {
-      setShowHandout(false);
+  const clearChat = async () => {
+      if(!confirm("Clear Chat?")) return;
+      const chatRef = collection(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'chat');
+      data.chatLog.forEach(async msg => await deleteDoc(doc(chatRef, msg.id)));
   };
 
   const handleSaveToJournal = () => {
       const log = (data.chatLog || []).map(m => `<p><b>${m.senderName}:</b> ${m.content}</p>`).join("");
-      const newId = `page_${Date.now()}`;
-      const newPage = { id: newId, title: `Log ${new Date().toLocaleDateString()}`, content: log, ownerId: user.uid, isPublic: true, created: Date.now() };
-      updateCloud({...data, journal_pages: {...data.journal_pages, [newId]: newPage}}, true);
-      alert("Saved to Journal.");
+      const newId = Date.now().toString();
+      const newPage = { id: newId, title: `Log ${new Date().toLocaleDateString()}`, content: log, ownerId: user?.uid, isPublic: true, created: Date.now() };
+      saveJournalEntry(newId, newPage);
+      alert("Saved to Journal!");
   };
+
+  const saveMessageToJournal = (msgContent) => {
+      const title = prompt("Entry Title:", "Log Entry");
+      if (!title) return;
+      const newId = Date.now().toString();
+      const newPage = { id: newId, title, content: `<p>${msgContent}</p>`, ownerId: user?.uid, isPublic: true, created: Date.now() };
+      saveJournalEntry(newId, newPage);
+      alert("Saved to Journal!");
+  };
+
+  const handleDiceRoll = (d) => {
+    return new Promise((resolve) => {
+        setRollingDice(null);
+        setTimeout(() => {
+            const result = Math.floor(Math.random() * d) + 1;
+            const rollId = Date.now();
+            setRollingDice({ die: d, result, id: rollId });
+            setShowTools(false); 
+            setTimeout(() => {
+                setDiceLog(prev => [{id: rollId, die: `d${d}`, result}, ...prev]);
+                if (d===20 && (result===20 || result===1)) {
+                    setInputText(prev => prev + `[${result===20 ? "CRIT!" : "FAIL!"}] `);
+                } else {
+                    sendChatMessage(`Rolled d${d}: **${result}**`, 'system');
+                }
+                
+                // SYNCHRONIZE TOAST
+                addLogEntry({
+                    message: `<div class="font-bold text-white">Manual Roll</div><div class="text-xl text-amber-500 font-bold">d${d} -> ${result}</div>`,
+                    id: rollId
+                });
+
+                resolve(result); 
+            }, 1000);
+            setTimeout(() => { setRollingDice(null); }, 4000); 
+        }, 50);
+    });
+  };
+
+  const generateRecap = () => alert("Feature coming to subcollections soon.");
+  const generateNpc = async (name, ctx) => {
+      const res = await queryAiService([{role:'user', content:`Create NPC JSON {name, race, class, quirk, stats} for ${name} ${ctx}`}]);
+      try { return JSON.parse(res.match(/\{[\s\S]*\}/)[0]); } catch(e) { return null; }
+  };
+  const generateLoc = async (type, note) => {
+      const res = await queryAiService([{role:'user', content:`Create Location JSON {name, type, desc} for ${type} ${note}`}]);
+      try { return JSON.parse(res.match(/\{[\s\S]*\}/)[0]); } catch(e) { return null; }
+  };
+  const handleOnboardingComplete = (data) => updateCloud({...data, onboardingComplete:true, campaign:{...data.campaign, genesis:data}});
+  const handleHandoutSave = (h) => {
+      const newH = [...(data.handouts||[])];
+      if(!h.id) h.id = Date.now();
+      const idx = newH.findIndex(x=>x.id===h.id);
+      if(idx>=0) newH[idx]=h; else newH.unshift(h);
+      updateCloud({...data, handouts:newH, campaign:{...data.campaign, activeHandout:h}});
+      setShowHandoutCreator(false);
+  };
+  const handleHandoutDelete = (id) => updateCloud({...data, handouts:data.handouts.filter(h=>h.id!==id)});
+  const closeHandoutViewer = () => setShowHandout(false);
 
   if (!isAuthReady) return <div className="h-screen bg-slate-900 flex items-center justify-center text-amber-500 font-bold animate-pulse">Summoning DungeonMind...</div>;
   if (!gameParams || !data) return <Lobby fb={fb} user={user} onJoin={(c, r, u) => { localStorage.setItem('dm_last_code', c); setGameParams({code:c, role:r, isOffline:false, uid:u}) }} onOffline={() => setGameParams({code:'LOCAL', role:'dm', isOffline:true, uid:'admin'})} />;
 
   return (
     <div className="fixed inset-0 flex flex-col md:flex-row bg-slate-900 text-slate-200 font-sans overflow-hidden">
-       <Sidebar view={currentView} setView={setCurrentView} onExit={() => { localStorage.removeItem('dm_last_code'); setGameParams(null); setData(null); }} />
+       <Sidebar view={currentView} setView={setCurrentView} onExit={() => { localStorage.removeItem('dm_last_code'); setGameParams(null); setData(INITIAL_APP_STATE); }} />
        <main className="flex-1 flex flex-col overflow-hidden relative w-full h-full">
-           
            <div className="shrink-0 bg-slate-900/95 backdrop-blur border-b border-slate-800 pt-safe z-50">
                <div className="h-14 flex items-center justify-between px-4">
                    <div className="flex gap-2 items-center">
@@ -525,14 +442,7 @@ function App() {
                        </span>
                    </div>
                    <div className="flex gap-2">
-                       {effectiveRole === 'dm' && (
-                           <button 
-                               onClick={() => setShowHandoutCreator(true)} 
-                               className="text-xs bg-amber-900/50 hover:bg-amber-800 px-3 py-1 rounded border border-amber-800 text-amber-200 flex items-center gap-2"
-                           >
-                               <Icon name="scroll" size={14}/> <span>Handout</span>
-                           </button>
-                       )}
+                       {effectiveRole === 'dm' && <button onClick={() => setShowHandoutCreator(true)} className="text-xs bg-amber-900/50 hover:bg-amber-800 px-3 py-1 rounded border border-amber-800 text-amber-200 flex items-center gap-2"><Icon name="scroll" size={14}/> <span>Handout</span></button>}
                        {possessedNpcId && <button onClick={() => setPossessedNpcId(null)} className="text-xs bg-red-900/80 text-white px-3 py-1 rounded">End Possession</button>}
                        <button onClick={handleSaveToJournal} className="text-xs bg-slate-800 hover:bg-slate-700 border border-slate-600 px-3 py-1 rounded flex items-center gap-2 text-slate-300 hover:text-white"><Icon name="save" size={14}/> Save Log</button>
                    </div>
@@ -540,98 +450,19 @@ function App() {
            </div>
 
            <div className="flex-1 overflow-hidden relative p-0 md:p-0">
-              {currentView === 'session' && (
-                  <SessionView 
-                      data={data}
-                      chatLog={data.chatLog || []} 
-                      inputText={inputText}
-                      setInputText={setInputText}
-                      onSendMessage={sendChatMessage}
-                      onEditMessage={editChatMessage}
-                      onDeleteMessage={deleteChatMessage}
-                      isLoading={isLoading}
-                      role={effectiveRole}
-                      user={user} 
-                      generateRecap={generateRecap}
-                      saveMessageToJournal={saveMessageToJournal} 
-                      clearChat={clearChat}
-                      showTools={showTools}
-                      setShowTools={setShowTools}
-                      diceLog={diceLog}
-                      handleDiceRoll={handleDiceRoll}
-                      possessedNpcId={possessedNpcId}
-                  />
-              )}
-              {currentView === 'journal' && <JournalView data={data} setData={setData} updateCloud={updateCloud} role={effectiveRole} updateJournalField={()=>{}} userId={user?.uid} aiHelper={queryAiService} deleteJournalEntry={deleteJournalEntry} />}
+              {currentView === 'session' && <SessionView data={data} chatLog={data.chatLog} inputText={inputText} setInputText={setInputText} onSendMessage={sendChatMessage} onEditMessage={editChatMessage} onDeleteMessage={deleteChatMessage} isLoading={isLoading} role={effectiveRole} user={user} saveMessageToJournal={saveMessageToJournal} clearChat={clearChat} showTools={showTools} setShowTools={setShowTools} diceLog={diceLog} handleDiceRoll={handleDiceRoll} possessedNpcId={possessedNpcId} />}
+              {currentView === 'journal' && <JournalView data={data} role={effectiveRole} userId={user?.uid} onSavePage={saveJournalEntry} onDeletePage={deleteJournalEntryFunc} aiHelper={queryAiService} />}
               {currentView === 'world' && <WorldView data={data} setData={setData} role={effectiveRole} updateCloud={updateCloud} generateLoc={generateLoc} updateMapState={updateMapState} />}
-              {currentView === 'party' && (
-                  <PartyView 
-                      data={data} 
-                      role={effectiveRole} 
-                      activeChar={data.assignments?.[user?.uid]} 
-                      updateCloud={updateCloud}
-                      setInputText={setInputText}
-                      setView={setCurrentView}
-                      user={user}
-                      aiHelper={queryAiService}
-                      onDiceRoll={handleDiceRoll} 
-                      onLogAction={(msg) => sendChatMessage(msg, 'system')}
-                  />
-              )}
+              {currentView === 'party' && <PartyView data={data} role={effectiveRole} activeChar={data.assignments?.[user?.uid]} updateCloud={updateCloud} savePlayer={savePlayer} deletePlayer={deletePlayer} setInputText={setInputText} setView={setCurrentView} user={user} aiHelper={queryAiService} onDiceRoll={handleDiceRoll} onLogAction={(msg) => sendChatMessage(msg, 'system')} edition={data.config?.edition || '2014'} />}
               {currentView === 'npcs' && <NpcView data={data} setData={setData} role={effectiveRole} updateCloud={updateCloud} generateNpc={generateNpc} setChatInput={setInputText} setView={setCurrentView} onPossess={(id) => { setPossessedNpcId(id); setCurrentView('session'); }} />}
-              {currentView === 'settings' && <SettingsView data={data} setData={setData} apiKey={apiKey} setApiKey={setApiKey} role={effectiveRole} updateCloud={updateCloud} code={gameParams.code} user={user} onExit={() => { localStorage.removeItem('dm_last_code'); setGameParams(null); setData(null); }} aiProvider={aiProvider} setAiProvider={setAiProvider} openAiModel={openAiModel} setOpenAiModel={setOpenAiModel} puterModel={puterModel} setPuterModel={setPuterModel} banPlayer={(uid) => { if(!confirm("Ban?")) return; const nd = {...data, activeUsers: {...data.activeUsers}, bannedUsers: [...(data.bannedUsers||[]), uid]}; delete nd.activeUsers[uid]; updateCloud(nd, true); }} kickPlayer={(uid) => { const nd = {...data, activeUsers: {...data.activeUsers}}; delete nd.activeUsers[uid]; updateCloud(nd, true); }} unbanPlayer={(uid) => { const nd = {...data, bannedUsers: data.bannedUsers.filter(u=>u!==uid)}; updateCloud(nd, true); }} />}
+              {currentView === 'settings' && <SettingsView data={data} setData={setData} apiKey={apiKey} setApiKey={setApiKey} role={effectiveRole} updateCloud={updateCloud} code={gameParams.code} user={user} onExit={() => { setGameParams(null); }} aiProvider={aiProvider} setAiProvider={setAiProvider} openAiModel={openAiModel} setOpenAiModel={setOpenAiModel} puterModel={puterModel} setPuterModel={setPuterModel} banPlayer={()=>{}} kickPlayer={()=>{}} unbanPlayer={()=>{}} />}
            </div>
        </main>
        
-       {showHandoutCreator && (
-            <HandoutEditor 
-                savedHandouts={data.handouts || []}
-                onSave={handleHandoutSave} 
-                onDelete={handleHandoutDelete}
-                onCancel={() => setShowHandoutCreator(false)} 
-            />
-       )}
-
-       {showHandout && data.campaign?.activeHandout && (
-            <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm" onClick={closeHandoutViewer}>
-                <div 
-                    className={`p-8 max-w-2xl w-full rounded-lg text-center transform scale-100 animate-in zoom-in duration-300 relative shadow-2xl handout-theme-${data.campaign.activeHandout.theme || 'parchment'}`} 
-                    onClick={e => e.stopPropagation()}
-                >
-                    <button onClick={closeHandoutViewer} className="absolute top-2 right-2 opacity-50 hover:opacity-100 transition-opacity">
-                        <Icon name="x" size={24}/>
-                    </button>
-                    
-                    <div className="flex flex-col items-center max-h-[85vh] overflow-y-auto custom-scroll">
-                        {data.campaign.activeHandout.title && (
-                            <h2 className="text-3xl mb-6 font-bold border-b-2 border-current pb-2 inline-block px-8">
-                                {data.campaign.activeHandout.title}
-                            </h2>
-                        )}
-                        
-                        {data.campaign.activeHandout.imageUrl && (
-                            <img 
-                                src={data.campaign.activeHandout.imageUrl} 
-                                className="max-h-64 object-contain mb-6 rounded shadow-md border-4 border-white/20" 
-                                alt="Handout Visual"
-                            />
-                        )}
-
-                        <div 
-                            className="text-lg leading-relaxed w-full text-left handout-content prose prose-p:text-inherit prose-headings:text-inherit max-w-none"
-                            dangerouslySetInnerHTML={{__html: data.campaign.activeHandout.content || data.campaign.activeHandout.text}} 
-                        />
-                    </div>
-                </div>
-            </div>
-       )}
-       
-       <div className="fixed inset-0 pointer-events-none z-[99999]">
-           {rollingDice && <DiceOverlay roll={rollingDice} />}
-       </div>
-
+       {showHandoutCreator && <HandoutEditor savedHandouts={data.handouts || []} onSave={handleHandoutSave} onDelete={handleHandoutDelete} onCancel={() => setShowHandoutCreator(false)} />}
+       {showHandout && data.campaign?.activeHandout && <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm" onClick={closeHandoutViewer}><div className={`p-8 max-w-2xl w-full rounded-lg text-center transform scale-100 animate-in zoom-in duration-300 relative shadow-2xl handout-theme-${data.campaign.activeHandout.theme || 'parchment'}`} onClick={e => e.stopPropagation()}><button onClick={closeHandoutViewer} className="absolute top-2 right-2 opacity-50 hover:opacity-100 transition-opacity"><Icon name="x" size={24}/></button><div className="flex flex-col items-center max-h-[85vh] overflow-y-auto custom-scroll">{data.campaign.activeHandout.title && <h2 className="text-3xl mb-6 font-bold border-b-2 border-current pb-2 inline-block px-8">{data.campaign.activeHandout.title}</h2>}{data.campaign.activeHandout.imageUrl && <img src={data.campaign.activeHandout.imageUrl} className="max-h-64 object-contain mb-6 rounded shadow-md border-4 border-white/20" alt="Handout Visual"/>}<div className="text-lg leading-relaxed w-full text-left handout-content prose prose-p:text-inherit prose-headings:text-inherit max-w-none" dangerouslySetInnerHTML={{__html: data.campaign.activeHandout.content || data.campaign.activeHandout.text}} /></div></div></div>}
+       <div className="fixed inset-0 pointer-events-none z-[99999]">{rollingDice && <DiceOverlay roll={rollingDice} />}</div>
        <MobileNav view={currentView} setView={setCurrentView} />
-       {showTour && <TourGuide setView={setCurrentView} onClose={() => { setShowTour(false); localStorage.setItem('dm_tour_completed', 'true'); }} />}
        {effectiveRole === 'dm' && !data.onboardingComplete && <OnboardingWizard onComplete={handleOnboardingComplete} aiHelper={queryAiService} />}
     </div>
   );

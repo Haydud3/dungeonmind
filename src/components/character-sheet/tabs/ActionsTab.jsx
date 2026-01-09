@@ -14,16 +14,12 @@ const ActionsTab = ({ onDiceRoll, onLogAction }) => {
         }
 
         try {
-            // 1. WAIT for App.jsx to roll and return the value
+            // 1. Roll d20
             const roll = await onDiceRoll(20); 
 
-            // Safety check: Ensure we actually got a number
-            if (typeof roll !== 'number') {
-                console.error("Dice failed to return a number");
-                return; 
-            }
+            if (typeof roll !== 'number') return;
 
-            // 2. Calculate using the REAL number
+            // 2. Calculate
             const hitMod = parseInt(action.hit) || 0;
             const total = roll + hitMod;
 
@@ -41,7 +37,7 @@ const ActionsTab = ({ onDiceRoll, onLogAction }) => {
                         <span>=</span>
                         <span class="text-xl text-amber-500 font-bold glow">${total}</span>
                     </div>
-                    ${action.dmg ? `<div class="text-xs text-slate-400 flex items-center gap-2 mt-1"><Icon name="sword" size={12}/> <span>${action.dmg} Damage</span></div>` : ''}
+                    ${action.dmg ? `<div class="text-xs text-slate-400 flex items-center gap-2 mt-1"><Icon name="sword" size={12}/> <span>Attack Roll Complete</span></div>` : ''}
                 </div>
             `;
             
@@ -49,6 +45,63 @@ const ActionsTab = ({ onDiceRoll, onLogAction }) => {
 
         } catch (e) {
             console.error("Roll interrupted", e);
+        }
+    };
+
+    const handleRollDamage = async (e, action) => {
+        e.stopPropagation(); // Stop the click from triggering the Attack Roll
+        
+        if (!onDiceRoll || !action.dmg) return;
+
+        // Regex to parse "2d6 + 3" or "1d8 Necrotic"
+        // Captures: 1: Count, 2: Die, 3: Sign (optional), 4: Mod (optional)
+        const diceRegex = /(\d+)d(\d+)(?:\s*([+-])\s*(\d+))?/;
+        const match = action.dmg.match(diceRegex);
+
+        if (match) {
+            const count = parseInt(match[1], 10);
+            const die = parseInt(match[2], 10);
+            const sign = match[3] === '-' ? -1 : 1;
+            const mod = parseInt(match[4], 10) || 0;
+            
+            let rollTotal = 0;
+            const rolls = [];
+
+            // Roll dice sequentially
+            for(let i=0; i<count; i++) {
+                const r = await onDiceRoll(die);
+                if (typeof r === 'number') {
+                    rolls.push(r);
+                    rollTotal += r;
+                }
+            }
+
+            const total = rollTotal + (sign * mod);
+            
+            // Remove the formula from the string to get the type (e.g. "Necrotic")
+            const damageType = action.dmg.replace(match[0], '').trim();
+
+            // Format Log
+            const msg = `
+                <div class="space-y-1">
+                    <div class="font-bold text-red-400 border-b border-red-900/30 pb-1 mb-1 flex justify-between">
+                        <span>${action.name} Damage</span>
+                        <span class="text-xs text-slate-500 font-normal self-end">${damageType}</span>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-2 text-sm text-slate-300">
+                        <span class="bg-slate-800 border border-slate-600 px-2 py-1 rounded text-xs font-mono">${match[0]}</span>
+                        <span>➜</span>
+                        <span class="font-mono text-xs text-slate-400">
+                            [${rolls.join('+')}]${mod ? (sign > 0 ? '+'+mod : '-'+mod) : ''}
+                        </span>
+                        <span>=</span>
+                        <span class="text-xl text-red-500 font-bold">${total}</span>
+                    </div>
+                </div>
+            `;
+            if (onLogAction) onLogAction(msg);
+        } else {
+            console.warn("Could not parse damage string:", action.dmg);
         }
     };
 
@@ -107,7 +160,14 @@ const ActionsTab = ({ onDiceRoll, onLogAction }) => {
                             <div className="text-xs text-slate-400 truncate">{act.notes || act.type}</div>
                         </div>
                         <div className="text-right">
-                            <div className="text-sm font-bold text-slate-300 bg-slate-900/50 px-2 py-1 rounded">{act.dmg || "No Dmg"}</div>
+                            {/* CLICKABLE DAMAGE BOX */}
+                            <div 
+                                onClick={(e) => handleRollDamage(e, act)}
+                                className="text-sm font-bold text-slate-300 bg-slate-900/50 px-2 py-1 rounded hover:bg-red-900/40 hover:text-red-200 hover:border-red-500/30 border border-transparent transition-colors z-10 relative"
+                                title="Click to Roll Damage"
+                            >
+                                {act.dmg || "No Dmg"}
+                            </div>
                         </div>
                     </div>
                 ))}
