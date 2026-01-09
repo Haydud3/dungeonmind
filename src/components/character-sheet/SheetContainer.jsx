@@ -10,7 +10,7 @@ import RollToast from './widgets/RollToast';
 import Icon from '../Icon';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 
-const SheetContainer = ({ characterId, onSave, onDiceRoll, onLogAction }) => {
+const SheetContainer = ({ characterId, onSave, onDiceRoll, onLogAction, onBack }) => {
     const [activeTab, setActiveTab] = useState('actions');
     
     const character = useCharacterStore((state) => state.character);
@@ -38,11 +38,10 @@ const SheetContainer = ({ characterId, onSave, onDiceRoll, onLogAction }) => {
     return (
         <div className="h-full flex flex-col bg-slate-950 font-sans relative overflow-hidden">
             
-            {/* 1. COMPACT HEADER */}
-            <HeaderStats onDiceRoll={onDiceRoll} onLogAction={handleLogAction} />
+            {/* 1. COMPACT HEADER (Now with onBack) */}
+            <HeaderStats onDiceRoll={onDiceRoll} onLogAction={handleLogAction} onBack={onBack} />
 
             {/* 2. SCROLLABLE CONTENT */}
-            {/* Added extra padding-bottom (pb-32) so content clears the bottom nav */}
             <div className="flex-1 overflow-y-auto custom-scroll bg-slate-900 relative">
                 <div className="p-4 max-w-2xl mx-auto pb-32"> 
                     <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">

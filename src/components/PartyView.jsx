@@ -101,17 +101,17 @@ const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView,
     };
 
     // --- FULL SCREEN OVERLAY FIX ---
-    // Added 'fixed inset-0 z-[200]' to cover the Mobile Nav Bar
+    // Z-Index increased to 9999 to definitely cover the bottom nav
     if (viewingCharacterId) {
         return (
-            <div className="fixed inset-0 z-[200] bg-slate-950 flex flex-col h-full w-full">
-                <button 
-                    onClick={() => setViewingCharacterId(null)} 
-                    className="absolute top-3 left-3 z-50 bg-slate-900/80 text-slate-400 p-2 rounded-full border border-slate-700 shadow-xl hover:text-white hover:bg-slate-800 backdrop-blur-md"
-                >
-                    <Icon name="arrow-left" size={24}/>
-                </button>
-                <SheetContainer characterId={viewingCharacterId} onSave={handleSheetSave} onDiceRoll={onDiceRoll} onLogAction={onLogAction} />
+            <div className="fixed inset-0 z-[9999] bg-slate-950 flex flex-col h-full w-full">
+                <SheetContainer 
+                    characterId={viewingCharacterId} 
+                    onSave={handleSheetSave} 
+                    onDiceRoll={onDiceRoll} 
+                    onLogAction={onLogAction}
+                    onBack={() => setViewingCharacterId(null)} // Pass back function
+                />
             </div>
         );
     }

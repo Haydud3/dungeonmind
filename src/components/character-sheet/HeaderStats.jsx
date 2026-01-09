@@ -3,7 +3,7 @@ import { useCharacterStore } from '../../stores/useCharacterStore';
 import Icon from '../Icon';
 import { compressImage } from '../../utils/imageCompressor';
 
-const HeaderStats = ({ onDiceRoll, onLogAction }) => {
+const HeaderStats = ({ onDiceRoll, onLogAction, onBack }) => {
   const { character, updateHP, getModifier, recoverSlots, shortRest, updateInfo, updateStat } = useCharacterStore();
   const [isExpanded, setIsExpanded] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -71,6 +71,13 @@ const HeaderStats = ({ onDiceRoll, onLogAction }) => {
         {/* --- COMPACT STRIP (ALWAYS VISIBLE) --- */}
         <div className="flex items-center gap-3 p-3 h-16">
             
+            {/* 0. Back Button (Left of Avatar) */}
+            {onBack && (
+                <button onClick={onBack} className="text-slate-400 hover:text-white p-1 mr-1">
+                    <Icon name="arrow-left" size={24}/>
+                </button>
+            )}
+
             {/* 1. Avatar (Click to Expand) */}
             <div onClick={() => setIsExpanded(!isExpanded)} className="relative w-12 h-12 shrink-0 cursor-pointer group">
                 <img 
