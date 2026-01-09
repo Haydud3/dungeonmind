@@ -15,7 +15,7 @@ import WorldView from './components/WorldView';
 import NpcView from './components/NpcView';
 import DiceOverlay from './components/DiceOverlay';
 import HandoutEditor from './components/HandoutEditor';
-import { useCharacterStore } from './stores/useCharacterStore'; // Import Store for Toast
+import { useCharacterStore } from './stores/useCharacterStore'; 
 
 // --- DATABASE CONFIG (CLEAN) ---
 const DB_INIT_DATA = { 
@@ -89,7 +89,10 @@ function App() {
       setIsAuthReady(true);
       if (u && !gameParams) {
           const lastCode = localStorage.getItem('dm_last_code');
-          if (lastCode) setGameParams({ code: lastCode, role: 'player', uid: u.uid, isOffline: false });
+          if (lastCode) {
+              // Optimistically try to join, Sync Engine will validate existence
+              setGameParams({ code: lastCode, role: 'player', uid: u.uid, isOffline: false });
+          }
       }
     });
     return () => unsub();
@@ -113,6 +116,7 @@ function App() {
               const d = snap.data();
               if (d.bannedUsers?.includes(uid)) {
                   alert("You have been banned.");
+                  localStorage.removeItem('dm_last_code'); // Ensure banned user doesn't loop
                   setGameParams(null);
                   return;
               }
@@ -122,9 +126,20 @@ function App() {
                   setShowHandout(true);
               }
           } else if (gameParams.role === 'dm') {
+              // Creating new campaign
               fb.setDoc(rootRef, { ...DB_INIT_DATA, hostId: user?.uid, dmIds: [user?.uid] });
           } else {
-              alert("Campaign not found!"); setGameParams(null);
+              // --- FIX: CAMPAIGN NOT FOUND LOGIC ---
+              console.warn(`Campaign ${code} does not exist. Cleaning up.`);
+              localStorage.removeItem('dm_last_code'); // Remove invalid code so it doesn't auto-join next time
+              setGameParams(null); // Return to Lobby
+          }
+      }, (err) => {
+          console.error("Sync Error:", err);
+          if (err.code === 'permission-denied') {
+              alert("Access Denied.");
+              localStorage.removeItem('dm_last_code');
+              setGameParams(null);
           }
       });
 
@@ -392,7 +407,6 @@ function App() {
                     sendChatMessage(`Rolled d${d}: **${result}**`, 'system');
                 }
                 
-                // SYNCHRONIZE TOAST
                 addLogEntry({
                     message: `<div class="font-bold text-white">Manual Roll</div><div class="text-xl text-amber-500 font-bold">d${d} -> ${result}</div>`,
                     id: rollId
