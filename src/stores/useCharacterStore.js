@@ -13,6 +13,7 @@ export const useCharacterStore = create((set, get) => ({
   loadCharacter: (charData) => set({ 
       character: {
           ...charData,
+          alias: charData.alias || "", // <--- Added Alias Initialization
           stats: charData.stats || { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 },
           hp: charData.hp || { current: 10, max: 10, temp: 0 },
           skills: charData.skills || {},
@@ -129,7 +130,6 @@ export const useCharacterStore = create((set, get) => ({
       return getMod(s);
   },
 
-  // --- ADDED THIS FUNCTION TO FIX THE CRASH ---
   getSkillBonus: (skillName, stat) => {
       const state = get();
       const char = state.character;

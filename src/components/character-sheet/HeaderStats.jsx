@@ -11,14 +11,15 @@ const HeaderStats = ({ onDiceRoll, onLogAction, onBack }) => {
   if (!character) return null;
 
   const dexMod = getModifier('dex');
-  const wisMod = getModifier('wis');
-  const intMod = getModifier('int');
   const prof = character.profBonus || 2;
   const ac = 10 + dexMod; 
   const init = dexMod;
 
   // Passive Senses
   const getPassive = (mod, skillName) => 10 + mod + (character.skills?.[skillName] ? prof : 0);
+  const wisMod = getModifier('wis');
+  const intMod = getModifier('int');
+  
   const passPerc = getPassive(wisMod, 'Perception');
   const passInv = getPassive(intMod, 'Investigation');
   const passIns = getPassive(wisMod, 'Insight');
@@ -130,6 +131,23 @@ const HeaderStats = ({ onDiceRoll, onLogAction, onBack }) => {
         {/* --- EXPANDED DRAWER (Details & Tools) --- */}
         {isExpanded && (
             <div className="border-t border-slate-800 bg-slate-900/50 p-4 animate-in slide-in-from-top-2">
+                
+                {/* --- ALIAS INPUT --- */}
+                <div className="mb-4">
+                    <label className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Real Name / Alias (For AI Context)</label>
+                    <div className="flex gap-2">
+                        <div className="bg-slate-800 border border-slate-700 rounded px-3 py-2 text-xs text-white flex-1 flex items-center gap-2">
+                            <Icon name="user-circle" size={14} className="text-amber-500"/>
+                            <input 
+                                className="bg-transparent outline-none w-full placeholder:text-slate-600" 
+                                value={character.alias || ''} 
+                                onChange={e => updateInfo('alias', e.target.value)} 
+                                placeholder="e.g. Hayden, or 'The Grey'" 
+                            />
+                        </div>
+                    </div>
+                </div>
+
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
                     <button onClick={handleShortRest} className="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600 py-2 rounded flex items-center justify-center gap-2 text-xs font-bold transition-colors">
                         <Icon name="coffee" size={14}/> Short Rest

@@ -290,16 +290,18 @@ function App() {
   };
 
   const buildSmartContext = (userMessage, players) => {
-      let context = "--- ACTIVE ROSTER (Always Available) ---\n";
+      let context = "--- ACTIVE ROSTER (Identity Map) ---\n";
       const relevantPlayers = [];
       const msgLower = userMessage.toLowerCase();
       const forceAll = msgLower.includes("/party") || msgLower.includes("everyone") || msgLower.includes("all characters");
 
       players.forEach(p => {
-          const alias = p.alias || p.playerName || "";
-          context += `• ${p.name} (Alias: ${alias || "None"}) | ${p.race} ${p.class} Lvl ${p.level}\n`;
+          // Explicit mapping for the AI
+          const alias = p.alias || "None";
+          context += `• ${p.name} (Alias/Player: "${alias}") | ${p.race} ${p.class} Lvl ${p.level} | HP: ${p.hp?.current}/${p.hp?.max}\n`;
 
-          if (forceAll || msgLower.includes(p.name.toLowerCase()) || (alias && msgLower.includes(alias.toLowerCase()))) {
+          // Check if message matches Name OR Alias
+          if (forceAll || msgLower.includes(p.name.toLowerCase()) || (p.alias && msgLower.includes(p.alias.toLowerCase()))) {
               relevantPlayers.push(p);
           }
       });
