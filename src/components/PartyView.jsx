@@ -4,20 +4,25 @@ import CharacterCreator from './ai-wizard/CharacterCreator';
 import SheetContainer from './character-sheet/SheetContainer'; 
 import { useCharacterStore } from '../stores/useCharacterStore';
 import { parsePdf } from '../utils/dndBeyondParser.js'; 
+import { enrichCharacter } from '../utils/srdEnricher.js';
 
 const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView, user, aiHelper, onDiceRoll, onLogAction, edition, apiKey }) => {
     const [showCreationMenu, setShowCreationMenu] = useState(false); 
     const [showAiCreator, setShowAiCreator] = useState(false);        
     const [viewingCharacterId, setViewingCharacterId] = useState(null);
     const [isImporting, setIsImporting] = useState(false);
+    const [importStatus, setImportStatus] = useState("Initializing...");
     
     const fileInputRef = useRef(null);
 
     const handleSheetSave = async (updatedChar) => {
+        // Double check specifically for undefined here as a failsafe
+        const cleanChar = JSON.parse(JSON.stringify(updatedChar, (k, v) => v === undefined ? null : v));
+        
         if (savePlayer) {
-            await savePlayer(updatedChar);
+            await savePlayer(cleanChar);
         } else {
-            const newPlayers = (data.players || []).map(p => p.id === updatedChar.id ? updatedChar : p);
+            const newPlayers = (data.players || []).map(p => p.id === cleanChar.id ? cleanChar : p);
             updateCloud({ ...data, players: newPlayers });
         }
     };
@@ -28,16 +33,55 @@ const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView,
     };
 
     const handleNewCharacter = (newChar) => {
-        const charWithId = { ...newChar, id: Date.now(), ownerId: user?.uid };
-        if(savePlayer) savePlayer(charWithId);
+        // Ensure ID is a string if your DB expects it, or number if you use Date.now()
+        const charWithId = { 
+            ...newChar, 
+            id: Date.now(), 
+            ownerId: user?.uid || "anon" 
+        };
+
+        // Failsafe sanitization
+        const cleanChar = JSON.parse(JSON.stringify(charWithId, (k, v) => v === undefined ? null : v));
+
+        if(savePlayer) savePlayer(cleanChar);
         else {
-            const newPlayers = [...(data.players || []), charWithId];
+            const newPlayers = [...(data.players || []), cleanChar];
             updateCloud({ ...data, players: newPlayers }, true);
         }
         setShowAiCreator(false);
         setShowCreationMenu(false);
     };
 
+    // --- UPDATED IMPORT HANDLER ---
+    const handlePdfImport = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        
+        setIsImporting(true);
+        setImportStatus("Reading PDF...");
+        
+        try {
+            // 1. Parse raw text from PDF
+            const rawData = await parsePdf(file);
+            
+            // 2. Enrich with API Data
+            setImportStatus("Consulting 5e SRD...");
+            const charData = await enrichCharacter(rawData);
+
+            setImportStatus("Saving...");
+            handleNewCharacter(charData);
+            
+            alert(`Success! Imported ${charData.name}`);
+        } catch (err) {
+            console.error("Import Error:", err);
+            alert("Import Failed: " + err.message);
+        }
+        
+        setIsImporting(false);
+        e.target.value = null; 
+    };
+
+    // ... (rest of the component, createManualCharacter, handleDelete, etc.)
     const createManualCharacter = () => {
         const blankChar = {
             name: "New Hero",
@@ -49,23 +93,6 @@ const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView,
             bio: {}
         };
         handleNewCharacter(blankChar);
-    };
-
-    const handlePdfImport = async (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-        setIsImporting(true);
-        try {
-            const charData = await parsePdf(file);
-            handleNewCharacter(charData);
-            alert(`Success! Imported ${charData.name}`);
-        } catch (err) {
-            console.error(err);
-            alert("Import Failed: " + err.message);
-        }
-        setIsImporting(false);
-        e.target.value = null; 
-        setShowCreationMenu(false);
     };
 
     const handleDelete = (id, e) => {
@@ -145,31 +172,41 @@ const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView,
                         
                         <div className="p-8 text-center">
                             <h2 className="text-3xl fantasy-font text-amber-500 mb-2">Summon a Hero</h2>
-                            <p className="text-slate-400 mb-8">Choose your method of creation.</p>
                             
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                                {/* MANUAL */}
-                                <div onClick={createManualCharacter} className="bg-slate-800 border-2 border-slate-700 hover:border-green-500 rounded-xl p-6 cursor-pointer group transition-all hover:-translate-y-1">
-                                    <div className="w-16 h-16 bg-green-900/30 text-green-500 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform"><Icon name="pencil" size={32}/></div>
-                                    <h3 className="font-bold text-xl text-white mb-2">Manual</h3>
-                                    <p className="text-xs text-slate-400">Build from scratch. Full control over stats, bio, and abilities.</p>
+                            {isImporting ? (
+                                <div className="py-10">
+                                    <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                                    <p className="text-indigo-400 font-bold animate-pulse">{importStatus}</p>
+                                    <p className="text-xs text-slate-500">Cross-referencing spells with SRD Database.</p>
                                 </div>
+                            ) : (
+                                <>
+                                    <p className="text-slate-400 mb-8">Choose your method of creation.</p>
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                        {/* MANUAL */}
+                                        <div onClick={createManualCharacter} className="bg-slate-800 border-2 border-slate-700 hover:border-green-500 rounded-xl p-6 cursor-pointer group transition-all hover:-translate-y-1">
+                                            <div className="w-16 h-16 bg-green-900/30 text-green-500 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform"><Icon name="pencil" size={32}/></div>
+                                            <h3 className="font-bold text-xl text-white mb-2">Manual</h3>
+                                            <p className="text-xs text-slate-400">Build from scratch.</p>
+                                        </div>
 
-                                {/* D&D BEYOND */}
-                                <div onClick={() => fileInputRef.current.click()} className="bg-slate-800 border-2 border-slate-700 hover:border-red-500 rounded-xl p-6 cursor-pointer group transition-all hover:-translate-y-1">
-                                    <div className="w-16 h-16 bg-red-900/30 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform"><Icon name="file-text" size={32}/></div>
-                                    <h3 className="font-bold text-xl text-white mb-2">D&D Beyond</h3>
-                                    <p className="text-xs text-slate-400">Import a PDF character sheet directly from D&D Beyond.</p>
-                                    <input type="file" accept=".pdf" className="hidden" ref={fileInputRef} onChange={handlePdfImport}/>
-                                </div>
+                                        {/* D&D BEYOND */}
+                                        <div onClick={() => fileInputRef.current.click()} className="bg-slate-800 border-2 border-slate-700 hover:border-red-500 rounded-xl p-6 cursor-pointer group transition-all hover:-translate-y-1">
+                                            <div className="w-16 h-16 bg-red-900/30 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform"><Icon name="file-text" size={32}/></div>
+                                            <h3 className="font-bold text-xl text-white mb-2">PDF Import</h3>
+                                            <p className="text-xs text-slate-400">Smart Import + API Enrich.</p>
+                                            <input type="file" accept=".pdf" className="hidden" ref={fileInputRef} onChange={handlePdfImport}/>
+                                        </div>
 
-                                {/* AI FORGE */}
-                                <div onClick={() => { setShowCreationMenu(false); setShowAiCreator(true); }} className="bg-slate-800 border-2 border-slate-700 hover:border-purple-500 rounded-xl p-6 cursor-pointer group transition-all hover:-translate-y-1">
-                                    <div className="w-16 h-16 bg-purple-900/30 text-purple-500 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform"><Icon name="sparkles" size={32}/></div>
-                                    <h3 className="font-bold text-xl text-white mb-2">AI Forge</h3>
-                                    <p className="text-xs text-slate-400">Generate a unique character with portrait and backstory instantly.</p>
-                                </div>
-                            </div>
+                                        {/* AI FORGE */}
+                                        <div onClick={() => { setShowCreationMenu(false); setShowAiCreator(true); }} className="bg-slate-800 border-2 border-slate-700 hover:border-purple-500 rounded-xl p-6 cursor-pointer group transition-all hover:-translate-y-1">
+                                            <div className="w-16 h-16 bg-purple-900/30 text-purple-500 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform"><Icon name="sparkles" size={32}/></div>
+                                            <h3 className="font-bold text-xl text-white mb-2">AI Forge</h3>
+                                            <p className="text-xs text-slate-400">Generate instantly.</p>
+                                        </div>
+                                    </div>
+                                </>
+                            )}
                         </div>
                     </div>
                 </div>

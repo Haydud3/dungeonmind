@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import Icon from '../Icon';
 import { compressImage } from '../../utils/imageCompressor';
@@ -7,6 +7,7 @@ const HeaderStats = ({ onDiceRoll, onLogAction, onBack, onPossess, isNpc }) => {
   const { character, updateHP, updateStat, recoverSlots, shortRest, updateInfo } = useCharacterStore();
   const [isExpanded, setIsExpanded] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef(null);
 
   if (!character) return null;
 
@@ -18,14 +19,14 @@ const HeaderStats = ({ onDiceRoll, onLogAction, onBack, onPossess, isNpc }) => {
   const intMod = calcMod(character.stats?.int);
   const prof = character.profBonus || 2;
   
-  const ac = 10 + dexMod; 
-  const init = dexMod;
+  const ac = character.ac || 10 + dexMod; 
+  const init = character.init ? parseInt(character.init) : dexMod;
 
   // Passive Senses
   const getPassive = (mod, skillName) => 10 + mod + (character.skills?.[skillName] ? prof : 0);
-  const passPerc = getPassive(wisMod, 'Perception');
-  const passInv = getPassive(intMod, 'Investigation');
-  const passIns = getPassive(wisMod, 'Insight');
+  const passPerc = character.senses?.passivePerception || getPassive(wisMod, 'Perception');
+  const passInv = character.senses?.passiveInvestigation || getPassive(intMod, 'Investigation');
+  const passIns = character.senses?.passiveInsight || getPassive(wisMod, 'Insight');
 
   const hpPercent = Math.min((character.hp.current / character.hp.max) * 100, 100);
   const hpColor = hpPercent < 30 ? 'bg-red-600' : hpPercent < 60 ? 'bg-amber-500' : 'bg-green-500';
@@ -45,6 +46,10 @@ const HeaderStats = ({ onDiceRoll, onLogAction, onBack, onPossess, isNpc }) => {
       setIsUploading(false);
   };
 
+  const triggerUpload = () => {
+    if (fileInputRef.current) fileInputRef.current.click();
+  };
+
   return (
     <div className="bg-slate-900 border-b border-slate-800 sticky top-0 z-30 shadow-lg shrink-0">
         
@@ -52,21 +57,26 @@ const HeaderStats = ({ onDiceRoll, onLogAction, onBack, onPossess, isNpc }) => {
         <div className="flex items-center gap-3 p-3 h-16">
             {onBack && <button onClick={onBack} className="text-slate-400 hover:text-white p-1 mr-1"><Icon name="arrow-left" size={24}/></button>}
             
-            <div onClick={() => setIsExpanded(!isExpanded)} className="relative w-12 h-12 shrink-0 cursor-pointer group">
-                <img src={character.image || `https://ui-avatars.com/api/?name=${character.name}`} className="w-full h-full rounded-full object-cover border-2 border-slate-600 group-hover:border-amber-500"/>
+            {/* Avatar - Click to Upload */}
+            <div onClick={triggerUpload} className="relative w-12 h-12 shrink-0 cursor-pointer group">
+                <img src={character.image || `https://ui-avatars.com/api/?name=${character.name}`} className="w-full h-full rounded-full object-cover border-2 border-slate-600 group-hover:border-amber-500 transition-colors"/>
                 {isNpc && <div className="absolute -top-1 -right-1 bg-red-600 text-[8px] font-bold text-white px-1 rounded">NPC</div>}
+                <div className="absolute inset-0 bg-black/50 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                    <Icon name="upload" size={16} className="text-white"/>
+                </div>
+                <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleImageUpload} disabled={isUploading}/>
             </div>
 
-            <div className="flex-1 flex flex-col justify-center min-w-0">
+            <div className="flex-1 flex flex-col justify-center min-w-0" onClick={() => setIsExpanded(!isExpanded)}>
                 <div className="flex justify-between items-end mb-1">
                     <span className="text-sm font-bold text-white truncate">{character.name}</span>
                     <span className="text-xs font-mono text-slate-400">{character.hp.current}/{character.hp.max}</span>
                 </div>
                 <div className="relative h-5 bg-slate-800 rounded-md overflow-hidden border border-slate-700 flex items-center">
                     <div className={`absolute top-0 left-0 h-full ${hpColor} transition-all duration-500 opacity-30`} style={{ width: `${hpPercent}%` }}></div>
-                    <button onClick={() => updateHP('current', character.hp.current - 1)} className="relative z-10 w-8 flex items-center justify-center hover:bg-black/20 text-slate-400 hover:text-red-400 h-full"><Icon name="minus" size={12}/></button>
+                    <button onClick={(e) => {e.stopPropagation(); updateHP('current', character.hp.current - 1)}} className="relative z-10 w-8 flex items-center justify-center hover:bg-black/20 text-slate-400 hover:text-red-400 h-full"><Icon name="minus" size={12}/></button>
                     <div className="flex-1"></div>
-                    <button onClick={() => updateHP('current', character.hp.current + 1)} className="relative z-10 w-8 flex items-center justify-center hover:bg-black/20 text-slate-400 hover:text-green-400 h-full"><Icon name="plus" size={12}/></button>
+                    <button onClick={(e) => {e.stopPropagation(); updateHP('current', character.hp.current + 1)}} className="relative z-10 w-8 flex items-center justify-center hover:bg-black/20 text-slate-400 hover:text-green-400 h-full"><Icon name="plus" size={12}/></button>
                 </div>
             </div>
 
@@ -88,7 +98,7 @@ const HeaderStats = ({ onDiceRoll, onLogAction, onBack, onPossess, isNpc }) => {
         {isExpanded && (
             <div className="border-t border-slate-800 bg-slate-900/50 p-4 animate-in slide-in-from-top-2">
                 
-                {/* 1. RESTORED STATS EDITOR */}
+                {/* 1. STATS EDITOR */}
                 <div className="grid grid-cols-6 gap-2 mb-4 bg-slate-800/50 p-2 rounded-xl border border-slate-700">
                     {['str', 'dex', 'con', 'int', 'wis', 'cha'].map((stat) => {
                         const val = character.stats?.[stat] || 10;
@@ -110,7 +120,21 @@ const HeaderStats = ({ onDiceRoll, onLogAction, onBack, onPossess, isNpc }) => {
                     })}
                 </div>
 
-                {/* 2. Tools & Actions */}
+                {/* 2. SENSES & SPEED (NEW) */}
+                <div className="grid grid-cols-2 gap-4 mb-4">
+                    <div className="bg-slate-800 p-2 rounded border border-slate-700 flex flex-col justify-center">
+                        <span className="text-[10px] text-slate-500 uppercase font-bold mb-1">Speed</span>
+                        <span className="text-sm font-bold text-white truncate">{character.speed || "30 ft."}</span>
+                    </div>
+                    <div className="bg-slate-800 p-2 rounded border border-slate-700 flex flex-col justify-center">
+                        <span className="text-[10px] text-slate-500 uppercase font-bold mb-1">Senses</span>
+                        <div className="text-xs text-white truncate">
+                            {character.senses?.darkvision ? character.senses.darkvision : "Normal"}
+                        </div>
+                    </div>
+                </div>
+
+                {/* 3. Tools & Actions */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
                     <button onClick={handleShortRest} className="bg-slate-800 border border-slate-600 py-2 rounded text-xs font-bold text-slate-300">Short Rest</button>
                     <button onClick={handleLongRest} className="bg-indigo-900/50 border border-indigo-700 py-2 rounded text-xs font-bold text-indigo-200">Long Rest</button>
@@ -130,20 +154,11 @@ const HeaderStats = ({ onDiceRoll, onLogAction, onBack, onPossess, isNpc }) => {
                     </div>
                 </div>
                 
-                {/* 3. Passive Senses & Image */}
-                <div className="flex gap-4 items-end">
-                    <div className="flex-1 grid grid-cols-3 gap-2 text-center">
-                        <div className="bg-slate-800 p-1 rounded border border-slate-700"><div className="text-[9px] text-slate-500">Perc</div><div className="text-sm font-bold text-white">{passPerc}</div></div>
-                        <div className="bg-slate-800 p-1 rounded border border-slate-700"><div className="text-[9px] text-slate-500">Inv</div><div className="text-sm font-bold text-white">{passInv}</div></div>
-                        <div className="bg-slate-800 p-1 rounded border border-slate-700"><div className="text-[9px] text-slate-500">Ins</div><div className="text-sm font-bold text-white">{passIns}</div></div>
-                    </div>
-                    <div className="flex gap-2 w-1/3">
-                         <label className={`w-full bg-slate-700 hover:bg-slate-600 text-white p-2 rounded cursor-pointer border border-slate-600 flex flex-col items-center justify-center ${isUploading ? 'opacity-50' : ''}`} title="Upload Avatar">
-                            {isUploading ? <Icon name="loader-2" className="animate-spin" size={16}/> : <Icon name="upload" size={16}/>}
-                            <span className="text-[9px] mt-1">Avatar</span>
-                            <input type="file" className="hidden" accept="image/*" onChange={handleImageUpload} disabled={isUploading}/>
-                        </label>
-                    </div>
+                {/* 4. Passive Senses */}
+                <div className="grid grid-cols-3 gap-2 text-center">
+                    <div className="bg-slate-800 p-1 rounded border border-slate-700"><div className="text-[9px] text-slate-500">Perc</div><div className="text-sm font-bold text-white">{passPerc}</div></div>
+                    <div className="bg-slate-800 p-1 rounded border border-slate-700"><div className="text-[9px] text-slate-500">Inv</div><div className="text-sm font-bold text-white">{passInv}</div></div>
+                    <div className="bg-slate-800 p-1 rounded border border-slate-700"><div className="text-[9px] text-slate-500">Ins</div><div className="text-sm font-bold text-white">{passIns}</div></div>
                 </div>
             </div>
         )}
