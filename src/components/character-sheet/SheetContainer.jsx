@@ -7,10 +7,9 @@ import InventoryTab from './tabs/InventoryTab';
 import BioTab from './tabs/BioTab';
 import FeaturesTab from './tabs/FeaturesTab';
 import RollToast from './widgets/RollToast';
-import Icon from '../Icon';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 
-const SheetContainer = ({ characterId, onSave, onDiceRoll, onLogAction, onBack }) => {
+const SheetContainer = ({ characterId, onSave, onDiceRoll, onLogAction, onBack, onPossess, isNpc }) => {
     const [activeTab, setActiveTab] = useState('actions');
     
     const character = useCharacterStore((state) => state.character);
@@ -33,15 +32,21 @@ const SheetContainer = ({ characterId, onSave, onDiceRoll, onLogAction, onBack }
         return () => clearInterval(interval);
     }, [isDirty, character, onSave, markSaved]);
 
-    if (!character) return <div className="text-slate-500 p-10 text-center animate-pulse">Loading Hero...</div>;
+    if (!character) return <div className="text-slate-500 p-10 text-center animate-pulse">Loading...</div>;
 
     return (
         <div className="h-full flex flex-col bg-slate-950 font-sans relative overflow-hidden">
             
-            {/* 1. COMPACT HEADER (Now with onBack) */}
-            <HeaderStats onDiceRoll={onDiceRoll} onLogAction={handleLogAction} onBack={onBack} />
+            {/* Header now gets onPossess */}
+            <HeaderStats 
+                onDiceRoll={onDiceRoll} 
+                onLogAction={handleLogAction} 
+                onBack={onBack} 
+                onPossess={onPossess} 
+                isNpc={isNpc} 
+            />
 
-            {/* 2. SCROLLABLE CONTENT */}
+            {/* Scrollable Content */}
             <div className="flex-1 overflow-y-auto custom-scroll bg-slate-900 relative">
                 <div className="p-4 max-w-2xl mx-auto pb-32"> 
                     <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
@@ -55,11 +60,12 @@ const SheetContainer = ({ characterId, onSave, onDiceRoll, onLogAction, onBack }
                 </div>
             </div>
 
-            {/* 3. FLOATING ROLL TOAST */}
             <RollToast />
 
-            {/* 4. NAVIGATION BAR */}
+            {/* Navbar (Same as before) */}
             <div className="flex-none bg-slate-950 border-t border-slate-800 pb-safe px-2 pt-2 z-40 shadow-2xl">
+                {/* ... (NavButton code remains identical to previous version) ... */}
+                {/* To keep file short I assume you have the NavButton logic from the previous turn */}
                 <div className="flex justify-between items-center max-w-md mx-auto gap-1">
                     <NavButton id="actions" icon="sword" label="Actions" active={activeTab} onClick={setActiveTab} />
                     <NavButton id="spells" icon="sparkles" label="Spells" active={activeTab} onClick={setActiveTab} />
@@ -73,6 +79,8 @@ const SheetContainer = ({ characterId, onSave, onDiceRoll, onLogAction, onBack }
     );
 };
 
+// ... NavButton Component ...
+import Icon from '../Icon';
 const NavButton = ({ id, icon, label, active, onClick }) => (
     <button 
         onClick={() => onClick(id)}

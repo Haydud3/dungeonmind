@@ -3,14 +3,13 @@ import Icon from './Icon';
 import CharacterCreator from './ai-wizard/CharacterCreator';
 import SheetContainer from './character-sheet/SheetContainer'; 
 import { useCharacterStore } from '../stores/useCharacterStore';
-import { getDebugText, parsePdf } from '../utils/dndBeyondParser.js'; 
+import { parsePdf } from '../utils/dndBeyondParser.js'; 
 
-const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView, user, aiHelper, onDiceRoll, onLogAction, edition }) => {
+const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView, user, aiHelper, onDiceRoll, onLogAction, edition, apiKey }) => {
     const [showCreationMenu, setShowCreationMenu] = useState(false); 
-    const [showAiCreator, setShowAiCreator] = useState(false);       
+    const [showAiCreator, setShowAiCreator] = useState(false);        
     const [viewingCharacterId, setViewingCharacterId] = useState(null);
     const [isImporting, setIsImporting] = useState(false);
-    const [debugLog, setDebugLog] = useState("");
     
     const fileInputRef = useRef(null);
 
@@ -45,15 +44,9 @@ const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView,
             race: "Human",
             class: "Fighter",
             level: 1,
-            profBonus: 2,
             hp: { current: 10, max: 10, temp: 0 },
             stats: { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 },
-            currency: { cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
-            skills: {},
-            spells: [],
-            inventory: [],
-            features: [],
-            bio: { backstory: "", appearance: "", traits: "", ideals: "", bonds: "", flaws: "" }
+            bio: {}
         };
         handleNewCharacter(blankChar);
     };
@@ -75,21 +68,6 @@ const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView,
         setShowCreationMenu(false);
     };
 
-    const handleDebugUpload = async (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-        setIsImporting(true);
-        setDebugLog("Reading PDF structure...");
-        try {
-            const text = await getDebugText(file);
-            setDebugLog(text);
-        } catch (err) {
-            setDebugLog("Error: " + err.message);
-        }
-        setIsImporting(false);
-        e.target.value = null; 
-    };
-
     const handleDelete = (id, e) => {
         e.stopPropagation();
         if (!confirm("Delete this hero permanently?")) return;
@@ -100,8 +78,6 @@ const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView,
         }
     };
 
-    // --- FULL SCREEN OVERLAY FIX ---
-    // Z-Index increased to 9999 to definitely cover the bottom nav
     if (viewingCharacterId) {
         return (
             <div className="fixed inset-0 z-[9999] bg-slate-950 flex flex-col h-full w-full">
@@ -110,7 +86,7 @@ const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView,
                     onSave={handleSheetSave} 
                     onDiceRoll={onDiceRoll} 
                     onLogAction={onLogAction}
-                    onBack={() => setViewingCharacterId(null)} // Pass back function
+                    onBack={() => setViewingCharacterId(null)} 
                 />
             </div>
         );
@@ -120,7 +96,6 @@ const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView,
         <div className="h-full bg-slate-900 p-4 overflow-y-auto custom-scroll pb-24">
             <div className="max-w-6xl mx-auto space-y-6">
                 
-                {/* Header Actions */}
                 <div className="flex flex-col md:flex-row justify-between items-center gap-4 border-b border-slate-700 pb-4">
                     <div>
                         <h2 className="text-3xl fantasy-font text-amber-500">Heroes</h2>
@@ -128,11 +103,6 @@ const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView,
                     </div>
                     
                     <div className="flex flex-wrap gap-2 justify-center">
-                        <label className="cursor-pointer bg-slate-800 hover:bg-slate-700 text-slate-500 border border-slate-700 px-3 py-2 rounded-lg flex items-center gap-2" title="Debug PDF">
-                            <Icon name="bug" size={16}/> 
-                            <input type="file" accept=".pdf" className="hidden" onChange={handleDebugUpload} />
-                        </label>
-
                         <button 
                             onClick={() => setShowCreationMenu(true)} 
                             className="bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white px-6 py-2 rounded-lg font-bold shadow-lg flex items-center gap-2 transform transition-all hover:scale-105"
@@ -142,23 +112,6 @@ const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView,
                     </div>
                 </div>
 
-                {/* DEBUG OUTPUT AREA */}
-                {debugLog && (
-                    <div className="bg-black/50 p-4 rounded border border-amber-900/50 animate-in fade-in slide-in-from-top-4 relative group">
-                        <button onClick={() => setDebugLog("")} className="absolute top-2 right-2 text-slate-500 hover:text-white"><Icon name="x" size={20}/></button>
-                        <div className="flex justify-between items-center mb-2">
-                            <h3 className="text-amber-500 font-bold font-mono">PDF RAW DATA</h3>
-                            <button onClick={() => {navigator.clipboard.writeText(debugLog); alert("Copied!");}} className="text-xs bg-slate-700 px-2 py-1 rounded text-white hover:bg-slate-600">Copy All</button>
-                        </div>
-                        <textarea 
-                            value={debugLog} 
-                            readOnly 
-                            className="w-full h-64 bg-slate-950 text-green-400 font-mono text-xs p-2 rounded border border-slate-800 focus:outline-none"
-                        />
-                    </div>
-                )}
-
-                {/* Character Grid */}
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                     {(data.players || []).map(p => (
                         <div key={p.id} onClick={() => openSheet(p)} className="group relative bg-slate-800 rounded-xl overflow-hidden border border-slate-700 hover:border-amber-500/50 shadow-lg cursor-pointer transition-all hover:-translate-y-1">
@@ -192,19 +145,29 @@ const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView,
                         
                         <div className="p-8 text-center">
                             <h2 className="text-3xl fantasy-font text-amber-500 mb-2">Summon a Hero</h2>
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-8">
-                                <div onClick={createManualCharacter} className="bg-slate-800 border-2 border-slate-700 hover:border-green-500 rounded-xl p-6 cursor-pointer group">
-                                    <div className="w-16 h-16 bg-green-900/30 text-green-500 rounded-full flex items-center justify-center mx-auto mb-4"><Icon name="pencil" size={32}/></div>
-                                    <h3 className="font-bold text-white">Manual</h3>
+                            <p className="text-slate-400 mb-8">Choose your method of creation.</p>
+                            
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                {/* MANUAL */}
+                                <div onClick={createManualCharacter} className="bg-slate-800 border-2 border-slate-700 hover:border-green-500 rounded-xl p-6 cursor-pointer group transition-all hover:-translate-y-1">
+                                    <div className="w-16 h-16 bg-green-900/30 text-green-500 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform"><Icon name="pencil" size={32}/></div>
+                                    <h3 className="font-bold text-xl text-white mb-2">Manual</h3>
+                                    <p className="text-xs text-slate-400">Build from scratch. Full control over stats, bio, and abilities.</p>
                                 </div>
-                                <div onClick={() => fileInputRef.current.click()} className="bg-slate-800 border-2 border-slate-700 hover:border-red-500 rounded-xl p-6 cursor-pointer group">
-                                    <div className="w-16 h-16 bg-red-900/30 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4"><Icon name="file-text" size={32}/></div>
-                                    <h3 className="font-bold text-white">D&D Beyond</h3>
+
+                                {/* D&D BEYOND */}
+                                <div onClick={() => fileInputRef.current.click()} className="bg-slate-800 border-2 border-slate-700 hover:border-red-500 rounded-xl p-6 cursor-pointer group transition-all hover:-translate-y-1">
+                                    <div className="w-16 h-16 bg-red-900/30 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform"><Icon name="file-text" size={32}/></div>
+                                    <h3 className="font-bold text-xl text-white mb-2">D&D Beyond</h3>
+                                    <p className="text-xs text-slate-400">Import a PDF character sheet directly from D&D Beyond.</p>
                                     <input type="file" accept=".pdf" className="hidden" ref={fileInputRef} onChange={handlePdfImport}/>
                                 </div>
-                                <div onClick={() => { setShowCreationMenu(false); setShowAiCreator(true); }} className="bg-slate-800 border-2 border-slate-700 hover:border-purple-500 rounded-xl p-6 cursor-pointer group">
-                                    <div className="w-16 h-16 bg-purple-900/30 text-purple-500 rounded-full flex items-center justify-center mx-auto mb-4"><Icon name="sparkles" size={32}/></div>
-                                    <h3 className="font-bold text-white">AI Forge</h3>
+
+                                {/* AI FORGE */}
+                                <div onClick={() => { setShowCreationMenu(false); setShowAiCreator(true); }} className="bg-slate-800 border-2 border-slate-700 hover:border-purple-500 rounded-xl p-6 cursor-pointer group transition-all hover:-translate-y-1">
+                                    <div className="w-16 h-16 bg-purple-900/30 text-purple-500 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform"><Icon name="sparkles" size={32}/></div>
+                                    <h3 className="font-bold text-xl text-white mb-2">AI Forge</h3>
+                                    <p className="text-xs text-slate-400">Generate a unique character with portrait and backstory instantly.</p>
                                 </div>
                             </div>
                         </div>
@@ -212,10 +175,11 @@ const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView,
                 </div>
             )}
 
+            {/* AI CREATOR */}
             {showAiCreator && (
                 <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm">
                     <div className="max-w-2xl w-full bg-slate-900 rounded-xl overflow-hidden shadow-2xl relative border border-slate-700 h-[90vh]">
-                        <CharacterCreator aiHelper={aiHelper} onComplete={handleNewCharacter} onCancel={() => setShowAiCreator(false)} edition={edition} />
+                        <CharacterCreator aiHelper={aiHelper} apiKey={apiKey} onComplete={handleNewCharacter} onCancel={() => setShowAiCreator(false)} edition={edition} />
                     </div>
                 </div>
             )}

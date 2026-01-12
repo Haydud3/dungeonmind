@@ -3,44 +3,44 @@ import Icon from './Icon';
 
 const Sidebar = ({ view, setView, onExit }) => {
     const navItems = [
-        { id: 'session', icon: 'scroll-text', label: 'Session' },
-        { id: 'journal', icon: 'book-open-text', label: 'Journal' },
-        { id: 'world', icon: 'map', label: 'World' },
+        { id: 'session', icon: 'message-circle', label: 'Session' },
         { id: 'party', icon: 'users', label: 'Party' },
-        { id: 'npcs', icon: 'skull', label: 'NPCs' },
-        { id: 'settings', icon: 'settings-2', label: 'Config' },
+        { id: 'atlas', icon: 'globe', label: 'Atlas' },   // WAS 'creator', NOW 'atlas'
+        { id: 'map', icon: 'map', label: 'Tactical' },    // The VTT
+        { id: 'npcs', icon: 'skull', label: 'Bestiary' },
+        { id: 'journal', icon: 'book', label: 'Journal' },
+        { id: 'settings', icon: 'settings', label: 'Settings' }
     ];
 
     return (
-        <aside className="hidden md:flex w-20 flex-col items-center bg-slate-900 border-r border-slate-800 py-4 z-20 h-full shrink-0">
-            {/* LOGO SECTION */}
-            <div className="mb-6 mt-2 relative group cursor-pointer" title="DungeonMind">
-                <div className="absolute inset-0 bg-amber-500 blur-lg opacity-20 group-hover:opacity-40 transition-opacity rounded-full"></div>
-                <img 
-                    src={`${import.meta.env.BASE_URL}logo.png`} 
-                    alt="DungeonMind" 
-                    className="w-12 h-12 rounded-full border-2 border-amber-500/50 shadow-lg relative z-10 object-cover"
-                />
+        <div className="hidden md:flex flex-col w-20 bg-slate-950 border-r border-slate-800 shrink-0 z-50">
+            <div className="p-4 flex justify-center mb-4">
+                <div className="w-10 h-10 bg-gradient-to-br from-amber-600 to-red-700 rounded-xl shadow-lg flex items-center justify-center text-white font-bold text-xl fantasy-font">
+                    DM
+                </div>
             </div>
             
-            {/* Navigation Buttons */}
-            <nav className="flex-1 flex flex-col gap-4 w-full">
+            <nav className="flex-1 flex flex-col gap-4 items-center">
                 {navItems.map(item => (
-                    <button 
-                        key={item.id} 
-                        onClick={() => setView(item.id)} 
-                        className={`w-full py-3 flex justify-center transition-all border-l-4 ${view === item.id ? 'border-amber-500 bg-slate-800 text-amber-400' : 'border-transparent text-slate-500 hover:text-slate-200'}`}
-                        title={item.label}
+                    <button
+                        key={item.id}
+                        onClick={() => setView(item.id)}
+                        className={`w-12 h-12 rounded-xl flex items-center justify-center transition-all group relative ${view === item.id ? 'bg-indigo-600 text-white shadow-indigo-500/50 shadow-lg scale-105' : 'text-slate-500 hover:bg-slate-800 hover:text-slate-200'}`}
                     >
                         <Icon name={item.icon} size={24} />
+                        <div className="absolute left-14 bg-slate-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none border border-slate-600 z-50">
+                            {item.label}
+                        </div>
                     </button>
                 ))}
             </nav>
 
-            <button onClick={onExit} className="mb-4 text-red-500 hover:bg-red-900/30 p-2 rounded transition-colors" title="Sign Out">
-                <Icon name="log-out" size={20}/>
-            </button>
-        </aside>
+            <div className="p-4 flex flex-col gap-4 items-center">
+                <button onClick={onExit} className="w-10 h-10 rounded-full bg-red-900/20 text-red-500 hover:bg-red-900/50 flex items-center justify-center transition-colors">
+                    <Icon name="log-out" size={20}/>
+                </button>
+            </div>
+        </div>
     );
 };
 
