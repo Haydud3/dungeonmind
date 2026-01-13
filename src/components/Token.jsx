@@ -12,31 +12,19 @@ const STATUS_ICONS = {
     burning: { icon: 'flame', color: 'text-orange-500', bg: 'bg-orange-900' }
 };
 
-const Token = ({ token, isOwner, onMouseDown, cellPx, isDragging, overridePos, onClick }) => {
+const Token = ({ token, isOwner, onMouseDown, onTouchStart, cellPx, isDragging, overridePos, onClick }) => {
     // 1. Calculate Token Dimensions
     const sizeMultiplier = token.size === 'large' ? 2 : token.size === 'huge' ? 3 : token.size === 'tiny' ? 0.5 : 1;
     const dimension = cellPx * sizeMultiplier;
     
-    // 2. Dynamic Scaling Variables (PURE PROPORTIONAL - NO MINIMUMS)
-    
-    // Border: 4% of the token size.
+    // 2. Dynamic Scaling Variables
     const borderThickness = dimension * 0.04; 
-    
     const shadowBlur = dimension * 0.15;
-    
-    // Font Size: 22% of the token size.
-    // e.g., 50px token = 11px font. 20px token = 4.4px font.
-    // We keep a Max cap (24px) so huge tokens don't have banner-sized text, but NO minimum.
     const fontSize = Math.min(24, dimension * 0.22); 
-    
-    // Spacing: Pure percentage scaling
     const paddingY = dimension * 0.03; 
     const paddingX = dimension * 0.08; 
-    
-    // Push it just below the token ring
     const bottomOffset = -(fontSize + (paddingY * 2.5)); 
 
-    // Visual Colors
     const isPc = token.type === 'pc';
     const borderColor = isPc ? '#22c55e' : '#ef4444';
     const shadowColor = isPc ? 'rgba(34,197,94,0.6)' : 'rgba(239,68,68,0.2)';
@@ -52,7 +40,14 @@ const Token = ({ token, isOwner, onMouseDown, cellPx, isDragging, overridePos, o
             onMouseDown={(e) => {
                 if (isOwner) {
                     e.stopPropagation(); 
-                    onMouseDown(e, token.id);
+                    if(onMouseDown) onMouseDown(e, token.id);
+                }
+            }}
+            // FIX: Added Touch Support
+            onTouchStart={(e) => {
+                if (isOwner) {
+                    e.stopPropagation();
+                    if(onTouchStart) onTouchStart(e, token.id);
                 }
             }}
             onClick={(e) => onClick && onClick(e, token.id)}
@@ -71,7 +66,6 @@ const Token = ({ token, isOwner, onMouseDown, cellPx, isDragging, overridePos, o
             }}
             title={token.name}
         >
-            {/* Token Image/Body with DYNAMIC BORDER */}
             <div 
                 className="w-full h-full rounded-full bg-slate-900 overflow-hidden relative box-border"
                 style={{
@@ -92,7 +86,6 @@ const Token = ({ token, isOwner, onMouseDown, cellPx, isDragging, overridePos, o
                     </div>
                 )}
                 
-                {/* Dead Overlay */}
                 {isDead && (
                     <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
                         <Icon name="skull" size={dimension * 0.6} className="text-red-600 opacity-80"/>
@@ -100,12 +93,10 @@ const Token = ({ token, isOwner, onMouseDown, cellPx, isDragging, overridePos, o
                 )}
             </div>
 
-            {/* Status Indicators */}
             <div className="absolute -top-1 -right-1 flex flex-col gap-0.5 pointer-events-none">
                 {statuses.map(s => {
                     if (s === 'dead') return null;
                     const def = STATUS_ICONS[s] || { icon: 'circle', color: 'text-white', bg: 'bg-slate-500' };
-                    // Icons scale purely with dimension
                     const iconSize = dimension * 0.25; 
                     return (
                         <div key={s} 
@@ -118,12 +109,11 @@ const Token = ({ token, isOwner, onMouseDown, cellPx, isDragging, overridePos, o
                 })}
             </div>
 
-            {/* Scalable Nameplate */}
             <div 
                 className="absolute left-1/2 -translate-x-1/2 bg-black/80 text-white rounded-full whitespace-nowrap pointer-events-none select-none z-20 shadow-md border border-white/10 flex items-center justify-center"
                 style={{ 
                     fontSize: `${fontSize}px`,
-                    lineHeight: '1', // Crucial: prevents box from being taller than text
+                    lineHeight: '1', 
                     bottom: `${bottomOffset}px`,
                     padding: `${paddingY}px ${paddingX}px`,
                     maxWidth: `${dimension * 3}px`, 

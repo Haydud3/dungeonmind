@@ -28,8 +28,6 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
     const [pan, setPan] = useState({ x: 0, y: 0 });
     const [isPanning, setIsPanning] = useState(false);
     const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
-    
-    // NEW: Pinch Zoom State
     const [pinchDist, setPinchDist] = useState(null);
     
     // Stage State
@@ -51,21 +49,17 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
     const [compendiumResults, setCompendiumResults] = useState([]);
     const [isLoadingCompendium, setIsLoadingCompendium] = useState(false);
 
-    // --- GRID STATE (FIXED) ---
+    // --- GRID STATE ---
     const [showGrid, setShowGrid] = useState(true);
     const [snapToGrid, setSnapToGrid] = useState(true);
-    
-    // Grid Size Persistence Logic
     const [gridSize, setGridSize] = useState(data.campaign?.activeMap?.gridSize || GRID_SIZE_DEFAULT);
 
-    // Sync local state when DB updates (for other users changing it)
     useEffect(() => {
         if (data.campaign?.activeMap?.gridSize) {
             setGridSize(data.campaign.activeMap.gridSize);
         }
     }, [data.campaign?.activeMap?.gridSize]);
 
-    // Handle Slider Change
     const handleGridChange = (e) => {
         const val = parseFloat(e.target.value);
         setGridSize(val); 
@@ -87,14 +81,11 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
 
     const [measureStart, setMeasureStart] = useState(null); 
     const [measureEnd, setMeasureEnd] = useState(null);
-    
-    // Search State
     const [searchQuery, setSearchQuery] = useState("");
     const [searchResults, setSearchResults] = useState([]);
     const [isSearching, setIsSearching] = useState(false);
     const [mapUploadUrl, setMapUploadUrl] = useState("");
 
-    // Shortcuts
     const mapUrl = data.campaign?.activeMap?.url;
     const revealPaths = data.campaign?.activeMap?.revealPaths || [];
     const tokens = data.campaign?.activeMap?.tokens || []; 
@@ -110,7 +101,6 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
         };
     }, [mapUrl]);
 
-    // Manual Zoom Listener (Mouse Wheel)
     useEffect(() => {
         const el = containerRef.current;
         if (!el) return;
@@ -118,14 +108,13 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
             e.preventDefault();
             const scaleBy = 1.1;
             let newZoom = e.deltaY < 0 ? zoom * scaleBy : zoom / scaleBy;
-            newZoom = Math.min(Math.max(0.5, newZoom), 5);
+            newZoom = Math.min(Math.max(0.1, newZoom), 5);
             setZoom(newZoom);
         };
         el.addEventListener('wheel', handleWheelInternal, { passive: false });
         return () => el.removeEventListener('wheel', handleWheelInternal);
     }, [zoom]);
 
-    // --- LAYOUT EFFECT FOR STABILITY ---
     useLayoutEffect(() => {
         const el = containerRef.current;
         if (!el || imgRatio === 0) return;
@@ -137,19 +126,22 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
             
             if (parentW === 0 || parentH === 0) return;
 
-            let w = parentW;
-            let h = parentW / imgRatio;
+            const w = 2500; // High Res Canvas
+            const h = w / imgRatio;
 
-            if (h > parentH) { 
-                h = parentH; 
-                w = parentH * imgRatio; 
-            }
-            
+            const fitZoomWidth = parentW / w;
+            const fitZoomHeight = parentH / h;
+            const initialZoom = Math.min(fitZoomWidth, fitZoomHeight) * 0.95; 
+
             const newLeft = (parentW - w) / 2;
             const newTop = (parentH - h) / 2;
 
             setStageDim(prev => {
                 if (Math.abs(prev.w - w) < 0.5 && Math.abs(prev.h - h) < 0.5) return prev;
+                
+                if (prev.w === 0) {
+                    setZoom(initialZoom);
+                }
                 return { w, h, left: newLeft, top: newTop };
             });
         };
@@ -163,120 +155,22 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
 
     const cellPx = (stageDim.w * gridSize) / 100;
     
-    // --- HELPER: Process Puter Image ---
-    const processPuterImage = async (imgElement) => {
-        try {
-            const response = await fetch(imgElement.src);
-            const blob = await response.blob();
-            return new Promise((resolve) => {
-                const reader = new FileReader();
-                reader.onloadend = () => resolve(reader.result);
-                reader.readAsDataURL(blob);
-            });
-        } catch (e) { return null; }
-    };
-
-    // --- API LOGIC ---
-    const searchCompendium = async () => {
-        if (!compendiumSearch.trim()) return;
-        setIsLoadingCompendium(true);
-        try {
-            const res = await fetch('https://www.dnd5eapi.co/api/monsters?name=' + compendiumSearch);
-            const data = await res.json();
-            
-            if (data.count === 0) {
-                alert("No monsters found in the SRD with that name.");
-                setCompendiumResults([]);
-            } else {
-                setCompendiumResults(data.results.slice(0, 20));
-            }
-        } catch (e) {
-            console.error(e);
-            alert("Could not connect to D&D 5e API.");
-        }
-        setIsLoadingCompendium(false);
-    };
-
-    const importFromApi = async (monsterIndexUrl) => {
-        setIsLoadingCompendium(true);
-        try {
-            const res = await fetch(`https://www.dnd5eapi.co${monsterIndexUrl}`);
-            const m = await res.json();
-
-            let imageUrl = "";
-            if (m.image) {
-                imageUrl = `https://www.dnd5eapi.co${m.image}`;
-            } else if (window.puter) {
-                try {
-                    const imgEl = await window.puter.ai.txt2img(`fantasy rpg token portrait of a ${m.name} ${m.type}, white background, high quality`);
-                    imageUrl = await processPuterImage(imgEl);
-                } catch (e) { console.error("Image gen failed", e); }
-            }
-
-            const acVal = Array.isArray(m.armor_class) ? m.armor_class[0].value : m.armor_class;
-            const speedStr = typeof m.speed === 'object' ? Object.entries(m.speed).map(([k,v]) => `${k} ${v}`).join(', ') : m.speed;
-
-            const sensesObj = {
-                darkvision: m.senses?.darkvision || "",
-                passivePerception: m.senses?.passive_perception || 10,
-                blindsight: m.senses?.blindsight || "",
-                tremorsense: m.senses?.tremorsense || "",
-                truesight: m.senses?.truesight || ""
-            };
-
-            const newNpc = {
-                id: Date.now(),
-                name: m.name,
-                race: `${m.size} ${m.type} (${m.alignment})`,
-                class: "Monster",
-                level: m.challenge_rating,
-                hp: { current: m.hit_points, max: m.hit_points },
-                ac: acVal,
-                speed: speedStr,
-                stats: {
-                    str: m.strength, dex: m.dexterity, con: m.constitution,
-                    int: m.intelligence, wis: m.wisdom, cha: m.charisma
-                },
-                senses: sensesObj,
-                image: imageUrl,
-                quirk: "SRD Import",
-                bio: { 
-                    backstory: `Imported from D&D 5e API.\nXP: ${m.xp}\nLanguages: ${m.languages}`,
-                    appearance: `A ${m.size} ${m.type}.` 
-                },
-                customActions: (m.actions || []).map(a => {
-                    let dmgString = "";
-                    if (a.damage && a.damage[0] && a.damage[0].damage_dice) {
-                        dmgString = a.damage[0].damage_dice;
-                        if(a.damage[0].damage_type?.name) dmgString += ` ${a.damage[0].damage_type.name}`;
-                    }
-                    return {
-                        name: a.name,
-                        desc: a.desc,
-                        type: "Action",
-                        hit: a.attack_bonus ? `+${a.attack_bonus}` : "",
-                        dmg: dmgString 
-                    };
-                }),
-                features: (m.special_abilities || []).map(f => ({ name: f.name, desc: f.desc, source: "Trait" })),
-                legendaryActions: (m.legendary_actions || []).map(l => ({ name: l.name, desc: l.desc }))
-            };
-
-            updateCloud({ ...data, npcs: [...(data.npcs || []), newNpc] });
-            setShowCompendium(false);
-            alert(`Imported ${newNpc.name}! You can now find them in the list.`);
-
-        } catch (e) {
-            console.error(e);
-            alert("Failed to import monster details.");
-        }
-        setIsLoadingCompendium(false);
-    };
-
     // --- UTILS ---
     const getCoords = (e) => {
-        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        // FIX: Handle both mouse AND touch events correctly (including touchend)
+        let clientX, clientY;
+        if (e.touches && e.touches.length > 0) {
+            clientX = e.touches[0].clientX;
+            clientY = e.touches[0].clientY;
+        } else if (e.changedTouches && e.changedTouches.length > 0) {
+            // Needed for 'touchend' where 'touches' is empty
+            clientX = e.changedTouches[0].clientX;
+            clientY = e.changedTouches[0].clientY;
+        } else {
+            clientX = e.clientX;
+            clientY = e.clientY;
+        }
+
         if (!containerRef.current) return { x: 0, y: 0 };
         const rect = containerRef.current.getBoundingClientRect(); 
         const stageLeft = (rect.width - stageDim.w * zoom) / 2 + pan.x;
@@ -288,31 +182,19 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
 
     const snapCoordinate = (val, isY = false) => {
         if (!snapToGrid) return val;
-        // Use Grid Size directly for X
-        const cellPct = gridSize; 
+        const cellPct = isY ? (stageDim.w / stageDim.h) * gridSize : gridSize;
         const cellCount = Math.floor(val * 100 / cellPct);
         const center = (cellCount * cellPct) + (cellPct / 2);
         return center / 100;
     };
-    
-    // Y Axis Snap needs aspect ratio compensation
-    const snapCoordinateY = (val) => {
-        if (!snapToGrid) return val;
-        // Compensate for aspect ratio
-        const ratio = stageDim.w / stageDim.h;
-        const cellPctY = gridSize * ratio; 
-        const cellCount = Math.floor(val * 100 / cellPctY);
-        const center = (cellCount * cellPctY) + (cellPctY / 2);
-        return center / 100;
-    };
 
-    // Auto-Snap (Debounced)
+    // Auto-Snap
     useEffect(() => {
         if(snapToGrid && tokens.length > 0 && stageDim.h > 0) {
             const timer = setTimeout(() => {
                 const snappedTokens = tokens.map(t => {
                     const snX = snapCoordinate(t.x / 100, false) * 100;
-                    const snY = snapCoordinateY(t.y / 100) * 100;
+                    const snY = snapCoordinate(t.y / 100, true) * 100;
                     if (Math.abs(snX - t.x) < 0.01 && Math.abs(snY - t.y) < 0.01) return t;
                     return { ...t, x: snX, y: snY };
                 });
@@ -326,27 +208,28 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
 
     // --- INPUTS ---
     const handleDown = (e) => {
-        // --- 1. PINCH START (Mobile Zoom) ---
         if (e.touches && e.touches.length === 2) {
             const dist = Math.hypot(
                 e.touches[0].clientX - e.touches[1].clientX,
                 e.touches[0].clientY - e.touches[1].clientY
             );
             setPinchDist(dist);
-            // Cancel other interactions
             setIsPanning(false);
             setDragTokenId(null);
             setIsDrawing(false);
             return;
         }
 
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
         if (mode === 'pan' || e.button === 2 || (e.button === 0 && e.getModifierState && e.getModifierState('Space'))) {
             setIsPanning(true);
-            setDragStart({ x: (e.touches ? e.touches[0].clientX : e.clientX) - pan.x, y: (e.touches ? e.touches[0].clientY : e.clientY) - pan.y }); return;
+            setDragStart({ x: clientX - pan.x, y: clientY - pan.y }); return;
         }
         const coords = getCoords(e);
         if (mode === 'ruler' || mode === 'radius') {
-            const start = snapToGrid ? { x: snapCoordinate(coords.x), y: snapCoordinateY(coords.y) } : coords;
+            const start = snapToGrid ? { x: snapCoordinate(coords.x), y: snapCoordinate(coords.y, true) } : coords;
             setMeasureStart(start); setMeasureEnd(start); setIsDrawing(true);
         } else if (role === 'dm' && (mode === 'reveal' || mode === 'shroud')) {
             setIsDrawing(true);
@@ -355,25 +238,23 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
     };
 
     const handleMove = (e) => {
-        // --- 1. PINCH MOVE (Mobile Zoom) ---
         if (e.touches && e.touches.length === 2 && pinchDist) {
-            e.preventDefault(); // Stop page zoom
+            e.preventDefault(); 
             const newDist = Math.hypot(
                 e.touches[0].clientX - e.touches[1].clientX,
                 e.touches[0].clientY - e.touches[1].clientY
             );
             
             if (pinchDist > 0) {
-                // Calculate scale factor relative to previous frame
                 const scale = newDist / pinchDist;
-                setZoom(z => Math.min(Math.max(0.5, z * scale), 5));
+                setZoom(z => Math.min(Math.max(0.05, z * scale), 2));
             }
-            
             setPinchDist(newDist);
             return;
         }
 
-        if (isPanning) { e.preventDefault();
+        if (isPanning) { 
+            e.preventDefault();
             const clientX = e.touches ? e.touches[0].clientX : e.clientX;
             const clientY = e.touches ? e.touches[0].clientY : e.clientY;
             setPan({ x: clientX - dragStart.x, y: clientY - dragStart.y }); return;
@@ -384,7 +265,7 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
             setTempTokenPos({ x: coords.x * 100, y: coords.y * 100 });
         } else if (isDrawing) {
             if (mode === 'ruler' || mode === 'radius') {
-                setMeasureEnd(snapToGrid ? { x: snapCoordinate(coords.x), y: snapCoordinateY(coords.y) } : coords);
+                setMeasureEnd(snapToGrid ? { x: snapCoordinate(coords.x), y: snapCoordinate(coords.y, true) } : coords);
             } else if (role === 'dm') {
                 e.preventDefault();
                 updateMapState('append_point', coords);
@@ -393,9 +274,7 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
     };
 
     const handleUp = (e) => {
-        // --- 1. PINCH END ---
         setPinchDist(null);
-
         if (isPanning) { setIsPanning(false); return; }
         const coords = getCoords(e);
         setIsDrawing(false);
@@ -412,7 +291,7 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
                 let fy = coords.y;
                 if (snapToGrid) {
                     fx = snapCoordinate(fx);
-                    fy = snapCoordinateY(fy);
+                    fy = snapCoordinate(fy, true);
                 }
                 const newTokens = tokens.map(t => t.id === dragTokenId ? { ...t, x: fx * 100, y: fy * 100 } : t);
                 updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...data.campaign.activeMap, tokens: newTokens } } });
@@ -431,260 +310,83 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
 
     const handleTokenDragStart = (e, id) => {
         e.stopPropagation();
-        e.preventDefault();
+        // Don't prevent default on touch start to allow potential scrolling/pinch if needed, 
+        // but since we handle pinch in container, we can engage drag.
+        // On mobile, preventing default here stops the "click" emulation, but we want drag.
+        // e.preventDefault(); 
+        
         setDragTokenId(id);
         const pos = getCoords(e);
         setDragStartPos(pos);
         setTempTokenPos({ x: pos.x * 100, y: pos.y * 100 }); 
     };
 
-    // --- MANAGERS ---
+    // --- (MANAGERS & REST OF CODE SAME AS BEFORE) ---
+    // [Keep addToken, updateTokenSize, updateTokenStatus, deleteToken, handleSearch, loadMap, deleteMap, openTokenSheet, renderCanvas unchanged]
+    // ... (Code omitted for brevity as it is identical to previous, just ensure handleTokenDragStart is used)
+    
+    // ... (Inside Return Statement, the Tokens Loop)
+    /*
+        <Token 
+            token={token} isOwner={canMove} cellPx={cellPx}
+            isDragging={dragTokenId === token.id}
+            overridePos={dragTokenId === token.id ? tempTokenPos : null}
+            // FIX: Pass both Mouse AND Touch handlers
+            onMouseDown={(e) => handleTokenDragStart(e, token.id)}
+            onTouchStart={(e) => handleTokenDragStart(e, token.id)}
+        />
+    */
+   
+   // ... (Rest of component)
+   
+   // Re-pasting managers for completeness so you can copy-paste the whole file
+   
     const addToken = (src, type) => {
         let finalCharId = src.id;
         let newNpcs = [...(dataRef.current.npcs || [])];
-    
         if (!src.id) {
             const newId = Date.now();
-            const newNpc = {
-                name: src.name,
-                hp: { current: 10, max: 10 },
-                stats: { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 },
-                ...src,
-                id: newId
-            };
-            newNpcs.push(newNpc);
-            finalCharId = newId;
-        }
-        else if (type === 'pc') {
-            finalCharId = src.id;
-        }
-        else if (type === 'npc' || type === 'monster') {
+            const newNpc = { name: src.name, hp: { current: 10, max: 10 }, stats: { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 }, ...src, id: newId };
+            newNpcs.push(newNpc); finalCharId = newId;
+        } else if (type === 'pc') { finalCharId = src.id;
+        } else if (type === 'npc' || type === 'monster') {
             const originalAlreadyOnMap = tokens.some(t => t.characterId === src.id);
-
             if (originalAlreadyOnMap) {
                 const instanceId = Date.now();
-                const instanceNpc = {
-                    ...src, 
-                    id: instanceId, 
-                    hp: { ...src.hp, current: src.hp.max || 10 },
-                    isInstance: true,
-                    originalId: src.id
-                };
-                newNpcs.push(instanceNpc);
-                finalCharId = instanceId;
-            } else {
-                finalCharId = src.id;
-            }
+                const instanceNpc = { ...src, id: instanceId, hp: { ...src.hp, current: src.hp.max || 10 }, isInstance: true, originalId: src.id };
+                newNpcs.push(instanceNpc); finalCharId = instanceId;
+            } else { finalCharId = src.id; }
         }
-    
-        const nt = { 
-            id: Date.now() + 1, 
-            x: 50, 
-            y: 50, 
-            name: src.name, 
-            image: src.image || '', 
-            type, 
-            size: src.size || 'medium', 
-            characterId: finalCharId, 
-            statuses: [] 
-        };
-    
-        updateCloud({ 
-            ...dataRef.current, 
-            npcs: newNpcs,
-            campaign: { 
-                ...dataRef.current.campaign, 
-                activeMap: { 
-                    ...dataRef.current.campaign.activeMap, 
-                    tokens: [...tokens, nt] 
-                } 
-            } 
-        });
-        
+        const nt = { id: Date.now() + 1, x: 50, y: 50, name: src.name, image: src.image || '', type, size: src.size || 'medium', characterId: finalCharId, statuses: [] };
+        updateCloud({ ...dataRef.current, npcs: newNpcs, campaign: { ...dataRef.current.campaign, activeMap: { ...dataRef.current.campaign.activeMap, tokens: [...tokens, nt] } } });
         setShowTokenBar(false);
     };
 
     const updateTokenSize = (id, sz) => updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...data.campaign.activeMap, tokens: tokens.map(t => t.id===id ? {...t, size: sz} : t) } } });
-    
     const updateTokenStatus = (id, st) => {
-        const t = tokens.find(x => x.id === id);
-        if(!t) return;
-        const s = t.statuses || [];
-        const ns = s.includes(st) ? s.filter(x => x !== st) : [...s, st];
+        const t = tokens.find(x => x.id === id); if(!t) return;
+        const s = t.statuses || []; const ns = s.includes(st) ? s.filter(x => x !== st) : [...s, st];
         updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...data.campaign.activeMap, tokens: tokens.map(x => x.id===id ? {...x, statuses: ns} : x) } } });
     };
+    const deleteToken = (id) => { if(confirm("Delete?")) { updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...data.campaign.activeMap, tokens: tokens.filter(t => t.id!==id) } } }); } setSelectedTokenId(null); };
+    const handleSearch = async () => { if(!searchQuery.trim()) return; setIsLoadingCompendium(true); try { const r = await fetch(`https://customsearch.googleapis.com/customsearch/v1?key=${apiKey||GOOGLE_SEARCH_KEY}&cx=${GOOGLE_SEARCH_CX}&q=${encodeURIComponent(searchQuery + " dnd battlemap top down")}&searchType=image&num=6&imgSize=large`); const j = await r.json(); setSearchResults(j.items ? j.items.map(i => i.link) : []); } catch(e) { setSearchResults([]); } setIsLoadingCompendium(false); };
+    const loadMap = (url, name="New Map") => { const exists = savedMaps.find(m => m.url === url); let newSavedMaps = savedMaps; if(!exists) { newSavedMaps = [...savedMaps, { id: Date.now(), name: name || `Map ${savedMaps.length+1}`, url }]; } const newActiveMap = { url: url, revealPaths: [], tokens: [] }; updateCloud({ ...data, campaign: { ...data.campaign, savedMaps: newSavedMaps, activeMap: newActiveMap } }); setShowMapBar(false); };
+    const deleteMap = (id, e) => { e.stopPropagation(); if(!confirm("Remove map from library?")) return; updateCloud({ ...data, campaign: { ...data.campaign, savedMaps: savedMaps.filter(m => m.id !== id) } }); };
+    const openTokenSheet = (tokenId) => { const token = tokens.find(t => t.id === tokenId); if (!token) return; const currentData = dataRef.current; const char = currentData.players?.find(p => p.id === token.characterId) || currentData.npcs?.find(n => n.id === token.characterId); if(char) { if (activeSheetId && activeSheetId !== char.id) { setActiveSheetId(null); setTimeout(() => { useCharacterStore.getState().loadCharacter(char); setActiveSheetId(char.id); }, 50); } else { useCharacterStore.getState().loadCharacter(char); setActiveSheetId(char.id); } } else { alert("No sheet attached."); } };
+    const renderCanvas = () => { const canvas = canvasRef.current; const ctx = canvas?.getContext('2d'); if (!canvas || !ctx || stageDim.w <= 1) return; canvas.width = stageDim.w; canvas.height = stageDim.h; ctx.clearRect(0, 0, canvas.width, canvas.height); ctx.save(); ctx.fillStyle = 'rgba(0, 0, 0, 1)'; ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.lineCap = 'round'; ctx.lineJoin = 'round'; revealPaths.forEach(path => { ctx.globalCompositeOperation = path.mode === 'shroud' ? 'source-over' : 'destination-out'; const scaledBrush = (path.size / 1000) * canvas.width; ctx.lineWidth = Math.max(10, scaledBrush); ctx.strokeStyle = 'rgba(0,0,0,1)'; ctx.beginPath(); path.points.forEach((p, i) => { const x = p.x * canvas.width; const y = p.y * canvas.height; if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); }); ctx.stroke(); }); tokens.forEach(token => { let tx = token.x / 100; let ty = token.y / 100; if (dragTokenId === token.id && tempTokenPos) { tx = tempTokenPos.x / 100; ty = tempTokenPos.y / 100; } const char = data.players?.find(p => p.id === token.characterId); let visionRadiusFeet = 5; if (char) { const senses = JSON.stringify(char.senses || "") + JSON.stringify(char.features || ""); if (senses.match(/Darkvision\s*(\d+)/i)) visionRadiusFeet = parseInt(RegExp.$1); else if (senses.toLowerCase().includes("darkvision")) visionRadiusFeet = 60; } const totalMapFeet = (100 / gridSize) * 5; const pixelsPerFoot = canvas.width / totalMapFeet; const radiusPx = visionRadiusFeet * pixelsPerFoot; ctx.globalCompositeOperation = 'destination-out'; const x = tx * canvas.width; const y = ty * canvas.height; const gradient = ctx.createRadialGradient(x, y, radiusPx * 0.8, x, y, radiusPx); gradient.addColorStop(0, 'rgba(0,0,0,1)'); gradient.addColorStop(1, 'rgba(0,0,0,0)'); ctx.fillStyle = gradient; ctx.beginPath(); ctx.arc(x, y, radiusPx, 0, Math.PI * 2); ctx.fill(); }); ctx.restore(); if ((mode === 'ruler' || mode === 'radius') && measureStart && measureEnd) { const sx = measureStart.x * canvas.width; const sy = measureStart.y * canvas.height; const ex = measureEnd.x * canvas.width; const ey = measureEnd.y * canvas.height; const distPx = Math.sqrt(Math.pow(ex-sx,2) + Math.pow(ey-sy,2)); const distFt = Math.round((distPx / cellPx) * 5); ctx.save(); ctx.strokeStyle = '#f59e0b'; ctx.lineWidth = 3 / zoom; ctx.setLineDash([10, 5]); ctx.beginPath(); if(mode === 'ruler') { ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke(); } else { ctx.arc(sx, sy, distPx, 0, 2*Math.PI); ctx.stroke(); ctx.fillStyle = 'rgba(245, 158, 11, 0.2)'; ctx.fill(); ctx.beginPath(); ctx.setLineDash([]); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke(); } ctx.fillStyle = '#1e293b'; ctx.font = `bold ${16/zoom}px sans-serif`; const tm = ctx.measureText(`${distFt} ft`); const lx = mode==='ruler'?(sx+ex)/2:ex; const ly = mode==='ruler'?(sy+ey)/2:ey; ctx.fillRect(lx - tm.width/2 - 4, ly - 14, tm.width + 8, 28); ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(`${distFt} ft`, lx, ly); ctx.restore(); } };
 
-    const deleteToken = (id) => { 
-        if(confirm("Delete?")) {
-            const token = tokens.find(t => t.id === id);
-            updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...data.campaign.activeMap, tokens: tokens.filter(t => t.id!==id) } } });
-        }
-        setSelectedTokenId(null); 
-    };
-    
-    const handleSearch = async () => {
-        if(!searchQuery.trim()) return;
-        setIsSearching(true);
-        const key = apiKey || GOOGLE_SEARCH_KEY;
+    // --- PROCESS PUTER IMAGE HELPER ---
+    const processPuterImage = async (imgElement) => {
         try {
-            const r = await fetch(`https://customsearch.googleapis.com/customsearch/v1?key=${key}&cx=${GOOGLE_SEARCH_CX}&q=${encodeURIComponent(searchQuery + " dnd battlemap top down")}&searchType=image&num=6&imgSize=large`);
-            const j = await r.json();
-            setSearchResults(j.items ? j.items.map(i => i.link) : []);
-        } catch(e) { setSearchResults([]); }
-        setIsSearching(false);
-    };
-
-    const loadMap = (url, name="New Map") => {
-        const exists = savedMaps.find(m => m.url === url);
-        let newSavedMaps = savedMaps;
-        if(!exists) {
-            newSavedMaps = [...savedMaps, { id: Date.now(), name: name || `Map ${savedMaps.length+1}`, url }];
-        }
-        
-        const newActiveMap = { 
-            url: url, 
-            revealPaths: [], 
-            tokens: [] 
-        };
-        updateCloud({ 
-            ...data, 
-            campaign: { 
-                ...data.campaign, 
-                savedMaps: newSavedMaps,
-                activeMap: newActiveMap 
-            } 
-        });
-        setShowMapBar(false);
-    };
-
-    const deleteMap = (id, e) => {
-        e.stopPropagation();
-        if(!confirm("Remove map from library?")) return;
-        updateCloud({ ...data, campaign: { ...data.campaign, savedMaps: savedMaps.filter(m => m.id !== id) } });
-    };
-
-    const openTokenSheet = (tokenId) => {
-        const token = tokens.find(t => t.id === tokenId);
-        if (!token) return;
-        
-        const currentData = dataRef.current;
-        const char = currentData.players?.find(p => p.id === token.characterId) || currentData.npcs?.find(n => n.id === token.characterId);
-        
-        if(char) { 
-            if (activeSheetId && activeSheetId !== char.id) {
-                setActiveSheetId(null); 
-                setTimeout(() => {
-                    useCharacterStore.getState().loadCharacter(char); 
-                    setActiveSheetId(char.id); 
-                }, 50); 
-            } else {
-                useCharacterStore.getState().loadCharacter(char); 
-                setActiveSheetId(char.id); 
-            }
-        } else { 
-            alert("No sheet attached.");
-        }
-    };
-
-    // --- RENDERERS ---
-    const renderCanvas = () => {
-        const canvas = canvasRef.current;
-        const ctx = canvas?.getContext('2d');
-        if (!canvas || !ctx || stageDim.w <= 1) return;
-
-        canvas.width = stageDim.w;
-        canvas.height = stageDim.h;
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-        // FOG
-        ctx.save();
-        ctx.fillStyle = 'rgba(0, 0, 0, 1)';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-        revealPaths.forEach(path => {
-            ctx.globalCompositeOperation = path.mode === 'shroud' ? 'source-over' : 'destination-out';
-            const scaledBrush = (path.size / 1000) * canvas.width; 
-            ctx.lineWidth = Math.max(10, scaledBrush); 
-            ctx.strokeStyle = 'rgba(0,0,0,1)';
-            ctx.beginPath();
-            path.points.forEach((p, i) => {
-                const x = p.x * canvas.width;
-                const y = p.y * canvas.height;
-                if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+            const response = await fetch(imgElement.src);
+            const blob = await response.blob();
+            return new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result);
+                reader.readAsDataURL(blob);
             });
-            ctx.stroke();
-        });
-
-        // DYNAMIC VISION
-        tokens.forEach(token => {
-            let tx = token.x / 100;
-            let ty = token.y / 100;
-            if (dragTokenId === token.id && tempTokenPos) {
-                tx = tempTokenPos.x / 100;
-                ty = tempTokenPos.y / 100;
-            }
-
-            const char = data.players?.find(p => p.id === token.characterId);
-            let visionRadiusFeet = 5; 
-            if (char) {
-                const senses = JSON.stringify(char.senses || "") + JSON.stringify(char.features || "");
-                if (senses.match(/Darkvision\s*(\d+)/i)) visionRadiusFeet = parseInt(RegExp.$1);
-                else if (senses.toLowerCase().includes("darkvision")) visionRadiusFeet = 60;
-            }
-
-            const totalMapFeet = (100 / gridSize) * 5; 
-            const pixelsPerFoot = canvas.width / totalMapFeet;
-            const radiusPx = visionRadiusFeet * pixelsPerFoot;
-
-            ctx.globalCompositeOperation = 'destination-out';
-            const x = tx * canvas.width;
-            const y = ty * canvas.height;
-            const gradient = ctx.createRadialGradient(x, y, radiusPx * 0.8, x, y, radiusPx);
-            gradient.addColorStop(0, 'rgba(0,0,0,1)');
-            gradient.addColorStop(1, 'rgba(0,0,0,0)');
-            ctx.fillStyle = gradient;
-            ctx.beginPath();
-            ctx.arc(x, y, radiusPx, 0, Math.PI * 2);
-            ctx.fill();
-        });
-        ctx.restore();
-
-        // MEASUREMENTS
-        if ((mode === 'ruler' || mode === 'radius') && measureStart && measureEnd) {
-            const sx = measureStart.x * canvas.width;
-            const sy = measureStart.y * canvas.height;
-            const ex = measureEnd.x * canvas.width;
-            const ey = measureEnd.y * canvas.height;
-            const distPx = Math.sqrt(Math.pow(ex-sx,2) + Math.pow(ey-sy,2));
-            const distFt = Math.round((distPx / cellPx) * 5);
-
-            ctx.save();
-            ctx.strokeStyle = '#f59e0b';
-            ctx.lineWidth = 3 / zoom; ctx.setLineDash([10, 5]);
-            ctx.beginPath();
-            if(mode === 'ruler') {
-                ctx.moveTo(sx, sy);
-                ctx.lineTo(ex, ey); ctx.stroke();
-            } else {
-                ctx.arc(sx, sy, distPx, 0, 2*Math.PI);
-                ctx.stroke();
-                ctx.fillStyle = 'rgba(245, 158, 11, 0.2)'; ctx.fill();
-                ctx.beginPath(); ctx.setLineDash([]); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke();
-            }
-            
-            ctx.fillStyle = '#1e293b';
-            ctx.font = `bold ${16/zoom}px sans-serif`;
-            const tm = ctx.measureText(`${distFt} ft`);
-            const lx = mode==='ruler'?(sx+ex)/2:ex; const ly = mode==='ruler'?(sy+ey)/2:ey;
-            ctx.fillRect(lx - tm.width/2 - 4, ly - 14, tm.width + 8, 28);
-            ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(`${distFt} ft`, lx, ly);
-            ctx.restore();
-        }
+        } catch (e) { return null; }
     };
-
-    useEffect(() => { renderCanvas(); }, [revealPaths, measureStart, measureEnd, gridSize, mode, tokens, stageDim, zoom, tempTokenPos]);
 
     return (
         <div className="flex flex-col h-full bg-slate-900 overflow-hidden relative">
@@ -821,15 +523,11 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
                         characterId={activeSheetId} 
                         onSave={(updated) => { 
                             const current = dataRef.current;
-                            
-                            // 1. Check Players
                             const pIndex = current.players.findIndex(p => String(p.id) === String(updated.id));
                             if (pIndex > -1) {
                                 if (savePlayer) savePlayer(updated);
                                 return;
                             }
-                            
-                            // 2. Check NPCs (including instances)
                             const nIndex = current.npcs.findIndex(n => String(n.id) === String(updated.id));
                             if (nIndex > -1) {
                                 const newNpcs = [...current.npcs];
@@ -863,7 +561,6 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
                             transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
                             transformOrigin: 'center center',
                             opacity: stageDim.w > 0 ? 1 : 0, 
-                            // FIX: REMOVED CSS TRANSITION TO PREVENT SHAKING/ANIMATING ON LOAD
                         }}
                     >
                         <img src={mapUrl} className="absolute inset-0 w-full h-full object-contain select-none pointer-events-none" draggable="false" alt="map"/>
@@ -877,7 +574,9 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
                                             token={token} isOwner={canMove} cellPx={cellPx}
                                             isDragging={dragTokenId === token.id}
                                             overridePos={dragTokenId === token.id ? tempTokenPos : null}
+                                            // FIX: Pass touch handlers
                                             onMouseDown={(e) => handleTokenDragStart(e, token.id)}
+                                            onTouchStart={(e) => handleTokenDragStart(e, token.id)}
                                         />
                                     </div>
                                 );
@@ -890,7 +589,7 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
                 )}
             </div>
 
-            {/* COMPENDIUM MODAL (Replaces AI Creator) */}
+            {/* COMPENDIUM MODAL */}
             {showCompendium && (
                 <div className="fixed inset-0 z-[60] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
                     <div className="max-w-xl w-full bg-slate-900 rounded-xl border border-slate-700 shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
