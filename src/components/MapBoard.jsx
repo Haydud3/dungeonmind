@@ -29,7 +29,10 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
     const [isPanning, setIsPanning] = useState(false);
     const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
     
-    // Stage State - Init with 0 to hide until measured
+    // NEW: Pinch Zoom State
+    const [pinchDist, setPinchDist] = useState(null);
+    
+    // Stage State
     const [stageDim, setStageDim] = useState({ w: 0, h: 0, left: 0, top: 0 });
     const [imgRatio, setImgRatio] = useState(0); 
 
@@ -62,10 +65,10 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
         }
     }, [data.campaign?.activeMap?.gridSize]);
 
-    // Handle Slider Change (Debounced Save) 
+    // Handle Slider Change
     const handleGridChange = (e) => {
         const val = parseFloat(e.target.value);
-        setGridSize(val); // Update visual immediately
+        setGridSize(val); 
         
         if (gridSaveTimer.current) clearTimeout(gridSaveTimer.current);
         gridSaveTimer.current = setTimeout(() => {
@@ -107,7 +110,7 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
         };
     }, [mapUrl]);
 
-    // Manual Zoom Listener
+    // Manual Zoom Listener (Mouse Wheel)
     useEffect(() => {
         const el = containerRef.current;
         if (!el) return;
@@ -122,7 +125,7 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
         return () => el.removeEventListener('wheel', handleWheelInternal);
     }, [zoom]);
 
-    // --- LAYOUT EFFECT FOR STABILITY (Fixes Shaking)  ---
+    // --- LAYOUT EFFECT FOR STABILITY ---
     useLayoutEffect(() => {
         const el = containerRef.current;
         if (!el || imgRatio === 0) return;
@@ -146,7 +149,6 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
             const newTop = (parentH - h) / 2;
 
             setStageDim(prev => {
-                // Micro-optimization: Don't update if pixels match to prevent react loops
                 if (Math.abs(prev.w - w) < 0.5 && Math.abs(prev.h - h) < 0.5) return prev;
                 return { w, h, left: newLeft, top: newTop };
             });
@@ -154,7 +156,7 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
 
         const obs = new ResizeObserver(measure);
         obs.observe(el);
-        measure(); // Run immediately
+        measure(); 
 
         return () => obs.disconnect();
     }, [imgRatio, mapUrl]); 
@@ -324,6 +326,20 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
 
     // --- INPUTS ---
     const handleDown = (e) => {
+        // --- 1. PINCH START (Mobile Zoom) ---
+        if (e.touches && e.touches.length === 2) {
+            const dist = Math.hypot(
+                e.touches[0].clientX - e.touches[1].clientX,
+                e.touches[0].clientY - e.touches[1].clientY
+            );
+            setPinchDist(dist);
+            // Cancel other interactions
+            setIsPanning(false);
+            setDragTokenId(null);
+            setIsDrawing(false);
+            return;
+        }
+
         if (mode === 'pan' || e.button === 2 || (e.button === 0 && e.getModifierState && e.getModifierState('Space'))) {
             setIsPanning(true);
             setDragStart({ x: (e.touches ? e.touches[0].clientX : e.clientX) - pan.x, y: (e.touches ? e.touches[0].clientY : e.clientY) - pan.y }); return;
@@ -339,6 +355,24 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
     };
 
     const handleMove = (e) => {
+        // --- 1. PINCH MOVE (Mobile Zoom) ---
+        if (e.touches && e.touches.length === 2 && pinchDist) {
+            e.preventDefault(); // Stop page zoom
+            const newDist = Math.hypot(
+                e.touches[0].clientX - e.touches[1].clientX,
+                e.touches[0].clientY - e.touches[1].clientY
+            );
+            
+            if (pinchDist > 0) {
+                // Calculate scale factor relative to previous frame
+                const scale = newDist / pinchDist;
+                setZoom(z => Math.min(Math.max(0.5, z * scale), 5));
+            }
+            
+            setPinchDist(newDist);
+            return;
+        }
+
         if (isPanning) { e.preventDefault();
             const clientX = e.touches ? e.touches[0].clientX : e.clientX;
             const clientY = e.touches ? e.touches[0].clientY : e.clientY;
@@ -359,6 +393,9 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
     };
 
     const handleUp = (e) => {
+        // --- 1. PINCH END ---
+        setPinchDist(null);
+
         if (isPanning) { setIsPanning(false); return; }
         const coords = getCoords(e);
         setIsDrawing(false);
