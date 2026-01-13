@@ -16,17 +16,21 @@ const SpellsTab = ({ onDiceRoll, onLogAction }) => {
     const [srdResults, setSrdResults] = useState([]);
     const [isSearching, setIsSearching] = useState(false);
 
-    const spellStat = 'int'; // Simplified default
+    // Stats
+    const spellStat = 'int'; // Default (could be dynamic)
     const spellSaveDC = 8 + (character.profBonus || 2) + getModifier(spellStat);
     const spellAttack = (character.profBonus || 2) + getModifier(spellStat);
 
+    // Filter Spells
     const allSpells = character.spells || [];
     const spells = allSpells.filter(s => (s.level || 0) === filterLevel);
     const slots = character.spellSlots?.[filterLevel] || { current: 0, max: 0 };
 
-    // --- ACTIONS ---
+    // --- HANDLERS ---
 
-    const handleCast = (spell) => {
+    const handleCast = (spell, e) => {
+        if(e) e.stopPropagation();
+        
         if (spell.level > 0) {
             if (slots.current <= 0) {
                 alert("No spell slots left!");
@@ -47,108 +51,93 @@ const SpellsTab = ({ onDiceRoll, onLogAction }) => {
         if (onLogAction) onLogAction(msg);
     };
 
-    const handleAttackRoll = async (spell) => {
-        if (!onDiceRoll || !spell.hit) return;
-        
-        try {
-            const roll = await onDiceRoll(20);
-            const hitMod = parseInt(spell.hit) || 0;
-            const total = roll + hitMod;
+    const handleRoll = async (spell, type, e) => {
+        if(e) e.stopPropagation();
+        if (!onDiceRoll) return;
 
-            const msg = `
-                <div class="space-y-2">
-                    <div class="font-bold text-cyan-400 text-base border-b border-cyan-900/50 pb-1 flex justify-between">
+        if (type === 'hit') {
+            const roll = await onDiceRoll(20);
+            const mod = parseInt(spell.hit) || 0;
+            const total = roll + mod;
+            const isCrit = roll === 20;
+            
+            onLogAction && onLogAction(`
+                <div class="space-y-1">
+                    <div class="font-bold text-cyan-400 border-b border-cyan-900/50 pb-1 flex justify-between">
                         <span>${spell.name} Attack</span>
                         <span class="text-xs text-slate-500 font-normal self-end">Spell</span>
                     </div>
                     <div class="flex items-center gap-2 text-sm text-slate-300">
-                        <span class="bg-slate-800 border border-slate-600 px-2 py-1 rounded text-xs font-mono">d20${hitMod >= 0 ? '+' : ''}${hitMod}</span>
+                        <span class="bg-slate-800 px-2 py-1 rounded text-xs font-mono">d20 ${mod >= 0 ? '+' : ''}${mod}</span>
                         <span>➜</span>
-                        <span class="font-mono"><strong>${roll}</strong> ${hitMod >= 0 ? '+' : ''} ${Math.abs(hitMod)}</span>
+                        <span class="font-mono text-slate-400">${roll}</span>
                         <span>=</span>
-                        <span class="text-xl text-cyan-400 font-bold glow">${total}</span>
+                        <span class="text-2xl font-bold ${isCrit ? 'text-green-400 glow' : 'text-white'}">${total}</span>
                     </div>
                 </div>
-            `;
-            if (onLogAction) onLogAction(msg);
-        } catch(e) { console.error(e); }
-    };
-
-    const handleDamageRoll = async (spell) => {
-        if (!onDiceRoll || !spell.dmg) return;
-
-        const diceRegex = /(\d+)d(\d+)(?:\s*([+-])\s*(\d+))?/;
-        const match = spell.dmg.match(diceRegex);
-
-        if (match) {
-            const count = parseInt(match[1], 10);
-            const die = parseInt(match[2], 10);
-            const sign = match[3] === '-' ? -1 : 1;
-            const mod = parseInt(match[4], 10) || 0;
+            `);
+        } 
+        else if (type === 'dmg') {
+            const regex = /(\d+)d(\d+)(?:\s*([+-])\s*(\d+))?/;
+            const match = spell.dmg.match(regex);
             
-            let rollTotal = 0;
-            const rolls = [];
-
-            for(let i=0; i<count; i++) {
-                const r = await onDiceRoll(die);
-                if (typeof r === 'number') {
+            if (match) {
+                const [fullStr, count, die, sign, modVal] = match;
+                const typeLabel = spell.dmg.replace(fullStr, '').trim();
+                
+                let rollTotal = 0;
+                const rolls = [];
+                for(let i=0; i<parseInt(count); i++) {
+                    const r = await onDiceRoll(parseInt(die));
                     rolls.push(r);
                     rollTotal += r;
                 }
+                if(modVal) rollTotal += (sign === '-' ? -1 : 1) * parseInt(modVal);
+
+                onLogAction && onLogAction(`
+                    <div class="space-y-1">
+                        <div class="font-bold text-indigo-400 border-b border-indigo-900/50 pb-1 flex justify-between">
+                            <span>${spell.name} Damage</span>
+                            <span class="text-xs text-slate-500 font-normal self-end">${typeLabel}</span>
+                        </div>
+                        <div class="flex flex-wrap items-center gap-2 text-sm text-slate-300">
+                            <span class="bg-slate-800 px-2 py-1 rounded text-xs font-mono">${fullStr}</span>
+                            <span>➜</span>
+                            <span class="font-mono text-xs text-slate-400">[${rolls.join('+')}]${modVal ? (sign + modVal) : ''}</span>
+                            <span>=</span>
+                            <span class="text-2xl font-bold text-indigo-300">${rollTotal}</span>
+                        </div>
+                    </div>
+                `);
+            } else {
+                onLogAction && onLogAction(`<div class="font-bold text-indigo-300">${spell.name}: ${spell.dmg}</div>`);
             }
-
-            const total = rollTotal + (sign * mod);
-            // Extract damage type if written like "1d10 Fire"
-            const damageType = spell.dmg.replace(match[0], '').trim();
-
-            const msg = `
-                <div class="space-y-1">
-                    <div class="font-bold text-indigo-400 border-b border-indigo-900/50 pb-1 mb-1 flex justify-between">
-                        <span>${spell.name} Damage</span>
-                        <span class="text-xs text-slate-500 font-normal self-end">${damageType}</span>
-                    </div>
-                    <div class="flex flex-wrap items-center gap-2 text-sm text-slate-300">
-                        <span class="bg-slate-800 border border-slate-600 px-2 py-1 rounded text-xs font-mono">${match[0]}</span>
-                        <span>➜</span>
-                        <span class="font-mono text-xs text-slate-400">
-                            [${rolls.join('+')}]${mod ? (sign > 0 ? '+'+mod : '-'+mod) : ''}
-                        </span>
-                        <span>=</span>
-                        <span class="text-xl text-indigo-400 font-bold">${total}</span>
-                    </div>
-                </div>
-            `;
-            if (onLogAction) onLogAction(msg);
-        } else {
-            // Fallback for flat damage or just text
-            if (onLogAction) onLogAction(`<div class="text-indigo-400 font-bold">${spell.name}: ${spell.dmg}</div>`);
         }
     };
 
     // --- EDITING ---
-    const startEdit = (index, spell) => {
+    const startEdit = (index, spell, e) => {
+        if(e) e.stopPropagation();
         setEditingIndex(index);
         setEditForm({ ...spell });
     };
 
     const saveEdit = () => {
-        const globalIndex = allSpells.findIndex(s => s.name === editForm.name); // Simple match, preferably use ID if available
-        if (globalIndex === -1) return; // Fallback logic needed if duplicates exist, but simple match works for now
-        
-        // Better logic: Map the *original* array to preserve order
         const newSpells = [...allSpells];
-        
-        // Find the spell in the master list that matches the one we are editing
-        // (Using a reference comparison would be better if we had IDs, assuming unique names for now)
         const targetIndex = newSpells.findIndex(s => s.name === spells[editingIndex].name && s.level === spells[editingIndex].level);
         
         if (targetIndex > -1) {
             newSpells[targetIndex] = editForm;
             updateInfo('spells', newSpells);
         }
-        
         setEditingIndex(-1);
         setEditForm({});
+    };
+
+    const deleteSpell = (spell) => {
+        if(!confirm(`Delete ${spell.name}?`)) return;
+        const newSpells = allSpells.filter(s => s !== spell);
+        updateInfo('spells', newSpells);
     };
 
     // --- SRD INTEGRATION ---
@@ -169,9 +158,7 @@ const SpellsTab = ({ onDiceRoll, onLogAction }) => {
             const res = await fetch(`https://www.dnd5eapi.co${url}`);
             const data = await res.json();
             
-            // Try to auto-parse damage
             let dmgString = "";
-            // Very basic parse attempt from SRD structure
             if (data.damage && data.damage.damage_at_slot_level) {
                 dmgString = data.damage.damage_at_slot_level[data.level] || data.damage.damage_at_slot_level[Object.keys(data.damage.damage_at_slot_level)[0]];
                 if (data.damage.damage_type?.name) dmgString += ` ${data.damage.damage_type.name}`;
@@ -184,7 +171,7 @@ const SpellsTab = ({ onDiceRoll, onLogAction }) => {
                 time: "1A",
                 range: data.range,
                 desc: data.desc.join('\n'),
-                hit: data.attack_type ? `+${spellAttack}` : "", // Auto-guess attack bonus
+                hit: data.attack_type ? `+${spellAttack}` : "",
                 dmg: dmgString
             };
             
@@ -194,6 +181,97 @@ const SpellsTab = ({ onDiceRoll, onLogAction }) => {
             setSearchTerm("");
         } catch (e) { alert("Failed to fetch spell details."); }
         setIsSearching(false);
+    };
+
+    // --- CARD COMPONENT ---
+    const SpellCard = ({ spell, index }) => {
+        const [expanded, setExpanded] = useState(false);
+        const hasText = spell.desc;
+
+        return (
+            <div className={`bg-slate-800 border border-slate-700 rounded-xl mb-2 transition-all hover:border-indigo-500/50 shadow-sm group ${expanded ? 'ring-1 ring-indigo-500/50' : ''}`}>
+                
+                {/* Main Row */}
+                {editingIndex !== index && (
+                    <div className="p-3 flex justify-between items-center gap-3">
+                        
+                        {/* Left: Info */}
+                        <div className="flex-1 min-w-0 cursor-pointer" onClick={() => hasText && setExpanded(!expanded)}>
+                            <div className="font-bold text-slate-200 truncate flex items-center gap-2">
+                                {spell.name}
+                                {spell.ritual && <Icon name="book" size={12} className="text-slate-500"/>}
+                                {spell.concentration && <Icon name="brain" size={12} className="text-slate-500"/>}
+                            </div>
+                            <div className="text-xs text-slate-500 truncate flex items-center gap-1">
+                                {spell.school} • {spell.range}
+                            </div>
+                        </div>
+
+                        {/* Right: Buttons */}
+                        <div className="flex items-center gap-2 shrink-0">
+                            
+                            {/* Hit Button */}
+                            {spell.hit && (
+                                <button 
+                                    onClick={(e) => handleRoll(spell, 'hit', e)}
+                                    className="bg-slate-700 hover:bg-cyan-900/50 text-cyan-400 border border-slate-600 hover:border-cyan-500/50 px-2 py-1 rounded text-[10px] font-bold font-mono transition-colors uppercase"
+                                >
+                                    {spell.hit.includes('+') ? spell.hit : `+${spell.hit}`}
+                                </button>
+                            )}
+
+                            {/* Damage Button */}
+                            {spell.dmg && (
+                                <button 
+                                    onClick={(e) => handleRoll(spell, 'dmg', e)}
+                                    className="bg-slate-700 hover:bg-indigo-900/50 text-indigo-300 border border-slate-600 hover:border-indigo-500/50 px-2 py-1 rounded text-[10px] font-bold font-mono transition-colors max-w-[100px] truncate"
+                                >
+                                    {spell.dmg}
+                                </button>
+                            )}
+
+                            {/* Cast / Slot Button */}
+                            <button 
+                                onClick={(e) => handleCast(spell, e)} 
+                                className="bg-indigo-600 hover:bg-indigo-500 text-white border border-indigo-500 px-3 py-1 rounded text-[10px] font-bold uppercase shadow-lg shadow-indigo-900/20"
+                            >
+                                {spell.level === 0 ? "CAST" : "SLOT"}
+                            </button>
+
+                            {/* Menu */}
+                            <div className="flex flex-col gap-1 ml-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button onClick={(e) => startEdit(index, spell, e)} className="text-slate-500 hover:text-white p-0.5"><Icon name="more-vertical" size={14}/></button>
+                                {hasText && <button onClick={() => setExpanded(!expanded)} className="text-slate-500 hover:text-white p-0.5"><Icon name={expanded ? "chevron-up" : "chevron-down"} size={14}/></button>}
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* Edit Mode */}
+                {editingIndex === index && (
+                    <div className="p-3 bg-slate-700/50 border-t border-slate-600">
+                        <div className="grid grid-cols-2 gap-2 mb-2">
+                            <div><label className="text-[10px] font-bold text-slate-400">Hit</label><input className="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1 text-xs text-white" value={editForm.hit || ''} onChange={e => setEditForm({...editForm, hit: e.target.value})} /></div>
+                            <div><label className="text-[10px] font-bold text-slate-400">Dmg</label><input className="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1 text-xs text-white" value={editForm.dmg || ''} onChange={e => setEditForm({...editForm, dmg: e.target.value})} /></div>
+                        </div>
+                        <div className="flex justify-end gap-2">
+                            <button onClick={() => deleteSpell(spell)} className="text-xs text-red-400 hover:text-red-300 mr-auto">Delete</button>
+                            <button onClick={() => setEditingIndex(-1)} className="text-xs text-slate-300 px-2 hover:underline">Cancel</button>
+                            <button onClick={saveEdit} className="text-xs bg-green-600 text-white px-3 py-1 rounded font-bold">Save</button>
+                        </div>
+                    </div>
+                )}
+
+                {/* Description Expanded */}
+                {expanded && hasText && editingIndex !== index && (
+                    <div className="px-3 pb-3 pt-0">
+                        <div className="border-t border-slate-700/50 pt-2 text-xs text-slate-300 leading-relaxed whitespace-pre-wrap animate-in fade-in">
+                            {spell.desc}
+                        </div>
+                    </div>
+                )}
+            </div>
+        );
     };
 
     return (
@@ -231,84 +309,23 @@ const SpellsTab = ({ onDiceRoll, onLogAction }) => {
             {/* Spell List */}
             <div className="space-y-2">
                 {spells.length === 0 ? (
-                    <div className="text-center text-slate-500 py-8 italic">
+                    <div className="text-center text-slate-500 py-8 italic border-2 border-dashed border-slate-800 rounded-xl">
                         {filterLevel === 0 ? "No Cantrips known." : `No Level ${filterLevel} spells found.`}
                     </div>
                 ) : (
-                    spells.map((spell, i) => (
-                        <div key={i} className="bg-slate-800 border border-slate-700 rounded-lg overflow-hidden transition-colors group relative">
-                            
-                            {/* Normal View */}
-                            {editingIndex !== i && (
-                                <div className="p-3 flex justify-between items-center hover:border-indigo-500 border border-transparent rounded-lg">
-                                    <div className="overflow-hidden flex-1 cursor-pointer" onClick={() => startEdit(i, spell)}>
-                                        <div className="font-bold text-slate-200 truncate flex items-center gap-2">
-                                            {spell.name}
-                                            {spell.hit && <span className="text-[9px] bg-slate-700 text-cyan-400 px-1 rounded border border-cyan-900/50">+{spell.hit}</span>}
-                                            {spell.dmg && <span className="text-[9px] bg-slate-700 text-indigo-300 px-1 rounded border border-indigo-900/50">{spell.dmg}</span>}
-                                        </div>
-                                        <div className="text-xs text-slate-500">{spell.school || "Spell"} • {spell.range} • {spell.time}</div>
-                                    </div>
-                                    
-                                    <div className="flex gap-2 items-center">
-                                        {/* Attack Roll Button */}
-                                        {spell.hit && (
-                                            <button onClick={() => handleAttackRoll(spell)} className="w-8 h-8 rounded bg-slate-700 hover:bg-cyan-700 text-cyan-200 flex items-center justify-center border border-slate-600" title="Roll Attack">
-                                                <Icon name="crosshair" size={16}/>
-                                            </button>
-                                        )}
-
-                                        {/* Damage Roll Button */}
-                                        {spell.dmg && (
-                                            <button onClick={() => handleDamageRoll(spell)} className="w-8 h-8 rounded bg-slate-700 hover:bg-indigo-700 text-indigo-200 flex items-center justify-center border border-slate-600" title="Roll Damage">
-                                                <Icon name="sword" size={16}/>
-                                            </button>
-                                        )}
-
-                                        {/* Cast / Slot Button */}
-                                        <button onClick={() => handleCast(spell)} className="text-[10px] bg-indigo-900 hover:bg-indigo-700 text-white px-3 py-1.5 rounded font-bold uppercase shrink-0 border border-indigo-700">
-                                            {filterLevel === 0 ? "Cast" : "Slot"}
-                                        </button>
-                                        
-                                        {/* Edit Toggle (small) */}
-                                        <button onClick={() => startEdit(i, spell)} className="text-slate-600 hover:text-white"><Icon name="more-vertical" size={16}/></button>
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* Edit View */}
-                            {editingIndex === i && (
-                                <div className="p-3 bg-slate-700/50 border-t border-slate-600">
-                                    <div className="grid grid-cols-2 gap-2 mb-2">
-                                        <div>
-                                            <label className="text-[10px] font-bold text-slate-400">Attack Bonus</label>
-                                            <input className="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1 text-xs text-white" placeholder="+5" value={editForm.hit || ''} onChange={e => setEditForm({...editForm, hit: e.target.value})} />
-                                        </div>
-                                        <div>
-                                            <label className="text-[10px] font-bold text-slate-400">Damage</label>
-                                            <input className="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1 text-xs text-white" placeholder="8d6 Fire" value={editForm.dmg || ''} onChange={e => setEditForm({...editForm, dmg: e.target.value})} />
-                                        </div>
-                                    </div>
-                                    <div className="flex justify-end gap-2">
-                                        <button onClick={() => setEditingIndex(-1)} className="text-xs text-slate-300 px-2 hover:underline">Cancel</button>
-                                        <button onClick={saveEdit} className="text-xs bg-green-600 text-white px-3 py-1 rounded font-bold">Save Stats</button>
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                    ))
+                    spells.map((spell, i) => <SpellCard key={i} index={i} spell={spell} />)
                 )}
             </div>
 
             {/* SRD Modal */}
             {showSrd && (
-                <div className="absolute inset-0 bg-slate-900 z-50 flex flex-col animate-in fade-in">
-                    <div className="flex items-center gap-2 p-2 border-b border-slate-700">
-                        <input autoFocus value={searchTerm} onChange={e => setSearchTerm(e.target.value)} onKeyDown={e => e.key==='Enter' && searchSrd()} placeholder="Search 5e API..." className="flex-1 bg-slate-800 border border-slate-600 rounded px-3 py-2 text-white outline-none"/>
+                <div className="absolute inset-0 bg-slate-900 z-50 flex flex-col animate-in fade-in rounded-xl overflow-hidden">
+                    <div className="flex items-center gap-2 p-2 border-b border-slate-700 bg-slate-800">
+                        <input autoFocus value={searchTerm} onChange={e => setSearchTerm(e.target.value)} onKeyDown={e => e.key==='Enter' && searchSrd()} placeholder="Search 5e API..." className="flex-1 bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white outline-none"/>
                         <button onClick={searchSrd} disabled={isSearching} className="bg-indigo-600 px-3 py-2 rounded text-white"><Icon name="search" size={18}/></button>
                         <button onClick={() => setShowSrd(false)} className="text-slate-400 p-2"><Icon name="x" size={24}/></button>
                     </div>
-                    <div className="flex-1 overflow-y-auto p-2 space-y-2">
+                    <div className="flex-1 overflow-y-auto p-2 space-y-2 bg-slate-900">
                         {srdResults.map(r => (
                             <div key={r.index} onClick={() => addSrdSpell(r.url)} className="p-3 bg-slate-800 border border-slate-700 rounded hover:border-green-500 cursor-pointer flex justify-between items-center">
                                 <span className="font-bold text-slate-200">{r.name}</span>

@@ -3,7 +3,7 @@ import { useCharacterStore } from '../../../stores/useCharacterStore';
 import Icon from '../../Icon';
 
 const InventoryTab = ({ onDiceRoll, onLogAction }) => {
-    const { character, updateCurrency, addItem, removeItem } = useCharacterStore();
+    const { character, updateCurrency, addItem, removeItem, updateInfo } = useCharacterStore();
     const [newItemName, setNewItemName] = useState("");
     
     // SRD State
@@ -19,12 +19,18 @@ const InventoryTab = ({ onDiceRoll, onLogAction }) => {
         setNewItemName("");
     };
 
+    const toggleEquip = (index) => {
+        const newInventory = [...character.inventory];
+        const item = newInventory[index];
+        item.equipped = !item.equipped;
+        updateInfo('inventory', newInventory);
+    };
+
     // --- SRD INTEGRATION ---
     const searchSrd = async () => {
         if (!searchTerm) return;
         setIsSearching(true);
         try {
-            // Searching Equipment
             const res = await fetch(`https://www.dnd5eapi.co/api/equipment?name=${searchTerm}`);
             const data = await res.json();
             setSrdResults(data.results.slice(0, 10)); 
@@ -42,7 +48,14 @@ const InventoryTab = ({ onDiceRoll, onLogAction }) => {
                 name: data.name,
                 qty: 1,
                 weight: data.weight || 0,
-                desc: data.desc ? data.desc.join('\n') : ""
+                desc: data.desc ? data.desc.join('\n') : "",
+                equipped: false,
+                combat: data.equipment_category?.index === 'weapon' ? {
+                    hit: "+0", // Placeholder, requires stats to calc properly
+                    dmg: data.damage?.damage_dice ? `${data.damage.damage_dice} ${data.damage.damage_type?.name}` : "1d4",
+                    type: "Action",
+                    notes: data.properties?.map(p => p.name).join(', ')
+                } : null
             };
             
             addItem(newItem);
@@ -100,21 +113,23 @@ const InventoryTab = ({ onDiceRoll, onLogAction }) => {
                     </div>
                 ) : (
                     character.inventory.map((item, i) => (
-                        <div key={i} className="bg-slate-800 border border-slate-700 p-3 rounded flex justify-between items-center group hover:border-slate-500 transition-colors">
+                        <div key={i} className={`border p-3 rounded flex justify-between items-center transition-colors ${item.equipped ? 'bg-indigo-900/20 border-indigo-500/50' : 'bg-slate-800 border-slate-700'}`}>
                             <div className="flex items-center gap-3 overflow-hidden">
-                                <div className="w-8 h-8 shrink-0 rounded bg-slate-900 flex items-center justify-center text-slate-600"><Icon name="backpack" size={16}/></div>
+                                <div onClick={() => toggleEquip(i)} className={`w-8 h-8 shrink-0 rounded flex items-center justify-center cursor-pointer transition-all ${item.equipped ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/50' : 'bg-slate-900 text-slate-600 hover:text-indigo-400'}`}>
+                                    <Icon name={item.combat ? "sword" : "backpack"} size={16}/>
+                                </div>
                                 <div className="flex flex-col min-w-0">
-                                    <span className="text-slate-200 font-bold text-sm truncate">{typeof item === 'string' ? item : item.name}</span>
+                                    <span className={`font-bold text-sm truncate ${item.equipped ? 'text-indigo-300' : 'text-slate-200'}`}>{typeof item === 'string' ? item : item.name}</span>
                                     {(item.weight || item.qty > 1) && <span className="text-xs text-slate-500">x{item.qty || 1} {item.weight ? `• ${item.weight}lb` : ''}</span>}
                                 </div>
                             </div>
-                            <button onClick={() => removeItem(i)} className="text-slate-600 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity p-2"><Icon name="trash-2" size={14}/></button>
+                            <button onClick={() => removeItem(i)} className="text-slate-600 hover:text-red-500 p-2"><Icon name="trash-2" size={14}/></button>
                         </div>
                     ))
                 )}
             </div>
 
-            {/* SRD Modal */}
+            {/* SRD Modal (Same as before) */}
             {showSrd && (
                 <div className="absolute inset-0 bg-slate-900 z-50 flex flex-col animate-in fade-in rounded-xl overflow-hidden">
                     <div className="flex items-center gap-2 p-2 border-b border-slate-700 bg-slate-800">
@@ -129,7 +144,6 @@ const InventoryTab = ({ onDiceRoll, onLogAction }) => {
                                 <Icon name="download" size={16} className="text-slate-500"/>
                             </div>
                         ))}
-                        {isSearching && <div className="text-center p-4 text-slate-500">Rummaging through crates...</div>}
                     </div>
                 </div>
             )}
