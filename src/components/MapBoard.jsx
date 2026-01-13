@@ -10,7 +10,7 @@ const GRID_SIZE_DEFAULT = 5;
 const GOOGLE_SEARCH_CX = "c38cb56920a4f45df"; 
 const GOOGLE_SEARCH_KEY = "AIzaSyBooM1Sk4A37qkWwADGXqwToVGRYgFOeY8"; 
 
-const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDiceRoll }) => {
+const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDiceRoll, savePlayer }) => {
     const canvasRef = useRef(null);
     const containerRef = useRef(null);
     
@@ -82,22 +82,37 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
         return () => el.removeEventListener('wheel', handleWheelInternal);
     }, [zoom]);
 
+    // --- FIX: ROBUST RESIZE OBSERVER FOR MOBILE ---
     useEffect(() => {
         const el = containerRef.current;
         if (!el) return;
-        const obs = new ResizeObserver(() => {
+
+        const measure = () => {
             if (!containerRef.current) return;
             const parentW = containerRef.current.clientWidth;
             const parentH = containerRef.current.clientHeight;
+            
             if (parentW === 0 || parentH === 0) return;
+
             let w = parentW;
             let h = parentW / imgRatio;
-            if (h > parentH) { h = parentH; w = parentH * imgRatio; }
+
+            if (h > parentH) { 
+                h = parentH; 
+                w = parentH * imgRatio; 
+            }
+            
             setStageDim({ w, h, left: (parentW - w) / 2, top: (parentH - h) / 2 });
-        });
+        };
+
+        const obs = new ResizeObserver(measure);
         obs.observe(el);
+        measure();
+        setTimeout(measure, 100);
+        setTimeout(measure, 500);
+
         return () => obs.disconnect();
-    }, [imgRatio]);
+    }, [imgRatio, mapUrl]);
 
     const cellPx = (stageDim.w * gridSize) / 100;
     const gridPctX = gridSize;
@@ -146,7 +161,7 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
     const handleDown = (e) => {
         if (mode === 'pan' || e.button === 2 || (e.button === 0 && e.getModifierState && e.getModifierState('Space'))) {
             setIsPanning(true);
-            setDragStart({ x: e.clientX - pan.x, y: e.clientY - pan.y }); return;
+            setDragStart({ x: (e.touches ? e.touches[0].clientX : e.clientX) - pan.x, y: (e.touches ? e.touches[0].clientY : e.clientY) - pan.y }); return;
         }
         const coords = getCoords(e);
         if (mode === 'ruler' || mode === 'radius') {
@@ -155,14 +170,14 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
         } else if (role === 'dm' && (mode === 'reveal' || mode === 'shroud')) {
             setIsDrawing(true);
             updateMapState('start_path', { mode, size: brushSize * (1000/stageDim.w), points: [coords] });
-        } else {
-            // Note: We don't clear selectedTokenId here immediately to allow seamless switching
         }
     };
 
     const handleMove = (e) => {
         if (isPanning) { e.preventDefault();
-            setPan({ x: e.clientX - dragStart.x, y: e.clientY - dragStart.y }); return;
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+            setPan({ x: clientX - dragStart.x, y: clientY - dragStart.y }); return;
         }
         const coords = getCoords(e);
         if (dragTokenId) { 
@@ -182,14 +197,21 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
         if (isPanning) { setIsPanning(false); return; }
         const coords = getCoords(e);
         setIsDrawing(false);
+        
         if (dragTokenId) {
             const dx = Math.abs(coords.x - dragStartPos.x);
             const dy = Math.abs(coords.y - dragStartPos.y);
+            
             // CHECK IF CLICK (Not Drag)
             if (Math.hypot(dx, dy) < 0.005) {
                 setSelectedTokenId(dragTokenId);
-                openTokenSheet(dragTokenId); 
+                
+                // FIX: Only auto-switch sheet if one is ALREADY open
+                if (activeSheetId) {
+                    openTokenSheet(dragTokenId); 
+                }
             } else {
+                // Drag Logic (Move Token)
                 let fx = coords.x;
                 let fy = coords.y;
                 if (snapToGrid) {
@@ -204,10 +226,11 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
             setMeasureStart(null);
             setMeasureEnd(null);
         } else {
-            // If we clicked empty space (no dragTokenId), clear selection
+            // Clicked empty space
             const isTokenClick = e.target.closest('.token-element');
             if(!isTokenClick) {
                 setSelectedTokenId(null);
+                // Do NOT close sheet here automatically, user might want to look at map while sheet is open
             }
         }
     };
@@ -223,12 +246,10 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
 
     // --- MANAGERS ---
     
-    // UPDATED: Manages "First vs Clone" logic for NPCs
     const addToken = (src, type) => {
         let finalCharId = src.id;
         let newNpcs = [...(dataRef.current.npcs || [])];
     
-        // 1. GENERIC / QUICK ADD (No ID yet) - Always new
         if (!src.id) {
             const newId = Date.now();
             const newNpc = {
@@ -241,32 +262,24 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
             newNpcs.push(newNpc);
             finalCharId = newId;
         }
-        // 2. PLAYER CHARACTERS - Always Link to Original (Party Tab)
         else if (type === 'pc') {
             finalCharId = src.id;
         }
-        // 3. NPCS / MONSTERS - Conditional Logic
         else if (type === 'npc' || type === 'monster') {
-            // Check if the ORIGINAL ID is already on the map
             const originalAlreadyOnMap = tokens.some(t => t.characterId === src.id);
 
             if (originalAlreadyOnMap) {
-                // SUBSEQUENT TOKENS: Create a Clone (Instance) with Reset HP
                 const instanceId = Date.now();
                 const instanceNpc = {
-                    ...src, // Copy current stats (even if modified)
-                    id: instanceId, // New ID
-                    hp: { 
-                        ...src.hp, 
-                        current: src.hp.max || 10 // FORCE RESET HP TO MAX
-                    },
+                    ...src, 
+                    id: instanceId, 
+                    hp: { ...src.hp, current: src.hp.max || 10 },
                     isInstance: true,
                     originalId: src.id
                 };
                 newNpcs.push(instanceNpc);
                 finalCharId = instanceId;
             } else {
-                // FIRST TOKEN: Connect directly to the Bestiary Original
                 finalCharId = src.id;
             }
         }
@@ -316,7 +329,6 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
         setSelectedTokenId(null); 
     };
     
-    // --- MAP LIBRARY FUNCTIONS ---
     const handleSearch = async () => {
         if(!searchQuery.trim()) return;
         setIsSearching(true);
@@ -362,19 +374,14 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
         const token = tokens.find(t => t.id === tokenId);
         if (!token) return;
         
-        // Lookup in Ref to ensure we have latest list if data changed recently
         const currentData = dataRef.current;
         const char = currentData.players?.find(p => p.id === token.characterId) || currentData.npcs?.find(n => n.id === token.characterId);
         
         if(char) { 
-            // FIX: Force Unmount-Remount Sequence to prevent store race condition
-            // 1. Unmount current sheet (triggers onSave for old char)
             if (activeSheetId && activeSheetId !== char.id) {
                 setActiveSheetId(null); 
                 setTimeout(() => {
-                    // 2. Load NEW char into store
                     useCharacterStore.getState().loadCharacter(char); 
-                    // 3. Mount NEW sheet
                     setActiveSheetId(char.id); 
                 }, 50); 
             } else {
@@ -386,7 +393,6 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
         }
     };
 
-    // --- RENDERERS ---
     const renderCanvas = () => {
         const canvas = canvasRef.current;
         const ctx = canvas?.getContext('2d');
@@ -396,7 +402,6 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
         canvas.height = stageDim.h;
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        // FOG
         ctx.save();
         ctx.fillStyle = 'rgba(0, 0, 0, 1)';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -415,7 +420,6 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
             ctx.stroke();
         });
 
-        // DYNAMIC VISION
         tokens.forEach(token => {
             let tx = token.x / 100;
             let ty = token.y / 100;
@@ -449,7 +453,6 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
         });
         ctx.restore();
 
-        // MEASUREMENTS
         if ((mode === 'ruler' || mode === 'radius') && measureStart && measureEnd) {
             const sx = measureStart.x * canvas.width;
             const sy = measureStart.y * canvas.height;
@@ -620,16 +623,16 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
                         key={activeSheetId} 
                         characterId={activeSheetId} 
                         onSave={(updated) => { 
-                            // UPDATED: Robust Save Logic - Searches both lists to update the correct ID
+                            // UPDATED: Robust Save Logic - Differentiates between Players (Collection) and NPCs (Array)
                             const current = dataRef.current;
                             
                             // 1. Check Players
                             const pIndex = current.players.findIndex(p => String(p.id) === String(updated.id));
                             if (pIndex > -1) {
-                                const newPlayers = [...current.players];
-                                newPlayers[pIndex] = updated;
-                                // FIX: Added ', true' to updateCloud to ensure persist
-                                updateCloud({ ...current, players: newPlayers }, true);
+                                // USE savePlayer PROP passed from App.jsx so it persists to subcollection!
+                                if (savePlayer) {
+                                    savePlayer(updated);
+                                }
                                 return;
                             }
                             

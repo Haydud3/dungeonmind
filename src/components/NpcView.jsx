@@ -31,7 +31,10 @@ const NpcView = ({ data, setData, role, updateCloud, setChatInput, setView, onPo
 
     // Safety check for data
     const npcs = (data?.npcs || []).filter(n => n && n.id);
-    const visibleNpcs = role === 'dm' ? npcs : npcs.filter(n => !n.isHidden);
+    
+    // --- FIX: FILTER OUT INSTANCES (CLONES) ---
+    // This stops the list from showing "Goblin", "Goblin", "Goblin" if you have 3 on the map.
+    const visibleNpcs = (role === 'dm' ? npcs : npcs.filter(n => !n.isHidden)).filter(n => !n.isInstance);
 
     // --- HELPER: Process Puter Image ---
     const processPuterImage = async (imgElement) => {
@@ -48,14 +51,13 @@ const NpcView = ({ data, setData, role, updateCloud, setChatInput, setView, onPo
 
     // --- SAVE / UPDATE ---
     const handleSheetSave = (updatedNpc) => {
-        // Use dataRef to get the LATEST NPC list, avoiding overwrites
         const currentData = dataRef.current;
         const currentNpcs = (currentData.npcs || []).filter(n => n && n.id);
         
-        // FIX: Use String() for safe ID comparison
+        // Update the specific NPC by ID
         const newNpcs = currentNpcs.map(n => String(n.id) === String(updatedNpc.id) ? updatedNpc : n);
         
-        // FIX: Added ', true' to force save to DB
+        // Force Cloud Save immediately
         updateCloud({ ...currentData, npcs: newNpcs }, true);
     };
 
@@ -70,7 +72,6 @@ const NpcView = ({ data, setData, role, updateCloud, setChatInput, setView, onPo
         const currentNpcs = (currentData.npcs || []).filter(n => n && n.id);
         const newNpcs = [...currentNpcs, newNpc];
         
-        // FIX: Added ', true'
         updateCloud({ ...currentData, npcs: newNpcs }, true);
         
         setShowAiCreator(false);
@@ -103,11 +104,9 @@ const NpcView = ({ data, setData, role, updateCloud, setChatInput, setView, onPo
     const importFromApi = async (monsterIndexUrl) => {
         setIsLoadingCompendium(true);
         try {
-            // Fetch Monster Details
             const res = await fetch(`https://www.dnd5eapi.co${monsterIndexUrl}`);
             const m = await res.json();
 
-            // Image Logic
             let imageUrl = "";
             if (m.image) {
                 imageUrl = `https://www.dnd5eapi.co${m.image}`;
@@ -118,13 +117,9 @@ const NpcView = ({ data, setData, role, updateCloud, setChatInput, setView, onPo
                 } catch (e) { console.error("Image gen failed", e); }
             }
 
-            // Stats Parsing
             const acVal = Array.isArray(m.armor_class) ? m.armor_class[0].value : m.armor_class;
-            
-            // Speed Parsing (e.g. { walk: "40 ft." } -> "40 ft.")
             const speedStr = typeof m.speed === 'object' ? Object.entries(m.speed).map(([k,v]) => `${k} ${v}`).join(', ') : m.speed;
 
-            // Senses Parsing
             const sensesObj = {
                 darkvision: m.senses?.darkvision || "",
                 passivePerception: m.senses?.passive_perception || 10,
@@ -154,31 +149,20 @@ const NpcView = ({ data, setData, role, updateCloud, setChatInput, setView, onPo
                 },
                 customActions: (m.actions || []).map(a => {
                     let dmgString = "";
-                    
-                    // Parse Damage from API structure
                     if (a.damage && a.damage[0] && a.damage[0].damage_dice) {
                         dmgString = a.damage[0].damage_dice;
-                        // Append type if available
                         if(a.damage[0].damage_type?.name) dmgString += ` ${a.damage[0].damage_type.name}`;
                     }
-
                     return {
                         name: a.name,
                         desc: a.desc,
-                        type: "Action", // Monsters usually just have Actions
+                        type: "Action",
                         hit: a.attack_bonus ? `+${a.attack_bonus}` : "",
                         dmg: dmgString 
                     };
                 }),
-                features: (m.special_abilities || []).map(f => ({ 
-                    name: f.name, 
-                    desc: f.desc, 
-                    source: "Trait" 
-                })),
-                legendaryActions: (m.legendary_actions || []).map(l => ({ 
-                    name: l.name, 
-                    desc: l.desc 
-                }))
+                features: (m.special_abilities || []).map(f => ({ name: f.name, desc: f.desc, source: "Trait" })),
+                legendaryActions: (m.legendary_actions || []).map(l => ({ name: l.name, desc: l.desc }))
             };
 
             handleNpcComplete(newNpc);
@@ -191,7 +175,6 @@ const NpcView = ({ data, setData, role, updateCloud, setChatInput, setView, onPo
         setIsLoadingCompendium(false);
     };
 
-    // --- OTHER METHODS ---
     const createManualNpc = () => {
         handleNpcComplete({
             name: "New Enemy",
@@ -206,12 +189,10 @@ const NpcView = ({ data, setData, role, updateCloud, setChatInput, setView, onPo
     const handlePdfImport = async (e) => {
         const file = e.target.files[0];
         if (!file) return;
-        
         setIsProcessing(true);
         try {
             const rawData = await parsePdf(file);
             const charData = await enrichCharacter(rawData);
-            
             handleNpcComplete(charData);
             alert(`Success! Imported ${charData.name}`);
         } catch (err) { 
@@ -241,7 +222,6 @@ const NpcView = ({ data, setData, role, updateCloud, setChatInput, setView, onPo
     const deleteNpc = (id, e) => {
         e.stopPropagation(); 
         if(!confirm("Delete this NPC?")) return;
-        
         const currentData = dataRef.current;
         const currentNpcs = (currentData.npcs || []).filter(n => n && n.id);
         const newNpcs = currentNpcs.filter(n => n.id !== id); 
@@ -254,8 +234,6 @@ const NpcView = ({ data, setData, role, updateCloud, setChatInput, setView, onPo
         const currentData = dataRef.current;
         const currentNpcs = (currentData.npcs || []).filter(n => n && n.id);
         const newNpcs = currentNpcs.map(n => n.id === npc.id ? updated : n);
-        
-        // FIX: Added ', true'
         updateCloud({ ...currentData, npcs: newNpcs }, true); 
     };
 

@@ -1,7 +1,7 @@
 import React from 'react';
 import MapBoard from './MapBoard';
 
-const WorldView = ({ data, role, updateMapState, updateCloud, user, apiKey, onDiceRoll }) => {
+const WorldView = ({ data, role, updateMapState, updateCloud, user, apiKey, onDiceRoll, savePlayer }) => {
     return (
         <div className="h-full w-full">
             <MapBoard 
@@ -11,7 +11,8 @@ const WorldView = ({ data, role, updateMapState, updateCloud, user, apiKey, onDi
                 updateCloud={updateCloud} 
                 user={user} 
                 apiKey={apiKey}
-                onDiceRoll={onDiceRoll} // PASS IT DOWN
+                onDiceRoll={onDiceRoll} 
+                savePlayer={savePlayer} // Pass this down
             />
         </div>
     );

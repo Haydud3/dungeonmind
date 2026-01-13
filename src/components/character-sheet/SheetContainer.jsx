@@ -8,6 +8,7 @@ import BioTab from './tabs/BioTab';
 import FeaturesTab from './tabs/FeaturesTab';
 import RollToast from './widgets/RollToast';
 import { useCharacterStore } from '../../stores/useCharacterStore';
+import Icon from '../Icon';
 
 const SheetContainer = ({ characterId, onSave, onDiceRoll, onLogAction, onBack, onPossess, isNpc }) => {
     const [activeTab, setActiveTab] = useState('actions');
@@ -22,6 +23,17 @@ const SheetContainer = ({ characterId, onSave, onDiceRoll, onLogAction, onBack, 
         if (onLogAction) onLogAction(msg);
     };
 
+    // --- FIX: FORCE SAVE ON EXIT ---
+    const handleBack = () => {
+        if (isDirty && character && onSave) {
+            console.log("Saving changes before exit...", character.name);
+            onSave(character); // Force immediate save
+            markSaved(); // Clear dirty flag
+        }
+        if (onBack) onBack(); // Now close the sheet
+    };
+
+    // Auto-save timer (keep this for backup)
     useEffect(() => {
         const interval = setInterval(() => {
             if (isDirty && character) {
@@ -37,11 +49,11 @@ const SheetContainer = ({ characterId, onSave, onDiceRoll, onLogAction, onBack, 
     return (
         <div className="h-full flex flex-col bg-slate-950 font-sans relative overflow-hidden">
             
-            {/* Header now gets onPossess */}
+            {/* Header gets handleBack instead of raw onBack */}
             <HeaderStats 
                 onDiceRoll={onDiceRoll} 
                 onLogAction={handleLogAction} 
-                onBack={onBack} 
+                onBack={handleBack} 
                 onPossess={onPossess} 
                 isNpc={isNpc} 
             />
@@ -62,10 +74,8 @@ const SheetContainer = ({ characterId, onSave, onDiceRoll, onLogAction, onBack, 
 
             <RollToast />
 
-            {/* Navbar (Same as before) */}
+            {/* Navbar */}
             <div className="flex-none bg-slate-950 border-t border-slate-800 pb-safe px-2 pt-2 z-40 shadow-2xl">
-                {/* ... (NavButton code remains identical to previous version) ... */}
-                {/* To keep file short I assume you have the NavButton logic from the previous turn */}
                 <div className="flex justify-between items-center max-w-md mx-auto gap-1">
                     <NavButton id="actions" icon="sword" label="Actions" active={activeTab} onClick={setActiveTab} />
                     <NavButton id="spells" icon="sparkles" label="Spells" active={activeTab} onClick={setActiveTab} />
@@ -79,8 +89,6 @@ const SheetContainer = ({ characterId, onSave, onDiceRoll, onLogAction, onBack, 
     );
 };
 
-// ... NavButton Component ...
-import Icon from '../Icon';
 const NavButton = ({ id, icon, label, active, onClick }) => (
     <button 
         onClick={() => onClick(id)}

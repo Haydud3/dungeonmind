@@ -93,6 +93,7 @@ function App() {
               if (d.bannedUsers?.includes(uid)) {
                   localStorage.removeItem('dm_last_code'); setGameParams(null); return;
               }
+              // Merge carefully to avoid overwriting local optimistic updates if possible
               setData(prev => ({ ...prev, ...d })); 
               if (d.campaign?.activeHandout && d.campaign.activeHandout.timestamp > (Date.now() - 5000)) setShowHandout(true);
           } else if (gameParams.role === 'dm') {
@@ -119,9 +120,18 @@ function App() {
 
   // --- ACTIONS ---
   const savePlayer = async (player) => {
-      const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'players', player.id.toString());
-      await setDoc(ref, player, { merge: true });
+      // 1. Optimistic Update (Immediate Local)
+      setData(prev => ({
+          ...prev,
+          players: prev.players.map(p => p.id === player.id ? player : p)
+      }));
+      // 2. Cloud Update
+      if (!gameParams?.isOffline) {
+          const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'players', player.id.toString());
+          await setDoc(ref, player, { merge: true });
+      }
   };
+
   const deletePlayer = async (playerId) => {
       const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'players', playerId.toString());
       await deleteDoc(ref);
@@ -134,14 +144,20 @@ function App() {
       const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'journal', pageId.toString());
       await deleteDoc(ref);
   };
+
   const updateCloud = (newData, immediate = false) => {
       const { players, chatLog, journal_pages, ...rootData } = newData;
-      setData(prev => ({ ...prev, ...rootData })); 
+      
+      // OPTIMISTIC UPDATE: Update EVERYTHING locally immediately
+      setData(prev => ({ ...prev, ...newData })); 
+
       if (gameParams?.isOffline) { localStorage.setItem('dm_local_data', JSON.stringify(newData)); return; }
+      
       const doSave = () => {
           const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code);
           fb.setDoc(ref, rootData, { merge: true });
       };
+      
       if (saveTimer.current) clearTimeout(saveTimer.current);
       if (immediate) doSave(); else saveTimer.current = setTimeout(doSave, 1000); 
   };
@@ -261,7 +277,6 @@ function App() {
               {currentView === 'session' && <SessionView data={data} chatLog={data.chatLog} inputText={inputText} setInputText={setInputText} onSendMessage={sendChatMessage} onEditMessage={()=>{}} onDeleteMessage={()=>{}} isLoading={isLoading} role={effectiveRole} user={user} showTools={showTools} setShowTools={setShowTools} diceLog={diceLog} handleDiceRoll={handleDiceRoll} />}
               {currentView === 'journal' && <JournalView data={data} role={effectiveRole} userId={user?.uid} onSavePage={saveJournalEntry} onDeletePage={deleteJournalEntryFunc} aiHelper={queryAiService} />}
               
-              {/* ATLAS VIEW */}
               {currentView === 'atlas' && (
                   <WorldCreator 
                       data={data} 
@@ -274,12 +289,11 @@ function App() {
                   />
               )}
               
-              {/* MAP VIEW */}
-              {currentView === 'map' && <WorldView data={data} setData={setData} role={effectiveRole} updateCloud={updateCloud} updateMapState={updateMapState} onDiceRoll={handleDiceRoll} user={user} apiKey={apiKey} />}
+              {/* IMPORTANT: Passed savePlayer so player stats persist properly */}
+              {currentView === 'map' && <WorldView data={data} setData={setData} role={effectiveRole} updateCloud={updateCloud} updateMapState={updateMapState} onDiceRoll={handleDiceRoll} user={user} apiKey={apiKey} savePlayer={savePlayer} />}
               
               {currentView === 'party' && <PartyView data={data} role={effectiveRole} activeChar={data.assignments?.[user?.uid]} updateCloud={updateCloud} savePlayer={savePlayer} deletePlayer={deletePlayer} setView={setCurrentView} user={user} aiHelper={queryAiService} onDiceRoll={handleDiceRoll} apiKey={apiKey} edition={data.config?.edition} />}
               
-              {/* FIXED: PASSING onDiceRoll HANDLER */}
               {currentView === 'npcs' && <NpcView data={data} setData={setData} role={effectiveRole} updateCloud={updateCloud} generateNpc={generateNpc} setChatInput={setInputText} setView={setCurrentView} onPossess={setPossessedNpcId} aiHelper={queryAiService} apiKey={apiKey} edition={data.config?.edition} onDiceRoll={handleDiceRoll} />}
               
               {currentView === 'settings' && <SettingsView data={data} setData={setData} apiKey={apiKey} setApiKey={setApiKey} role={effectiveRole} updateCloud={updateCloud} code={gameParams.code} user={user} onExit={() => { setGameParams(null); }} aiProvider={aiProvider} setAiProvider={setAiProvider} openAiModel={openAiModel} setOpenAiModel={setOpenAiModel} puterModel={puterModel} setPuterModel={setPuterModel} banPlayer={()=>{}} kickPlayer={()=>{}} unbanPlayer={()=>{}} />}
