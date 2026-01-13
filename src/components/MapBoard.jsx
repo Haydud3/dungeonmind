@@ -1,8 +1,7 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useLayoutEffect, useState } from 'react';
 import Icon from './Icon';
 import Token from './Token';
 import SheetContainer from './character-sheet/SheetContainer';
-import CharacterCreator from './ai-wizard/CharacterCreator'; 
 import { useCharacterStore } from '../stores/useCharacterStore';
 
 const GRID_SIZE_DEFAULT = 5;
@@ -13,6 +12,7 @@ const GOOGLE_SEARCH_KEY = "AIzaSyBooM1Sk4A37qkWwADGXqwToVGRYgFOeY8";
 const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDiceRoll, savePlayer }) => {
     const canvasRef = useRef(null);
     const containerRef = useRef(null);
+    const gridSaveTimer = useRef(null); 
     
     // --- STALE STATE FIX ---
     const dataRef = useRef(data);
@@ -22,14 +22,16 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
     const [mode, setMode] = useState('move');
     const [isDrawing, setIsDrawing] = useState(false);
     const [brushSize, setBrushSize] = useState(40);
+    
     // Transform State
     const [zoom, setZoom] = useState(1);
     const [pan, setPan] = useState({ x: 0, y: 0 });
     const [isPanning, setIsPanning] = useState(false);
     const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
-    // Stage State
-    const [stageDim, setStageDim] = useState({ w: 800, h: 600, left: 0, top: 0 });
-    const [imgRatio, setImgRatio] = useState(1); 
+    
+    // Stage State - Init with 0 to hide until measured
+    const [stageDim, setStageDim] = useState({ w: 0, h: 0, left: 0, top: 0 });
+    const [imgRatio, setImgRatio] = useState(0); 
 
     // Logic State
     const [dragTokenId, setDragTokenId] = useState(null);
@@ -39,14 +41,50 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
     const [activeSheetId, setActiveSheetId] = useState(null);
     const [showTokenBar, setShowTokenBar] = useState(false);
     const [showMapBar, setShowMapBar] = useState(false);
-    const [showAiCreator, setShowAiCreator] = useState(false); 
 
-    // Grid State
+    // --- COMPENDIUM STATE ---
+    const [showCompendium, setShowCompendium] = useState(false);
+    const [compendiumSearch, setCompendiumSearch] = useState("");
+    const [compendiumResults, setCompendiumResults] = useState([]);
+    const [isLoadingCompendium, setIsLoadingCompendium] = useState(false);
+
+    // --- GRID STATE (FIXED) ---
     const [showGrid, setShowGrid] = useState(true);
     const [snapToGrid, setSnapToGrid] = useState(true);
-    const [gridSize, setGridSize] = useState(GRID_SIZE_DEFAULT);
+    
+    // Grid Size Persistence Logic
+    const [gridSize, setGridSize] = useState(data.campaign?.activeMap?.gridSize || GRID_SIZE_DEFAULT);
+
+    // Sync local state when DB updates (for other users changing it)
+    useEffect(() => {
+        if (data.campaign?.activeMap?.gridSize) {
+            setGridSize(data.campaign.activeMap.gridSize);
+        }
+    }, [data.campaign?.activeMap?.gridSize]);
+
+    // Handle Slider Change (Debounced Save) 
+    const handleGridChange = (e) => {
+        const val = parseFloat(e.target.value);
+        setGridSize(val); // Update visual immediately
+        
+        if (gridSaveTimer.current) clearTimeout(gridSaveTimer.current);
+        gridSaveTimer.current = setTimeout(() => {
+            updateCloud({
+                ...dataRef.current,
+                campaign: {
+                    ...dataRef.current.campaign,
+                    activeMap: {
+                        ...dataRef.current.campaign.activeMap,
+                        gridSize: val
+                    }
+                }
+            });
+        }, 500);
+    };
+
     const [measureStart, setMeasureStart] = useState(null); 
     const [measureEnd, setMeasureEnd] = useState(null);
+    
     // Search State
     const [searchQuery, setSearchQuery] = useState("");
     const [searchResults, setSearchResults] = useState([]);
@@ -64,7 +102,9 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
         if (!mapUrl) return;
         const img = new Image();
         img.src = mapUrl;
-        img.onload = () => { if(img.height > 0) setImgRatio(img.width / img.height); };
+        img.onload = () => { 
+            if(img.height > 0) setImgRatio(img.width / img.height); 
+        };
     }, [mapUrl]);
 
     // Manual Zoom Listener
@@ -82,10 +122,10 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
         return () => el.removeEventListener('wheel', handleWheelInternal);
     }, [zoom]);
 
-    // --- FIX: ROBUST RESIZE OBSERVER FOR MOBILE ---
-    useEffect(() => {
+    // --- LAYOUT EFFECT FOR STABILITY (Fixes Shaking)  ---
+    useLayoutEffect(() => {
         const el = containerRef.current;
-        if (!el) return;
+        if (!el || imgRatio === 0) return;
 
         const measure = () => {
             if (!containerRef.current) return;
@@ -102,21 +142,134 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
                 w = parentH * imgRatio; 
             }
             
-            setStageDim({ w, h, left: (parentW - w) / 2, top: (parentH - h) / 2 });
+            const newLeft = (parentW - w) / 2;
+            const newTop = (parentH - h) / 2;
+
+            setStageDim(prev => {
+                // Micro-optimization: Don't update if pixels match to prevent react loops
+                if (Math.abs(prev.w - w) < 0.5 && Math.abs(prev.h - h) < 0.5) return prev;
+                return { w, h, left: newLeft, top: newTop };
+            });
         };
 
         const obs = new ResizeObserver(measure);
         obs.observe(el);
-        measure();
-        setTimeout(measure, 100);
-        setTimeout(measure, 500);
+        measure(); // Run immediately
 
         return () => obs.disconnect();
-    }, [imgRatio, mapUrl]);
+    }, [imgRatio, mapUrl]); 
 
     const cellPx = (stageDim.w * gridSize) / 100;
-    const gridPctX = gridSize;
-    const gridPctY = (stageDim.w / stageDim.h) * gridSize;
+    
+    // --- HELPER: Process Puter Image ---
+    const processPuterImage = async (imgElement) => {
+        try {
+            const response = await fetch(imgElement.src);
+            const blob = await response.blob();
+            return new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result);
+                reader.readAsDataURL(blob);
+            });
+        } catch (e) { return null; }
+    };
+
+    // --- API LOGIC ---
+    const searchCompendium = async () => {
+        if (!compendiumSearch.trim()) return;
+        setIsLoadingCompendium(true);
+        try {
+            const res = await fetch('https://www.dnd5eapi.co/api/monsters?name=' + compendiumSearch);
+            const data = await res.json();
+            
+            if (data.count === 0) {
+                alert("No monsters found in the SRD with that name.");
+                setCompendiumResults([]);
+            } else {
+                setCompendiumResults(data.results.slice(0, 20));
+            }
+        } catch (e) {
+            console.error(e);
+            alert("Could not connect to D&D 5e API.");
+        }
+        setIsLoadingCompendium(false);
+    };
+
+    const importFromApi = async (monsterIndexUrl) => {
+        setIsLoadingCompendium(true);
+        try {
+            const res = await fetch(`https://www.dnd5eapi.co${monsterIndexUrl}`);
+            const m = await res.json();
+
+            let imageUrl = "";
+            if (m.image) {
+                imageUrl = `https://www.dnd5eapi.co${m.image}`;
+            } else if (window.puter) {
+                try {
+                    const imgEl = await window.puter.ai.txt2img(`fantasy rpg token portrait of a ${m.name} ${m.type}, white background, high quality`);
+                    imageUrl = await processPuterImage(imgEl);
+                } catch (e) { console.error("Image gen failed", e); }
+            }
+
+            const acVal = Array.isArray(m.armor_class) ? m.armor_class[0].value : m.armor_class;
+            const speedStr = typeof m.speed === 'object' ? Object.entries(m.speed).map(([k,v]) => `${k} ${v}`).join(', ') : m.speed;
+
+            const sensesObj = {
+                darkvision: m.senses?.darkvision || "",
+                passivePerception: m.senses?.passive_perception || 10,
+                blindsight: m.senses?.blindsight || "",
+                tremorsense: m.senses?.tremorsense || "",
+                truesight: m.senses?.truesight || ""
+            };
+
+            const newNpc = {
+                id: Date.now(),
+                name: m.name,
+                race: `${m.size} ${m.type} (${m.alignment})`,
+                class: "Monster",
+                level: m.challenge_rating,
+                hp: { current: m.hit_points, max: m.hit_points },
+                ac: acVal,
+                speed: speedStr,
+                stats: {
+                    str: m.strength, dex: m.dexterity, con: m.constitution,
+                    int: m.intelligence, wis: m.wisdom, cha: m.charisma
+                },
+                senses: sensesObj,
+                image: imageUrl,
+                quirk: "SRD Import",
+                bio: { 
+                    backstory: `Imported from D&D 5e API.\nXP: ${m.xp}\nLanguages: ${m.languages}`,
+                    appearance: `A ${m.size} ${m.type}.` 
+                },
+                customActions: (m.actions || []).map(a => {
+                    let dmgString = "";
+                    if (a.damage && a.damage[0] && a.damage[0].damage_dice) {
+                        dmgString = a.damage[0].damage_dice;
+                        if(a.damage[0].damage_type?.name) dmgString += ` ${a.damage[0].damage_type.name}`;
+                    }
+                    return {
+                        name: a.name,
+                        desc: a.desc,
+                        type: "Action",
+                        hit: a.attack_bonus ? `+${a.attack_bonus}` : "",
+                        dmg: dmgString 
+                    };
+                }),
+                features: (m.special_abilities || []).map(f => ({ name: f.name, desc: f.desc, source: "Trait" })),
+                legendaryActions: (m.legendary_actions || []).map(l => ({ name: l.name, desc: l.desc }))
+            };
+
+            updateCloud({ ...data, npcs: [...(data.npcs || []), newNpc] });
+            setShowCompendium(false);
+            alert(`Imported ${newNpc.name}! You can now find them in the list.`);
+
+        } catch (e) {
+            console.error(e);
+            alert("Failed to import monster details.");
+        }
+        setIsLoadingCompendium(false);
+    };
 
     // --- UTILS ---
     const getCoords = (e) => {
@@ -133,9 +286,21 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
 
     const snapCoordinate = (val, isY = false) => {
         if (!snapToGrid) return val;
-        const cellPct = isY ? gridPctY : gridPctX;
+        // Use Grid Size directly for X
+        const cellPct = gridSize; 
         const cellCount = Math.floor(val * 100 / cellPct);
         const center = (cellCount * cellPct) + (cellPct / 2);
+        return center / 100;
+    };
+    
+    // Y Axis Snap needs aspect ratio compensation
+    const snapCoordinateY = (val) => {
+        if (!snapToGrid) return val;
+        // Compensate for aspect ratio
+        const ratio = stageDim.w / stageDim.h;
+        const cellPctY = gridSize * ratio; 
+        const cellCount = Math.floor(val * 100 / cellPctY);
+        const center = (cellCount * cellPctY) + (cellPctY / 2);
         return center / 100;
     };
 
@@ -145,7 +310,7 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
             const timer = setTimeout(() => {
                 const snappedTokens = tokens.map(t => {
                     const snX = snapCoordinate(t.x / 100, false) * 100;
-                    const snY = snapCoordinate(t.y / 100, true) * 100;
+                    const snY = snapCoordinateY(t.y / 100) * 100;
                     if (Math.abs(snX - t.x) < 0.01 && Math.abs(snY - t.y) < 0.01) return t;
                     return { ...t, x: snX, y: snY };
                 });
@@ -165,7 +330,7 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
         }
         const coords = getCoords(e);
         if (mode === 'ruler' || mode === 'radius') {
-            const start = snapToGrid ? { x: snapCoordinate(coords.x, false), y: snapCoordinate(coords.y, true) } : coords;
+            const start = snapToGrid ? { x: snapCoordinate(coords.x), y: snapCoordinateY(coords.y) } : coords;
             setMeasureStart(start); setMeasureEnd(start); setIsDrawing(true);
         } else if (role === 'dm' && (mode === 'reveal' || mode === 'shroud')) {
             setIsDrawing(true);
@@ -185,7 +350,7 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
             setTempTokenPos({ x: coords.x * 100, y: coords.y * 100 });
         } else if (isDrawing) {
             if (mode === 'ruler' || mode === 'radius') {
-                setMeasureEnd(snapToGrid ? { x: snapCoordinate(coords.x, false), y: snapCoordinate(coords.y, true) } : coords);
+                setMeasureEnd(snapToGrid ? { x: snapCoordinate(coords.x), y: snapCoordinateY(coords.y) } : coords);
             } else if (role === 'dm') {
                 e.preventDefault();
                 updateMapState('append_point', coords);
@@ -197,26 +362,20 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
         if (isPanning) { setIsPanning(false); return; }
         const coords = getCoords(e);
         setIsDrawing(false);
-        
         if (dragTokenId) {
             const dx = Math.abs(coords.x - dragStartPos.x);
             const dy = Math.abs(coords.y - dragStartPos.y);
-            
-            // CHECK IF CLICK (Not Drag)
             if (Math.hypot(dx, dy) < 0.005) {
                 setSelectedTokenId(dragTokenId);
-                
-                // FIX: Only auto-switch sheet if one is ALREADY open
                 if (activeSheetId) {
                     openTokenSheet(dragTokenId); 
                 }
             } else {
-                // Drag Logic (Move Token)
                 let fx = coords.x;
                 let fy = coords.y;
                 if (snapToGrid) {
-                    fx = snapCoordinate(fx, false);
-                    fy = snapCoordinate(fy, true);
+                    fx = snapCoordinate(fx);
+                    fy = snapCoordinateY(fy);
                 }
                 const newTokens = tokens.map(t => t.id === dragTokenId ? { ...t, x: fx * 100, y: fy * 100 } : t);
                 updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...data.campaign.activeMap, tokens: newTokens } } });
@@ -226,11 +385,9 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
             setMeasureStart(null);
             setMeasureEnd(null);
         } else {
-            // Clicked empty space
             const isTokenClick = e.target.closest('.token-element');
             if(!isTokenClick) {
                 setSelectedTokenId(null);
-                // Do NOT close sheet here automatically, user might want to look at map while sheet is open
             }
         }
     };
@@ -245,7 +402,6 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
     };
 
     // --- MANAGERS ---
-    
     const addToken = (src, type) => {
         let finalCharId = src.id;
         let newNpcs = [...(dataRef.current.npcs || [])];
@@ -393,6 +549,7 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
         }
     };
 
+    // --- RENDERERS ---
     const renderCanvas = () => {
         const canvas = canvasRef.current;
         const ctx = canvas?.getContext('2d');
@@ -402,6 +559,7 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
         canvas.height = stageDim.h;
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+        // FOG
         ctx.save();
         ctx.fillStyle = 'rgba(0, 0, 0, 1)';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -420,6 +578,7 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
             ctx.stroke();
         });
 
+        // DYNAMIC VISION
         tokens.forEach(token => {
             let tx = token.x / 100;
             let ty = token.y / 100;
@@ -453,6 +612,7 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
         });
         ctx.restore();
 
+        // MEASUREMENTS
         if ((mode === 'ruler' || mode === 'radius') && measureStart && measureEnd) {
             const sx = measureStart.x * canvas.width;
             const sy = measureStart.y * canvas.height;
@@ -509,7 +669,7 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
                 <div className="flex bg-slate-900 rounded p-1 gap-1 border border-slate-700 items-center px-2">
                     <button onClick={() => setShowGrid(!showGrid)} className={`p-1 rounded ${showGrid ? 'text-green-400' : 'text-slate-500'}`}><Icon name="grid" size={18}/></button>
                     <button onClick={() => setSnapToGrid(!snapToGrid)} className={`p-1 rounded ${snapToGrid ? 'text-green-400' : 'text-slate-500'}`}><Icon name="magnet" size={18}/></button>
-                    {showGrid && <input type="range" min="2" max="15" step="0.5" value={gridSize} onChange={e => setGridSize(parseFloat(e.target.value))} className="w-16 accent-green-500 h-1 bg-slate-700 rounded-lg cursor-pointer"/>}
+                    {showGrid && <input type="range" min="2" max="15" step="0.5" value={gridSize} onChange={handleGridChange} className="w-16 accent-green-500 h-1 bg-slate-700 rounded-lg cursor-pointer"/>}
                 </div>
                 <button onClick={() => setShowTokenBar(!showTokenBar)} className="p-1.5 px-3 rounded bg-slate-700 text-slate-300 flex items-center gap-2 text-xs font-bold hover:text-white"><Icon name="users" size={16}/> Tokens</button>
             </div>
@@ -571,10 +731,10 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
                     {/* CREATE ENTITY BUTTON */}
                     <div className="p-2 border-b border-slate-700">
                         <button 
-                            onClick={() => { setShowAiCreator(true); setShowTokenBar(false); }}
+                            onClick={() => { setShowCompendium(true); setShowTokenBar(false); }}
                             className="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-2 rounded text-xs font-bold flex items-center justify-center gap-2 shadow-lg"
                         >
-                            <Icon name="plus" size={14}/> Create Entity
+                            <Icon name="book" size={14}/> Search 5e Compendium
                         </button>
                     </div>
 
@@ -599,7 +759,7 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
 
             {/* Token Menu */}
             {selectedTokenId && (
-                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-50 bg-slate-900 border border-slate-500 rounded-full shadow-2xl p-2 flex gap-2 animate-in slide-in-from-bottom-2 items-center">
+                <div className="absolute bottom-20 md:bottom-4 left-1/2 -translate-x-1/2 z-50 bg-slate-900 border border-slate-500 rounded-full shadow-2xl p-2 flex gap-2 animate-in slide-in-from-bottom-2 items-center">
                     <button onClick={() => openTokenSheet(selectedTokenId)} title="Open Sheet" className="p-2 hover:bg-slate-800 rounded-full text-amber-400 bg-amber-900/20 border border-amber-600/50"><Icon name="scroll-text" size={20}/></button>
                     <div className="w-px h-6 bg-slate-700 mx-1"></div>
                     <button onClick={() => updateTokenStatus(selectedTokenId, 'dead')} className="p-2 hover:bg-slate-800 rounded-full text-white"><Icon name="skull" size={20}/></button>
@@ -618,21 +778,17 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
 
             {/* Sheet Popup */}
             {activeSheetId && (
-                <div className="absolute top-14 right-2 bottom-4 w-96 bg-slate-900 border border-slate-600 rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden animate-in slide-in-from-right-10">
+                <div className="absolute top-14 right-2 left-2 md:left-auto md:w-96 bottom-20 md:bottom-4 bg-slate-900 border border-slate-600 rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden animate-in slide-in-from-right-10">
                     <SheetContainer 
                         key={activeSheetId} 
                         characterId={activeSheetId} 
                         onSave={(updated) => { 
-                            // UPDATED: Robust Save Logic - Differentiates between Players (Collection) and NPCs (Array)
                             const current = dataRef.current;
                             
                             // 1. Check Players
                             const pIndex = current.players.findIndex(p => String(p.id) === String(updated.id));
                             if (pIndex > -1) {
-                                // USE savePlayer PROP passed from App.jsx so it persists to subcollection!
-                                if (savePlayer) {
-                                    savePlayer(updated);
-                                }
+                                if (savePlayer) savePlayer(updated);
                                 return;
                             }
                             
@@ -641,7 +797,6 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
                             if (nIndex > -1) {
                                 const newNpcs = [...current.npcs];
                                 newNpcs[nIndex] = updated;
-                                // FIX: Added ', true' to updateCloud to ensure persist
                                 updateCloud({ ...current, npcs: newNpcs }, true);
                                 return;
                             }
@@ -656,9 +811,8 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
             {/* Map Stage */}
             <div 
                 ref={containerRef} 
-                className={`flex-1 relative overflow-hidden flex items-center justify-center bg-black touch-none ${mode==='pan' || isPanning ? 'cursor-grab active:cursor-grabbing' : 'cursor-crosshair'}`}
+                className={`flex-1 min-h-0 relative overflow-hidden flex items-center justify-center bg-black touch-none ${mode==='pan' || isPanning ? 'cursor-grab active:cursor-grabbing' : 'cursor-crosshair'}`}
                 onMouseDown={handleDown} onMouseMove={handleMove} onMouseUp={handleUp} 
-                // REMOVED onMouseLeave to prevent menu disappearance
                 onWheel={(e) => e.preventDefault()}
                 onTouchStart={handleDown} onTouchMove={handleMove} onTouchEnd={handleUp}
                 onContextMenu={(e) => e.preventDefault()}
@@ -671,7 +825,8 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
                             height: `${stageDim.h}px`,
                             transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
                             transformOrigin: 'center center',
-                            transition: isPanning ? 'none' : 'transform 0.1s ease-out'
+                            opacity: stageDim.w > 0 ? 1 : 0, 
+                            // FIX: REMOVED CSS TRANSITION TO PREVENT SHAKING/ANIMATING ON LOAD
                         }}
                     >
                         <img src={mapUrl} className="absolute inset-0 w-full h-full object-contain select-none pointer-events-none" draggable="false" alt="map"/>
@@ -698,21 +853,29 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
                 )}
             </div>
 
-            {/* NEW: AI CREATOR MODAL (Called from Token Box) */}
-            {showAiCreator && (
-                <div className="fixed inset-0 z-[60] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm">
-                    <div className="max-w-2xl w-full bg-slate-900 rounded-xl overflow-hidden shadow-2xl relative border border-slate-700 h-[90vh]">
-                        <CharacterCreator 
-                            aiHelper={data.aiHelper} // Pass the helper if available, or rely on App.jsx context
-                            apiKey={apiKey} 
-                            edition={data.config?.edition}
-                            onCancel={() => setShowAiCreator(false)}
-                            onComplete={(newNpc) => {
-                                const npcWithId = { ...newNpc, id: Date.now() };
-                                updateCloud({ ...data, npcs: [...data.npcs, npcWithId] });
-                                setShowAiCreator(false);
-                            }} 
-                        />
+            {/* COMPENDIUM MODAL (Replaces AI Creator) */}
+            {showCompendium && (
+                <div className="fixed inset-0 z-[60] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
+                    <div className="max-w-xl w-full bg-slate-900 rounded-xl border border-slate-700 shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
+                        <div className="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-800">
+                            <h3 className="font-bold text-white flex items-center gap-2"><Icon name="globe" size={18}/> D&D 5e API Search</h3>
+                            <button onClick={() => setShowCompendium(false)} className="text-slate-400 hover:text-white"><Icon name="x" size={20}/></button>
+                        </div>
+                        <div className="p-4 border-b border-slate-700">
+                            <div className="flex gap-2">
+                                <input autoFocus value={compendiumSearch} onChange={(e) => setCompendiumSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && searchCompendium()} placeholder="Search (e.g. Owlbear, Lich)..." className="flex-1 bg-slate-950 border border-slate-600 rounded px-3 py-2 text-white outline-none focus:border-blue-500"/>
+                                <button onClick={searchCompendium} disabled={isLoadingCompendium} className="bg-blue-600 hover:bg-blue-500 px-4 rounded text-white font-bold">{isLoadingCompendium ? <Icon name="loader" size={18} className="animate-spin"/> : <Icon name="search" size={18}/>}</button>
+                            </div>
+                        </div>
+                        <div className="flex-1 overflow-y-auto p-2 space-y-2 bg-slate-900">
+                            {compendiumResults.map(r => (
+                                <div key={r.index} onClick={() => importFromApi(r.url)} className="p-3 bg-slate-800 border border-slate-700 rounded hover:border-blue-500 cursor-pointer flex justify-between items-center group">
+                                    <div className="font-bold text-white group-hover:text-blue-400 capitalize">{r.name}</div>
+                                    <div className="text-xs text-slate-500 flex items-center gap-1 group-hover:text-blue-300">Import <Icon name="download" size={14}/></div>
+                                </div>
+                            ))}
+                            {compendiumResults.length === 0 && !isLoadingCompendium && <div className="text-center text-slate-500 py-8 italic">Search for a creature to begin.</div>}
+                        </div>
                     </div>
                 </div>
             )}

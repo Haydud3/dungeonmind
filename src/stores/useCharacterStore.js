@@ -1,141 +1,105 @@
 import { create } from 'zustand';
 
-const getMod = (score) => Math.floor((score - 10) / 2);
-const getProficiency = (level) => Math.ceil(level / 4) + 1;
-
 export const useCharacterStore = create((set, get) => ({
-  // --- STATE ---
-  character: null,
-  isDirty: false,
-  rollHistory: [],
+    character: null,
+    isDirty: false,
+    logs: [],
 
-  // --- ACTIONS ---
-  loadCharacter: (charData) => set({ 
-      character: {
-          ...charData,
-          alias: charData.alias || "", // <--- Added Alias Initialization
-          stats: charData.stats || { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 },
-          hp: charData.hp || { current: 10, max: 10, temp: 0 },
-          skills: charData.skills || {},
-          spells: charData.spells || [],
-          spellSlots: charData.spellSlots || { 1: { current: 0, max: 0 } },
-          inventory: charData.inventory || [],
-          currency: charData.currency || { cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
-          level: charData.level || 1,
-          profBonus: charData.profBonus || 2,
-          features: charData.features || [],
-          customActions: charData.customActions || [],
-          bio: charData.bio || {}
-      },
-      isDirty: false 
-  }),
+    loadCharacter: (char) => set({ character: char, isDirty: false }),
 
-  addLogEntry: (entry) => set((state) => {
-      const newLog = typeof entry === 'string' ? { message: entry } : entry;
-      return {
-          rollHistory: [{ id: Date.now(), ...newLog }, ...state.rollHistory].slice(0, 5) 
-      };
-  }),
+    updateHP: (type, value) => set((state) => {
+        if (!state.character) return {};
+        
+        const char = { ...state.character };
+        const current = char.hp.current;
+        const max = char.hp.max;
 
-  updateInfo: (field, value) => set((state) => {
-      let updates = { [field]: value };
-      if (field === 'level') {
-          const lvl = parseInt(value) || 1;
-          updates.level = lvl;
-          updates.profBonus = getProficiency(lvl);
-      }
-      return { character: { ...state.character, ...updates }, isDirty: true };
-  }),
+        let newVal = value;
 
-  updateStat: (stat, value) => set((state) => ({
-    character: { 
-        ...state.character, 
-        stats: { ...state.character.stats, [stat]: parseInt(value) || 10 } 
-    },
-    isDirty: true
-  })),
+        if (type === 'current') {
+            // Rule: Strictly Clamp between 0 and Max
+            newVal = Math.max(0, Math.min(value, max));
+            
+            // Rule: If healing from 0, reset Death Saves
+            if (current === 0 && newVal > 0) {
+                char.deathSaves = { successes: 0, failures: 0 };
+            }
+        }
 
-  updateHP: (field, value) => set((state) => ({
-    character: { 
-        ...state.character, 
-        hp: { ...state.character.hp, [field]: parseInt(value) || 0 } 
-    },
-    isDirty: true
-  })),
+        char.hp[type] = newVal;
+        return { character: char, isDirty: true };
+    }),
 
-  updateCurrency: (type, value) => set((state) => ({
-      character: { 
-          ...state.character, 
-          currency: { ...state.character.currency, [type]: parseInt(value) || 0 } 
-      },
-      isDirty: true
-  })),
+    // Manual setter for clicking bubbles
+    setDeathSaves: (type, count) => set((state) => {
+        const char = { ...state.character };
+        if (!char.deathSaves) char.deathSaves = { successes: 0, failures: 0 };
+        
+        char.deathSaves[type] = count;
 
-  recoverSlots: () => set((state) => {
-      const slots = state.character.spellSlots || {};
-      const newSlots = {};
-      Object.keys(slots).forEach(lvl => {
-          newSlots[lvl] = { ...slots[lvl], current: slots[lvl].max };
-      });
-      return {
-          character: { 
-              ...state.character, 
-              spellSlots: newSlots, 
-              hp: { ...state.character.hp, current: state.character.hp.max } 
-          },
-          isDirty: true
-      };
-  }),
+        // Auto-Heal Check on Manual Click
+        if (char.deathSaves.successes >= 3) {
+            char.hp.current = 1;
+            char.deathSaves = { successes: 0, failures: 0 };
+        }
 
-  shortRest: (hpRegen) => set((state) => {
-      let newHp = state.character.hp.current + hpRegen;
-      if (newHp > state.character.hp.max) newHp = state.character.hp.max;
-      return {
-          character: { ...state.character, hp: { ...state.character.hp, current: newHp } },
-          isDirty: true
-      };
-  }),
+        return { character: char, isDirty: true };
+    }),
 
-  castSpell: (level) => set((state) => {
-      const slots = state.character.spellSlots || {};
-      const slotData = slots[level];
-      if (slotData && slotData.current > 0) {
-          const newSlots = { ...slots, [level]: { ...slotData, current: slotData.current - 1 } };
-          return { character: { ...state.character, spellSlots: newSlots }, isDirty: true };
-      }
-      return state; 
-  }),
+    // Rolling logic
+    updateDeathSaves: (result) => set((state) => {
+        const char = { ...state.character };
+        if (!char.deathSaves) char.deathSaves = { successes: 0, failures: 0 };
 
-  addItem: (item) => set((state) => ({
-      character: { ...state.character, inventory: [...(state.character.inventory || []), item] },
-      isDirty: true
-  })),
+        if (result === 'reset') {
+            char.deathSaves = { successes: 0, failures: 0 };
+        } else if (result === 'success') {
+            char.deathSaves.successes = Math.min(3, (char.deathSaves.successes || 0) + 1);
+        } else if (result === 'failure') {
+            char.deathSaves.failures = Math.min(3, (char.deathSaves.failures || 0) + 1);
+        } else if (result === 'crit_fail') {
+            char.deathSaves.failures = Math.min(3, (char.deathSaves.failures || 0) + 2);
+        }
 
-  removeItem: (index) => set((state) => {
-      const newInv = [...(state.character.inventory || [])];
-      newInv.splice(index, 1);
-      return { character: { ...state.character, inventory: newInv }, isDirty: true };
-  }),
+        // Auto-Heal Check on Roll
+        if (char.deathSaves.successes >= 3) {
+            char.hp.current = 1;
+            char.deathSaves = { successes: 0, failures: 0 };
+        }
 
-  toggleSkill: (skill) => set((state) => {
-    const newSkills = { ...state.character.skills };
-    newSkills[skill] = !newSkills[skill]; 
-    return { character: { ...state.character, skills: newSkills }, isDirty: true };
-  }),
+        return { character: char, isDirty: true };
+    }),
 
-  markSaved: () => set({ isDirty: false }),
+    updateStat: (stat, value) => set((state) => {
+        const char = { ...state.character };
+        if (!char.stats) char.stats = {};
+        char.stats[stat] = value;
+        return { character: char, isDirty: true };
+    }),
 
-  getModifier: (stat) => {
-      const s = get().character?.stats?.[stat] || 10;
-      return getMod(s);
-  },
+    updateInfo: (field, value) => set((state) => {
+        const char = { ...state.character };
+        char[field] = value;
+        return { character: char, isDirty: true };
+    }),
 
-  getSkillBonus: (skillName, stat) => {
-      const state = get();
-      const char = state.character;
-      if (!char) return 0;
-      const modifier = state.getModifier(stat);
-      const isProficient = char.skills?.[skillName];
-      return modifier + (isProficient ? char.profBonus : 0);
-  }
+    recoverSlots: () => set((state) => ({ isDirty: true })),
+
+    shortRest: (healAmount) => set((state) => {
+        if (!state.character) return {};
+        const char = { ...state.character };
+        const max = char.hp.max;
+        char.hp.current = Math.min(max, char.hp.current + healAmount);
+        return { character: char, isDirty: true };
+    }),
+
+    markSaved: () => set({ isDirty: false }),
+    
+    // FIX: Handle both string and object inputs to prevent [object Object]
+    addLogEntry: (entry) => set((state) => {
+        const msgContent = typeof entry === 'object' && entry.message ? entry.message : entry;
+        return { 
+            logs: [{ id: Date.now(), message: msgContent }, ...(state.logs || [])].slice(0, 5) 
+        };
+    })
 }));
