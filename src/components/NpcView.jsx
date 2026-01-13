@@ -1,9 +1,9 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import Icon from './Icon';
 import CharacterCreator from './ai-wizard/CharacterCreator';
 import SheetContainer from './character-sheet/SheetContainer'; 
 import { useCharacterStore } from '../stores/useCharacterStore';
-import { parsePdf } from '../utils/dndBeyondParser.js'; 
+import { parsePdf } from '../utils/dndBeyondParser.js';
 import { enrichCharacter } from '../utils/srdEnricher.js';
 
 const NpcView = ({ data, setData, role, updateCloud, setChatInput, setView, onPossess, aiHelper, apiKey, edition, onDiceRoll }) => {
@@ -11,13 +11,11 @@ const NpcView = ({ data, setData, role, updateCloud, setChatInput, setView, onPo
     const [viewingNpcId, setViewingNpcId] = useState(null);
     const [showCreationMenu, setShowCreationMenu] = useState(false);
     const [showAiCreator, setShowAiCreator] = useState(false);
-    
     // Compendium State
     const [showCompendium, setShowCompendium] = useState(false);
     const [compendiumSearch, setCompendiumSearch] = useState("");
     const [compendiumResults, setCompendiumResults] = useState([]);
     const [isLoadingCompendium, setIsLoadingCompendium] = useState(false);
-    
     // Debug & Tools State
     const [showDebug, setShowDebug] = useState(false);
     const [debugOutput, setDebugOutput] = useState("");
@@ -26,6 +24,10 @@ const NpcView = ({ data, setData, role, updateCloud, setChatInput, setView, onPo
     const fileInputRef = useRef(null);
     const debugInputRef = useRef(null); 
     const addLogEntry = useCharacterStore((state) => state.addLogEntry);
+
+    // --- STALE STATE FIX ---
+    const dataRef = useRef(data);
+    useEffect(() => { dataRef.current = data; }, [data]);
 
     // Safety check for data
     const npcs = (data?.npcs || []).filter(n => n && n.id);
@@ -46,8 +48,15 @@ const NpcView = ({ data, setData, role, updateCloud, setChatInput, setView, onPo
 
     // --- SAVE / UPDATE ---
     const handleSheetSave = (updatedNpc) => {
-        const newNpcs = npcs.map(n => n.id === updatedNpc.id ? updatedNpc : n);
-        updateCloud({ ...data, npcs: newNpcs });
+        // Use dataRef to get the LATEST NPC list, avoiding overwrites
+        const currentData = dataRef.current;
+        const currentNpcs = (currentData.npcs || []).filter(n => n && n.id);
+        
+        // FIX: Use String() for safe ID comparison
+        const newNpcs = currentNpcs.map(n => String(n.id) === String(updatedNpc.id) ? updatedNpc : n);
+        
+        // FIX: Added ', true' to force save to DB
+        updateCloud({ ...currentData, npcs: newNpcs }, true);
     };
 
     const handleNpcComplete = (npcData) => {
@@ -57,8 +66,12 @@ const NpcView = ({ data, setData, role, updateCloud, setChatInput, setView, onPo
             ...npcData,
             id: Date.now()
         };
-        const newNpcs = [...npcs, newNpc];
-        updateCloud({ ...data, npcs: newNpcs });
+        const currentData = dataRef.current;
+        const currentNpcs = (currentData.npcs || []).filter(n => n && n.id);
+        const newNpcs = [...currentNpcs, newNpc];
+        
+        // FIX: Added ', true'
+        updateCloud({ ...currentData, npcs: newNpcs }, true);
         
         setShowAiCreator(false);
         setShowCreationMenu(false);
@@ -109,9 +122,7 @@ const NpcView = ({ data, setData, role, updateCloud, setChatInput, setView, onPo
             const acVal = Array.isArray(m.armor_class) ? m.armor_class[0].value : m.armor_class;
             
             // Speed Parsing (e.g. { walk: "40 ft." } -> "40 ft.")
-            const speedStr = typeof m.speed === 'object' ? 
-                Object.entries(m.speed).map(([k,v]) => `${k} ${v}`).join(', ') : 
-                m.speed;
+            const speedStr = typeof m.speed === 'object' ? Object.entries(m.speed).map(([k,v]) => `${k} ${v}`).join(', ') : m.speed;
 
             // Senses Parsing
             const sensesObj = {
@@ -230,15 +241,22 @@ const NpcView = ({ data, setData, role, updateCloud, setChatInput, setView, onPo
     const deleteNpc = (id, e) => {
         e.stopPropagation(); 
         if(!confirm("Delete this NPC?")) return;
-        const newNpcs = npcs.filter(n => n.id !== id); 
-        updateCloud({ ...data, npcs: newNpcs }, true); 
+        
+        const currentData = dataRef.current;
+        const currentNpcs = (currentData.npcs || []).filter(n => n && n.id);
+        const newNpcs = currentNpcs.filter(n => n.id !== id); 
+        updateCloud({ ...currentData, npcs: newNpcs }, true); 
     };
-    
+
     const toggleHidden = (npc, e) => {
         e.stopPropagation();
         const updated = { ...npc, isHidden: !npc.isHidden }; 
-        const newNpcs = npcs.map(n => n.id === npc.id ? updated : n); 
-        updateCloud({ ...data, npcs: newNpcs }); 
+        const currentData = dataRef.current;
+        const currentNpcs = (currentData.npcs || []).filter(n => n && n.id);
+        const newNpcs = currentNpcs.map(n => n.id === npc.id ? updated : n);
+        
+        // FIX: Added ', true'
+        updateCloud({ ...currentData, npcs: newNpcs }, true); 
     };
 
     const openSheet = (npc) => {
@@ -313,14 +331,13 @@ const NpcView = ({ data, setData, role, updateCloud, setChatInput, setView, onPo
                 </div>
             </div>
 
-            {/* --- CREATION HUB MODAL --- */}
+            {/* CREATION HUB MODAL */}
             {showCreationMenu && (
                 <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
                     <div className="max-w-5xl w-full bg-slate-900 rounded-xl overflow-hidden shadow-2xl relative border border-slate-700">
                         <button onClick={() => setShowCreationMenu(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white"><Icon name="x" size={24}/></button>
                         <div className="p-8 text-center">
                             <h2 className="text-3xl fantasy-font text-amber-500 mb-2">Summon an Entity</h2>
-                            
                             {isProcessing ? (
                                 <div className="py-12 flex flex-col items-center gap-4">
                                     <div className="w-12 h-12 border-4 border-amber-500 border-t-transparent rounded-full animate-spin"></div>
@@ -341,21 +358,18 @@ const NpcView = ({ data, setData, role, updateCloud, setChatInput, setView, onPo
                                             <h3 className="font-bold text-white">5e API</h3>
                                             <p className="text-[10px] text-slate-400">Search Database.</p>
                                         </div>
-                                        
                                         <div onClick={() => debugInputRef.current.click()} className="bg-slate-800 border-2 border-slate-700 hover:border-amber-500 rounded-xl p-4 cursor-pointer group transition-all hover:-translate-y-1">
                                             <div className="w-12 h-12 bg-amber-900/30 text-amber-500 rounded-full flex items-center justify-center mx-auto mb-2"><Icon name="bug" size={24}/></div>
                                             <h3 className="font-bold text-white">Debug Parser</h3>
                                             <p className="text-[10px] text-slate-400">View Raw PDF JSON.</p>
                                             <input type="file" accept=".pdf" className="hidden" ref={debugInputRef} onChange={handleDebugPdf}/>
                                         </div>
-                                        
                                         <div onClick={() => fileInputRef.current.click()} className="bg-slate-800 border-2 border-slate-700 hover:border-red-500 rounded-xl p-4 cursor-pointer group transition-all hover:-translate-y-1">
                                             <div className="w-12 h-12 bg-red-900/30 text-red-500 rounded-full flex items-center justify-center mx-auto mb-2"><Icon name="file-text" size={24}/></div>
                                             <h3 className="font-bold text-white">PDF</h3>
                                             <p className="text-[10px] text-slate-400">Import + SRD Enrich.</p>
                                             <input type="file" accept=".pdf" className="hidden" ref={fileInputRef} onChange={handlePdfImport}/>
                                         </div>
-                                        
                                         <div onClick={() => { setShowCreationMenu(false); setShowAiCreator(true); }} className="bg-slate-800 border-2 border-slate-700 hover:border-purple-500 rounded-xl p-4 cursor-pointer group transition-all hover:-translate-y-1">
                                             <div className="w-12 h-12 bg-purple-900/30 text-purple-500 rounded-full flex items-center justify-center mx-auto mb-2"><Icon name="sparkles" size={24}/></div>
                                             <h3 className="font-bold text-white">AI Forge</h3>
@@ -368,8 +382,6 @@ const NpcView = ({ data, setData, role, updateCloud, setChatInput, setView, onPo
                     </div>
                 </div>
             )}
-
-            {/* --- COMPENDIUM MODAL (D&D 5E API) --- */}
             {showCompendium && (
                 <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
                     <div className="max-w-xl w-full bg-slate-900 rounded-xl border border-slate-700 shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
@@ -379,30 +391,15 @@ const NpcView = ({ data, setData, role, updateCloud, setChatInput, setView, onPo
                         </div>
                         <div className="p-4 border-b border-slate-700">
                             <div className="flex gap-2">
-                                <input 
-                                    autoFocus
-                                    value={compendiumSearch} 
-                                    onChange={(e) => setCompendiumSearch(e.target.value)} 
-                                    onKeyDown={(e) => e.key === 'Enter' && searchCompendium()}
-                                    placeholder="Search (e.g. Owlbear, Lich)..." 
-                                    className="flex-1 bg-slate-950 border border-slate-600 rounded px-3 py-2 text-white outline-none focus:border-blue-500"
-                                />
-                                <button onClick={searchCompendium} disabled={isLoadingCompendium} className="bg-blue-600 hover:bg-blue-500 px-4 rounded text-white font-bold">
-                                    {isLoadingCompendium ? <Icon name="loader" size={18} className="animate-spin"/> : <Icon name="search" size={18}/>}
-                                </button>
+                                <input autoFocus value={compendiumSearch} onChange={(e) => setCompendiumSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && searchCompendium()} placeholder="Search (e.g. Owlbear, Lich)..." className="flex-1 bg-slate-950 border border-slate-600 rounded px-3 py-2 text-white outline-none focus:border-blue-500"/>
+                                <button onClick={searchCompendium} disabled={isLoadingCompendium} className="bg-blue-600 hover:bg-blue-500 px-4 rounded text-white font-bold">{isLoadingCompendium ? <Icon name="loader" size={18} className="animate-spin"/> : <Icon name="search" size={18}/>}</button>
                             </div>
                         </div>
                         <div className="flex-1 overflow-y-auto p-2 space-y-2 bg-slate-900">
                             {compendiumResults.map(r => (
-                                <div 
-                                    key={r.index} 
-                                    onClick={() => importFromApi(r.url)} 
-                                    className="p-3 bg-slate-800 border border-slate-700 rounded hover:border-blue-500 cursor-pointer flex justify-between items-center group"
-                                >
+                                <div key={r.index} onClick={() => importFromApi(r.url)} className="p-3 bg-slate-800 border border-slate-700 rounded hover:border-blue-500 cursor-pointer flex justify-between items-center group">
                                     <div className="font-bold text-white group-hover:text-blue-400 capitalize">{r.name}</div>
-                                    <div className="text-xs text-slate-500 flex items-center gap-1 group-hover:text-blue-300">
-                                        Import <Icon name="download" size={14}/>
-                                    </div>
+                                    <div className="text-xs text-slate-500 flex items-center gap-1 group-hover:text-blue-300">Import <Icon name="download" size={14}/></div>
                                 </div>
                             ))}
                             {compendiumResults.length === 0 && !isLoadingCompendium && <div className="text-center text-slate-500 py-8 italic">Search for a creature to begin.</div>}
@@ -410,8 +407,6 @@ const NpcView = ({ data, setData, role, updateCloud, setChatInput, setView, onPo
                     </div>
                 </div>
             )}
-
-            {/* --- DEBUG MODAL --- */}
             {showDebug && (
                 <div className="fixed inset-0 z-[60] bg-black/90 flex items-center justify-center p-4 backdrop-blur-md">
                     <div className="max-w-4xl w-full bg-slate-900 rounded-xl border border-amber-500/50 shadow-2xl flex flex-col max-h-[90vh]">
@@ -420,23 +415,12 @@ const NpcView = ({ data, setData, role, updateCloud, setChatInput, setView, onPo
                             <button onClick={() => setShowDebug(false)} className="text-slate-400 hover:text-white"><Icon name="x" size={20}/></button>
                         </div>
                         <div className="flex-1 p-0 overflow-hidden relative">
-                            <textarea 
-                                readOnly 
-                                value={debugOutput} 
-                                className="w-full h-full bg-slate-950 text-green-400 font-mono text-xs p-4 resize-none outline-none custom-scroll"
-                            />
-                            <button 
-                                onClick={() => { navigator.clipboard.writeText(debugOutput); alert("Copied to clipboard!"); }}
-                                className="absolute top-4 right-4 bg-slate-800 hover:bg-slate-700 text-white text-xs px-3 py-1 rounded border border-slate-600 shadow-lg"
-                            >
-                                Copy JSON
-                            </button>
+                            <textarea readOnly value={debugOutput} className="w-full h-full bg-slate-950 text-green-400 font-mono text-xs p-4 resize-none outline-none custom-scroll"/>
+                            <button onClick={() => { navigator.clipboard.writeText(debugOutput); alert("Copied to clipboard!"); }} className="absolute top-4 right-4 bg-slate-800 hover:bg-slate-700 text-white text-xs px-3 py-1 rounded border border-slate-600 shadow-lg">Copy JSON</button>
                         </div>
                     </div>
                 </div>
             )}
-
-            {/* --- AI CREATOR --- */}
             {showAiCreator && (
                 <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
                     <div className="max-w-2xl w-full bg-slate-900 rounded-xl overflow-hidden shadow-2xl relative border border-slate-700 h-[90vh]">

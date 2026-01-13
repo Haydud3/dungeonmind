@@ -2,10 +2,10 @@ import React, { useRef, useEffect, useState } from 'react';
 import Icon from './Icon';
 import Token from './Token';
 import SheetContainer from './character-sheet/SheetContainer';
+import CharacterCreator from './ai-wizard/CharacterCreator'; 
 import { useCharacterStore } from '../stores/useCharacterStore';
 
-const GRID_SIZE_DEFAULT = 5; 
-
+const GRID_SIZE_DEFAULT = 5;
 // CONFIG
 const GOOGLE_SEARCH_CX = "c38cb56920a4f45df"; 
 const GOOGLE_SEARCH_KEY = "AIzaSyBooM1Sk4A37qkWwADGXqwToVGRYgFOeY8"; 
@@ -13,39 +13,40 @@ const GOOGLE_SEARCH_KEY = "AIzaSyBooM1Sk4A37qkWwADGXqwToVGRYgFOeY8";
 const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDiceRoll }) => {
     const canvasRef = useRef(null);
     const containerRef = useRef(null);
+    
+    // --- STALE STATE FIX ---
+    const dataRef = useRef(data);
+    useEffect(() => { dataRef.current = data; }, [data]);
 
     // --- STATE ---
-    const [mode, setMode] = useState('move'); 
+    const [mode, setMode] = useState('move');
     const [isDrawing, setIsDrawing] = useState(false);
     const [brushSize, setBrushSize] = useState(40);
-    
     // Transform State
     const [zoom, setZoom] = useState(1);
     const [pan, setPan] = useState({ x: 0, y: 0 });
     const [isPanning, setIsPanning] = useState(false);
     const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
-
     // Stage State
-    const [stageDim, setStageDim] = useState({ w: 800, h: 600, left: 0, top: 0 }); 
+    const [stageDim, setStageDim] = useState({ w: 800, h: 600, left: 0, top: 0 });
     const [imgRatio, setImgRatio] = useState(1); 
 
     // Logic State
-    const [dragTokenId, setDragTokenId] = useState(null); 
+    const [dragTokenId, setDragTokenId] = useState(null);
     const [tempTokenPos, setTempTokenPos] = useState(null); 
     const [dragStartPos, setDragStartPos] = useState(null); 
     const [selectedTokenId, setSelectedTokenId] = useState(null);
-    const [activeSheetId, setActiveSheetId] = useState(null); 
-
+    const [activeSheetId, setActiveSheetId] = useState(null);
     const [showTokenBar, setShowTokenBar] = useState(false);
-    const [showMapBar, setShowMapBar] = useState(false); 
-    
+    const [showMapBar, setShowMapBar] = useState(false);
+    const [showAiCreator, setShowAiCreator] = useState(false); 
+
     // Grid State
     const [showGrid, setShowGrid] = useState(true);
     const [snapToGrid, setSnapToGrid] = useState(true);
     const [gridSize, setGridSize] = useState(GRID_SIZE_DEFAULT);
     const [measureStart, setMeasureStart] = useState(null); 
     const [measureEnd, setMeasureEnd] = useState(null);
-
     // Search State
     const [searchQuery, setSearchQuery] = useState("");
     const [searchResults, setSearchResults] = useState([]);
@@ -56,7 +57,7 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
     const mapUrl = data.campaign?.activeMap?.url;
     const revealPaths = data.campaign?.activeMap?.revealPaths || [];
     const tokens = data.campaign?.activeMap?.tokens || []; 
-    const savedMaps = data.campaign?.savedMaps || []; 
+    const savedMaps = data.campaign?.savedMaps || [];
 
     // --- 1. SETUP ---
     useEffect(() => {
@@ -144,30 +145,35 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
     // --- INPUTS ---
     const handleDown = (e) => {
         if (mode === 'pan' || e.button === 2 || (e.button === 0 && e.getModifierState && e.getModifierState('Space'))) {
-            setIsPanning(true); setDragStart({ x: e.clientX - pan.x, y: e.clientY - pan.y }); return;
+            setIsPanning(true);
+            setDragStart({ x: e.clientX - pan.x, y: e.clientY - pan.y }); return;
         }
         const coords = getCoords(e);
         if (mode === 'ruler' || mode === 'radius') {
             const start = snapToGrid ? { x: snapCoordinate(coords.x, false), y: snapCoordinate(coords.y, true) } : coords;
             setMeasureStart(start); setMeasureEnd(start); setIsDrawing(true);
         } else if (role === 'dm' && (mode === 'reveal' || mode === 'shroud')) {
-            setIsDrawing(true); updateMapState('start_path', { mode, size: brushSize * (1000/stageDim.w), points: [coords] });
+            setIsDrawing(true);
+            updateMapState('start_path', { mode, size: brushSize * (1000/stageDim.w), points: [coords] });
         } else {
-            setSelectedTokenId(null);
+            // Note: We don't clear selectedTokenId here immediately to allow seamless switching
         }
     };
 
     const handleMove = (e) => {
-        if (isPanning) { e.preventDefault(); setPan({ x: e.clientX - dragStart.x, y: e.clientY - dragStart.y }); return; }
+        if (isPanning) { e.preventDefault();
+            setPan({ x: e.clientX - dragStart.x, y: e.clientY - dragStart.y }); return;
+        }
         const coords = getCoords(e);
         if (dragTokenId) { 
-            e.preventDefault(); 
-            setTempTokenPos({ x: coords.x * 100, y: coords.y * 100 }); 
+            e.preventDefault();
+            setTempTokenPos({ x: coords.x * 100, y: coords.y * 100 });
         } else if (isDrawing) {
             if (mode === 'ruler' || mode === 'radius') {
                 setMeasureEnd(snapToGrid ? { x: snapCoordinate(coords.x, false), y: snapCoordinate(coords.y, true) } : coords);
             } else if (role === 'dm') {
-                e.preventDefault(); updateMapState('append_point', coords);
+                e.preventDefault();
+                updateMapState('append_point', coords);
             }
         }
     };
@@ -176,12 +182,13 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
         if (isPanning) { setIsPanning(false); return; }
         const coords = getCoords(e);
         setIsDrawing(false);
-
         if (dragTokenId) {
             const dx = Math.abs(coords.x - dragStartPos.x);
             const dy = Math.abs(coords.y - dragStartPos.y);
+            // CHECK IF CLICK (Not Drag)
             if (Math.hypot(dx, dy) < 0.005) {
-                setSelectedTokenId(dragTokenId); 
+                setSelectedTokenId(dragTokenId);
+                openTokenSheet(dragTokenId); 
             } else {
                 let fx = coords.x;
                 let fy = coords.y;
@@ -194,12 +201,20 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
             }
             setDragTokenId(null); setDragStartPos(null); setTempTokenPos(null);
         } else if (mode === 'ruler' || mode === 'radius') {
-            setMeasureStart(null); setMeasureEnd(null);
+            setMeasureStart(null);
+            setMeasureEnd(null);
+        } else {
+            // If we clicked empty space (no dragTokenId), clear selection
+            const isTokenClick = e.target.closest('.token-element');
+            if(!isTokenClick) {
+                setSelectedTokenId(null);
+            }
         }
     };
 
     const handleTokenDragStart = (e, id) => {
-        e.stopPropagation(); e.preventDefault();
+        e.stopPropagation();
+        e.preventDefault();
         setDragTokenId(id);
         const pos = getCoords(e);
         setDragStartPos(pos);
@@ -207,19 +222,99 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
     };
 
     // --- MANAGERS ---
+    
+    // UPDATED: Manages "First vs Clone" logic for NPCs
     const addToken = (src, type) => {
-        const nt = { id: Date.now(), x: 50, y: 50, name: src.name, image: src.image||'', type, size: 'medium', characterId: src.id||null, statuses: [] };
-        updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...data.campaign.activeMap, tokens: [...tokens, nt] } } });
+        let finalCharId = src.id;
+        let newNpcs = [...(dataRef.current.npcs || [])];
+    
+        // 1. GENERIC / QUICK ADD (No ID yet) - Always new
+        if (!src.id) {
+            const newId = Date.now();
+            const newNpc = {
+                name: src.name,
+                hp: { current: 10, max: 10 },
+                stats: { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 },
+                ...src,
+                id: newId
+            };
+            newNpcs.push(newNpc);
+            finalCharId = newId;
+        }
+        // 2. PLAYER CHARACTERS - Always Link to Original (Party Tab)
+        else if (type === 'pc') {
+            finalCharId = src.id;
+        }
+        // 3. NPCS / MONSTERS - Conditional Logic
+        else if (type === 'npc' || type === 'monster') {
+            // Check if the ORIGINAL ID is already on the map
+            const originalAlreadyOnMap = tokens.some(t => t.characterId === src.id);
+
+            if (originalAlreadyOnMap) {
+                // SUBSEQUENT TOKENS: Create a Clone (Instance) with Reset HP
+                const instanceId = Date.now();
+                const instanceNpc = {
+                    ...src, // Copy current stats (even if modified)
+                    id: instanceId, // New ID
+                    hp: { 
+                        ...src.hp, 
+                        current: src.hp.max || 10 // FORCE RESET HP TO MAX
+                    },
+                    isInstance: true,
+                    originalId: src.id
+                };
+                newNpcs.push(instanceNpc);
+                finalCharId = instanceId;
+            } else {
+                // FIRST TOKEN: Connect directly to the Bestiary Original
+                finalCharId = src.id;
+            }
+        }
+    
+        const nt = { 
+            id: Date.now() + 1, 
+            x: 50, 
+            y: 50, 
+            name: src.name, 
+            image: src.image || '', 
+            type, 
+            size: src.size || 'medium', 
+            characterId: finalCharId, 
+            statuses: [] 
+        };
+    
+        updateCloud({ 
+            ...dataRef.current, 
+            npcs: newNpcs,
+            campaign: { 
+                ...dataRef.current.campaign, 
+                activeMap: { 
+                    ...dataRef.current.campaign.activeMap, 
+                    tokens: [...tokens, nt] 
+                } 
+            } 
+        });
+        
         setShowTokenBar(false);
     };
+
     const updateTokenSize = (id, sz) => updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...data.campaign.activeMap, tokens: tokens.map(t => t.id===id ? {...t, size: sz} : t) } } });
+    
     const updateTokenStatus = (id, st) => {
-        const t = tokens.find(x => x.id === id); if(!t) return;
+        const t = tokens.find(x => x.id === id);
+        if(!t) return;
         const s = t.statuses || [];
         const ns = s.includes(st) ? s.filter(x => x !== st) : [...s, st];
         updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...data.campaign.activeMap, tokens: tokens.map(x => x.id===id ? {...x, statuses: ns} : x) } } });
     };
-    const deleteToken = (id) => { if(confirm("Delete?")) updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...data.campaign.activeMap, tokens: tokens.filter(t => t.id!==id) } } }); setSelectedTokenId(null); };
+
+    const deleteToken = (id) => { 
+        if(confirm("Delete?")) {
+            const token = tokens.find(t => t.id === id);
+            updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...data.campaign.activeMap, tokens: tokens.filter(t => t.id!==id) } } });
+        }
+        setSelectedTokenId(null); 
+    };
     
     // --- MAP LIBRARY FUNCTIONS ---
     const handleSearch = async () => {
@@ -235,20 +330,17 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
     };
 
     const loadMap = (url, name="New Map") => {
-        // 1. Add to Saved Maps if not exists
         const exists = savedMaps.find(m => m.url === url);
         let newSavedMaps = savedMaps;
         if(!exists) {
             newSavedMaps = [...savedMaps, { id: Date.now(), name: name || `Map ${savedMaps.length+1}`, url }];
         }
         
-        // 2. Load as Active Map
         const newActiveMap = { 
             url: url, 
             revealPaths: [], 
-            tokens: [] // Option: Keep tokens? Usually better to clear on new map
+            tokens: [] 
         };
-
         updateCloud({ 
             ...data, 
             campaign: { 
@@ -269,10 +361,28 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
     const openTokenSheet = (tokenId) => {
         const token = tokens.find(t => t.id === tokenId);
         if (!token) return;
-        const myCharId = data.assignments?.[user?.uid];
-        if (role === 'dm' || token.characterId === myCharId) {
-            const char = data.players?.find(p => p.id === token.characterId) || data.npcs?.find(n => n.id === token.characterId);
-            if(char) { useCharacterStore.getState().loadCharacter(char); setActiveSheetId(char.id); setSelectedTokenId(null); } else { alert("No sheet attached."); }
+        
+        // Lookup in Ref to ensure we have latest list if data changed recently
+        const currentData = dataRef.current;
+        const char = currentData.players?.find(p => p.id === token.characterId) || currentData.npcs?.find(n => n.id === token.characterId);
+        
+        if(char) { 
+            // FIX: Force Unmount-Remount Sequence to prevent store race condition
+            // 1. Unmount current sheet (triggers onSave for old char)
+            if (activeSheetId && activeSheetId !== char.id) {
+                setActiveSheetId(null); 
+                setTimeout(() => {
+                    // 2. Load NEW char into store
+                    useCharacterStore.getState().loadCharacter(char); 
+                    // 3. Mount NEW sheet
+                    setActiveSheetId(char.id); 
+                }, 50); 
+            } else {
+                useCharacterStore.getState().loadCharacter(char); 
+                setActiveSheetId(char.id); 
+            }
+        } else { 
+            alert("No sheet attached.");
         }
     };
 
@@ -288,7 +398,7 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
 
         // FOG
         ctx.save();
-        ctx.fillStyle = 'rgba(0, 0, 0, 1)'; 
+        ctx.fillStyle = 'rgba(0, 0, 0, 1)';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.lineCap = 'round'; ctx.lineJoin = 'round';
         revealPaths.forEach(path => {
@@ -349,21 +459,26 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
             const distFt = Math.round((distPx / cellPx) * 5);
 
             ctx.save();
-            ctx.strokeStyle = '#f59e0b'; ctx.lineWidth = 3 / zoom; ctx.setLineDash([10, 5]);
+            ctx.strokeStyle = '#f59e0b';
+            ctx.lineWidth = 3 / zoom; ctx.setLineDash([10, 5]);
             ctx.beginPath();
             if(mode === 'ruler') {
-                ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke();
+                ctx.moveTo(sx, sy);
+                ctx.lineTo(ex, ey); ctx.stroke();
             } else {
-                ctx.arc(sx, sy, distPx, 0, 2*Math.PI); ctx.stroke();
+                ctx.arc(sx, sy, distPx, 0, 2*Math.PI);
+                ctx.stroke();
                 ctx.fillStyle = 'rgba(245, 158, 11, 0.2)'; ctx.fill();
                 ctx.beginPath(); ctx.setLineDash([]); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke();
             }
             
-            ctx.fillStyle = '#1e293b'; ctx.font = `bold ${16/zoom}px sans-serif`;
+            ctx.fillStyle = '#1e293b';
+            ctx.font = `bold ${16/zoom}px sans-serif`;
             const tm = ctx.measureText(`${distFt} ft`);
             const lx = mode==='ruler'?(sx+ex)/2:ex; const ly = mode==='ruler'?(sy+ey)/2:ey;
             ctx.fillRect(lx - tm.width/2 - 4, ly - 14, tm.width + 8, 28);
-            ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
             ctx.fillText(`${distFt} ft`, lx, ly);
             ctx.restore();
         }
@@ -377,7 +492,6 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
             <div className="p-2 bg-slate-800 border-b border-slate-700 flex flex-wrap gap-2 items-center shrink-0 z-30 shadow-md">
                 {role === 'dm' && (
                     <div className="flex gap-2">
-                        {/* RESTORED: Maps Button */}
                         <button onClick={() => setShowMapBar(!showMapBar)} className={`px-3 py-1.5 rounded text-xs font-bold border ${showMapBar ? 'bg-amber-600 border-amber-500 text-white' : 'bg-slate-700 border-slate-600 text-slate-300'}`}><Icon name="map" size={14}/> Maps</button>
                     </div>
                 )}
@@ -397,7 +511,7 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
                 <button onClick={() => setShowTokenBar(!showTokenBar)} className="p-1.5 px-3 rounded bg-slate-700 text-slate-300 flex items-center gap-2 text-xs font-bold hover:text-white"><Icon name="users" size={16}/> Tokens</button>
             </div>
 
-            {/* RESTORED: Map Library Sidebar */}
+            {/* Map Library Sidebar */}
             {showMapBar && (
                 <div className="absolute top-14 left-2 z-50 w-80 bg-slate-900/95 backdrop-blur border border-slate-600 rounded-lg shadow-2xl flex flex-col max-h-[85%] overflow-hidden animate-in slide-in-from-left-2">
                     <div className="p-3 border-b border-slate-700 flex justify-between items-center bg-slate-800">
@@ -406,13 +520,11 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
                     </div>
                     
                     <div className="p-4 border-b border-slate-700 space-y-3">
-                        {/* Search */}
                         <div className="flex gap-1">
                             <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSearch()} placeholder="Search (e.g. 'Cave')" className="flex-1 bg-slate-800 border border-slate-600 rounded px-2 py-1 text-xs text-white"/>
                             <button onClick={handleSearch} className="bg-indigo-600 px-2 rounded text-white"><Icon name="search" size={14}/></button>
                         </div>
                         
-                        {/* Results */}
                         {isSearching ? <div className="text-center text-xs py-2 text-slate-400">Searching...</div> : (
                             searchResults.length > 0 ? (
                                 <div className="grid grid-cols-3 gap-2">
@@ -425,14 +537,12 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
                             )
                         )}
 
-                        {/* URL Upload */}
                         <div className="flex gap-2">
                             <input value={mapUploadUrl} onChange={e => setMapUploadUrl(e.target.value)} placeholder="Paste Image URL" className="flex-1 bg-slate-800 border border-slate-600 rounded px-2 py-1 text-xs text-white"/>
                             <button onClick={() => { if(mapUploadUrl) { loadMap(mapUploadUrl, "Uploaded Map"); setMapUploadUrl(""); } }} className="bg-green-700 px-2 rounded text-white text-xs font-bold">Add</button>
                         </div>
                     </div>
 
-                    {/* Saved Maps List */}
                     <div className="flex-1 overflow-y-auto p-2 space-y-2">
                         {savedMaps.map(m => (
                             <div key={m.id} className="group relative flex items-center gap-3 bg-slate-800 hover:bg-slate-700 p-2 rounded border border-slate-700">
@@ -454,10 +564,32 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
             {showTokenBar && (
                 <div className="absolute top-14 right-2 md:left-32 md:right-auto z-40 w-64 bg-slate-900/95 backdrop-blur border border-slate-600 rounded-lg shadow-2xl flex flex-col max-h-[80%] overflow-hidden animate-in slide-in-from-left-2">
                     <div className="p-3 border-b border-slate-700 flex justify-between items-center"><span className="font-bold text-slate-200">Token Box</span><button onClick={() => setShowTokenBar(false)}><Icon name="x" size={16}/></button></div>
+                    
+                    {/* CREATE ENTITY BUTTON */}
+                    <div className="p-2 border-b border-slate-700">
+                        <button 
+                            onClick={() => { setShowAiCreator(true); setShowTokenBar(false); }}
+                            className="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-2 rounded text-xs font-bold flex items-center justify-center gap-2 shadow-lg"
+                        >
+                            <Icon name="plus" size={14}/> Create Entity
+                        </button>
+                    </div>
+
                     <div className="overflow-y-auto p-2 space-y-4">
                         <div><div className="text-[10px] uppercase font-bold text-slate-500 mb-2">Quick Add</div><button onClick={() => addToken({name: "Monster", image: ""}, 'monster')} className="w-full bg-red-900/50 hover:bg-red-800 border border-red-700 rounded p-2 flex items-center gap-2 text-xs text-red-100">Generic Monster</button></div>
                         <div><div className="text-[10px] uppercase font-bold text-slate-500 mb-2">Party</div><div className="grid grid-cols-2 gap-2">{data.players.map(p => (<div key={p.id} onClick={() => addToken(p, 'pc')} className="cursor-pointer bg-slate-800 hover:bg-slate-700 p-2 rounded border border-slate-700 flex flex-col items-center"><img src={p.image || `https://ui-avatars.com/api/?name=${p.name}`} className="w-8 h-8 rounded-full mb-1 object-cover"/><span className="text-[10px] truncate w-full text-center">{p.name}</span></div>))}</div></div>
-                        <div><div className="text-[10px] uppercase font-bold text-slate-500 mb-2">NPCs</div><div className="space-y-1">{data.npcs.map(n => (<button key={n.id} onClick={() => addToken(n, 'npc')} className="w-full text-left text-xs p-2 hover:bg-slate-800 rounded truncate flex items-center gap-2"><Icon name="user" size={12}/> {n.name}</button>))}</div></div>
+                        
+                        {/* NPC List */}
+                        <div>
+                            <div className="text-[10px] uppercase font-bold text-slate-500 mb-2">NPCs</div>
+                            <div className="space-y-1">
+                                {data.npcs.filter(n => !n.isInstance).map(n => (
+                                    <button key={n.id} onClick={() => addToken(n, 'npc')} className="w-full text-left text-xs p-2 hover:bg-slate-800 rounded truncate flex items-center gap-2">
+                                        <Icon name="user" size={12}/> {n.name}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
                     </div>
                 </div>
             )}
@@ -484,7 +616,37 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
             {/* Sheet Popup */}
             {activeSheetId && (
                 <div className="absolute top-14 right-2 bottom-4 w-96 bg-slate-900 border border-slate-600 rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden animate-in slide-in-from-right-10">
-                    <SheetContainer characterId={activeSheetId} onSave={(updated) => { const isPc = data.players.some(p => p.id === updated.id); if(isPc) updateCloud({...data, players: data.players.map(p => p.id === updated.id ? updated : p)}); else updateCloud({...data, npcs: data.npcs.map(n => n.id === updated.id ? updated : n)}); }} onBack={() => setActiveSheetId(null)} onDiceRoll={onDiceRoll} onLogAction={(msg) => console.log(msg)} />
+                    <SheetContainer 
+                        key={activeSheetId} 
+                        characterId={activeSheetId} 
+                        onSave={(updated) => { 
+                            // UPDATED: Robust Save Logic - Searches both lists to update the correct ID
+                            const current = dataRef.current;
+                            
+                            // 1. Check Players
+                            const pIndex = current.players.findIndex(p => String(p.id) === String(updated.id));
+                            if (pIndex > -1) {
+                                const newPlayers = [...current.players];
+                                newPlayers[pIndex] = updated;
+                                // FIX: Added ', true' to updateCloud to ensure persist
+                                updateCloud({ ...current, players: newPlayers }, true);
+                                return;
+                            }
+                            
+                            // 2. Check NPCs (including instances)
+                            const nIndex = current.npcs.findIndex(n => String(n.id) === String(updated.id));
+                            if (nIndex > -1) {
+                                const newNpcs = [...current.npcs];
+                                newNpcs[nIndex] = updated;
+                                // FIX: Added ', true' to updateCloud to ensure persist
+                                updateCloud({ ...current, npcs: newNpcs }, true);
+                                return;
+                            }
+                        }} 
+                        onBack={() => setActiveSheetId(null)} 
+                        onDiceRoll={onDiceRoll} 
+                        onLogAction={(msg) => console.log(msg)} 
+                    />
                 </div>
             )}
 
@@ -492,7 +654,9 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
             <div 
                 ref={containerRef} 
                 className={`flex-1 relative overflow-hidden flex items-center justify-center bg-black touch-none ${mode==='pan' || isPanning ? 'cursor-grab active:cursor-grabbing' : 'cursor-crosshair'}`}
-                onMouseDown={handleDown} onMouseMove={handleMove} onMouseUp={handleUp} onMouseLeave={handleUp} onWheel={(e) => e.preventDefault()}
+                onMouseDown={handleDown} onMouseMove={handleMove} onMouseUp={handleUp} 
+                // REMOVED onMouseLeave to prevent menu disappearance
+                onWheel={(e) => e.preventDefault()}
                 onTouchStart={handleDown} onTouchMove={handleMove} onTouchEnd={handleUp}
                 onContextMenu={(e) => e.preventDefault()}
             >
@@ -513,7 +677,7 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
                             {tokens.map(token => {
                                 const canMove = role === 'dm' || mode === 'move'; 
                                 return (
-                                    <div key={token.id} className="pointer-events-auto">
+                                    <div key={token.id} className="pointer-events-auto token-element">
                                         <Token 
                                             token={token} isOwner={canMove} cellPx={cellPx}
                                             isDragging={dragTokenId === token.id}
@@ -530,6 +694,25 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
                     <div className="text-slate-500 flex flex-col items-center"><Icon name="map" size={48} className="mb-2 opacity-20"/><p>No Map Loaded</p></div>
                 )}
             </div>
+
+            {/* NEW: AI CREATOR MODAL (Called from Token Box) */}
+            {showAiCreator && (
+                <div className="fixed inset-0 z-[60] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm">
+                    <div className="max-w-2xl w-full bg-slate-900 rounded-xl overflow-hidden shadow-2xl relative border border-slate-700 h-[90vh]">
+                        <CharacterCreator 
+                            aiHelper={data.aiHelper} // Pass the helper if available, or rely on App.jsx context
+                            apiKey={apiKey} 
+                            edition={data.config?.edition}
+                            onCancel={() => setShowAiCreator(false)}
+                            onComplete={(newNpc) => {
+                                const npcWithId = { ...newNpc, id: Date.now() };
+                                updateCloud({ ...data, npcs: [...data.npcs, npcWithId] });
+                                setShowAiCreator(false);
+                            }} 
+                        />
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

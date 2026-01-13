@@ -1,19 +1,23 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import Icon from './Icon';
 import CharacterCreator from './ai-wizard/CharacterCreator';
 import SheetContainer from './character-sheet/SheetContainer'; 
 import { useCharacterStore } from '../stores/useCharacterStore';
-import { parsePdf } from '../utils/dndBeyondParser.js'; 
+import { parsePdf } from '../utils/dndBeyondParser.js';
 import { enrichCharacter } from '../utils/srdEnricher.js';
 
 const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView, user, aiHelper, onDiceRoll, onLogAction, edition, apiKey }) => {
-    const [showCreationMenu, setShowCreationMenu] = useState(false); 
+    const [showCreationMenu, setShowCreationMenu] = useState(false);
     const [showAiCreator, setShowAiCreator] = useState(false);        
     const [viewingCharacterId, setViewingCharacterId] = useState(null);
     const [isImporting, setIsImporting] = useState(false);
     const [importStatus, setImportStatus] = useState("Initializing...");
-    
     const fileInputRef = useRef(null);
+
+    // --- STALE STATE FIX ---
+    // We use a Ref to hold the latest data to prevent overwriting updates
+    const dataRef = useRef(data);
+    useEffect(() => { dataRef.current = data; }, [data]);
 
     const handleSheetSave = async (updatedChar) => {
         // Double check specifically for undefined here as a failsafe
@@ -22,8 +26,10 @@ const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView,
         if (savePlayer) {
             await savePlayer(cleanChar);
         } else {
-            const newPlayers = (data.players || []).map(p => p.id === cleanChar.id ? cleanChar : p);
-            updateCloud({ ...data, players: newPlayers });
+            // Use dataRef.current to get the LATEST players list
+            const currentData = dataRef.current;
+            const newPlayers = (currentData.players || []).map(p => p.id === cleanChar.id ? cleanChar : p);
+            updateCloud({ ...currentData, players: newPlayers });
         }
     };
 
@@ -39,14 +45,15 @@ const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView,
             id: Date.now(), 
             ownerId: user?.uid || "anon" 
         };
-
         // Failsafe sanitization
         const cleanChar = JSON.parse(JSON.stringify(charWithId, (k, v) => v === undefined ? null : v));
-
+        
         if(savePlayer) savePlayer(cleanChar);
         else {
-            const newPlayers = [...(data.players || []), cleanChar];
-            updateCloud({ ...data, players: newPlayers }, true);
+            // Use dataRef.current
+            const currentData = dataRef.current;
+            const newPlayers = [...(currentData.players || []), cleanChar];
+            updateCloud({ ...currentData, players: newPlayers }, true);
         }
         setShowAiCreator(false);
         setShowCreationMenu(false);
@@ -63,7 +70,6 @@ const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView,
         try {
             // 1. Parse raw text from PDF
             const rawData = await parsePdf(file);
-            
             // 2. Enrich with API Data
             setImportStatus("Consulting 5e SRD...");
             const charData = await enrichCharacter(rawData);
@@ -81,7 +87,6 @@ const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView,
         e.target.value = null; 
     };
 
-    // ... (rest of the component, createManualCharacter, handleDelete, etc.)
     const createManualCharacter = () => {
         const blankChar = {
             name: "New Hero",
@@ -100,8 +105,9 @@ const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView,
         if (!confirm("Delete this hero permanently?")) return;
         if(deletePlayer) deletePlayer(id);
         else {
-            const newPlayers = data.players.filter(p => p.id !== id);
-            updateCloud({ ...data, players: newPlayers }, true);
+            const currentData = dataRef.current;
+            const newPlayers = currentData.players.filter(p => p.id !== id);
+            updateCloud({ ...currentData, players: newPlayers }, true);
         }
     };
 
