@@ -24,9 +24,24 @@ const SKILL_LIST = [
 ];
 
 const SkillsTab = ({ onDiceRoll, onLogAction }) => {
-    const { character, getModifier, toggleSkill } = useCharacterStore();
+    // FIX: Removed getModifier/toggleSkill from destructuring
+    const { character, updateInfo } = useCharacterStore();
     const charSkills = character.skills || {};
     const profBonus = character.profBonus || 2;
+
+    // FIX: Defined getModifier locally
+    const getModifier = (stat) => Math.floor(((character.stats?.[stat] || 10) - 10) / 2);
+
+    // FIX: Defined toggleSkill locally using updateInfo
+    const toggleSkill = (skillName) => {
+        const newSkills = { ...charSkills };
+        if (newSkills[skillName]) {
+            delete newSkills[skillName];
+        } else {
+            newSkills[skillName] = true;
+        }
+        updateInfo('skills', newSkills);
+    };
 
     // Helper to calculate bonus locally so we can show the math
     const calculateSkill = (skill) => {

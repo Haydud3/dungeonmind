@@ -3,7 +3,8 @@ import { useCharacterStore } from '../../../stores/useCharacterStore';
 import Icon from '../../Icon';
 
 const SpellsTab = ({ onDiceRoll, onLogAction }) => {
-    const { character, castSpell, getModifier, updateInfo } = useCharacterStore();
+    // FIX: Removed getModifier from store destructuring
+    const { character, castSpell, updateInfo } = useCharacterStore();
     const [filterLevel, setFilterLevel] = useState(0);
     
     // Edit State
@@ -16,8 +17,11 @@ const SpellsTab = ({ onDiceRoll, onLogAction }) => {
     const [srdResults, setSrdResults] = useState([]);
     const [isSearching, setIsSearching] = useState(false);
 
+    // FIX: Defined getModifier locally to prevent crash
+    const getModifier = (stat) => Math.floor(((character.stats?.[stat] || 10) - 10) / 2);
+
     // Stats
-    const spellStat = 'int'; // Default (could be dynamic)
+    const spellStat = character.spellAbility || 'int'; // Default to int if undefined
     const spellSaveDC = 8 + (character.profBonus || 2) + getModifier(spellStat);
     const spellAttack = (character.profBonus || 2) + getModifier(spellStat);
 
@@ -36,7 +40,7 @@ const SpellsTab = ({ onDiceRoll, onLogAction }) => {
                 alert("No spell slots left!");
                 return;
             }
-            castSpell(spell.level);
+            if (castSpell) castSpell(spell.level);
         }
 
         const msg = `

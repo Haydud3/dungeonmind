@@ -31,8 +31,7 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
     const [pinchDist, setPinchDist] = useState(null);
     
     // Stage State
-    const [stageDim, setStageDim] = useState({ w: 0, h: 0, left: 0, top: 0 });
-    const [imgRatio, setImgRatio] = useState(0); 
+    const [stageDim, setStageDim] = useState({ w: 0, h: 0 }); 
 
     // Logic State
     const [dragTokenId, setDragTokenId] = useState(null);
@@ -94,12 +93,40 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
     // --- 1. SETUP ---
     useEffect(() => {
         if (!mapUrl) return;
+        
+        setStageDim({ w: 0, h: 0 });
+        setPan({x: 0, y: 0});
+
         const img = new Image();
         img.src = mapUrl;
         img.onload = () => { 
-            if(img.height > 0) setImgRatio(img.width / img.height); 
+            const w = img.naturalWidth || img.width;
+            const h = img.naturalHeight || img.height;
+            if (h > 0) {
+                setStageDim({ w, h });
+            }
         };
     }, [mapUrl]);
+
+    useLayoutEffect(() => {
+        const el = containerRef.current;
+        if (!el || stageDim.w === 0) return;
+
+        const parentW = el.clientWidth;
+        const parentH = el.clientHeight;
+        
+        if (parentW === 0 || parentH === 0) return;
+
+        const fitZoomWidth = (parentW * 0.95) / stageDim.w;
+        const fitZoomHeight = (parentH * 0.95) / stageDim.h;
+        const initialZoom = Math.min(fitZoomWidth, fitZoomHeight); 
+
+        // Only reset zoom if it is effectively unset (1) or purely for initial setup
+        if (zoom === 1) {
+            setZoom(initialZoom);
+        }
+
+    }, [stageDim.w, stageDim.h]); 
 
     useEffect(() => {
         const el = containerRef.current;
@@ -108,62 +135,23 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
             e.preventDefault();
             const scaleBy = 1.1;
             let newZoom = e.deltaY < 0 ? zoom * scaleBy : zoom / scaleBy;
-            newZoom = Math.min(Math.max(0.1, newZoom), 5);
+            newZoom = Math.min(Math.max(0.01, newZoom), 10);
             setZoom(newZoom);
         };
         el.addEventListener('wheel', handleWheelInternal, { passive: false });
         return () => el.removeEventListener('wheel', handleWheelInternal);
     }, [zoom]);
 
-    useLayoutEffect(() => {
-        const el = containerRef.current;
-        if (!el || imgRatio === 0) return;
-
-        const measure = () => {
-            if (!containerRef.current) return;
-            const parentW = containerRef.current.clientWidth;
-            const parentH = containerRef.current.clientHeight;
-            
-            if (parentW === 0 || parentH === 0) return;
-
-            const w = 2500; // High Res Canvas
-            const h = w / imgRatio;
-
-            const fitZoomWidth = parentW / w;
-            const fitZoomHeight = parentH / h;
-            const initialZoom = Math.min(fitZoomWidth, fitZoomHeight) * 0.95; 
-
-            const newLeft = (parentW - w) / 2;
-            const newTop = (parentH - h) / 2;
-
-            setStageDim(prev => {
-                if (Math.abs(prev.w - w) < 0.5 && Math.abs(prev.h - h) < 0.5) return prev;
-                
-                if (prev.w === 0) {
-                    setZoom(initialZoom);
-                }
-                return { w, h, left: newLeft, top: newTop };
-            });
-        };
-
-        const obs = new ResizeObserver(measure);
-        obs.observe(el);
-        measure(); 
-
-        return () => obs.disconnect();
-    }, [imgRatio, mapUrl]); 
-
-    const cellPx = (stageDim.w * gridSize) / 100;
+    // Calculate exact pixel size of a grid square based on Width
+    const cellPx = stageDim.w ? (stageDim.w * gridSize) / 100 : 0;
     
     // --- UTILS ---
     const getCoords = (e) => {
-        // FIX: Handle both mouse AND touch events correctly (including touchend)
         let clientX, clientY;
         if (e.touches && e.touches.length > 0) {
             clientX = e.touches[0].clientX;
             clientY = e.touches[0].clientY;
         } else if (e.changedTouches && e.changedTouches.length > 0) {
-            // Needed for 'touchend' where 'touches' is empty
             clientX = e.changedTouches[0].clientX;
             clientY = e.changedTouches[0].clientY;
         } else {
@@ -173,19 +161,37 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
 
         if (!containerRef.current) return { x: 0, y: 0 };
         const rect = containerRef.current.getBoundingClientRect(); 
-        const stageLeft = (rect.width - stageDim.w * zoom) / 2 + pan.x;
-        const stageTop = (rect.height - stageDim.h * zoom) / 2 + pan.y;
+        
+        const visualW = stageDim.w * zoom;
+        const visualH = stageDim.h * zoom;
+
+        const stageLeft = (rect.width - visualW) / 2 + pan.x;
+        const stageTop = (rect.height - visualH) / 2 + pan.y;
+
         const x = (clientX - rect.left - stageLeft) / zoom;
         const y = (clientY - rect.top - stageTop) / zoom;
+        
         return { x: x / stageDim.w, y: y / stageDim.h };
     };
 
     const snapCoordinate = (val, isY = false) => {
-        if (!snapToGrid) return val;
-        const cellPct = isY ? (stageDim.w / stageDim.h) * gridSize : gridSize;
-        const cellCount = Math.floor(val * 100 / cellPct);
-        const center = (cellCount * cellPct) + (cellPct / 2);
-        return center / 100;
+        if (!snapToGrid || stageDim.w === 0) return val;
+
+        // 1. Calculate Grid Cell Size in Pixels (based on Width)
+        const sizePx = (stageDim.w * gridSize) / 100;
+        
+        // 2. Convert value (0-1) to current Pixels
+        const totalPx = isY ? stageDim.h : stageDim.w;
+        const currentPx = val * totalPx;
+
+        // 3. Find which "slot" index we are in
+        const index = Math.floor(currentPx / sizePx);
+
+        // 4. Find the center of that slot in pixels
+        const centerPx = (index * sizePx) + (sizePx / 2);
+
+        // 5. Convert back to 0-1
+        return centerPx / totalPx;
     };
 
     // Auto-Snap
@@ -193,8 +199,13 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
         if(snapToGrid && tokens.length > 0 && stageDim.h > 0) {
             const timer = setTimeout(() => {
                 const snappedTokens = tokens.map(t => {
-                    const snX = snapCoordinate(t.x / 100, false) * 100;
-                    const snY = snapCoordinate(t.y / 100, true) * 100;
+                    // Clamp
+                    const cx = Math.max(0, Math.min(100, t.x));
+                    const cy = Math.max(0, Math.min(100, t.y));
+
+                    const snX = snapCoordinate(cx / 100, false) * 100;
+                    const snY = snapCoordinate(cy / 100, true) * 100;
+                    
                     if (Math.abs(snX - t.x) < 0.01 && Math.abs(snY - t.y) < 0.01) return t;
                     return { ...t, x: snX, y: snY };
                 });
@@ -204,7 +215,7 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
             }, 800);
             return () => clearTimeout(timer);
         }
-    }, [gridSize, snapToGrid, imgRatio]);
+    }, [gridSize, snapToGrid, stageDim.w, stageDim.h]);
 
     // --- INPUTS ---
     const handleDown = (e) => {
@@ -247,7 +258,7 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
             
             if (pinchDist > 0) {
                 const scale = newDist / pinchDist;
-                setZoom(z => Math.min(Math.max(0.05, z * scale), 2));
+                setZoom(z => Math.min(Math.max(0.01, z * scale), 10));
             }
             setPinchDist(newDist);
             return;
@@ -262,7 +273,10 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
         const coords = getCoords(e);
         if (dragTokenId) { 
             e.preventDefault();
-            setTempTokenPos({ x: coords.x * 100, y: coords.y * 100 });
+            // Clamp Token Drag
+            const clampedX = Math.max(0, Math.min(1, coords.x)) * 100;
+            const clampedY = Math.max(0, Math.min(1, coords.y)) * 100;
+            setTempTokenPos({ x: clampedX, y: clampedY });
         } else if (isDrawing) {
             if (mode === 'ruler' || mode === 'radius') {
                 setMeasureEnd(snapToGrid ? { x: snapCoordinate(coords.x), y: snapCoordinate(coords.y, true) } : coords);
@@ -289,6 +303,10 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
             } else {
                 let fx = coords.x;
                 let fy = coords.y;
+                
+                fx = Math.max(0, Math.min(1, fx));
+                fy = Math.max(0, Math.min(1, fy));
+
                 if (snapToGrid) {
                     fx = snapCoordinate(fx);
                     fy = snapCoordinate(fy, true);
@@ -310,37 +328,15 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
 
     const handleTokenDragStart = (e, id) => {
         e.stopPropagation();
-        // Don't prevent default on touch start to allow potential scrolling/pinch if needed, 
-        // but since we handle pinch in container, we can engage drag.
-        // On mobile, preventing default here stops the "click" emulation, but we want drag.
-        // e.preventDefault(); 
-        
         setDragTokenId(id);
         const pos = getCoords(e);
         setDragStartPos(pos);
-        setTempTokenPos({ x: pos.x * 100, y: pos.y * 100 }); 
+        const cx = Math.max(0, Math.min(1, pos.x)) * 100;
+        const cy = Math.max(0, Math.min(1, pos.y)) * 100;
+        setTempTokenPos({ x: cx, y: cy }); 
     };
 
-    // --- (MANAGERS & REST OF CODE SAME AS BEFORE) ---
-    // [Keep addToken, updateTokenSize, updateTokenStatus, deleteToken, handleSearch, loadMap, deleteMap, openTokenSheet, renderCanvas unchanged]
-    // ... (Code omitted for brevity as it is identical to previous, just ensure handleTokenDragStart is used)
-    
-    // ... (Inside Return Statement, the Tokens Loop)
-    /*
-        <Token 
-            token={token} isOwner={canMove} cellPx={cellPx}
-            isDragging={dragTokenId === token.id}
-            overridePos={dragTokenId === token.id ? tempTokenPos : null}
-            // FIX: Pass both Mouse AND Touch handlers
-            onMouseDown={(e) => handleTokenDragStart(e, token.id)}
-            onTouchStart={(e) => handleTokenDragStart(e, token.id)}
-        />
-    */
-   
-   // ... (Rest of component)
-   
-   // Re-pasting managers for completeness so you can copy-paste the whole file
-   
+    // --- MANAGERS ---
     const addToken = (src, type) => {
         let finalCharId = src.id;
         let newNpcs = [...(dataRef.current.npcs || [])];
@@ -375,17 +371,51 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
     const openTokenSheet = (tokenId) => { const token = tokens.find(t => t.id === tokenId); if (!token) return; const currentData = dataRef.current; const char = currentData.players?.find(p => p.id === token.characterId) || currentData.npcs?.find(n => n.id === token.characterId); if(char) { if (activeSheetId && activeSheetId !== char.id) { setActiveSheetId(null); setTimeout(() => { useCharacterStore.getState().loadCharacter(char); setActiveSheetId(char.id); }, 50); } else { useCharacterStore.getState().loadCharacter(char); setActiveSheetId(char.id); } } else { alert("No sheet attached."); } };
     const renderCanvas = () => { const canvas = canvasRef.current; const ctx = canvas?.getContext('2d'); if (!canvas || !ctx || stageDim.w <= 1) return; canvas.width = stageDim.w; canvas.height = stageDim.h; ctx.clearRect(0, 0, canvas.width, canvas.height); ctx.save(); ctx.fillStyle = 'rgba(0, 0, 0, 1)'; ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.lineCap = 'round'; ctx.lineJoin = 'round'; revealPaths.forEach(path => { ctx.globalCompositeOperation = path.mode === 'shroud' ? 'source-over' : 'destination-out'; const scaledBrush = (path.size / 1000) * canvas.width; ctx.lineWidth = Math.max(10, scaledBrush); ctx.strokeStyle = 'rgba(0,0,0,1)'; ctx.beginPath(); path.points.forEach((p, i) => { const x = p.x * canvas.width; const y = p.y * canvas.height; if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); }); ctx.stroke(); }); tokens.forEach(token => { let tx = token.x / 100; let ty = token.y / 100; if (dragTokenId === token.id && tempTokenPos) { tx = tempTokenPos.x / 100; ty = tempTokenPos.y / 100; } const char = data.players?.find(p => p.id === token.characterId); let visionRadiusFeet = 5; if (char) { const senses = JSON.stringify(char.senses || "") + JSON.stringify(char.features || ""); if (senses.match(/Darkvision\s*(\d+)/i)) visionRadiusFeet = parseInt(RegExp.$1); else if (senses.toLowerCase().includes("darkvision")) visionRadiusFeet = 60; } const totalMapFeet = (100 / gridSize) * 5; const pixelsPerFoot = canvas.width / totalMapFeet; const radiusPx = visionRadiusFeet * pixelsPerFoot; ctx.globalCompositeOperation = 'destination-out'; const x = tx * canvas.width; const y = ty * canvas.height; const gradient = ctx.createRadialGradient(x, y, radiusPx * 0.8, x, y, radiusPx); gradient.addColorStop(0, 'rgba(0,0,0,1)'); gradient.addColorStop(1, 'rgba(0,0,0,0)'); ctx.fillStyle = gradient; ctx.beginPath(); ctx.arc(x, y, radiusPx, 0, Math.PI * 2); ctx.fill(); }); ctx.restore(); if ((mode === 'ruler' || mode === 'radius') && measureStart && measureEnd) { const sx = measureStart.x * canvas.width; const sy = measureStart.y * canvas.height; const ex = measureEnd.x * canvas.width; const ey = measureEnd.y * canvas.height; const distPx = Math.sqrt(Math.pow(ex-sx,2) + Math.pow(ey-sy,2)); const distFt = Math.round((distPx / cellPx) * 5); ctx.save(); ctx.strokeStyle = '#f59e0b'; ctx.lineWidth = 3 / zoom; ctx.setLineDash([10, 5]); ctx.beginPath(); if(mode === 'ruler') { ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke(); } else { ctx.arc(sx, sy, distPx, 0, 2*Math.PI); ctx.stroke(); ctx.fillStyle = 'rgba(245, 158, 11, 0.2)'; ctx.fill(); ctx.beginPath(); ctx.setLineDash([]); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke(); } ctx.fillStyle = '#1e293b'; ctx.font = `bold ${16/zoom}px sans-serif`; const tm = ctx.measureText(`${distFt} ft`); const lx = mode==='ruler'?(sx+ex)/2:ex; const ly = mode==='ruler'?(sy+ey)/2:ey; ctx.fillRect(lx - tm.width/2 - 4, ly - 14, tm.width + 8, 28); ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(`${distFt} ft`, lx, ly); ctx.restore(); } };
 
-    // --- PROCESS PUTER IMAGE HELPER ---
-    const processPuterImage = async (imgElement) => {
+    const searchCompendium = async () => {
+        if(!compendiumSearch.trim()) return;
+        setIsLoadingCompendium(true);
         try {
-            const response = await fetch(imgElement.src);
-            const blob = await response.blob();
-            return new Promise((resolve) => {
-                const reader = new FileReader();
-                reader.onloadend = () => resolve(reader.result);
-                reader.readAsDataURL(blob);
-            });
-        } catch (e) { return null; }
+            const r = await fetch(`https://www.dnd5eapi.co/api/monsters/?name=${compendiumSearch}`);
+            const j = await r.json();
+            setCompendiumResults(j.results || []);
+        } catch(e) { setCompendiumResults([]); }
+        setIsLoadingCompendium(false);
+    };
+
+    const importFromApi = async (url) => {
+        try {
+            setIsLoadingCompendium(true);
+            const r = await fetch(`https://www.dnd5eapi.co${url}`);
+            const data = await r.json();
+            
+            // CONVERT TO TOKEN
+            const stats = {
+                str: data.strength || 10, dex: data.dexterity || 10, con: data.constitution || 10,
+                int: data.intelligence || 10, wis: data.wisdom || 10, cha: data.charisma || 10
+            };
+            const hp = { current: data.hit_points || 10, max: data.hit_points || 10 };
+            const senses = Object.keys(data.senses || {}).map(k => `${k} ${data.senses[k]}`).join(", ");
+            
+            const newToken = {
+                name: data.name,
+                image: `https://ui-avatars.com/api/?name=${data.name}&background=random`, 
+                stats, hp, senses, size: data.size ? data.size.toLowerCase() : 'medium',
+                ac: data.armor_class ? data.armor_class[0].value : 10
+            };
+            
+            // Check for image from Google Custom Search based on name to make it prettier
+            try {
+               const imgRes = await fetch(`https://customsearch.googleapis.com/customsearch/v1?key=${apiKey||GOOGLE_SEARCH_KEY}&cx=${GOOGLE_SEARCH_CX}&q=${encodeURIComponent(data.name + " dnd monster art")}&searchType=image&num=1`);
+               const imgJson = await imgRes.json();
+               if(imgJson.items && imgJson.items.length > 0) {
+                   newToken.image = imgJson.items[0].link;
+               }
+            } catch(e) {}
+
+            addToken(newToken, 'monster');
+            setShowCompendium(false);
+        } catch(e) { console.error(e); }
+        setIsLoadingCompendium(false);
     };
 
     return (
@@ -552,19 +582,28 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
                 onTouchStart={handleDown} onTouchMove={handleMove} onTouchEnd={handleUp}
                 onContextMenu={(e) => e.preventDefault()}
             >
-                {mapUrl ? (
+                {/* Only render stage if we have a valid dimension and ratio to avoid stale layout bars */}
+                {mapUrl && stageDim.w > 0 ? (
                     <div 
-                        className="relative"
+                        className="relative overflow-hidden shadow-2xl" 
                         style={{
                             width: `${stageDim.w}px`,
                             height: `${stageDim.h}px`,
                             transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
                             transformOrigin: 'center center',
-                            opacity: stageDim.w > 0 ? 1 : 0, 
                         }}
                     >
                         <img src={mapUrl} className="absolute inset-0 w-full h-full object-contain select-none pointer-events-none" draggable="false" alt="map"/>
-                        {showGrid && <div className="absolute inset-0 w-full h-full pointer-events-none opacity-30" style={{backgroundImage: `linear-gradient(to right, #ffffff 1px, transparent 1px), linear-gradient(to bottom, #ffffff 1px, transparent 1px)`, backgroundSize: `${cellPx}px ${cellPx}px`}}/>}
+                        {showGrid && (
+                            <div 
+                                className="absolute inset-0 w-full h-full pointer-events-none" 
+                                style={{
+                                    backgroundImage: `linear-gradient(to right, rgba(255,255,255,0.3) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,0.3) 1px, transparent 1px)`,
+                                    backgroundSize: `${cellPx}px ${cellPx}px`,
+                                    backgroundPosition: '-1px -1px'
+                                }}
+                            />
+                        )}
                         <div className="absolute inset-0 w-full h-full pointer-events-none">
                             {tokens.map(token => {
                                 const canMove = role === 'dm' || mode === 'move'; 
@@ -574,7 +613,6 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
                                             token={token} isOwner={canMove} cellPx={cellPx}
                                             isDragging={dragTokenId === token.id}
                                             overridePos={dragTokenId === token.id ? tempTokenPos : null}
-                                            // FIX: Pass touch handlers
                                             onMouseDown={(e) => handleTokenDragStart(e, token.id)}
                                             onTouchStart={(e) => handleTokenDragStart(e, token.id)}
                                         />
@@ -585,7 +623,7 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
                         <canvas ref={canvasRef} className={`absolute inset-0 w-full h-full z-20 ${mode === 'move' || mode === 'pan' ? 'pointer-events-none opacity-90' : 'pointer-events-auto opacity-70'}`}/>
                     </div>
                 ) : (
-                    <div className="text-slate-500 flex flex-col items-center"><Icon name="map" size={48} className="mb-2 opacity-20"/><p>No Map Loaded</p></div>
+                    <div className="text-slate-500 flex flex-col items-center"><Icon name="map" size={48} className="mb-2 opacity-20"/><p>{mapUrl ? "Loading..." : "No Map Loaded"}</p></div>
                 )}
             </div>
 
