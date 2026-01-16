@@ -570,8 +570,7 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
     };
 
     const loadMap = (url, name) => {
-        const newSaved = savedMaps.find(m => m.url === url) ? savedMaps : [...savedMaps, {id:Date.now(), name, url}];
-        updateCloud({ ...data, campaign: { ...data.campaign, savedMaps: newSaved, activeMap: { url, revealPaths:[], walls:[], tokens:[], view: {zoom: 1, pan: {x:0,y:0}} } } });
+        updateMapState('load_map', { url, name });
         setShowMapBar(false);
     };
 

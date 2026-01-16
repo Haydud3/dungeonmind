@@ -168,13 +168,22 @@ function App() {
       let newMap = { ...currentMap };
       let newSavedMaps = [...savedMaps];
 
+      // Helper: Save current map state before switching
+      if ((action === 'set_image' || action === 'load_map') && currentMap.url) {
+          const idx = newSavedMaps.findIndex(m => m.url === currentMap.url);
+          if (idx > -1) newSavedMaps[idx] = { ...newSavedMaps[idx], ...currentMap };
+          else newSavedMaps.push({ id: Date.now(), name: "Unsaved Map", ...currentMap });
+      }
+
       if (action === 'set_image') { 
-          if (newMap.url && !newSavedMaps.find(m => m.url === newMap.url)) {
-             newSavedMaps.push({ id: Date.now(), name: `Map ${newSavedMaps.length + 1}`, url: newMap.url });
+          if (payload && !newSavedMaps.find(m => m.url === payload)) {
+             newSavedMaps.push({ id: Date.now(), name: `Map ${newSavedMaps.length + 1}`, url: payload });
           }
-          newMap.url = payload; newMap.revealPaths = []; 
+          newMap = { url: payload, revealPaths: [], walls: [], tokens: [], view: { zoom: 1, pan: {x:0,y:0} } };
       } else if (action === 'load_map') {
-          newMap.url = payload.url; newMap.revealPaths = []; 
+          const existing = newSavedMaps.find(m => m.url === payload.url);
+          if (existing) newMap = { ...existing }; 
+          else newMap = { url: payload.url, revealPaths: [], walls: [], tokens: [], view: { zoom: 1, pan: {x:0,y:0} } };
       } else if (action === 'start_path') { newMap.revealPaths = [...newMap.revealPaths, payload]; 
       } else if (action === 'append_point') {
           const lastPath = { ...newMap.revealPaths[newMap.revealPaths.length - 1] };
