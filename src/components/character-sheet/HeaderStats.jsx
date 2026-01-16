@@ -26,6 +26,10 @@ const HeaderStats = ({ onDiceRoll, onLogAction, onBack, onPossess, isNpc }) => {
   const passPerc = character.senses?.passivePerception || getPassive(wisMod, 'Perception');
   const passInv = character.senses?.passiveInvestigation || getPassive(intMod, 'Investigation');
   const passIns = character.senses?.passiveInsight || getPassive(wisMod, 'Insight');
+  
+  // --- DARKVISION (NEW) ---
+  // Defaults to 0 if not found. This maps to the data extracted by the updated parser.
+  const darkvision = character.senses?.darkvision || 0;
 
   // --- HP LOGIC ---
   const currentHP = character.hp.current;
@@ -104,7 +108,6 @@ const HeaderStats = ({ onDiceRoll, onLogAction, onBack, onPossess, isNpc }) => {
                     </span>
                 </div>
                 
-                {/* FIX: Removed 'sm:inline' logic. Now uses concise text everywhere to fit in VTT popup. */}
                 {isDying ? (
                     <div 
                         className="h-5 flex items-center justify-center bg-red-900/40 rounded border border-red-500/50 cursor-pointer hover:bg-red-900/60 transition-colors animate-pulse px-1" 
@@ -162,10 +165,26 @@ const HeaderStats = ({ onDiceRoll, onLogAction, onBack, onPossess, isNpc }) => {
                     <div onClick={() => updateInfo('inspiration', !character.inspiration)} className={`py-2 rounded border flex items-center justify-center gap-2 text-xs font-bold cursor-pointer transition-colors ${character.inspiration ? 'bg-amber-500/20 border-amber-500 text-amber-400' : 'bg-slate-800 border-slate-700 text-slate-500'}`}><Icon name="flame" size={14} className={character.inspiration ? "fill-amber-500" : ""}/> Inspiration</div>
                 </div>
                 
-                <div className="grid grid-cols-3 gap-2 text-center">
-                    <div className="bg-slate-800 p-1 rounded border border-slate-700"><div className="text-[9px] text-slate-500">Perc</div><div className="text-sm font-bold text-white">{passPerc}</div></div>
-                    <div className="bg-slate-800 p-1 rounded border border-slate-700"><div className="text-[9px] text-slate-500">Inv</div><div className="text-sm font-bold text-white">{passInv}</div></div>
-                    <div className="bg-slate-800 p-1 rounded border border-slate-700"><div className="text-[9px] text-slate-500">Ins</div><div className="text-sm font-bold text-white">{passIns}</div></div>
+                {/* SENSES ROW: Now 4 columns to include Darkvision */}
+                <div className="grid grid-cols-4 gap-2 text-center">
+                    <div className="bg-slate-800 p-1 rounded border border-slate-700">
+                        <div className="text-[9px] text-slate-500">Perc</div>
+                        <div className="text-sm font-bold text-white">{passPerc}</div>
+                    </div>
+                    <div className="bg-slate-800 p-1 rounded border border-slate-700">
+                        <div className="text-[9px] text-slate-500">Inv</div>
+                        <div className="text-sm font-bold text-white">{passInv}</div>
+                    </div>
+                    <div className="bg-slate-800 p-1 rounded border border-slate-700">
+                        <div className="text-[9px] text-slate-500">Ins</div>
+                        <div className="text-sm font-bold text-white">{passIns}</div>
+                    </div>
+                    <div className="bg-slate-800 p-1 rounded border border-slate-700 group relative">
+                        <div className="text-[9px] text-slate-500">Vision</div>
+                        <div className={`text-sm font-bold ${darkvision > 0 ? 'text-cyan-400' : 'text-slate-500'}`}>
+                            {darkvision > 0 ? `${darkvision}ft` : '-'}
+                        </div>
+                    </div>
                 </div>
             </div>
         )}

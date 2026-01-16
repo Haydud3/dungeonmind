@@ -1,7 +1,16 @@
 import React, { useState } from 'react';
 import Icon from './Icon';
 
-const SettingsView = ({ data, setData, apiKey, setApiKey, role, updateCloud, code, user, onExit, aiProvider, setAiProvider, openAiModel, setOpenAiModel, puterModel, setPuterModel, banPlayer, kickPlayer, unbanPlayer }) => {
+const SettingsView = ({ 
+    data, setData, 
+    apiKey, setApiKey, 
+    role, updateCloud, 
+    code, user, onExit, 
+    aiProvider, setAiProvider, 
+    openAiModel, setOpenAiModel, 
+    puterModel, setPuterModel, 
+    banPlayer, kickPlayer, unbanPlayer 
+}) => {
     const [activeTab, setActiveTab] = useState('general');
     
     // Campaign Bible State (Local edit before save)
@@ -10,6 +19,34 @@ const SettingsView = ({ data, setData, apiKey, setApiKey, role, updateCloud, cod
     const handleBibleSave = () => {
         updateCloud({ ...data, campaign: { ...data.campaign, genesis: bibleData } });
         alert("Campaign Bible Updated!");
+    };
+
+    // --- PLAYER MANAGEMENT LOGIC ---
+    const handleAssignCharacter = (uid, charId) => {
+        const newAssignments = { ...data.assignments, [uid]: charId };
+        if (!charId) delete newAssignments[uid]; // Remove assignment if "None" selected
+        updateCloud({ ...data, assignments: newAssignments });
+    };
+
+    const toggleDmStatus = (uid) => {
+        let newDmIds = [...(data.dmIds || [])];
+        
+        // If already DM, remove (Renounce)
+        if (newDmIds.includes(uid)) {
+            if (newDmIds.length <= 1) {
+                alert("Cannot renounce: You are the only DM left!");
+                return;
+            }
+            if (!confirm("Are you sure you want to renounce your Dungeon Master status? You will lose access to DM tools immediately.")) return;
+            newDmIds = newDmIds.filter(id => id !== uid);
+        } 
+        // If not DM, add (Promote)
+        else {
+            if (!confirm("Promote this user to Dungeon Master? They will have full control over the map and settings.")) return;
+            newDmIds.push(uid);
+        }
+
+        updateCloud({ ...data, dmIds: newDmIds });
     };
 
     return (
@@ -30,11 +67,11 @@ const SettingsView = ({ data, setData, apiKey, setApiKey, role, updateCloud, cod
                 </div>
 
                 {/* Tabs */}
-                <div className="flex gap-1 bg-slate-800/50 p-1 rounded-lg">
-                    <button onClick={() => setActiveTab('general')} className={`flex-1 py-2 rounded-md text-sm font-bold transition-all ${activeTab === 'general' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}>General</button>
-                    <button onClick={() => setActiveTab('bible')} className={`flex-1 py-2 rounded-md text-sm font-bold transition-all ${activeTab === 'bible' ? 'bg-slate-700 text-amber-500 shadow' : 'text-slate-400 hover:text-slate-200'}`}>Campaign Bible</button>
-                    <button onClick={() => setActiveTab('ai')} className={`flex-1 py-2 rounded-md text-sm font-bold transition-all ${activeTab === 'ai' ? 'bg-slate-700 text-purple-400 shadow' : 'text-slate-400 hover:text-slate-200'}`}>AI Config</button>
-                    {role === 'dm' && <button onClick={() => setActiveTab('players')} className={`flex-1 py-2 rounded-md text-sm font-bold transition-all ${activeTab === 'players' ? 'bg-slate-700 text-red-400 shadow' : 'text-slate-400 hover:text-slate-200'}`}>Players</button>}
+                <div className="flex gap-1 bg-slate-800/50 p-1 rounded-lg overflow-x-auto">
+                    <button onClick={() => setActiveTab('general')} className={`flex-1 py-2 px-4 rounded-md text-sm font-bold transition-all whitespace-nowrap ${activeTab === 'general' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}>General</button>
+                    <button onClick={() => setActiveTab('bible')} className={`flex-1 py-2 px-4 rounded-md text-sm font-bold transition-all whitespace-nowrap ${activeTab === 'bible' ? 'bg-slate-700 text-amber-500 shadow' : 'text-slate-400 hover:text-slate-200'}`}>Campaign Bible</button>
+                    <button onClick={() => setActiveTab('ai')} className={`flex-1 py-2 px-4 rounded-md text-sm font-bold transition-all whitespace-nowrap ${activeTab === 'ai' ? 'bg-slate-700 text-purple-400 shadow' : 'text-slate-400 hover:text-slate-200'}`}>AI Config</button>
+                    {role === 'dm' && <button onClick={() => setActiveTab('players')} className={`flex-1 py-2 px-4 rounded-md text-sm font-bold transition-all whitespace-nowrap ${activeTab === 'players' ? 'bg-slate-700 text-red-400 shadow' : 'text-slate-400 hover:text-slate-200'}`}>Players</button>}
                 </div>
 
                 {/* --- GENERAL SETTINGS --- */}
@@ -208,21 +245,57 @@ const SettingsView = ({ data, setData, apiKey, setApiKey, role, updateCloud, cod
                             <h3 className="text-lg font-bold text-red-400 mb-4 flex items-center gap-2"><Icon name="shield" size={20}/> Player Management</h3>
                             
                             <div className="space-y-4">
-                                {Object.entries(data.activeUsers || {}).map(([uid, name]) => (
-                                    <div key={uid} className="flex items-center justify-between bg-slate-900 p-3 rounded border border-slate-700">
-                                        <div className="flex items-center gap-3">
-                                            <div className="w-2 h-2 rounded-full bg-green-500"></div>
-                                            <span className="text-white font-bold">{name}</span>
-                                            {uid === data.hostId && <span className="text-xs bg-amber-900 text-amber-200 px-2 py-0.5 rounded border border-amber-700">DM</span>}
-                                        </div>
-                                        {uid !== data.hostId && (
-                                            <div className="flex gap-2">
-                                                <button onClick={() => kickPlayer(uid)} className="text-xs bg-slate-700 hover:bg-slate-600 text-white px-3 py-1 rounded">Kick</button>
-                                                <button onClick={() => banPlayer(uid)} className="text-xs bg-red-900 hover:bg-red-800 text-white px-3 py-1 rounded">Ban</button>
+                                {Object.entries(data.activeUsers || {}).map(([uid, name]) => {
+                                    const isDm = data.dmIds?.includes(uid);
+                                    const isMe = uid === user.uid;
+                                    const assignedCharId = data.assignments?.[uid] || "";
+
+                                    return (
+                                        <div key={uid} className="flex flex-col bg-slate-900 p-4 rounded border border-slate-700 gap-3">
+                                            <div className="flex items-center justify-between">
+                                                <div className="flex items-center gap-3">
+                                                    <div className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_#22c55e]"></div>
+                                                    <div className="flex flex-col">
+                                                        <span className="text-white font-bold text-sm">{name}</span>
+                                                        <span className="text-xs text-slate-500 font-mono">{uid.slice(0,6)}...</span>
+                                                    </div>
+                                                    {isDm && <span className="text-[10px] font-bold bg-amber-600/20 text-amber-500 px-2 py-0.5 rounded border border-amber-600/50 uppercase">Dungeon Master</span>}
+                                                </div>
+                                                
+                                                <div className="flex gap-2">
+                                                    {isMe ? (
+                                                        isDm && (
+                                                            <button onClick={() => toggleDmStatus(uid)} className="text-xs bg-slate-800 hover:bg-red-900/50 text-slate-400 hover:text-red-400 border border-slate-600 px-3 py-1 rounded">
+                                                                Renounce DM
+                                                            </button>
+                                                        )
+                                                    ) : (
+                                                        <>
+                                                            {!isDm && <button onClick={() => toggleDmStatus(uid)} className="text-xs bg-indigo-900/40 hover:bg-indigo-700 text-indigo-300 border border-indigo-700 px-3 py-1 rounded">Promote</button>}
+                                                            <button onClick={() => kickPlayer(uid)} className="text-xs bg-slate-700 hover:bg-slate-600 text-white px-3 py-1 rounded">Kick</button>
+                                                            <button onClick={() => banPlayer(uid)} className="text-xs bg-red-900 hover:bg-red-800 text-white px-3 py-1 rounded">Ban</button>
+                                                        </>
+                                                    )}
+                                                </div>
                                             </div>
-                                        )}
-                                    </div>
-                                ))}
+
+                                            {/* Character Assignment Dropdown */}
+                                            <div className="flex items-center gap-2 mt-2 pt-2 border-t border-slate-800">
+                                                <label className="text-xs text-slate-500 font-bold uppercase">Assign:</label>
+                                                <select 
+                                                    value={assignedCharId} 
+                                                    onChange={(e) => handleAssignCharacter(uid, e.target.value)}
+                                                    className="flex-1 bg-slate-800 border border-slate-600 rounded px-2 py-1 text-xs text-white outline-none focus:border-indigo-500"
+                                                >
+                                                    <option value="">(Observer / None)</option>
+                                                    {data.players?.map(p => (
+                                                        <option key={p.id} value={p.id}>{p.name} ({p.race} {p.class})</option>
+                                                    ))}
+                                                </select>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
                             </div>
 
                             {data.bannedUsers?.length > 0 && (
@@ -230,9 +303,9 @@ const SettingsView = ({ data, setData, apiKey, setApiKey, role, updateCloud, cod
                                     <h4 className="text-sm font-bold text-slate-500 uppercase mb-2">Banned Souls</h4>
                                     <div className="space-y-2">
                                         {data.bannedUsers.map(uid => (
-                                            <div key={uid} className="flex justify-between items-center text-sm text-slate-400 bg-slate-900/50 p-2 rounded">
+                                            <div key={uid} className="flex justify-between items-center text-sm text-slate-400 bg-slate-900/50 p-2 rounded border border-slate-700/50">
                                                 <span>ID: {uid.substring(0,8)}...</span>
-                                                <button onClick={() => unbanPlayer(uid)} className="text-green-400 hover:underline">Forgive</button>
+                                                <button onClick={() => unbanPlayer(uid)} className="text-green-400 hover:underline text-xs font-bold">Forgive</button>
                                             </div>
                                         ))}
                                     </div>

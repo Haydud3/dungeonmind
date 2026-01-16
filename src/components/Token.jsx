@@ -39,14 +39,13 @@ const Token = ({ token, isOwner, onMouseDown, onTouchStart, cellPx, isDragging, 
         <div 
             onMouseDown={(e) => {
                 if (isOwner) {
-                    e.stopPropagation(); 
+                    // REMOVED: e.stopPropagation(); to allow global window listeners to catch drag
                     if(onMouseDown) onMouseDown(e, token.id);
                 }
             }}
-            // FIX: Added Touch Support
             onTouchStart={(e) => {
                 if (isOwner) {
-                    e.stopPropagation();
+                    // REMOVED: e.stopPropagation();
                     if(onTouchStart) onTouchStart(e, token.id);
                 }
             }}

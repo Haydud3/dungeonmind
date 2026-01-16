@@ -202,7 +202,7 @@ const parseFromFields = (fields, normFields) => {
         if (currentFeature) features.push(currentFeature);
     }
 
-    // 9. BIO & SENSES
+    // 9. BIO & SENSES (UPDATED FOR DARKVISION)
     const bio = {
         backstory: getVal("Backstory") || getVal("CharacterBackstory"),
         appearance: getVal("Appearance") || getVal("CharacterAppearance"),
@@ -211,11 +211,26 @@ const parseFromFields = (fields, normFields) => {
         notes: (getVal("AdditionalNotes1") + "\n" + getVal("AlliesOrganizations")).trim()
     };
 
+    // --- SENSE PARSING LOGIC ---
+    const senseString = getVal("AdditionalSenses") || ""; 
+    let darkvisionRange = 0;
+    
+    // Look for "Darkvision X ft" pattern (e.g. "Darkvision 60 ft." or "Darkvision 120")
+    const dvMatch = senseString.match(/Darkvision\s+(\d+)/i);
+    
+    if (dvMatch) {
+        darkvisionRange = parseInt(dvMatch[1]);
+    } else if (senseString.toLowerCase().includes("darkvision")) {
+        // Fallback: If it says "Darkvision" but no number found, standard is 60ft
+        darkvisionRange = 60;
+    }
+
     const senses = {
         passivePerception: getInt("Passive1"),
         passiveInvestigation: getInt("Passive2"),
         passiveInsight: getInt("Passive3"),
-        darkvision: getVal("AdditionalSenses")
+        darkvisionString: senseString, // Keep extracted string for UI display
+        darkvision: darkvisionRange    // The raw integer for Raycasting
     };
 
     return {
@@ -239,9 +254,10 @@ const parseFromFields = (fields, normFields) => {
         spells: spells,
         features: features,
         bio: bio,
-        proficiencies: proficiencies, // NOW CORRECTLY POPULATED
+        proficiencies: proficiencies,
         skills: skills,
-        senses: senses
+        senses: senses,
+        visionRadius: darkvisionRange || 5 // Default to 5ft (standard visibility) if no darkvision
     };
 };
 
