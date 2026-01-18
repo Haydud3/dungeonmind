@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import { useCharacterStore } from '../../../stores/useCharacterStore';
 import Icon from '../../Icon';
 
-const ActionsTab = ({ onDiceRoll, onLogAction }) => {
+// UPDATE: Added isOwner
+const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
     const { character, updateInfo } = useCharacterStore();
     const [showAdd, setShowAdd] = useState(false);
     const [newAction, setNewAction] = useState({ name: "", hit: "", dmg: "", type: "Action", category: "Attack", notes: "" });
@@ -218,32 +219,35 @@ const ActionsTab = ({ onDiceRoll, onLogAction }) => {
                         {/* RIGHT: Buttons */}
                         <div className="flex gap-2 items-center">
                             
-                            {/* Uses Tracker */}
+                            {/* Uses Tracker (Visible but Read-Only if not owner?) 
+                                Actually, we should allow viewing uses but prevent clicking.
+                            */}
                             {action.uses && (
                                 <div className="flex gap-1 mr-1" onClick={(e) => e.stopPropagation()}>
                                     {Array.from({ length: Math.min(5, action.uses.max) }).map((_, i) => (
                                         <div 
                                             key={i} 
-                                            onClick={() => toggleUse(action.id)}
-                                            className={`w-2.5 h-2.5 rounded-full border cursor-pointer transition-colors ${i < action.uses.current ? 'bg-amber-500 border-amber-600' : 'bg-slate-900 border-slate-600'}`} 
+                                            // UPDATE: Prevent toggle if not owner
+                                            onClick={() => isOwner && toggleUse(action.id)}
+                                            className={`w-2.5 h-2.5 rounded-full border transition-colors ${i < action.uses.current ? 'bg-amber-500 border-amber-600' : 'bg-slate-900 border-slate-600'} ${isOwner ? 'cursor-pointer' : 'cursor-default opacity-80'}`} 
                                         />
                                     ))}
                                 </div>
                             )}
 
-                            {/* HIT Button */}
-                            {(action.hit !== undefined && action.hit !== null && action.hit !== "") && (
-    <button 
-        onClick={(e) => handleRoll(action, 'hit', e)}
-        className="h-7 px-2 rounded bg-slate-700 hover:bg-cyan-900 text-cyan-200 border border-slate-600 hover:border-cyan-500 text-xs font-bold font-mono transition-colors" 
-        title="Roll Attack"
-    >
-       {String(action.hit).includes('+') || String(action.hit).includes('-') ? action.hit : `+${action.hit}`}
-    </button>
-)}
+                            {/* UPDATE: Hide HIT Button if not owner */}
+                            {isOwner && (action.hit !== undefined && action.hit !== null && action.hit !== "") && (
+                                <button 
+                                    onClick={(e) => handleRoll(action, 'hit', e)}
+                                    className="h-7 px-2 rounded bg-slate-700 hover:bg-cyan-900 text-cyan-200 border border-slate-600 hover:border-cyan-500 text-xs font-bold font-mono transition-colors" 
+                                    title="Roll Attack"
+                                >
+                                {String(action.hit).includes('+') || String(action.hit).includes('-') ? action.hit : `+${action.hit}`}
+                                </button>
+                            )}
 
-                            {/* DAMAGE Button */}
-                            {action.dmg && (
+                            {/* UPDATE: Hide DAMAGE Button if not owner */}
+                            {isOwner && action.dmg && (
                                 <button 
                                     onClick={(e) => handleRoll(action, 'dmg', e)}
                                     className="h-7 px-2 rounded bg-slate-700 hover:bg-indigo-900 text-indigo-200 border border-slate-600 hover:border-indigo-500 text-xs font-bold font-mono transition-colors max-w-[100px] truncate" 
@@ -253,8 +257,8 @@ const ActionsTab = ({ onDiceRoll, onLogAction }) => {
                                 </button>
                             )}
 
-                            {/* CAST/USE Button */}
-                            {(!action.hit && !action.dmg) && (
+                            {/* UPDATE: Hide USE Button if not owner */}
+                            {isOwner && (!action.hit && !action.dmg) && (
                                 <button onClick={(e) => handleRoll(action, 'use', e)} className="h-7 px-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-xs font-bold uppercase border border-indigo-500 shadow-md transition-colors">
                                     USE
                                 </button>
@@ -262,7 +266,8 @@ const ActionsTab = ({ onDiceRoll, onLogAction }) => {
                             
                             {/* Edit/Delete Toggle */}
                             <div className="flex flex-col gap-1 ml-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                {action.source === 'custom' && <button onClick={() => startEdit(action)} className="text-slate-500 hover:text-white"><Icon name="more-vertical" size={14}/></button>}
+                                {/* UPDATE: Hide Edit if not owner */}
+                                {isOwner && action.source === 'custom' && <button onClick={() => startEdit(action)} className="text-slate-500 hover:text-white"><Icon name="more-vertical" size={14}/></button>}
                                 {hasText && <button onClick={() => setIsExpanded(!isExpanded)} className="text-slate-500 hover:text-white"><Icon name={isExpanded?"chevron-up":"chevron-down"} size={14}/></button>}
                             </div>
                         </div>
@@ -300,13 +305,15 @@ const ActionsTab = ({ onDiceRoll, onLogAction }) => {
     return (
         <div className="space-y-6 pb-24">
             
-            {/* ADD BUTTON */}
-            <button onClick={() => setShowAdd(!showAdd)} className="w-full py-3 border border-dashed border-slate-700 rounded-xl text-slate-500 hover:text-white hover:border-slate-500 hover:bg-slate-800/50 transition-all flex items-center justify-center gap-2 text-sm font-bold">
-                <Icon name="plus" size={16}/> Add Action
-            </button>
+            {/* UPDATE: Hide ADD BUTTON if not owner */}
+            {isOwner && (
+                <button onClick={() => setShowAdd(!showAdd)} className="w-full py-3 border border-dashed border-slate-700 rounded-xl text-slate-500 hover:text-white hover:border-slate-500 hover:bg-slate-800/50 transition-all flex items-center justify-center gap-2 text-sm font-bold">
+                    <Icon name="plus" size={16}/> Add Action
+                </button>
+            )}
 
             {/* ADD FORM */}
-            {showAdd && (
+            {showAdd && isOwner && (
                 <div className="bg-slate-800 p-4 rounded-xl border border-slate-600 shadow-xl animate-in slide-in-from-top-2">
                     <div className="grid grid-cols-2 gap-3 mb-4">
                         <div className="col-span-2">

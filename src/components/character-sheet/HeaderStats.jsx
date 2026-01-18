@@ -44,8 +44,9 @@ const HeaderStats = ({ onDiceRoll, onLogAction, onBack, onPossess, isNpc, combat
           const r = await onDiceRoll(20); 
           const total = r + init;
           
-          if (combatActive && onInitiative) {
-              onInitiative(total);
+          // FIX: Pass character object + roll. Remove combatActive check to allow auto-start.
+          if (onInitiative) {
+              onInitiative(character, total);
               if(onLogAction) onLogAction(`<span class="text-amber-500 font-bold">Joined Combat</span>: ${total}`);
           } else {
               if(onLogAction) onLogAction(`Init: ${total}`); 

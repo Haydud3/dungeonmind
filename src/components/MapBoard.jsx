@@ -57,7 +57,7 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
 
     // NEW: Manual Combat Entry State
     const [showAddCombatant, setShowAddCombatant] = useState(false);
-    const [manualCombatant, setManualCombatant] = useState({ name: '', init: '' });
+    const [manualCombatant, setManualCombatant] = useState({ tokenId: '', init: '' });
 
     const walls = data.campaign?.activeMap?.walls || []; 
     const lightingMode = data.campaign?.activeMap?.lightingMode || 'daylight'; 
@@ -305,10 +305,17 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
         if (revealPaths && Array.isArray(revealPaths) && revealPaths.length > 0) {
              ctx.lineCap = 'round';
              ctx.lineJoin = 'round';
+             
+             // FIX: Calculate scale factor for consistent line width regardless of zoom
+             const scaleFactor = Math.max(1, stageDim.w / 1000);
+
              revealPaths.forEach(path => {
                 if (!path.points || !Array.isArray(path.points)) return; 
                 ctx.globalCompositeOperation = path.mode === 'shroud' ? 'source-over' : 'destination-out';
-                ctx.lineWidth = Math.max(10, (path.size / 1000) * canvas.width);
+                
+                // FIX: Use scaleFactor
+                ctx.lineWidth = (path.size || 40) * scaleFactor;
+                
                 ctx.strokeStyle = 'rgba(0,0,0,1)';
                 ctx.beginPath();
                 const validPoints = path.points.filter(p => p && typeof p.x === 'number');
@@ -405,11 +412,15 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
             }
         });
 
-        // 5. Render Wall Lines (Visible ONLY when Editing)
+        // // 5. Render Wall Lines (Visible ONLY when Editing)
         if (role === 'dm' && (mode === 'wall' || mode === 'wall-erase') && walls && walls.length > 0) {
             ctx.globalCompositeOperation = 'source-over';
             ctx.strokeStyle = '#06b6d4'; // Cyan
-            ctx.lineWidth = 3 / zoom; 
+            
+            // FIX: Use world-space width (5% of cell) instead of screen-space (3/zoom)
+            // This prevents blurry lines when zoomed in by treating walls as physical objects
+            ctx.lineWidth = Math.max(2, cellPx * 0.08); 
+            
             ctx.lineCap = 'round';
             ctx.beginPath();
             pixelWalls.forEach(w => {
@@ -436,7 +447,10 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
         if (role === 'dm' && mode === 'wall' && wallStart && ghostWall) {
              ctx.globalCompositeOperation = 'source-over';
              ctx.strokeStyle = '#facc15'; 
-             ctx.lineWidth = 2 / zoom;
+             
+             // FIX: consistent thickness
+             ctx.lineWidth = Math.max(2, cellPx * 0.05);
+             
              ctx.setLineDash([5, 5]);
              ctx.beginPath();
              ctx.moveTo(wallStart.x * canvas.width, wallStart.y * canvas.height);
@@ -453,7 +467,12 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
             const distFt = Math.round((distPx / cellPx) * 5);
             
             ctx.save();
-            ctx.strokeStyle = '#f59e0b'; ctx.lineWidth = 3 / zoom; ctx.setLineDash([10, 5]);
+            ctx.strokeStyle = '#f59e0b'; 
+            
+            // FIX: consistent thickness
+            ctx.lineWidth = Math.max(2, cellPx * 0.05); 
+            
+            ctx.setLineDash([10, 5]);
             ctx.beginPath();
             if(mode === 'ruler') { ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke(); }
             else { ctx.arc(sx, sy, distPx, 0, 2*Math.PI); ctx.stroke(); ctx.fillStyle = 'rgba(245, 158, 11, 0.2)'; ctx.fill(); ctx.beginPath(); ctx.setLineDash([]); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke(); }
@@ -484,7 +503,11 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
         }
 
         if (mode === 'pan' || e.button === 1 || (e.button === 0 && e.altKey)) {
-            setIsPanning(true); setDragStart({ x: e.clientX - pan.x, y: e.clientY - pan.y }); return;
+            // FIX: Get correct client coordinates for Touch events
+            let cx = e.clientX; let cy = e.clientY;
+            if(e.touches && e.touches.length > 0) { cx = e.touches[0].clientX; cy = e.touches[0].clientY; }
+            
+            setIsPanning(true); setDragStart({ x: cx - pan.x, y: cy - pan.y }); return;
         }
 
         // Place Spell Template
@@ -546,7 +569,11 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
     const handleMove = (e) => {
         if (isPanning) { 
             e.preventDefault(); 
-            setPan({ x: e.clientX - dragStart.x, y: e.clientY - dragStart.y }); return; 
+            // FIX: Get correct client coordinates for Touch events
+            let cx = e.clientX; let cy = e.clientY;
+            if(e.touches && e.touches.length > 0) { cx = e.touches[0].clientX; cy = e.touches[0].clientY; }
+            
+            setPan({ x: cx - dragStart.x, y: cy - dragStart.y }); return; 
         }
 
         // Pinch Zoom Move
@@ -623,15 +650,25 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
         if (!dragTokenId) return;
         const handleWindowMove = (e) => handleMove(e);
         const handleWindowUp = (e) => handleUp(e);
+        
+        // NEW: Safety - Abort drag on resize/orientation change to prevent teleporting to (0,0)
+        const handleResize = () => setDragTokenId(null);
+        window.addEventListener('resize', handleResize);
+
         window.addEventListener('mousemove', handleWindowMove);
         window.addEventListener('mouseup', handleWindowUp);
         window.addEventListener('touchmove', handleWindowMove, { passive: false });
         window.addEventListener('touchend', handleWindowUp);
+        // NEW: Handle touch cancellation (e.g. incoming call, tab switch)
+        window.addEventListener('touchcancel', () => setDragTokenId(null));
+
         return () => {
+            window.removeEventListener('resize', handleResize);
             window.removeEventListener('mousemove', handleWindowMove);
             window.removeEventListener('mouseup', handleWindowUp);
             window.removeEventListener('touchmove', handleWindowMove);
             window.removeEventListener('touchend', handleWindowUp);
+            window.removeEventListener('touchcancel', () => setDragTokenId(null));
         };
     }, [dragTokenId, dragStartPos, pan, zoom, stageDim, mode]); 
 
@@ -697,6 +734,10 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
 
     const openTokenSheet = (tokenId) => { 
         const token = tokens.find(t => t.id === tokenId); if (!token) return; 
+        
+        // NEW: Gatekeeper - Players cannot open NPC sheets
+        if (role !== 'dm' && (token.type === 'npc' || token.type === 'monster')) return;
+
         const char = dataRef.current.players?.find(p => p.id === token.characterId) || dataRef.current.npcs?.find(n => n.id === token.characterId); 
         if(char) { 
             if (activeSheetId && activeSheetId !== char.id) { setActiveSheetId(null); setTimeout(() => { useCharacterStore.getState().loadCharacter(char); setActiveSheetId(char.id); }, 50); } 
@@ -710,7 +751,17 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
     if (mode === 'move') cursorClass = 'cursor-default';
 
     return (
-        <div className="flex flex-col h-full bg-slate-900 overflow-hidden relative">
+        // FIX: Use 100dvh for mobile browsers to account for address bars
+        <div className="flex flex-col w-full bg-slate-900 overflow-hidden relative" style={{ height: '100dvh' }}>
+            {/* NEW: Inject Custom Animations for Tokens */}
+            <style>{`
+                @keyframes lunge { 0% { transform: translate(-50%, -50%) scale(1); } 50% { transform: translate(-50%, -70%) scale(1.2); } 100% { transform: translate(-50%, -50%) scale(1); } }
+                .animate-lunge { animation: lunge 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+                @keyframes shake { 0%, 100% { transform: translate(-50%, -50%); } 25% { transform: translate(-55%, -50%); } 75% { transform: translate(-45%, -50%); } }
+                .animate-shake { animation: shake 0.3s ease-in-out; }
+                .animate-ping-slow { animation: ping 2s cubic-bezier(0, 0, 0.2, 1) infinite; }
+            `}</style>
+
             <MapToolbar 
                 mode={mode} setMode={setMode} 
                 showGrid={showGrid} setShowGrid={setShowGrid}
@@ -728,11 +779,17 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
             {showCompendium && <CompendiumModal onClose={() => setShowCompendium(false)} importFromApi={()=>{}} />}
             
             {canControlSelected && (
-                <TokenMenu selectedTokenId={selectedTokenId} onClose={() => setSelectedTokenId(null)} openTokenSheet={openTokenSheet} updateTokenStatus={updateTokenStatus} updateTokenSize={updateTokenSize} deleteToken={deleteToken} />
+                // FIX: Mobile bottom-24. Desktop md:bottom-12. Z-Index lowered to 90 (below sheet).
+                <div className="absolute left-0 right-0 bottom-24 md:bottom-12 z-[90] pointer-events-none flex justify-center" style={{ transform: 'translateZ(0)' }}>
+                    <div className="pointer-events-auto">
+                        <TokenMenu selectedTokenId={selectedTokenId} onClose={() => setSelectedTokenId(null)} openTokenSheet={openTokenSheet} updateTokenStatus={updateTokenStatus} updateTokenSize={updateTokenStatus} deleteToken={deleteToken} />
+                    </div>
+                </div>
             )}
 
             {activeSheetId && (
-                 <div className="absolute top-14 right-2 left-2 md:left-auto md:w-96 bottom-20 md:bottom-4 bg-slate-900 border border-slate-600 rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden animate-in slide-in-from-right-10">
+                 // FIX: Z-Index raised to 100 (above token menu). Desktop raised to md:bottom-12.
+                 <div className="absolute top-14 right-2 left-2 md:left-auto md:w-96 bottom-28 md:bottom-12 bg-slate-900 border border-slate-600 rounded-xl shadow-2xl z-[100] flex flex-col overflow-hidden animate-in slide-in-from-right-10">
                     <SheetContainer characterId={activeSheetId} onBack={() => setActiveSheetId(null)} onSave={savePlayer} onDiceRoll={onDiceRoll} onInitiative={onInitiative} />
                  </div>
             )}
@@ -746,7 +803,8 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
                 onTouchStart={handleDown} onTouchMove={handleMove} onTouchEnd={handleUp}
             >
                  {mapUrl ? (
-                    <div style={{ width: `${stageDim.w}px`, height: `${stageDim.h}px`, transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: 'center center' }} className="relative shadow-2xl">
+                    // FIX: added overflow-hidden to prevent grid bleeding
+                    <div style={{ width: `${stageDim.w}px`, height: `${stageDim.h}px`, transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: 'center center' }} className="relative shadow-2xl overflow-hidden">
                         <img src={mapUrl} className="absolute inset-0 w-full h-full object-contain pointer-events-none" />
                         {showGrid && <div className="absolute inset-0 w-full h-full pointer-events-none z-10" style={{ backgroundImage: `linear-gradient(to right, rgba(255,255,255,0.3) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,0.3) 1px, transparent 1px)`, backgroundSize: `${cellPx}px ${cellPx}px` }} />}
                         
@@ -789,9 +847,22 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
                      </div>
                      <div className="max-h-40 overflow-y-auto custom-scroll space-y-1 mb-2">
                          {(data.campaign.combat.combatants || []).map((c, i) => (
-                             <div key={i} className={`flex justify-between items-center text-xs px-2 py-1.5 rounded transition-colors ${i === data.campaign.combat.turn ? 'bg-green-900/60 border border-green-500/50 shadow-[0_0_10px_rgba(34,197,94,0.2)]' : 'bg-slate-800/50'}`}>
-                                 <span className={`truncate max-w-[100px] ${i === data.campaign.combat.turn ? 'text-white font-bold' : 'text-slate-400'}`}>{c.name}</span>
-                                 <span className="font-mono text-amber-500 font-bold">{c.init}</span>
+                             <div 
+                                key={i} 
+                                onClick={() => { if(role === 'dm' && c.tokenId) openTokenSheet(c.tokenId); }}
+                                className={`flex items-center gap-2 text-xs px-2 py-1.5 rounded transition-colors border ${i === data.campaign.combat.turn ? 'bg-green-900/60 border-green-500/50 shadow-[0_0_10px_rgba(34,197,94,0.2)]' : 'bg-slate-800/50 border-transparent'} ${role === 'dm' ? 'cursor-pointer hover:bg-slate-700 hover:border-slate-500' : ''}`}
+                             >
+                                 {/* ICON DISPLAY */}
+                                 <div className="w-6 h-6 rounded-full bg-slate-900 border border-slate-600 overflow-hidden shrink-0 flex items-center justify-center">
+                                     {c.image ? (
+                                         <img src={c.image} className="w-full h-full object-cover" alt="" />
+                                     ) : (
+                                         <span className="font-bold text-slate-500 text-[8px]">{c.name?.substring(0,2).toUpperCase()}</span>
+                                     )}
+                                 </div>
+
+                                 <span className={`truncate flex-1 font-medium ${i === data.campaign.combat.turn ? 'text-white' : 'text-slate-400'}`}>{c.name}</span>
+                                 <span className="font-mono text-amber-500 font-bold text-sm">{c.init}</span>
                              </div>
                          ))}
                          {(!data.campaign.combat.combatants || data.campaign.combat.combatants.length === 0) && <div className="text-[10px] text-slate-500 text-center italic">Waiting for rolls...</div>}
@@ -806,36 +877,44 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
                                 </button>
                             ) : (
                                 <div className="flex gap-1 items-center animate-in slide-in-from-top-2">
-                                    <input 
-                                        placeholder="Name" 
-                                        className="w-16 bg-slate-800 border border-slate-600 rounded px-1 py-0.5 text-[10px] text-white"
-                                        value={manualCombatant.name}
-                                        onChange={e => setManualCombatant({...manualCombatant, name: e.target.value})}
-                                    />
+                                    <select 
+                                        className="flex-1 bg-slate-800 border border-slate-600 rounded px-1 py-0.5 text-[10px] text-white outline-none min-w-0"
+                                        value={manualCombatant.tokenId}
+                                        onChange={e => setManualCombatant({...manualCombatant, tokenId: parseInt(e.target.value)})}
+                                    >
+                                        <option value="">Select Token...</option>
+                                        {tokens.filter(t => !data.campaign.combat.combatants?.some(c => c.tokenId === t.id)).map(t => (
+                                            <option key={t.id} value={t.id}>{t.name}</option>
+                                        ))}
+                                    </select>
                                     <input 
                                         type="number" 
                                         placeholder="#" 
-                                        className="w-8 bg-slate-800 border border-slate-600 rounded px-1 py-0.5 text-[10px] text-white text-center"
+                                        className="w-8 bg-slate-800 border border-slate-600 rounded px-1 py-0.5 text-[10px] text-white text-center outline-none shrink-0"
                                         value={manualCombatant.init}
                                         onChange={e => setManualCombatant({...manualCombatant, init: e.target.value})}
                                     />
                                     <button 
                                         onClick={() => {
-                                            if(!manualCombatant.name || !manualCombatant.init) return;
+                                            if(!manualCombatant.tokenId || !manualCombatant.init) return;
+                                            const token = tokens.find(t => t.id === manualCombatant.tokenId);
+                                            if (!token) return;
+
                                             const newC = { 
-                                                id: Date.now(), 
-                                                name: manualCombatant.name, 
+                                                id: token.characterId || Date.now(), 
+                                                name: token.name, 
                                                 init: parseInt(manualCombatant.init), 
-                                                type: 'manual' 
+                                                type: token.type || 'npc',
+                                                tokenId: token.id 
                                             };
                                             const sorted = [...(data.campaign.combat.combatants||[]), newC].sort((a,b) => b.init - a.init);
                                             updateCloud({...data, campaign: {...data.campaign, combat: {...data.campaign.combat, combatants: sorted}}});
-                                            setManualCombatant({ name: '', init: '' });
+                                            setManualCombatant({ tokenId: '', init: '' });
                                             setShowAddCombatant(false);
                                         }}
-                                        className="text-green-400 hover:text-green-300"
+                                        className="text-green-400 hover:text-green-300 shrink-0"
                                     ><Icon name="check" size={14}/></button>
-                                    <button onClick={() => setShowAddCombatant(false)} className="text-red-400 hover:text-red-300"><Icon name="x" size={14}/></button>
+                                    <button onClick={() => setShowAddCombatant(false)} className="text-red-400 hover:text-red-300 shrink-0"><Icon name="x" size={14}/></button>
                                 </div>
                             )}
                         </div>

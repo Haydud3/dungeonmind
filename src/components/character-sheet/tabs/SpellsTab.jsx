@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import { useCharacterStore } from '../../../stores/useCharacterStore';
 import Icon from '../../Icon';
 
-const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate }) => {
+// UPDATE: Added isOwner to destructuring
+const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate, isOwner }) => {
     // FIX: Removed getModifier from store destructuring
     const { character, castSpell, updateInfo } = useCharacterStore();
     const [filterLevel, setFilterLevel] = useState(0);
@@ -218,8 +219,8 @@ const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate }) => {
                         {/* Right: Buttons */}
                         <div className="flex items-center gap-2 shrink-0">
                             
-                            {/* Hit Button */}
-                            {spell.hit && (
+                            {/* UPDATE: Hide Hit Button if not owner */}
+                            {isOwner && spell.hit && (
                                 <button 
                                     onClick={(e) => handleRoll(spell, 'hit', e)}
                                     className="bg-slate-700 hover:bg-cyan-900/50 text-cyan-400 border border-slate-600 hover:border-cyan-500/50 px-2 py-1 rounded text-[10px] font-bold font-mono transition-colors uppercase"
@@ -228,8 +229,8 @@ const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate }) => {
                                 </button>
                             )}
 
-                            {/* Damage Button */}
-                            {spell.dmg && (
+                            {/* UPDATE: Hide Damage Button if not owner */}
+                            {isOwner && spell.dmg && (
                                 <button 
                                     onClick={(e) => handleRoll(spell, 'dmg', e)}
                                     className="bg-slate-700 hover:bg-indigo-900/50 text-indigo-300 border border-slate-600 hover:border-indigo-500/50 px-2 py-1 rounded text-[10px] font-bold font-mono transition-colors max-w-[100px] truncate"
@@ -238,16 +239,18 @@ const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate }) => {
                                 </button>
                             )}
 
-                            {/* Cast / Slot Button */}
-                            <button 
-                                onClick={(e) => handleCast(spell, e)} 
-                                className="bg-indigo-600 hover:bg-indigo-500 text-white border border-indigo-500 px-3 py-1 rounded text-[10px] font-bold uppercase shadow-lg shadow-indigo-900/20"
-                            >
-                                {spell.level === 0 ? "CAST" : "SLOT"}
-                            </button>
+                            {/* UPDATE: Hide Cast/Slot Button if not owner */}
+                            {isOwner && (
+                                <button 
+                                    onClick={(e) => handleCast(spell, e)} 
+                                    className="bg-indigo-600 hover:bg-indigo-500 text-white border border-indigo-500 px-3 py-1 rounded text-[10px] font-bold uppercase shadow-lg shadow-indigo-900/20"
+                                >
+                                    {spell.level === 0 ? "CAST" : "SLOT"}
+                                </button>
+                            )}
 
-                            {/* UPDATE: Place Template Button */}
-                            {isAoE && onPlaceTemplate && (
+                            {/* Template Button (Available to everyone or just owner? Usually just owner) */}
+                            {isAoE && onPlaceTemplate && isOwner && (
                                 <button 
                                     onClick={(e) => {
                                         e.stopPropagation(); 
@@ -262,7 +265,8 @@ const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate }) => {
 
                             {/* Menu */}
                             <div className="flex flex-col gap-1 ml-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <button onClick={(e) => startEdit(index, spell, e)} className="text-slate-500 hover:text-white p-0.5"><Icon name="more-vertical" size={14}/></button>
+                                {/* UPDATE: Hide Edit button if not owner */}
+                                {isOwner && <button onClick={(e) => startEdit(index, spell, e)} className="text-slate-500 hover:text-white p-0.5"><Icon name="more-vertical" size={14}/></button>}
                                 {hasText && <button onClick={() => setExpanded(!expanded)} className="text-slate-500 hover:text-white p-0.5"><Icon name={expanded ? "chevron-up" : "chevron-down"} size={14}/></button>}
                             </div>
                         </div>
@@ -325,7 +329,11 @@ const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate }) => {
                         {lvl === 0 ? 'C' : lvl}
                     </button>
                 ))}
-                <button onClick={() => setShowSrd(true)} className="shrink-0 w-10 h-10 rounded-full flex items-center justify-center bg-slate-700 hover:bg-green-600 text-white border border-slate-600 ml-2 shadow-lg"><Icon name="plus" size={18}/></button>
+                
+                {/* UPDATE: Only Owner can add spells */}
+                {isOwner && (
+                    <button onClick={() => setShowSrd(true)} className="shrink-0 w-10 h-10 rounded-full flex items-center justify-center bg-slate-700 hover:bg-green-600 text-white border border-slate-600 ml-2 shadow-lg"><Icon name="plus" size={18}/></button>
+                )}
             </div>
 
             {/* Spell List */}

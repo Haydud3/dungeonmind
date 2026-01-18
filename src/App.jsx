@@ -276,19 +276,44 @@ function App() {
 
   const handleInitiative = (char, roll) => {
       const c = data.campaign?.combat;
-      if (!c || !c.active) return;
+      // Auto-start combat if needed so the roll isn't lost
+      const combatState = (c && c.active) ? c : { active: true, round: 1, turn: 0, combatants: [] };
       
-      const combatants = [...(c.combatants || [])];
+      const combatants = [...(combatState.combatants || [])];
       const idx = combatants.findIndex(x => x.id === char.id);
-      const type = data.players.some(p => p.id === char.id) ? 'pc' : 'npc';
       
-      const entry = { id: char.id, name: char.name, init: roll, type };
+      // Determine type & Image
+      const isPlayer = data.players.some(p => p.id === char.id);
+      const type = isPlayer ? 'pc' : 'npc';
       
-      if (idx > -1) combatants[idx] = entry; 
+      // Find linked Token ID for map integration
+      const linkedToken = data.campaign?.activeMap?.tokens?.find(t => t.characterId === char.id);
+      const tokenId = linkedToken ? linkedToken.id : null;
+      
+      // Grab image from Character OR Token (fallback)
+      const image = char.image || linkedToken?.image || null;
+
+      const entry = { 
+          id: char.id, 
+          name: char.name, 
+          init: roll, 
+          type, 
+          tokenId,
+          image // Save image for the tracker
+      };
+      
+      if (idx > -1) combatants[idx] = { ...combatants[idx], ...entry }; 
       else combatants.push(entry);
       
       combatants.sort((a,b) => b.init - a.init);
-      updateCloud({ ...data, campaign: { ...data.campaign, combat: { ...c, combatants } } });
+      
+      updateCloud({ 
+          ...data, 
+          campaign: { 
+              ...data.campaign, 
+              combat: { ...combatState, combatants } 
+          } 
+      }, true); // Force immediate save
   };
 
   if (!isAuthReady) return <div className="h-screen bg-slate-900 flex items-center justify-center text-amber-500 font-bold animate-pulse">Summoning DungeonMind...</div>;

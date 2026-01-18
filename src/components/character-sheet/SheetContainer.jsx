@@ -10,7 +10,8 @@ import RollToast from './widgets/RollToast';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import Icon from '../Icon';
 
-const SheetContainer = ({ characterId, onSave, onDiceRoll, onLogAction, onBack, onPossess, isNpc, combatActive, onInitiative, onPlaceTemplate }) => {
+// UPDATE: Added isOwner to props (defaulting to true temporarily to prevent breakage)
+const SheetContainer = ({ characterId, onSave, onDiceRoll, onLogAction, onBack, onPossess, isNpc, combatActive, onInitiative, onPlaceTemplate, isOwner = true }) => {
     const [activeTab, setActiveTab] = useState('actions');
     
     const character = useCharacterStore((state) => state.character);
@@ -65,18 +66,19 @@ const SheetContainer = ({ characterId, onSave, onDiceRoll, onLogAction, onBack, 
                 isNpc={isNpc} 
                 combatActive={combatActive}
                 onInitiative={onInitiative}
+                isOwner={isOwner}
             />
 
             {/* Scrollable Content */}
             <div className="flex-1 overflow-y-auto custom-scroll bg-slate-900 relative">
                 <div className="p-4 max-w-2xl mx-auto pb-32"> 
                     <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
-                        {activeTab === 'actions' && <ActionsTab onDiceRoll={onDiceRoll} onLogAction={handleLogAction} />}
-                        {activeTab === 'skills' && <SkillsTab onDiceRoll={onDiceRoll} onLogAction={handleLogAction} />}
-                        {activeTab === 'spells' && <SpellsTab onDiceRoll={onDiceRoll} onLogAction={handleLogAction} onPlaceTemplate={onPlaceTemplate} />}
-                        {activeTab === 'inventory' && <InventoryTab onDiceRoll={onDiceRoll} onLogAction={handleLogAction} />}
-                        {activeTab === 'features' && <FeaturesTab />}
-                        {activeTab === 'bio' && <BioTab />}
+                        {activeTab === 'actions' && <ActionsTab onDiceRoll={onDiceRoll} onLogAction={handleLogAction} isOwner={isOwner} />}
+                        {activeTab === 'skills' && <SkillsTab onDiceRoll={onDiceRoll} onLogAction={handleLogAction} isOwner={isOwner} />}
+                        {activeTab === 'spells' && <SpellsTab onDiceRoll={onDiceRoll} onLogAction={handleLogAction} onPlaceTemplate={onPlaceTemplate} isOwner={isOwner} />}
+                        {activeTab === 'inventory' && <InventoryTab onDiceRoll={onDiceRoll} onLogAction={handleLogAction} isOwner={isOwner} />}
+                        {activeTab === 'features' && <FeaturesTab isOwner={isOwner} />}
+                        {activeTab === 'bio' && <BioTab isOwner={isOwner} />}
                     </div>
                 </div>
             </div>
