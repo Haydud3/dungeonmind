@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useCharacterStore } from '../../../stores/useCharacterStore';
 import Icon from '../../Icon';
 
-const SpellsTab = ({ onDiceRoll, onLogAction }) => {
+const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate }) => {
     // FIX: Removed getModifier from store destructuring
     const { character, castSpell, updateInfo } = useCharacterStore();
     const [filterLevel, setFilterLevel] = useState(0);
@@ -192,6 +192,10 @@ const SpellsTab = ({ onDiceRoll, onLogAction }) => {
         const [expanded, setExpanded] = useState(false);
         const hasText = spell.desc;
 
+        // Detect if spell is an AoE/Placeable
+        const isAoE = (spell.range && (spell.range.includes('foot') || spell.range.includes('mile'))) || 
+                      (spell.desc && (spell.desc.includes('radius') || spell.desc.includes('cone') || spell.desc.includes('cube')));
+
         return (
             <div className={`bg-slate-800 border border-slate-700 rounded-xl mb-2 transition-all hover:border-indigo-500/50 shadow-sm group ${expanded ? 'ring-1 ring-indigo-500/50' : ''}`}>
                 
@@ -241,6 +245,20 @@ const SpellsTab = ({ onDiceRoll, onLogAction }) => {
                             >
                                 {spell.level === 0 ? "CAST" : "SLOT"}
                             </button>
+
+                            {/* UPDATE: Place Template Button */}
+                            {isAoE && onPlaceTemplate && (
+                                <button 
+                                    onClick={(e) => {
+                                        e.stopPropagation(); 
+                                        onPlaceTemplate(spell);
+                                    }} 
+                                    className="bg-orange-600 hover:bg-orange-500 text-white border border-orange-500 px-2 py-1 rounded text-[10px] font-bold shadow-lg flex items-center justify-center" 
+                                    title="Place Template on Map"
+                                >
+                                    <Icon name="crosshair" size={14}/>
+                                </button>
+                            )}
 
                             {/* Menu */}
                             <div className="flex flex-col gap-1 ml-1 opacity-0 group-hover:opacity-100 transition-opacity">

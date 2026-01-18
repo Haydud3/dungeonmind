@@ -1,13 +1,11 @@
 import React from 'react';
 import MapBoard from './MapBoard';
 
-const WorldView = ({ data, role, updateMapState, updateCloud, user, apiKey, onDiceRoll, savePlayer }) => {
+const WorldView = ({ data, role, updateMapState, updateCloud, user, apiKey, onDiceRoll, savePlayer, activeTemplate, onClearTemplate, onInitiative }) => {
     return (
-        // FIX: Changed from "h-full w-full" to "absolute inset-0"
-        // This forces the VTT to fill the parent container on mobile devices
-        // preventing the "Blank Screen" / 0-height issue.
-        <div className="absolute inset-0 w-full h-full bg-slate-900">
-            <MapBoard 
+        /* Fix: Use absolute inset-0 to force full height on mobile/PWA */
+        <div className="absolute inset-0 w-full h-full bg-slate-900 overflow-hidden">
+             <MapBoard 
                 data={data} 
                 role={role} 
                 updateMapState={updateMapState} 
@@ -16,6 +14,9 @@ const WorldView = ({ data, role, updateMapState, updateCloud, user, apiKey, onDi
                 apiKey={apiKey}
                 onDiceRoll={onDiceRoll} 
                 savePlayer={savePlayer} 
+                activeTemplate={activeTemplate}
+                onClearTemplate={onClearTemplate}
+                onInitiative={onInitiative}
             />
         </div>
     );

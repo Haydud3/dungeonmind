@@ -15,9 +15,10 @@ import CompendiumModal from './map/CompendiumModal';
 // --- CONFIG ---
 const GRID_SIZE_DEFAULT = 5;
 
-const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDiceRoll, savePlayer }) => {
+const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDiceRoll, savePlayer, activeTemplate, onClearTemplate, onInitiative, onPlaceTemplate }) => {
     const canvasRef = useRef(null);
     const containerRef = useRef(null);
+
     const gridSaveTimer = useRef(null);
     const viewSaveTimer = useRef(null);
     
@@ -52,9 +53,15 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
     // --- NEW: VISION & WALL STATE ---
     const [wallStart, setWallStart] = useState(null); // {x, y} start of current wall segment
     const [ghostWall, setGhostWall] = useState(null); // {x, y} current mouse pos for ghost line
-    
+    const [templatePos, setTemplatePos] = useState(null); // {x, y} for active spell placement
+
+    // NEW: Manual Combat Entry State
+    const [showAddCombatant, setShowAddCombatant] = useState(false);
+    const [manualCombatant, setManualCombatant] = useState({ name: '', init: '' });
+
     const walls = data.campaign?.activeMap?.walls || []; 
     const lightingMode = data.campaign?.activeMap?.lightingMode || 'daylight'; 
+    const mapTemplates = data.campaign?.activeMap?.templates || [];
 
     // UI Panels
     const [showTokenBar, setShowTokenBar] = useState(false);
@@ -314,6 +321,33 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
             });
         }
 
+        // 3.5 Render Spell Templates (Saved & Active)
+        const drawTemplate = (t, isGhost = false) => {
+            const x = (t.x / 100) * canvas.width;
+            const y = (t.y / 100) * canvas.height;
+            // Default 20ft radius if parse fails. Map width / (100 / gridSize) = px per 5ft cell.
+            const pxPerFoot = (canvas.width / (100 / gridSize)) / 5;
+            const radius = (t.size || 20) * pxPerFoot;
+
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.beginPath();
+            ctx.arc(0, 0, radius, 0, Math.PI * 2);
+            ctx.fillStyle = isGhost ? 'rgba(249, 115, 22, 0.3)' : 'rgba(249, 115, 22, 0.2)';
+            ctx.fill();
+            ctx.strokeStyle = '#f97316';
+            ctx.lineWidth = 2;
+            if(isGhost) ctx.setLineDash([5, 5]);
+            ctx.stroke();
+            ctx.restore();
+        };
+
+        mapTemplates.forEach(t => drawTemplate(t));
+        if (activeTemplate && templatePos) {
+            const size = parseInt(activeTemplate.desc?.match(/(\d+)-foot-radius/)?.[1] || 20);
+            drawTemplate({ x: templatePos.x * 100, y: templatePos.y * 100, size }, true);
+        }
+
         // 4. Dynamic Lighting & Vision
         const pixelWalls = walls.map(w => ({
             p1: { x: w.p1.x * canvas.width, y: w.p1.y * canvas.height },
@@ -435,15 +469,40 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
     };
 
     // Animation Loop
-    useEffect(() => { renderCanvas(); }, [revealPaths, tokens, stageDim, mode, measureStart, measureEnd, dragTokenId, tempTokenPos, gridSize, walls, wallStart, ghostWall, lightingMode, role]);
+    useEffect(() => { renderCanvas(); }, [revealPaths, tokens, stageDim, mode, measureStart, measureEnd, dragTokenId, tempTokenPos, gridSize, walls, wallStart, ghostWall, lightingMode, role, activeTemplate, templatePos, mapTemplates]);
 
     // --- INTERACTION LOGIC ---
     
     const handleDown = (e) => {
         const coords = getCoords(e);
         
+        // Pinch Zoom Start
+        if (e.touches && e.touches.length === 2) {
+            const d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+            setPinchDist(d);
+            return;
+        }
+
         if (mode === 'pan' || e.button === 1 || (e.button === 0 && e.altKey)) {
             setIsPanning(true); setDragStart({ x: e.clientX - pan.x, y: e.clientY - pan.y }); return;
+        }
+
+        // Place Spell Template
+        if (activeTemplate && templatePos) {
+            const size = parseInt(activeTemplate.desc?.match(/(\d+)-foot-radius/)?.[1] || 20);
+            
+            const newT = { id: Date.now(), x: templatePos.x*100, y: templatePos.y*100, size, name: activeTemplate.name };
+            
+            if (onPlaceTemplate) {
+                onPlaceTemplate(newT);
+            } else {
+                const newTemplates = [...mapTemplates, newT];
+                updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...data.campaign.activeMap, templates: newTemplates } } });
+                if(onClearTemplate) onClearTemplate();
+            }
+
+            setTemplatePos(null);
+            return;
         }
 
         // WALL DELETION
@@ -489,12 +548,29 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
             e.preventDefault(); 
             setPan({ x: e.clientX - dragStart.x, y: e.clientY - dragStart.y }); return; 
         }
+
+        // Pinch Zoom Move
+        if (e.touches && e.touches.length === 2 && pinchDist) {
+            const d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+            const delta = d - pinchDist;
+            const newZoom = Math.max(0.1, Math.min(5, zoom + (delta * 0.005)));
+            setZoom(newZoom);
+            setPinchDist(d);
+            return;
+        }
+
         const coords = getCoords(e);
 
         if (role === 'dm' && mode === 'wall') {
             let cx = coords.x; let cy = coords.y;
             if (snapToGrid) { cx = snapCoordinate(cx); cy = snapCoordinate(cy, true); }
             setGhostWall({x: cx, y: cy});
+        }
+
+        if (activeTemplate) {
+            let cx = coords.x; let cy = coords.y;
+            if (snapToGrid) { cx = snapCoordinate(cx); cy = snapCoordinate(cy, true); }
+            setTemplatePos({x: cx, y: cy});
         }
 
         if (dragTokenId) {
@@ -513,6 +589,7 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
     const handleUp = (e) => {
         setIsPanning(false);
         setIsDrawing(false);
+        setPinchDist(null);
         setMeasureStart(null);
         setMeasureEnd(null);
         
@@ -646,7 +723,7 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
                 lightingMode={lightingMode} onToggleLight={toggleLighting} 
             />
 
-            {showMapBar && <MapLibrary savedMaps={savedMaps} onClose={() => setShowMapBar(false)} loadMap={loadMap} deleteMap={()=>{}} apiKey={apiKey} />}
+            {showMapBar && <MapLibrary savedMaps={savedMaps} onClose={() => setShowMapBar(false)} loadMap={loadMap} deleteMap={(id)=>updateMapState('delete_map', id)} apiKey={apiKey} />}
             {showTokenBar && <TokenManager data={data} onClose={() => setShowTokenBar(false)} addToken={addToken} onOpenCompendium={() => setShowCompendium(true)} onOpenSheet={openTokenSheet} />}
             {showCompendium && <CompendiumModal onClose={() => setShowCompendium(false)} importFromApi={()=>{}} />}
             
@@ -656,7 +733,7 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
 
             {activeSheetId && (
                  <div className="absolute top-14 right-2 left-2 md:left-auto md:w-96 bottom-20 md:bottom-4 bg-slate-900 border border-slate-600 rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden animate-in slide-in-from-right-10">
-                    <SheetContainer characterId={activeSheetId} onBack={() => setActiveSheetId(null)} onSave={savePlayer} onDiceRoll={onDiceRoll} />
+                    <SheetContainer characterId={activeSheetId} onBack={() => setActiveSheetId(null)} onSave={savePlayer} onDiceRoll={onDiceRoll} onInitiative={onInitiative} />
                  </div>
             )}
 
@@ -671,9 +748,9 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
                  {mapUrl ? (
                     <div style={{ width: `${stageDim.w}px`, height: `${stageDim.h}px`, transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: 'center center' }} className="relative shadow-2xl">
                         <img src={mapUrl} className="absolute inset-0 w-full h-full object-contain pointer-events-none" />
-                        {showGrid && <div className="absolute inset-0 w-full h-full pointer-events-none" style={{ backgroundImage: `linear-gradient(to right, rgba(255,255,255,0.3) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,0.3) 1px, transparent 1px)`, backgroundSize: `${cellPx}px ${cellPx}px` }} />}
+                        {showGrid && <div className="absolute inset-0 w-full h-full pointer-events-none z-10" style={{ backgroundImage: `linear-gradient(to right, rgba(255,255,255,0.3) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,0.3) 1px, transparent 1px)`, backgroundSize: `${cellPx}px ${cellPx}px` }} />}
                         
-                        <div className="absolute inset-0 w-full h-full pointer-events-none">
+                        <div className="absolute inset-0 w-full h-full pointer-events-none z-30">
                             {tokens.map(t => {
                                 const isOwner = role === 'dm' || (t.characterId === myCharId);
                                 return (
@@ -683,10 +760,13 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
                                             isOwner={isOwner && (mode === 'move' || role === 'dm')} 
                                             cellPx={cellPx} 
                                             isDragging={dragTokenId===t.id} 
-                                            overridePos={dragTokenId===t.id?tempTokenPos:null} 
-                                            onMouseDown={(e)=>handleTokenDragStart(e, t.id)} 
-                                        />
-                                    </div>
+                                    overridePos={dragTokenId===t.id?tempTokenPos:null} 
+                                    onMouseDown={(e) => {
+                                        if (mode === 'ruler' || mode === 'radius') return;
+                                        handleTokenDragStart(e, t.id);
+                                    }}
+                                />
+                            </div>
                                 );
                             })}
                         </div>
@@ -696,6 +776,82 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
                     <div className="text-slate-500 flex flex-col items-center"><Icon name="map" size={48} className="mb-2 opacity-20"/><p>No Map Loaded</p></div>
                  )}
             </div>
+
+            {/* COMBAT TRACKER OVERLAY */}
+            {role === 'dm' && !data.campaign?.combat?.active && (
+                 <button onClick={() => updateCloud({...data, campaign: {...data.campaign, combat: { active: true, round: 1, turn: 0, combatants: [] }}})} className="absolute top-16 left-4 z-30 bg-red-900/80 hover:bg-red-700 text-white px-3 py-1 rounded-full text-xs font-bold border border-red-500 shadow-lg flex items-center gap-1 transition-transform hover:scale-105"><Icon name="sword" size={14}/> Fight!</button>
+            )}
+            {data.campaign?.combat?.active && (
+                 <div className="absolute top-16 left-4 z-30 bg-slate-900/95 backdrop-blur border border-slate-600 rounded-lg p-3 w-48 shadow-2xl animate-in slide-in-from-left-5">
+                     <div className="flex justify-between items-center mb-2 border-b border-slate-700 pb-1">
+                         <span className="text-xs font-bold text-amber-500 flex items-center gap-1"><Icon name="swords" size={12}/> Round {data.campaign.combat.round}</span>
+                         {role === 'dm' && <button onClick={() => updateCloud({...data, campaign: {...data.campaign, combat: { ...data.campaign.combat, active: false }}})} className="text-[10px] text-red-400 hover:text-white bg-slate-800 px-2 rounded">End</button>}
+                     </div>
+                     <div className="max-h-40 overflow-y-auto custom-scroll space-y-1 mb-2">
+                         {(data.campaign.combat.combatants || []).map((c, i) => (
+                             <div key={i} className={`flex justify-between items-center text-xs px-2 py-1.5 rounded transition-colors ${i === data.campaign.combat.turn ? 'bg-green-900/60 border border-green-500/50 shadow-[0_0_10px_rgba(34,197,94,0.2)]' : 'bg-slate-800/50'}`}>
+                                 <span className={`truncate max-w-[100px] ${i === data.campaign.combat.turn ? 'text-white font-bold' : 'text-slate-400'}`}>{c.name}</span>
+                                 <span className="font-mono text-amber-500 font-bold">{c.init}</span>
+                             </div>
+                         ))}
+                         {(!data.campaign.combat.combatants || data.campaign.combat.combatants.length === 0) && <div className="text-[10px] text-slate-500 text-center italic">Waiting for rolls...</div>}
+                     </div>
+
+                     {/* Manual Add Button */}
+                     {role === 'dm' && (
+                        <div className="mb-2 border-t border-slate-700 pt-1">
+                            {!showAddCombatant ? (
+                                <button onClick={() => setShowAddCombatant(true)} className="w-full text-[10px] text-slate-400 hover:text-white flex items-center justify-center gap-1 hover:bg-slate-800 rounded py-1">
+                                    <Icon name="plus" size={10}/> Add Combatant
+                                </button>
+                            ) : (
+                                <div className="flex gap-1 items-center animate-in slide-in-from-top-2">
+                                    <input 
+                                        placeholder="Name" 
+                                        className="w-16 bg-slate-800 border border-slate-600 rounded px-1 py-0.5 text-[10px] text-white"
+                                        value={manualCombatant.name}
+                                        onChange={e => setManualCombatant({...manualCombatant, name: e.target.value})}
+                                    />
+                                    <input 
+                                        type="number" 
+                                        placeholder="#" 
+                                        className="w-8 bg-slate-800 border border-slate-600 rounded px-1 py-0.5 text-[10px] text-white text-center"
+                                        value={manualCombatant.init}
+                                        onChange={e => setManualCombatant({...manualCombatant, init: e.target.value})}
+                                    />
+                                    <button 
+                                        onClick={() => {
+                                            if(!manualCombatant.name || !manualCombatant.init) return;
+                                            const newC = { 
+                                                id: Date.now(), 
+                                                name: manualCombatant.name, 
+                                                init: parseInt(manualCombatant.init), 
+                                                type: 'manual' 
+                                            };
+                                            const sorted = [...(data.campaign.combat.combatants||[]), newC].sort((a,b) => b.init - a.init);
+                                            updateCloud({...data, campaign: {...data.campaign, combat: {...data.campaign.combat, combatants: sorted}}});
+                                            setManualCombatant({ name: '', init: '' });
+                                            setShowAddCombatant(false);
+                                        }}
+                                        className="text-green-400 hover:text-green-300"
+                                    ><Icon name="check" size={14}/></button>
+                                    <button onClick={() => setShowAddCombatant(false)} className="text-red-400 hover:text-red-300"><Icon name="x" size={14}/></button>
+                                </div>
+                            )}
+                        </div>
+                     )}
+
+                     {role === 'dm' && (
+                         <button onClick={() => {
+                             const c = data.campaign.combat;
+                             let nextT = c.turn + 1;
+                             let nextR = c.round;
+                             if (nextT >= (c.combatants?.length || 0)) { nextT = 0; nextR++; }
+                             updateCloud({...data, campaign: {...data.campaign, combat: { ...c, turn: nextT, round: nextR }}});
+                         }} className="w-full bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] py-1.5 rounded font-bold shadow flex justify-center items-center gap-1">Next Turn <Icon name="chevron-right" size={12}/></button>
+                     )}
+                 </div>
+            )}
         </div>
     );
 };

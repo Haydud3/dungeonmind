@@ -32,8 +32,21 @@ const Token = ({ token, isOwner, onMouseDown, onTouchStart, cellPx, isDragging, 
     const statuses = token.statuses || [];
     const isDead = statuses.includes('dead');
 
-    const x = isDragging && overridePos ? overridePos.x : token.x;
-    const y = isDragging && overridePos ? overridePos.y : token.y;
+    // --- NEW: Visual Animation Logic ---
+    const animMap = {
+        'attack': 'animate-bounce',   // Placeholder for lunge
+        'hit': 'animate-pulse bg-red-500/50',      
+        'heal': 'animate-pulse shadow-[0_0_15px_rgba(34,197,94,0.8)]', 
+        'cast': 'animate-pulse shadow-[0_0_15px_rgba(99,102,241,0.8)]'
+    };
+    const animClass = token.anim ? (animMap[token.anim] || '') : '';
+
+    // Fix: Default to center (50,50) if x/y are missing to prevent top-left bunching
+    const safeX = (token.x === undefined || token.x === null) ? 50 : token.x;
+    const safeY = (token.y === undefined || token.y === null) ? 50 : token.y;
+
+    const x = isDragging && overridePos ? overridePos.x : safeX;
+    const y = isDragging && overridePos ? overridePos.y : safeY;
 
     return (
         <div 
@@ -54,6 +67,7 @@ const Token = ({ token, isOwner, onMouseDown, onTouchStart, cellPx, isDragging, 
                 ${isOwner ? 'hover:scale-105' : ''} 
                 ${isDead ? 'grayscale opacity-80' : ''}
                 ${isDragging ? 'opacity-60 pointer-events-none z-[100] scale-110' : 'opacity-100 z-10'} 
+                ${animClass}
             `}
             style={{ 
                 left: `${x}%`, 

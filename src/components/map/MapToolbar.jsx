@@ -44,14 +44,15 @@ const MapToolbar = ({
                 )}
             </div>
 
-            <div className="flex bg-slate-900 rounded p-1 gap-1 border border-slate-700 items-center px-2">
+            {/* HIDE ON MOBILE: Secondary Tools */}
+            <div className="hidden md:flex bg-slate-900 rounded p-1 gap-1 border border-slate-700 items-center px-2">
                 <button onClick={() => setShowGrid(!showGrid)} className={`p-1 rounded ${showGrid ? 'text-green-400' : 'text-slate-500'}`} title="Toggle Grid"><Icon name="grid" size={18}/></button>
                 <button onClick={() => setSnapToGrid(!snapToGrid)} className={`p-1 rounded ${snapToGrid ? 'text-green-400' : 'text-slate-500'}`} title="Snap to Grid"><Icon name="magnet" size={18}/></button>
                 {showGrid && <input type="range" min="2" max="15" step="0.5" value={gridSize} onChange={handleGridChange} className="w-16 accent-green-500 h-1 bg-slate-700 rounded-lg cursor-pointer"/>}
             </div>
 
-            {/* ZOOM SLIDER */}
-            <div className="flex items-center gap-2 bg-slate-900 rounded p-1 px-2 border border-slate-700 hidden sm:flex">
+            {/* ZOOM SLIDER - Hide on mobile since we have pinch zoom now */}
+            <div className="flex items-center gap-2 bg-slate-900 rounded p-1 px-2 border border-slate-700 hidden md:flex">
                 <Icon name="zoom-in" size={14} className="text-slate-500"/>
                 <input 
                     type="range" min="0.1" max="5" step="0.1" 

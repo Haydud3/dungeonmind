@@ -101,5 +101,9 @@ export const useCharacterStore = create((set, get) => ({
         return { 
             logs: [{ id: Date.now(), message: msgContent }, ...(state.logs || [])].slice(0, 5) 
         };
-    })
+    }),
+
+    removeLog: (id) => set((state) => ({
+        logs: state.logs.filter(l => l.id !== id)
+    }))
 }));

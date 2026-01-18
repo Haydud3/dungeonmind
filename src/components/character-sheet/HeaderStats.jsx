@@ -3,7 +3,7 @@ import { useCharacterStore } from '../../stores/useCharacterStore';
 import Icon from '../Icon';
 import { compressImage } from '../../utils/imageCompressor';
 
-const HeaderStats = ({ onDiceRoll, onLogAction, onBack, onPossess, isNpc }) => {
+const HeaderStats = ({ onDiceRoll, onLogAction, onBack, onPossess, isNpc, combatActive, onInitiative }) => {
   const { character, updateHP, updateStat, updateDeathSaves, setDeathSaves, recoverSlots, shortRest, updateInfo } = useCharacterStore();
   const [isExpanded, setIsExpanded] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -39,7 +39,19 @@ const HeaderStats = ({ onDiceRoll, onLogAction, onBack, onPossess, isNpc }) => {
   const isDying = currentHP === 0 && !isNpc;
 
   // --- HANDLERS ---
-  const handleInitRoll = async () => { if(onDiceRoll) { const r = await onDiceRoll(20); if(onLogAction) onLogAction(`Init: ${r+init}`); } };
+  const handleInitRoll = async () => { 
+      if(onDiceRoll) { 
+          const r = await onDiceRoll(20); 
+          const total = r + init;
+          
+          if (combatActive && onInitiative) {
+              onInitiative(total);
+              if(onLogAction) onLogAction(`<span class="text-amber-500 font-bold">Joined Combat</span>: ${total}`);
+          } else {
+              if(onLogAction) onLogAction(`Init: ${total}`); 
+          }
+      } 
+  };
   const handleLongRest = () => { recoverSlots(); updateHP('current', maxHP); setIsExpanded(false); };
   const handleShortRest = () => { const h = prompt("Heal amount:"); if(h) shortRest(parseInt(h)); setIsExpanded(false); };
   

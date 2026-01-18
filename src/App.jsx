@@ -33,7 +33,8 @@ const DB_INIT_DATA = {
         activeMap: { url: null, revealPaths: [], tokens: [] }, 
         savedMaps: [],
         activeHandout: null, 
-        location: "Start" 
+        location: "Start",
+        combat: { active: false, round: 1, turn: 0, combatants: [] }
     }
 };
 
@@ -55,6 +56,7 @@ function App() {
   const [showHandout, setShowHandout] = useState(false);
   const [showHandoutCreator, setShowHandoutCreator] = useState(false);
   const [rollingDice, setRollingDice] = useState(null);
+  const [activeTemplate, setActiveTemplate] = useState(null); // NEW: Track active spell template
   const addLogEntry = useCharacterStore((state) => state.addLogEntry);
 
   const [apiKey, setApiKey] = useState(() => localStorage.getItem('dm_api_key') || '');
@@ -191,7 +193,15 @@ function App() {
           const newPaths = [...newMap.revealPaths];
           newPaths[newPaths.length - 1] = lastPath;
           newMap.revealPaths = newPaths;
-      } else if (action === 'clear_fog') { newMap.revealPaths = []; }
+      } else if (action === 'clear_fog') { newMap.revealPaths = []; 
+      } else if (action === 'delete_map') {
+          const target = newSavedMaps.find(m => m.id === payload);
+          newSavedMaps = newSavedMaps.filter(m => m.id !== payload);
+          // If deleting the active map, reset the board
+          if (target && target.url === newMap.url) {
+              newMap = { url: null, revealPaths: [], walls: [], tokens: [], view: { zoom: 1, pan: {x:0,y:0} } };
+          }
+      }
       updateCloud({ ...data, campaign: { ...data.campaign, activeMap: newMap, savedMaps: newSavedMaps } });
   };
 
@@ -232,7 +242,7 @@ function App() {
       setIsLoading(false);
   };
 
-  const handleDiceRoll = (d) => {
+  const handleDiceRoll = (d, silent = false) => {
     return new Promise((resolve) => {
         setRollingDice(null);
         setTimeout(() => {
@@ -241,7 +251,7 @@ function App() {
             setShowTools(false); 
             setTimeout(() => {
                 setDiceLog(prev => [{id: Date.now(), die: `d${d}`, result}, ...prev]);
-                addLogEntry({ message: `<div class="font-bold text-white">Manual Roll</div><div class="text-xl text-amber-500 font-bold">d${d} -> ${result}</div>`, id: Date.now() });
+                if (!silent) addLogEntry({ message: `<div class="font-bold text-white">Manual Roll</div><div class="text-xl text-amber-500 font-bold">d${d} -> ${result}</div>`, id: Date.now() });
                 resolve(result); 
             }, 1000);
             setTimeout(() => { setRollingDice(null); }, 4000); 
@@ -260,6 +270,25 @@ function App() {
   const handleHandoutSave = (h) => {
       const newH = [...(data.handouts||[])]; h.id ? newH[newH.findIndex(x=>x.id===h.id)] = h : newH.unshift({...h, id: Date.now()});
       updateCloud({...data, handouts:newH, campaign:{...data.campaign, activeHandout:h}}); setShowHandoutCreator(false);
+  };
+
+  const handlePlaceTemplate = (spell) => { setActiveTemplate(spell); setCurrentView('map'); };
+
+  const handleInitiative = (char, roll) => {
+      const c = data.campaign?.combat;
+      if (!c || !c.active) return;
+      
+      const combatants = [...(c.combatants || [])];
+      const idx = combatants.findIndex(x => x.id === char.id);
+      const type = data.players.some(p => p.id === char.id) ? 'pc' : 'npc';
+      
+      const entry = { id: char.id, name: char.name, init: roll, type };
+      
+      if (idx > -1) combatants[idx] = entry; 
+      else combatants.push(entry);
+      
+      combatants.sort((a,b) => b.init - a.init);
+      updateCloud({ ...data, campaign: { ...data.campaign, combat: { ...c, combatants } } });
   };
 
   if (!isAuthReady) return <div className="h-screen bg-slate-900 flex items-center justify-center text-amber-500 font-bold animate-pulse">Summoning DungeonMind...</div>;
@@ -299,14 +328,14 @@ function App() {
               )}
               
               {/* IMPORTANT: Passed savePlayer so player stats persist properly */}
-              {currentView === 'map' && <WorldView data={data} setData={setData} role={effectiveRole} updateCloud={updateCloud} updateMapState={updateMapState} onDiceRoll={handleDiceRoll} user={user} apiKey={apiKey} savePlayer={savePlayer} />}
+              {currentView === 'map' && <WorldView data={data} setData={setData} role={effectiveRole} updateCloud={updateCloud} updateMapState={updateMapState} onDiceRoll={handleDiceRoll} user={user} apiKey={apiKey} savePlayer={savePlayer} activeTemplate={activeTemplate} onClearTemplate={() => setActiveTemplate(null)} onInitiative={handleInitiative} />}
               
-              {currentView === 'party' && <PartyView data={data} role={effectiveRole} activeChar={data.assignments?.[user?.uid]} updateCloud={updateCloud} savePlayer={savePlayer} deletePlayer={deletePlayer} setView={setCurrentView} user={user} aiHelper={queryAiService} onDiceRoll={handleDiceRoll} apiKey={apiKey} edition={data.config?.edition} />}
+              {currentView === 'party' && <PartyView data={data} role={effectiveRole} activeChar={data.assignments?.[user?.uid]} updateCloud={updateCloud} savePlayer={savePlayer} deletePlayer={deletePlayer} setView={setCurrentView} user={user} aiHelper={queryAiService} onDiceRoll={handleDiceRoll} apiKey={apiKey} edition={data.config?.edition} onPlaceTemplate={handlePlaceTemplate} onInitiative={handleInitiative} />}
               
-              {currentView === 'npcs' && <NpcView data={data} setData={setData} role={effectiveRole} updateCloud={updateCloud} generateNpc={generateNpc} setChatInput={setInputText} setView={setCurrentView} onPossess={setPossessedNpcId} aiHelper={queryAiService} apiKey={apiKey} edition={data.config?.edition} onDiceRoll={handleDiceRoll} />}
+              {currentView === 'npcs' && <NpcView data={data} setData={setData} role={effectiveRole} updateCloud={updateCloud} generateNpc={generateNpc} setChatInput={setInputText} setView={setCurrentView} onPossess={setPossessedNpcId} aiHelper={queryAiService} apiKey={apiKey} edition={data.config?.edition} onDiceRoll={handleDiceRoll} onPlaceTemplate={handlePlaceTemplate} onInitiative={handleInitiative} />}
               
               {currentView === 'settings' && <SettingsView data={data} setData={setData} apiKey={apiKey} setApiKey={setApiKey} role={effectiveRole} updateCloud={updateCloud} code={gameParams.code} user={user} onExit={() => { setGameParams(null); }} aiProvider={aiProvider} setAiProvider={setAiProvider} openAiModel={openAiModel} setOpenAiModel={setOpenAiModel} puterModel={puterModel} setPuterModel={setPuterModel} banPlayer={()=>{}} kickPlayer={()=>{}} unbanPlayer={()=>{}} />}
-           </div>
+            </div>
        </main>
        
        {showHandoutCreator && <HandoutEditor savedHandouts={data.handouts || []} onSave={handleHandoutSave} onCancel={() => setShowHandoutCreator(false)} />}

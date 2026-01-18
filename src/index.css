@@ -19,13 +19,11 @@ h1, h2, h3, .fantasy-font { font-family: 'Cinzel', serif; }
 .h-dvh { height: 100vh; height: 100dvh; }
 
 .pt-safe {
-    padding-top: 44px; 
-    padding-top: env(safe-area-inset-top, 44px);
+    padding-top: env(safe-area-inset-top, 0px);
 }
 
 .pb-safe {
-    padding-bottom: 20px;
-    padding-bottom: env(safe-area-inset-bottom, 20px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 /* --- QUILL EDITOR MOBILE OVERRIDES --- */

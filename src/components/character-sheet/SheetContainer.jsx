@@ -10,7 +10,7 @@ import RollToast from './widgets/RollToast';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import Icon from '../Icon';
 
-const SheetContainer = ({ characterId, onSave, onDiceRoll, onLogAction, onBack, onPossess, isNpc }) => {
+const SheetContainer = ({ characterId, onSave, onDiceRoll, onLogAction, onBack, onPossess, isNpc, combatActive, onInitiative, onPlaceTemplate }) => {
     const [activeTab, setActiveTab] = useState('actions');
     
     const character = useCharacterStore((state) => state.character);
@@ -27,10 +27,17 @@ const SheetContainer = ({ characterId, onSave, onDiceRoll, onLogAction, onBack, 
     const handleBack = () => {
         if (isDirty && character && onSave) {
             console.log("Saving changes before exit...", character.name);
-            onSave(character); // Force immediate save
-            markSaved(); // Clear dirty flag
+            
+            // MERGE the isNpc prop back into the character object to prevent data loss
+            const safeCharacter = { 
+                ...character, 
+                isNpc: (character.isNpc || isNpc) 
+            };
+            
+            onSave(safeCharacter); 
+            markSaved(); 
         }
-        if (onBack) onBack(); // Now close the sheet
+        if (onBack) onBack(); 
     };
 
     // Auto-save timer (keep this for backup)
@@ -56,6 +63,8 @@ const SheetContainer = ({ characterId, onSave, onDiceRoll, onLogAction, onBack, 
                 onBack={handleBack} 
                 onPossess={onPossess} 
                 isNpc={isNpc} 
+                combatActive={combatActive}
+                onInitiative={onInitiative}
             />
 
             {/* Scrollable Content */}
@@ -64,7 +73,7 @@ const SheetContainer = ({ characterId, onSave, onDiceRoll, onLogAction, onBack, 
                     <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
                         {activeTab === 'actions' && <ActionsTab onDiceRoll={onDiceRoll} onLogAction={handleLogAction} />}
                         {activeTab === 'skills' && <SkillsTab onDiceRoll={onDiceRoll} onLogAction={handleLogAction} />}
-                        {activeTab === 'spells' && <SpellsTab onDiceRoll={onDiceRoll} onLogAction={handleLogAction} />}
+                        {activeTab === 'spells' && <SpellsTab onDiceRoll={onDiceRoll} onLogAction={handleLogAction} onPlaceTemplate={onPlaceTemplate} />}
                         {activeTab === 'inventory' && <InventoryTab onDiceRoll={onDiceRoll} onLogAction={handleLogAction} />}
                         {activeTab === 'features' && <FeaturesTab />}
                         {activeTab === 'bio' && <BioTab />}

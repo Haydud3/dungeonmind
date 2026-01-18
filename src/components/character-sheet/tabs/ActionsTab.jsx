@@ -81,7 +81,7 @@ const ActionsTab = ({ onDiceRoll, onLogAction }) => {
         if (!onDiceRoll) return alert("Dice connection missing.");
 
         if (type === 'hit') {
-            const roll = await onDiceRoll(20);
+            const roll = await onDiceRoll(20, true);
             const mod = parseInt(action.hit) || 0;
             const total = roll + mod;
             const isCrit = roll === 20;
@@ -114,7 +114,7 @@ const ActionsTab = ({ onDiceRoll, onLogAction }) => {
                 let rollTotal = 0;
                 const rolls = [];
                 for(let i=0; i<parseInt(count); i++) {
-                    const r = await onDiceRoll(parseInt(die));
+                    const r = await onDiceRoll(parseInt(die), true);
                     rolls.push(r);
                     rollTotal += r;
                 }
@@ -232,15 +232,15 @@ const ActionsTab = ({ onDiceRoll, onLogAction }) => {
                             )}
 
                             {/* HIT Button */}
-                            {action.hit && (
-                                <button 
-                                    onClick={(e) => handleRoll(action, 'hit', e)}
-                                    className="h-7 px-2 rounded bg-slate-700 hover:bg-cyan-900 text-cyan-200 border border-slate-600 hover:border-cyan-500 text-xs font-bold font-mono transition-colors" 
-                                    title="Roll Attack"
-                                >
-                                    {action.hit.includes('+') || action.hit.includes('-') ? action.hit : `+${action.hit}`}
-                                </button>
-                            )}
+                            {(action.hit !== undefined && action.hit !== null && action.hit !== "") && (
+    <button 
+        onClick={(e) => handleRoll(action, 'hit', e)}
+        className="h-7 px-2 rounded bg-slate-700 hover:bg-cyan-900 text-cyan-200 border border-slate-600 hover:border-cyan-500 text-xs font-bold font-mono transition-colors" 
+        title="Roll Attack"
+    >
+       {String(action.hit).includes('+') || String(action.hit).includes('-') ? action.hit : `+${action.hit}`}
+    </button>
+)}
 
                             {/* DAMAGE Button */}
                             {action.dmg && (
