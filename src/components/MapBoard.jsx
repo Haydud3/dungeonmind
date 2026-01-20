@@ -949,9 +949,10 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
             >
                  {mapUrl ? (
                     // FIX: added overflow-hidden to prevent grid bleeding
-                    <div style={{ width: `${stageDim.w}px`, height: `${stageDim.h}px`, transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: 'center center' }} className="relative shadow-2xl overflow-hidden">
-                        {/* FIX: Use 'object-contain' to preserve aspect ratio. Add 'key' to force React to redraw when URL changes. */}
-                        <img key={mapUrl} src={mapUrl} className="absolute inset-0 w-full h-full object-contain pointer-events-none" />
+                    <div style={{ width: `${stageDim.w}px`, height: `${stageDim.h}px`, transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: 'center center' }} className="relative shadow-2xl overflow-hidden flex-none">
+                        
+                        {/* FIX: Revert to 'object-fill' now that stageDim is correct. This locks the image to the grid pixels 1:1. */}
+                        <img key={mapUrl} src={mapUrl} className="absolute inset-0 w-full h-full object-fill pointer-events-none" />
                         
                         {/* OLD CSS GRID REMOVED HERE - Now handled in renderCanvas */}
                         
