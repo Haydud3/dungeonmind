@@ -14,7 +14,9 @@ const MobileNav = ({ view, setView, className = "" }) => {
     ];
 
     return (
-        <nav className={`md:hidden fixed bottom-0 left-0 right-0 bg-slate-900 border-t border-slate-800 flex items-center justify-between px-1 z-50 pb-safe ${className}`}>
+        // FIX: Replaced 'pb-safe' with explicit env() padding and dynamic height.
+        // This ensures the bar extends behind the iOS Swipe Indicator without cutting off buttons.
+        <nav className={`md:hidden fixed bottom-0 left-0 right-0 bg-slate-900 border-t border-slate-800 flex items-center justify-between px-1 z-50 pb-[env(safe-area-inset-bottom)] h-[calc(3.5rem+env(safe-area-inset-bottom))] ${className}`}>
             {navItems.map(item => (
                 <button 
                     key={item.id} 
