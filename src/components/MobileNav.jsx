@@ -13,10 +13,11 @@ const MobileNav = ({ view, setView, className = "" }) => {
     ];
 
     return (
-    // FIX: 'fixed bottom-0' sticks to the viewport bottom.
+    // START CHANGE: Removed style prop, added safe-area padding class
     <nav 
         className={`md:hidden fixed bottom-0 left-0 right-0 bg-slate-900 border-t border-slate-800 flex items-start justify-between px-1 z-50 pt-2 pb-[env(safe-area-inset-bottom)] ${className}`}
     >
+    // END CHANGE
         {navItems.map(item => (
             <button 
                     key={item.id} 
