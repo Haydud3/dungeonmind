@@ -13,15 +13,12 @@ const MobileNav = ({ view, setView, className = "" }) => {
     ];
 
     return (
-        // FIX: 'fixed bottom-0' sticks to the viewport bottom.
-        // FIX: style={{ paddingBottom }} reads the device's actual Safe Area (0px on Web, 34px on App).
-        // FIX: 'viewport-fit=cover' in HTML enables this to touch the physical screen edge.
-        <nav 
-            className={`md:hidden fixed bottom-0 left-0 right-0 bg-slate-900 border-t border-slate-800 flex items-start justify-between px-1 z-50 pt-2 ${className}`}
-            style={{ paddingBottom: 'env(safe-area-inset-bottom, 20px)' }}
-        >
-            {navItems.map(item => (
-                <button 
+    // FIX: 'fixed bottom-0' sticks to the viewport bottom.
+    <nav 
+        className={`md:hidden fixed bottom-0 left-0 right-0 bg-slate-900 border-t border-slate-800 flex items-start justify-between px-1 z-50 pt-2 pb-[env(safe-area-inset-bottom)] ${className}`}
+    >
+        {navItems.map(item => (
+            <button 
                     key={item.id} 
                     onClick={() => setView(item.id)}
                     className={`flex flex-1 flex-col items-center justify-center pb-2 transition-colors ${view === item.id ? 'text-amber-500' : 'text-slate-500 hover:text-slate-300'}`}
