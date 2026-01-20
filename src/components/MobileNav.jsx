@@ -13,13 +13,11 @@ const MobileNav = ({ view, setView, className = "" }) => {
     ];
 
     return (
-    // START CHANGE: Removed style prop, added safe-area padding class
-    <nav 
-        className={`md:hidden fixed bottom-0 left-0 right-0 bg-slate-900 border-t border-slate-800 flex items-start justify-between px-1 z-50 pt-2 pb-[env(safe-area-inset-bottom)] ${className}`}
-    >
-    // END CHANGE
-        {navItems.map(item => (
-            <button 
+        <nav 
+            className={`md:hidden fixed bottom-0 left-0 right-0 bg-slate-900 border-t border-slate-800 flex items-start justify-between px-1 z-50 pt-2 pb-[env(safe-area-inset-bottom)] ${className}`}
+        >
+            {navItems.map(item => (
+                <button 
                     key={item.id} 
                     onClick={() => setView(item.id)}
                     className={`flex flex-1 flex-col items-center justify-center pb-2 transition-colors ${view === item.id ? 'text-amber-500' : 'text-slate-500 hover:text-slate-300'}`}

@@ -320,9 +320,7 @@ function App() {
   if (!gameParams || !data) return <Lobby fb={fb} user={user} onJoin={(c, r, u) => { localStorage.setItem('dm_last_code', c); setGameParams({code:c, role:r, isOffline:false, uid:u}) }} onOffline={() => setGameParams({code:'LOCAL', role:'dm', isOffline:true, uid:'admin'})} />;
 
   return (
-    // START CHANGE: Use h-dvh (dynamic viewport height) instead of fixed inset-0
-    <div className="h-dvh w-screen flex flex-col md:flex-row bg-slate-900 text-slate-200 font-sans overflow-hidden">
-    // END CHANGE
+    <div className="fixed inset-0 w-full h-full flex flex-col md:flex-row bg-slate-900 text-slate-200 font-sans overflow-hidden">
        <Sidebar view={currentView} setView={setCurrentView} onExit={() => { localStorage.removeItem('dm_last_code'); setGameParams(null); setData(INITIAL_APP_STATE); }} />
        <main className="flex-1 flex flex-col overflow-hidden relative w-full h-full">
            <div className="shrink-0 bg-slate-900/95 backdrop-blur border-b border-slate-800 pt-safe z-50">
