@@ -14,14 +14,15 @@ const MobileNav = ({ view, setView, className = "" }) => {
     ];
 
     return (
-        // FIX: Replaced 'pb-safe' with explicit env() padding and dynamic height.
-        // This ensures the bar extends behind the iOS Swipe Indicator without cutting off buttons.
+        // FIX: The height grows automatically based on where the app is running.
+        // In Browser: Height is 3.5rem (standard). Padding is 0.
+        // In App: Height is 3.5rem + 34px. Padding pushes icons up by 34px.
         <nav className={`md:hidden fixed bottom-0 left-0 right-0 bg-slate-900 border-t border-slate-800 flex items-center justify-between px-1 z-50 pb-[env(safe-area-inset-bottom)] h-[calc(3.5rem+env(safe-area-inset-bottom))] ${className}`}>
             {navItems.map(item => (
                 <button 
                     key={item.id} 
                     onClick={() => setView(item.id)}
-                    className={`flex flex-1 flex-col items-center justify-center py-3 transition-colors ${view === item.id ? 'text-amber-500 bg-slate-800/50' : 'text-slate-500 hover:text-slate-300'}`}
+                    className={`flex flex-1 flex-col items-center justify-center py-1 h-full transition-colors ${view === item.id ? 'text-amber-500 bg-slate-800/50' : 'text-slate-500 hover:text-slate-300'}`}
                 >
                     <Icon name={item.icon} size={20} className={view === item.id ? "stroke-2" : "stroke-1.5"} />
                     <span className="text-[9px] font-bold uppercase mt-1 leading-none tracking-tight">{item.label}</span>
