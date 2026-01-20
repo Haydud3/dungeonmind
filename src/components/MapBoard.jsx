@@ -59,6 +59,15 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
     const [showAddCombatant, setShowAddCombatant] = useState(false);
     const [manualCombatant, setManualCombatant] = useState({ tokenId: '', init: '' });
 
+    // --- DELETE THIS BLOCK BELOW (It is a duplicate causing the error) ---
+    // const [tokenAnims, setTokenAnims] = useState({}); 
+    // const prevTokensRef = useRef(tokens);
+    //
+    // useEffect(() => {
+    //    ... (delete all this animation logic here)
+    // }, [tokens]);
+    // -------------------------------------------------------------------
+
     const walls = data.campaign?.activeMap?.walls || []; 
     const lightingMode = data.campaign?.activeMap?.lightingMode || 'daylight'; 
     const mapTemplates = data.campaign?.activeMap?.templates || [];
@@ -68,7 +77,7 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
     const [showMapBar, setShowMapBar] = useState(false);
     const [showCompendium, setShowCompendium] = useState(false);
 
-    // Grid Config
+    /// Grid Config
     const [showGrid, setShowGrid] = useState(true);
     const [snapToGrid, setSnapToGrid] = useState(true);
     const [gridSize, setGridSize] = useState(data.campaign?.activeMap?.gridSize || GRID_SIZE_DEFAULT);
@@ -77,6 +86,28 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
     const mapUrl = data.campaign?.activeMap?.url;
     const revealPaths = data.campaign?.activeMap?.revealPaths || [];
     const tokens = data.campaign?.activeMap?.tokens || [];
+
+    // FIX: Animation Logic moved here so 'tokens' is defined before we access it
+    const [tokenAnims, setTokenAnims] = useState({}); 
+    const prevTokensRef = useRef(tokens);
+
+    useEffect(() => {
+        const prev = prevTokensRef.current;
+        const newAnims = { ...tokenAnims };
+        let hasNewAnim = false;
+
+        tokens.forEach(t => {
+            const old = prev.find(p => p.id === t.id);
+            if (old && t.hp?.current < old.hp?.current) {
+                newAnims[t.id] = 'animate-shake';
+                hasNewAnim = true;
+                setTimeout(() => setTokenAnims(prev => { const n = {...prev}; delete n[t.id]; return n; }), 500);
+            }
+        });
+        if (hasNewAnim) setTokenAnims(newAnims);
+        prevTokensRef.current = tokens;
+    }, [tokens]);
+
     const savedMaps = data.campaign?.savedMaps || [];
     const cellPx = stageDim.w ? (stageDim.w * gridSize) / 100 : 0;
     
@@ -94,15 +125,23 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
         }
     }, [data.campaign?.activeMap?.url]); 
 
+    // FIX: Use decode() to force browser to calculate dimensions for stubborn JPEGs
     useEffect(() => {
         if (!mapUrl) return;
+        
         const img = new Image();
         img.src = mapUrl;
-        img.onload = () => { 
-            const w = img.naturalWidth || img.width;
-            const h = img.naturalHeight || img.height;
-            if (h > 0) setStageDim({ w, h });
-        };
+
+        img.decode().then(() => {
+            if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+                setStageDim({ w: img.naturalWidth, h: img.naturalHeight });
+            }
+        }).catch((err) => {
+            // Fallback for non-image formats or errors
+            console.warn("Image decode failed, falling back to onload", err);
+            img.onload = () => setStageDim({ w: img.naturalWidth || 800, h: img.naturalHeight || 600 });
+        });
+        
     }, [mapUrl]);
 
     // Initial Zoom Fit (Only if no saved view)
@@ -148,10 +187,29 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
         if (!el) return;
         const handleWheelInternal = (e) => {
             e.preventDefault();
+            
+            // 1. Calculate new Zoom
             const scaleBy = 1.1;
-            let newZoom = e.deltaY < 0 ? zoom * scaleBy : zoom / scaleBy;
-            newZoom = Math.min(Math.max(0.1, newZoom), 10);
-            setZoom(newZoom);
+            const newZoom = e.deltaY < 0 ? zoom * scaleBy : zoom / scaleBy;
+            const clampedZoom = Math.min(Math.max(0.1, newZoom), 10);
+            
+            if (clampedZoom === zoom) return;
+
+            // 2. Calculate "Zoom to Cursor" Pan adjustment
+            // We find the mouse vector relative to center, then shift Pan to compensate for the scale change
+            const rect = el.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left - (rect.width / 2);
+            const mouseY = e.clientY - rect.top - (rect.height / 2);
+            
+            const scaleFactor = clampedZoom / zoom;
+
+            const newPan = {
+                x: mouseX * (1 - scaleFactor) + pan.x * scaleFactor,
+                y: mouseY * (1 - scaleFactor) + pan.y * scaleFactor
+            };
+
+            setZoom(clampedZoom);
+            setPan(newPan);
         };
         el.addEventListener('wheel', handleWheelInternal, { passive: false });
         return () => el.removeEventListener('wheel', handleWheelInternal);
@@ -191,6 +249,7 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
         const rect = containerRef.current?.getBoundingClientRect();
         if(!rect) return {x:0, y:0};
         
+        // FIX: Check for touches first to support mobile
         let cx, cy;
         if (e.touches && e.touches.length > 0) { cx = e.touches[0].clientX; cy = e.touches[0].clientY; }
         else if (e.changedTouches && e.changedTouches.length > 0) { cx = e.changedTouches[0].clientX; cy = e.changedTouches[0].clientY; }
@@ -219,7 +278,14 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
     // 3. Wall Deletion Check
     const handleWallDelete = (clickPoint) => {
         const canvas = canvasRef.current;
+        
+        // FIX: Improve hit detection math and sync deletion to savedMaps
         if(!canvas) return;
+        // Project points to screen space for accurate hit testing regardless of zoom
+        const toScreen = (p) => ({ x: p.x * stageDim.w * zoom, y: p.y * stageDim.h * zoom });
+        const screenClick = toScreen(clickPoint);
+        const threshold = 20; // 20px hit tolerance
+
         const distToSegment = (p, v, w) => {
             const l2 = (w.x - v.x) ** 2 + (w.y - v.y) ** 2;
             if (l2 === 0) return Math.hypot(p.x - v.x, p.y - v.y);
@@ -228,20 +294,25 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
             return Math.hypot(p.x - (v.x + t * (w.x - v.x)), p.y - (v.y + t * (w.y - v.y)));
         };
 
-        const threshold = 15 / (canvas.width * zoom); 
         const wallIndex = walls.findIndex(w => {
             if (!w.p1 || !w.p2) return false;
-            return distToSegment(clickPoint, w.p1, w.p2) < threshold;
+            return distToSegment(screenClick, toScreen(w.p1), toScreen(w.p2)) < threshold;
         });
 
         if (wallIndex !== -1) {
             const newWalls = [...walls];
             newWalls.splice(wallIndex, 1);
+            
+            // Sync deletion to BOTH Active Map AND the Saved Library entry
+            const activeId = data.campaign?.activeMap?.id;
+            const updatedSavedMaps = savedMaps.map(m => m.id === activeId ? { ...m, walls: newWalls } : m);
+
             updateCloud({
                 ...dataRef.current,
                 campaign: {
                     ...dataRef.current.campaign,
-                    activeMap: { ...dataRef.current.campaign.activeMap, walls: newWalls }
+                    activeMap: { ...dataRef.current.campaign.activeMap, walls: newWalls },
+                    savedMaps: activeId ? updatedSavedMaps : savedMaps
                 }
             });
         }
@@ -290,16 +361,34 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
         const ctx = canvas?.getContext('2d');
         if (!canvas || !ctx || stageDim.w <= 1) return;
 
-        // 1. Setup
-        canvas.width = stageDim.w;
-        canvas.height = stageDim.h;
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        // FIX: High-DPI Rendering. Scale internal resolution by zoom level for crisp lines.
+        canvas.width = stageDim.w * zoom;
+        canvas.height = stageDim.h * zoom;
+        
+        // Normalize coordinates: We scale the context so our drawing logic (0 to 1000) works on the huge canvas
+        ctx.scale(zoom, zoom);
+        
+        ctx.clearRect(0, 0, stageDim.w, stageDim.h);
         ctx.save();
 
         // 2. Base Layer (Fog of War)
         // DM sees 50% opacity fog to know where map is, Players see 100% black
         ctx.fillStyle = role === 'dm' ? 'rgba(0, 0, 0, 0.5)' : 'rgba(0, 0, 0, 1)'; 
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillRect(0, 0, stageDim.w, stageDim.h);
+
+        // 2.5 Render Grid (Moved from CSS to Canvas for alignment & sharpness)
+        if (showGrid && cellPx > 0) {
+            ctx.beginPath();
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+            // Keep line width 1px on SCREEN, regardless of zoom
+            ctx.lineWidth = 1 / zoom; 
+            
+            // Verticals
+            for (let x = cellPx; x < stageDim.w; x += cellPx) { ctx.moveTo(x, 0); ctx.lineTo(x, stageDim.h); }
+            // Horizontals
+            for (let y = cellPx; y < stageDim.h; y += cellPx) { ctx.moveTo(0, y); ctx.lineTo(stageDim.w, y); }
+            ctx.stroke();
+        }
         
         // 3. Render Legacy Fog (if exists)
         if (revealPaths && Array.isArray(revealPaths) && revealPaths.length > 0) {
@@ -320,8 +409,8 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
                 ctx.beginPath();
                 const validPoints = path.points.filter(p => p && typeof p.x === 'number');
                 validPoints.forEach((p, i) => { 
-                    const x = p.x * canvas.width; 
-                    const y = p.y * canvas.height; 
+                    const x = p.x * stageDim.w; 
+                    const y = p.y * stageDim.h; 
                     i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); 
                 });
                 ctx.stroke();
@@ -357,8 +446,9 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
 
         // 4. Dynamic Lighting & Vision
         const pixelWalls = walls.map(w => ({
-            p1: { x: w.p1.x * canvas.width, y: w.p1.y * canvas.height },
-            p2: { x: w.p2.x * canvas.width, y: w.p2.y * canvas.height }
+            // FIX: Use stageDim (World Units) instead of canvas.width (Screen Units) to prevent double-zooming
+            p1: { x: w.p1.x * stageDim.w, y: w.p1.y * stageDim.h },
+            p2: { x: w.p2.x * stageDim.w, y: w.p2.y * stageDim.h }
         }));
         
         tokens.forEach(token => {
@@ -381,13 +471,18 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
             }
 
             const totalCellsX = 100 / gridSize;
-            const pxPerCell = canvas.width / totalCellsX;
+            
+            // FIX: Use stageDim (World Units) for calculation. 
+            // Using canvas.width (Screen Units) caused the circle to be multiplied by zoom twice.
+            const pxPerCell = stageDim.w / totalCellsX; 
             const pxPerFoot = pxPerCell / 5;
             const radiusPx = visionRadiusFeet * pxPerFoot;
-            const origin = { x: tx * canvas.width, y: ty * canvas.height };
+            
+            const origin = { x: tx * stageDim.w, y: ty * stageDim.h };
 
             // Math
-            const polygon = calculateVisibilityPolygon(origin, pixelWalls, { width: canvas.width, height: canvas.height });
+            // We pass the RAW World coordinates to the math function, but we need to pass the World Dimensions for the bounds
+            const polygon = calculateVisibilityPolygon(origin, pixelWalls, { width: stageDim.w, height: stageDim.h });
 
             // Drawing
             ctx.globalCompositeOperation = 'destination-out';
@@ -448,39 +543,54 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
              ctx.globalCompositeOperation = 'source-over';
              ctx.strokeStyle = '#facc15'; 
              
-             // FIX: consistent thickness
-             ctx.lineWidth = Math.max(2, cellPx * 0.05);
-             
-             ctx.setLineDash([5, 5]);
+             // FIX: Divide by zoom for constant screen thickness. Use stageDim instead of canvas.width to prevent double-scaling.
+             ctx.lineWidth = 2 / zoom;
+             ctx.setLineDash([5 / zoom, 5 / zoom]);
              ctx.beginPath();
-             ctx.moveTo(wallStart.x * canvas.width, wallStart.y * canvas.height);
-             ctx.lineTo(ghostWall.x * canvas.width, ghostWall.y * canvas.height);
+             ctx.moveTo(wallStart.x * stageDim.w, wallStart.y * stageDim.h);
+             ctx.lineTo(ghostWall.x * stageDim.w, ghostWall.y * stageDim.h);
              ctx.stroke();
              ctx.setLineDash([]);
         }
 
         // Rulers
         if ((mode === 'ruler' || mode === 'radius') && measureStart && measureEnd) {
-            const sx = measureStart.x * canvas.width; const sy = measureStart.y * canvas.height;
-            const ex = measureEnd.x * canvas.width; const ey = measureEnd.y * canvas.height;
+            // FIX: Use stageDim instead of canvas.width to prevent double-scaling
+            const sx = measureStart.x * stageDim.w; const sy = measureStart.y * stageDim.h;
+            const ex = measureEnd.x * stageDim.w; const ey = measureEnd.y * stageDim.h;
+            
             const distPx = Math.hypot(ex-sx, ey-sy);
             const distFt = Math.round((distPx / cellPx) * 5);
             
             ctx.save();
             ctx.strokeStyle = '#f59e0b'; 
+            ctx.lineWidth = 2 / zoom; 
             
-            // FIX: consistent thickness
-            ctx.lineWidth = Math.max(2, cellPx * 0.05); 
-            
-            ctx.setLineDash([10, 5]);
+            ctx.setLineDash([10 / zoom, 5 / zoom]);
             ctx.beginPath();
             if(mode === 'ruler') { ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke(); }
-            else { ctx.arc(sx, sy, distPx, 0, 2*Math.PI); ctx.stroke(); ctx.fillStyle = 'rgba(245, 158, 11, 0.2)'; ctx.fill(); ctx.beginPath(); ctx.setLineDash([]); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke(); }
+            else { 
+                ctx.arc(sx, sy, distPx, 0, 2*Math.PI); 
+                ctx.stroke(); 
+                ctx.fillStyle = 'rgba(245, 158, 11, 0.2)'; 
+                ctx.fill(); 
+                ctx.beginPath(); 
+                ctx.setLineDash([]); 
+                ctx.moveTo(sx, sy); 
+                ctx.lineTo(ex, ey); 
+                ctx.stroke(); 
+            }
             
-            ctx.fillStyle = '#1e293b'; ctx.font = `bold ${16/zoom}px sans-serif`;
+            // Text Label - Scaled inversely to zoom so it stays readable
+            ctx.fillStyle = '#1e293b'; 
+            ctx.font = `bold ${16/zoom}px sans-serif`;
+            
             const tm = ctx.measureText(`${distFt} ft`);
             const lx = mode==='ruler'?(sx+ex)/2:ex; const ly = mode==='ruler'?(sy+ey)/2:ey;
-            ctx.fillRect(lx - tm.width/2 - 4, ly - 14, tm.width + 8, 28);
+            
+            // Background Box for Text
+            ctx.fillRect(lx - tm.width/2 - (4/zoom), ly - (14/zoom), tm.width + (8/zoom), 28/zoom);
+            
             ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
             ctx.fillText(`${distFt} ft`, lx, ly);
             ctx.restore();
@@ -544,11 +654,17 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
             } else {
                 const newWall = { id: Date.now(), p1: wallStart, p2: snapped };
                 const newWalls = [...walls, newWall];
+
+                // FIX: Sync new walls to Library so they persist when switching maps
+                const activeId = data.campaign?.activeMap?.id;
+                const updatedSavedMaps = savedMaps.map(m => m.id === activeId ? { ...m, walls: newWalls } : m);
+
                 updateCloud({
                     ...dataRef.current,
                     campaign: {
                         ...dataRef.current.campaign,
-                        activeMap: { ...dataRef.current.campaign.activeMap, walls: newWalls }
+                        activeMap: { ...dataRef.current.campaign.activeMap, walls: newWalls },
+                        savedMaps: activeId ? updatedSavedMaps : savedMaps
                     }
                 });
                 setWallStart(snapped); 
@@ -579,9 +695,34 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
         // Pinch Zoom Move
         if (e.touches && e.touches.length === 2 && pinchDist) {
             const d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+            
+            // FIX: Calculate zoom factor and Zoom-to-Finger logic
             const delta = d - pinchDist;
-            const newZoom = Math.max(0.1, Math.min(5, zoom + (delta * 0.005)));
-            setZoom(newZoom);
+            const scaleBy = 1 + (delta * 0.005); 
+            const newZoom = Math.max(0.1, Math.min(5, zoom * scaleBy));
+            
+            if (newZoom !== zoom) {
+                // Calculate Focal Point (Midpoint between two fingers)
+                const t0 = e.touches[0]; const t1 = e.touches[1];
+                const midX = (t0.clientX + t1.clientX) / 2;
+                const midY = (t0.clientY + t1.clientY) / 2;
+
+                // Convert to relative coordinates
+                const rect = containerRef.current.getBoundingClientRect();
+                const relX = midX - rect.left - (rect.width / 2);
+                const relY = midY - rect.top - (rect.height / 2);
+
+                // Adjust Pan to keep focal point stationary
+                const scaleFactor = newZoom / zoom;
+                const newPan = {
+                    x: relX * (1 - scaleFactor) + pan.x * scaleFactor,
+                    y: relY * (1 - scaleFactor) + pan.y * scaleFactor
+                };
+
+                setZoom(newZoom);
+                setPan(newPan);
+            }
+            
             setPinchDist(d);
             return;
         }
@@ -673,7 +814,10 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
     }, [dragTokenId, dragStartPos, pan, zoom, stageDim, mode]); 
 
     const handleTokenDragStart = (e, id) => {
-        e.preventDefault(); 
+        // FIX: Stop propagation so we don't trigger map panning simultaneously
+        if(e.stopPropagation) e.stopPropagation();
+        // if(e.preventDefault) e.preventDefault(); // Optional: might block click events if too aggressive
+        
         setDragTokenId(id);
         const pos = getCoords(e);
         setDragStartPos(pos);
@@ -774,7 +918,7 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
                 lightingMode={lightingMode} onToggleLight={toggleLighting} 
             />
 
-            {showMapBar && <MapLibrary savedMaps={savedMaps} onClose={() => setShowMapBar(false)} loadMap={loadMap} deleteMap={(id)=>updateMapState('delete_map', id)} apiKey={apiKey} />}
+            {showMapBar && <MapLibrary savedMaps={savedMaps} onClose={() => setShowMapBar(false)} loadMap={loadMap} deleteMap={(id)=>updateMapState('delete_map', id)} onAddMap={(m) => updateCloud({...data, campaign: {...data.campaign, savedMaps: [...savedMaps, m]}})} apiKey={apiKey} />}
             {showTokenBar && <TokenManager data={data} onClose={() => setShowTokenBar(false)} addToken={addToken} onOpenCompendium={() => setShowCompendium(true)} onOpenSheet={openTokenSheet} />}
             {showCompendium && <CompendiumModal onClose={() => setShowCompendium(false)} importFromApi={()=>{}} />}
             
@@ -796,6 +940,7 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
 
             <div 
                 ref={containerRef}
+                // FIX: Add 'touch-none' class (Tailwind) to prevent browser scrolling while dragging
                 className={`flex-1 min-h-0 relative overflow-hidden flex items-center justify-center bg-black touch-none ${cursorClass}`}
                 onMouseDown={handleDown} onMouseMove={handleMove} onMouseUp={handleUp} 
                 onWheel={(e) => e.preventDefault()}
@@ -805,26 +950,34 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
                  {mapUrl ? (
                     // FIX: added overflow-hidden to prevent grid bleeding
                     <div style={{ width: `${stageDim.w}px`, height: `${stageDim.h}px`, transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: 'center center' }} className="relative shadow-2xl overflow-hidden">
-                        <img src={mapUrl} className="absolute inset-0 w-full h-full object-contain pointer-events-none" />
-                        {showGrid && <div className="absolute inset-0 w-full h-full pointer-events-none z-10" style={{ backgroundImage: `linear-gradient(to right, rgba(255,255,255,0.3) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,0.3) 1px, transparent 1px)`, backgroundSize: `${cellPx}px ${cellPx}px` }} />}
+                        {/* FIX: Use 'object-contain' to preserve aspect ratio. Add 'key' to force React to redraw when URL changes. */}
+                        <img key={mapUrl} src={mapUrl} className="absolute inset-0 w-full h-full object-contain pointer-events-none" />
+                        
+                        {/* OLD CSS GRID REMOVED HERE - Now handled in renderCanvas */}
                         
                         <div className="absolute inset-0 w-full h-full pointer-events-none z-30">
                             {tokens.map(t => {
                                 const isOwner = role === 'dm' || (t.characterId === myCharId);
+
+                                // FIX: Calculate Animation & Turn Highlight Classes
+                                const animClass = tokenAnims[t.id] || '';
+                                const isMyTurn = data.campaign?.combat?.active && data.campaign.combat.combatants?.[data.campaign.combat.turn]?.tokenId === t.id;
+                                const turnClass = isMyTurn ? 'ring-2 ring-green-500 shadow-[0_0_15px_rgba(34,197,94,0.6)] scale-110 z-50 transition-all duration-300' : '';
+
                                 return (
-                                    <div key={t.id} className={`pointer-events-auto token-element ${!isOwner ? 'pointer-events-none' : ''}`}>
+                                    <div key={t.id} className={`pointer-events-auto token-element ${!isOwner ? 'pointer-events-none' : ''} ${animClass} ${turnClass}`}>
                                         <Token 
                                             token={t} 
                                             isOwner={isOwner && (mode === 'move' || role === 'dm')} 
                                             cellPx={cellPx} 
                                             isDragging={dragTokenId===t.id} 
-                                    overridePos={dragTokenId===t.id?tempTokenPos:null} 
-                                    onMouseDown={(e) => {
-                                        if (mode === 'ruler' || mode === 'radius') return;
-                                        handleTokenDragStart(e, t.id);
-                                    }}
-                                />
-                            </div>
+                                            overridePos={dragTokenId===t.id?tempTokenPos:null} 
+                                            
+                                            // FIX: Add onTouchStart so mobile users can grab tokens
+                                            onMouseDown={(e) => { if (mode !== 'ruler' && mode !== 'radius') handleTokenDragStart(e, t.id); }}
+                                            onTouchStart={(e) => { if (mode !== 'ruler' && mode !== 'radius') handleTokenDragStart(e, t.id); }}
+                                        />
+                                    </div>
                                 );
                             })}
                         </div>
