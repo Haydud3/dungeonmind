@@ -191,32 +191,56 @@ const SessionView = ({
                     {visibleMessages.length === 0 && <div className="text-center text-slate-600 mt-10">No messages yet.</div>}
                     
                     {visibleMessages.map((msg, i) => {
-    const isSystem = msg.role === 'system';
-    const showHeader = i === 0 || visibleMessages[i-1].senderId !== msg.senderId || (msg.timestamp - visibleMessages[i-1].timestamp > 60000);
-    const canEdit = role === 'dm' || msg.senderId === user?.uid || (msg.role === 'ai' && msg.replyTo === user?.uid);
+                        const isSystem = msg.role === 'system';
+                        const showHeader = i === 0 || visibleMessages[i-1].senderId !== msg.senderId || (msg.timestamp - visibleMessages[i-1].timestamp > 60000);
+                        
+                        // START CHANGE: Define charId and canEdit before the return block
+                        const charId = data.assignments?.[msg.senderId];
+                        const canEdit = role === 'dm' || msg.senderId === user?.uid || (msg.role === 'ai' && msg.replyTo === user?.uid);
+                        // END CHANGE
 
-    // START CHANGE: Define charId before using it to look up the character
-    const charId = data.assignments?.[msg.senderId];
-    // END CHANGE
+                        if (isSystem) {
+                            return (
+                                <div key={i} className="flex justify-center my-2 group">
+                                    <span className="text-xs text-slate-500 bg-slate-800 px-3 py-1 rounded-full flex items-center gap-2 pr-2">
+                                        <span dangerouslySetInnerHTML={{__html: msg.content.replace(/\*\*/g, '')}} />
+                                        {role === 'dm' && (
+                                            <button onClick={() => onDeleteMessage(msg.id)} className="text-slate-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity -mr-1" title="Delete">
+                                                <Icon name="x" size={12}/>
+                                            </button>
+                                        )}
+                                    </span>
+                                </div>
+                            );
+                        }
 
-    if (isSystem) {
-        // ... system message return ...
-    }
+                        return (
+                            <div key={i} className={`group flex gap-3 px-2 py-1 rounded hover:bg-slate-800/50 ${getMessageStyle(msg)} ${showHeader ? 'mt-3' : 'mt-0.5'}`}>
+                                <div className="w-10 flex-shrink-0">
+                                    {/* START CHANGE: Dynamic Avatar (DM Icon vs Character Image) */}
+                                    {showHeader && (() => {
+                                        // 1. Is it AI?
+                                        if (msg.role === 'ai') return (
+                                            <div className="w-10 h-10 rounded-full flex items-center justify-center text-white shadow-lg bg-gradient-to-br from-amber-600 to-purple-700 shadow-amber-500/20">
+                                                <Icon name="sparkles" size={20}/>
+                                            </div>
+                                        );
 
-    return (
-        <div key={i} className={`group flex gap-3 px-2 py-1 rounded hover:bg-slate-800/50 ...`}>
-            <div className="w-10 flex-shrink-0">
-                {showHeader && (() => {
-                    if (msg.role === 'ai') return ( /* AI Icon */ );
-                    const isDm = data.dmIds?.includes(msg.senderId) || msg.senderName === 'Dungeon Master';
-                    if (isDm) return ( /* DM Icon */ );
+                                        // 2. Is it the DM? (Check ID or Name)
+                                        const isDm = data.dmIds?.includes(msg.senderId) || msg.senderName === 'Dungeon Master';
+                                        if (isDm) return (
+                                            <div className="w-10 h-10 rounded-full flex items-center justify-center text-white shadow-lg bg-slate-700 border border-amber-500/30">
+                                                <Icon name="crown" size={20} className="text-amber-500"/>
+                                            </div>
+                                        );
 
-                    // FIX WAS HERE: Now character can find charId because it's defined above
-                    const character = players?.find(p => String(p.id) === String(charId));
-                    
-                    if (character?.image) return (
-                        <img src={character.image} className="w-10 h-10 rounded-full object-cover border border-slate-600"/>
-                    );
+                                        // 3. Is it a Player Character?
+                                                            // Find the character assigned to this senderId
+                                                            const character = players?.find(p => String(p.id) === String(charId));
+                                        
+                                        if (character?.image) return (
+                                            <img src={character.image} alt={msg.senderName} className="w-10 h-10 rounded-full object-cover shadow-lg border border-slate-600"/>
+                                        );
 
                                         // 4. Fallback Initials
                                         return (
