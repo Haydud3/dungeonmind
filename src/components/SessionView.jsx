@@ -71,15 +71,15 @@ const SessionView = ({
 
             // B. Build Context
             const recentChat = chatLog.slice(-10).map(m => `${m.senderName}: ${m.content}`).join('\n');
-            const context = retrieveContext(query, props.loreChunks || [], data.journal_pages || {});
+            const context = retrieveContext(query, loreChunks || [], data.journal_pages || {});
             
             // C. Build Prompt (Public flag = true if type is ai-public)
             const isPublic = (type === 'ai-public');
             const prompt = buildPrompt(query, context, recentChat, isPublic);
 
             // D. Ask AI
-            if (props.aiHelper) {
-                const answer = await props.aiHelper([{ role: 'user', content: prompt }]);
+            if (aiHelper) {
+                const answer = await aiHelper([{ role: 'user', content: prompt }]);
                 setGhostMessage(null); // Clear ghost before sending real
                 onSendMessage(answer, type, null); 
             } else {
@@ -253,7 +253,20 @@ const SessionView = ({
                                 <div className="flex-1 min-w-0 relative">
                                     {showHeader && (
                                         <div className="flex items-center gap-2">
-                                            <span className={`font-bold text-sm ${msg.role === 'ai' ? 'text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-purple-400' : 'text-slate-200'}`}>{msg.role === 'ai' ? 'Dungeon Master (AI)' : msg.senderName}</span>
+                                            {/* START CHANGE: Dynamic Name Resolution (Fixes mrjazzinator vs Flamme) */}
+                                            <span className={`font-bold text-sm ${msg.role === 'ai' ? 'text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-purple-400' : 'text-slate-200'}`}>
+                                                {(() => {
+                                                    if (msg.role === 'ai') return 'Dungeon Master (AI)';
+                                                    if (data.dmIds?.includes(msg.senderId) || msg.senderName === 'Dungeon Master') return 'Dungeon Master';
+                                                    
+                                                    // Look up character assignment
+                                                    const charId = data.assignments?.[msg.senderId];
+                                                    const character = data.players?.find(p => p.id === charId);
+                                                    
+                                                    return character ? character.name : msg.senderName;
+                                                })()}
+                                            </span>
+                                            {/* END CHANGE */}
                                             {msg.type === 'chat-private' && <span className="text-[10px] text-purple-400 bg-purple-900/30 px-1 rounded border border-purple-500/30 flex items-center gap-1"><Icon name="lock" size={8}/> WHISPER</span>}
                                             {msg.type === 'ai-private' && <span className="text-[10px] text-cyan-400 bg-cyan-900/30 px-1 rounded border border-cyan-500/30 flex items-center gap-1"><Icon name="eye-off" size={8}/> SECRET</span>}
                                             <span className="text-[10px] text-slate-500">{formatTime(msg.timestamp)}</span>
