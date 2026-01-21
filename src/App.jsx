@@ -372,29 +372,23 @@ function App() {
           castList
       );
 
+      // START CHANGE: Use the systemPrompt variable to send context to the AI
       const isPc = type === 'pc';
+      
+      // Define Schemas
+      const npcSchema = `{ name, race, class, cr, hp: { current, max }, ac, speed, stats: { STR, DEX, CON, INT, WIS, CHA }, senses: { darkvision, passivePerception }, customActions: [{ name, desc, type, hit, dmg }], features: [{ name, desc }], bio: { backstory, appearance } }`;
       const pcSchema = `{ name, race, class, background, alignment, stats: { STR, DEX, CON, INT, WIS, CHA }, hp, ac, speed, senses, skills: [], features: [], equipment: [], image_prompt }`;
 
-      const prompt = `
-      Forge a D&D 5e ${isPc ? 'Player Character (Level 1)' : 'NPC Stat Block'} for "${name}".
-      Output JSON matching this schema: ${isPc ? pcSchema : npcSchema}
-
-      STRICT RULES:
-      - If LORE CONTEXT below defines this character, use those EXACT stats.
-      - If LORE is empty, create a thematically appropriate character.
-      - FOR ACTION ARRAYS: Use the key "customActions", NOT "actions".
-      - FOR HP: Return an object { current: X, max: X }, not a single number.
-      - RACIAL TRAITS: Must include standard 5e traits (e.g. Darkvision).
-      - JSON ONLY. No markdown.
-
-      LORE CONTEXT:
-      ${contextText || "No existing lore found."}
-
-      USER INSTRUCTIONS:
-      ${instructions}
+      const finalAIPrompt = `
+      ${systemPrompt}
+      
+      TASK: Output valid JSON matching this schema: ${isPc ? pcSchema : npcSchema}
+      ADDITIONAL USER INSTRUCTIONS: ${instructions}
+      JSON ONLY. NO MARKDOWN WRAPPERS.
       `;
 
-      const res = await queryAiService([{ role: 'user', content: prompt }]);
+      const res = await queryAiService([{ role: 'user', content: finalAIPrompt }]);
+      // END CHANGE
       
       try { 
           const rawJson = JSON.parse(res.match(/\{[\s\S]*\}/)[0]);
@@ -603,6 +597,9 @@ function App() {
                   clearChat={clearChat}
                   isLoading={isLoading} role={effectiveRole} user={user} showTools={showTools} setShowTools={setShowTools} diceLog={diceLog} handleDiceRoll={handleDiceRoll} 
                   onSavePage={saveJournalEntry} generateRecap={generateRecap} loreChunks={loreChunks} aiHelper={queryAiService}
+                  players={data.players}
+                  castList={buildCastList(data)}
+                  myCharId={data.assignments?.[user?.uid]}
               />}
               {/* END CHANGE */}
               

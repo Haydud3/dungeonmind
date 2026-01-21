@@ -62,13 +62,17 @@ const SessionView = ({
                 timestamp: Date.now(), type: type, isGhost: true
             });
 
-            // START CHANGE: Pass players, role, and myCharId to retrieveContext
+            // B. Build Context
             const recentChat = chatLog.slice(-10).map(m => `${m.senderName}: ${m.content}`).join('\n');
+            
+            // START CHANGE: Pass the 'players' and 'castList' variables into the functions
+            // 'players' is the 4th argument, 'castList' is the 5th argument of buildPrompt
             const context = retrieveContext(query, loreChunks || [], data.journal_pages || {}, players, role, myCharId);
             
             const isPublic = (type === 'ai-public');
             const prompt = buildPrompt(query, context, recentChat, isPublic, castList);
-            
+            // END CHANGE
+
             // START CHANGE: Debug logging to verify the AI's "Brain"
             console.log("DEBUG AI PROMPT:", prompt);
             // END CHANGE

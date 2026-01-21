@@ -51,8 +51,9 @@ export const ingestPDF = async (file, onProgress) => {
 // START CHANGE: Added 'players', 'userRole', and 'myCharId' to arguments
 export const retrieveContext = (query, pdfChunks, journalPages, players, userRole, myCharId) => {
     if (!query) return [];
-// END CHANGE
+    
     const terms = query.toLowerCase().split(" ").filter(w => w.length > 3);
+    // END CHANGE
     const results = [];
 
     // Search Journal
