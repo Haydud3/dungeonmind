@@ -15,7 +15,9 @@ import WorldCreator from './components/WorldCreator';
 import NpcView from './components/NpcView';
 import DiceOverlay from './components/DiceOverlay';
 import HandoutEditor from './components/HandoutEditor';
+import LoreView from './components/LoreView';
 import { useCharacterStore } from './stores/useCharacterStore'; 
+import { retrieveContext } from './utils/loreEngine';
 
 const DB_INIT_DATA = { 
     hostId: null,
@@ -43,7 +45,52 @@ const INITIAL_APP_STATE = { ...DB_INIT_DATA, players: [], journal_pages: {}, cha
 function App() {
   const [user, setUser] = useState(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
-  const [currentView, setCurrentView] = useState('session'); 
+
+  // START CHANGE: Deep Linking Router Logic
+  const BASE_PATH = '/dungeonmind';
+  
+  // 1. Map internal IDs to friendly URL slugs
+  const VIEW_SLUGS = {
+      'session': 'session',
+      'journal': 'journal',
+      'map': 'tactical',
+      'party': 'player-character',
+      'npcs': 'bestiary',
+      'lore': 'lore',
+      'settings': 'settings'
+  };
+
+  // 2. Initialize view based on current URL
+  const getInitialView = () => {
+      const path = window.location.pathname.replace(BASE_PATH, '').replace(/^\//, '').split('/')[0];
+      const foundEntry = Object.entries(VIEW_SLUGS).find(([id, slug]) => slug === path);
+      return foundEntry ? foundEntry[0] : 'session';
+  };
+
+  const [currentView, setCurrentView] = useState(getInitialView);
+
+  // 3. Sync URL when view changes & Handle Back Button
+  useEffect(() => {
+      // A. Update URL to match current view
+      const targetSlug = VIEW_SLUGS[currentView] || 'session';
+      const targetPath = `${BASE_PATH}/${targetSlug}`;
+      
+      if (!window.location.pathname.includes(targetSlug)) {
+          window.history.pushState(null, '', targetPath);
+      }
+
+      // B. Listen for Back/Forward button
+      const handlePopState = () => {
+          const newSlug = window.location.pathname.replace(BASE_PATH, '').replace(/^\//, '').split('/')[0];
+          const foundEntry = Object.entries(VIEW_SLUGS).find(([id, slug]) => slug === newSlug);
+          if (foundEntry) setCurrentView(foundEntry[0]);
+      };
+
+      window.addEventListener('popstate', handlePopState);
+      return () => window.removeEventListener('popstate', handlePopState);
+  }, [currentView]);
+  // END CHANGE
+  
   const [gameParams, setGameParams] = useState(null); 
   const [data, setData] = useState(INITIAL_APP_STATE);
   const saveTimer = useRef(null);
@@ -61,6 +108,7 @@ function App() {
 
   const [apiKey, setApiKey] = useState(() => localStorage.getItem('dm_api_key') || '');
   const [aiProvider, setAiProvider] = useState(() => localStorage.getItem('dm_ai_provider') || 'puter');
+  const [loreChunks, setLoreChunks] = useState([]); // NEW: Global lore state
   const [openAiModel, setOpenAiModel] = useState(() => localStorage.getItem('dm_openai_model') || 'gpt-4o');
   const [puterModel, setPuterModel] = useState(() => localStorage.getItem('dm_puter_model') || 'mistral-large-latest');
 
@@ -112,10 +160,20 @@ function App() {
           setData(prev => ({ ...prev, journal_pages: j }));
       });
       const chatRef = query(collection(rootRef, 'chat'), orderBy('timestamp', 'asc'), limit(100));
-      const unsubChat = onSnapshot(chatRef, (snap) => setData(prev => ({ ...prev, chatLog: snap.docs.map(d => ({id: d.id, ...d.data()})) })));
+      // START CHANGE: Flip order so d.id overwrites internal data.id
+      const unsubChat = onSnapshot(chatRef, (snap) => setData(prev => ({ ...prev, chatLog: snap.docs.map(d => ({...d.data(), id: d.id})) })));
+      // END CHANGE
+
+      // NEW: Sync Lore Volumes
+      const loreRef = collection(rootRef, 'lore');
+      const unsubLore = onSnapshot(loreRef, (snap) => {
+          let allChunks = [];
+          snap.docs.forEach(doc => { const v = doc.data(); if(v.chunks) allChunks = [...allChunks, ...v.chunks]; });
+          setLoreChunks(allChunks);
+      });
 
       if (user && !isOffline) fb.updateDoc(rootRef, { [`activeUsers.${user.uid}`]: user.email || "Anonymous" }).catch(console.error);
-      return () => { unsubRoot(); unsubPlayers(); unsubJournal(); unsubChat(); };
+      return () => { unsubRoot(); unsubPlayers(); unsubJournal(); unsubChat(); unsubLore(); };
   }, [gameParams]);
 
   const effectiveRole = (data && user && data.dmIds?.includes(user.uid)) ? 'dm' : 'player';
@@ -227,7 +285,23 @@ function App() {
       } catch(e) { console.error(e); return "AI Error"; }
   };
 
-  const getSenderName = () => possessedNpcId ? (data.npcs?.find(n => n.id === possessedNpcId)?.name + " (NPC)") : (data.players?.find(p => p.id === data.assignments?.[user?.uid])?.name || "User");
+  const getSenderName = () => {
+      // 1. NPC Possession (Highest Priority)
+      if (possessedNpcId) return (data.npcs?.find(n => n.id === possessedNpcId)?.name || "Unknown NPC") + " (NPC)";
+      
+      // 2. DM Identity
+      if (effectiveRole === 'dm') return "Dungeon Master";
+      
+      // 3. Player Character Identity
+      const charId = data.assignments?.[user?.uid];
+      const character = data.players?.find(p => p.id === charId);
+      if (character) return character.name;
+      
+      // 4. Fallback
+      return user?.email?.split('@')[0] || "User";
+  };
+  // END CHANGE
+
   const sendChatMessage = async (content, type = 'chat-public', targetId = null) => {
       if (!content.trim()) return;
       setIsLoading(true);
@@ -235,12 +309,28 @@ function App() {
       const chatRef = collection(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'chat');
       await addDoc(chatRef, newMessage);
 
-      if (type === 'ai-public' || type === 'ai-private') {
-          const aiRes = await queryAiService([{ role: "system", content: `Context: ${data.campaign.genesis.tone}. You are the Dungeon Master.` }, { role: "user", content }]);
-          await addDoc(chatRef, { id: Date.now()+1, role: 'ai', content: aiRes, timestamp: Date.now(), senderId: 'system', senderName: 'DungeonMind', type, replyTo: user?.uid });
-      }
+      // START CHANGE: Removed automatic AI logic from here (moved to SessionView)
+      // Old logic deleted: if (type === 'ai-public' || type === 'ai-private') { ... }
+      // END CHANGE
+      // START CHANGE: Add Delete and Clear functions
       setIsLoading(false);
   };
+
+  const deleteMessage = async (id) => {
+      const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'chat', id);
+      await deleteDoc(ref);
+  };
+
+  const clearChat = async () => {
+      if (!confirm("Delete all chat history?")) return;
+      const batch = fb.writeBatch(fb.db);
+      data.chatLog.forEach(msg => {
+          const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'chat', msg.id.toString());
+          batch.delete(ref);
+      });
+      await batch.commit();
+  };
+  // END CHANGE
 
   const handleDiceRoll = (d, silent = false) => {
     return new Promise((resolve) => {
@@ -263,10 +353,94 @@ function App() {
       const res = await queryAiService([{role:'user', content:`Create Location JSON {name, type, desc} for ${type} ${note}`}]);
       try { return JSON.parse(res.match(/\{[\s\S]*\}/)[0]); } catch(e) { return null; }
   };
-  const generateNpc = async (name, ctx) => {
-      const res = await queryAiService([{role:'user', content:`Create NPC JSON {name, race, class, quirk, stats} for ${name} ${ctx}`}]);
-      try { return JSON.parse(res.match(/\{[\s\S]*\}/)[0]); } catch(e) { return null; }
+
+  // START CHANGE: Unified Context-Aware Forge (NPCs & PCs)
+  const forgeEntity = async (name, type, instructions = "") => {
+      // 1. Search Lore (The Brain)
+      const context = retrieveContext(name, loreChunks, data.journal_pages || {});
+      const contextText = context.map(c => `[SOURCE: ${c.title}]: ${c.content}`).join('\n');
+
+      // 2. Build Schema & Prompt (Explicitly asking for UI-compatible fields)
+      const isPc = type === 'pc';
+      
+      // NPC Schema: Matches NpcView.jsx expectations (customActions, bio, etc)
+      const npcSchema = `{
+          name, 
+          race, 
+          class, 
+          cr, 
+          hp: { current, max }, 
+          ac, 
+          speed, 
+          stats: { STR, DEX, CON, INT, WIS, CHA }, 
+          senses: { darkvision, passivePerception },
+          customActions: [{ name, desc, type, hit, dmg }], 
+          features: [{ name, desc }], 
+          bio: { backstory, appearance }
+      }`;
+
+      const pcSchema = `{
+          name, race, class, background, alignment, 
+          stats: { STR, DEX, CON, INT, WIS, CHA }, 
+          hp, ac, speed, senses, 
+          skills: [], features: [], equipment: [], image_prompt
+      }`;
+
+      const prompt = `
+      Forge a D&D 5e ${isPc ? 'Player Character (Level 1)' : 'NPC Stat Block'} for "${name}".
+      Output JSON matching this schema: ${isPc ? pcSchema : npcSchema}
+
+      STRICT RULES:
+      - If LORE CONTEXT below defines this character, use those EXACT stats.
+      - If LORE is empty, create a thematically appropriate character.
+      - FOR ACTION ARRAYS: Use the key "customActions", NOT "actions".
+      - FOR HP: Return an object { current: X, max: X }, not a single number.
+      - RACIAL TRAITS: Must include standard 5e traits (e.g. Darkvision).
+      - JSON ONLY. No markdown.
+
+      LORE CONTEXT:
+      ${contextText || "No existing lore found."}
+
+      USER INSTRUCTIONS:
+      ${instructions}
+      `;
+
+      const res = await queryAiService([{ role: 'user', content: prompt }]);
+      
+      try { 
+          const rawJson = JSON.parse(res.match(/\{[\s\S]*\}/)[0]);
+          
+          // 3. Sanitizer (The Safety Net)
+          // Fix capitalization or missing fields that break the UI
+          const sanitized = { ...rawJson };
+
+          // Fix HP if it came back as a number
+          if (typeof sanitized.hp === 'number') {
+              sanitized.hp = { current: sanitized.hp, max: sanitized.hp };
+          }
+          
+          // Fix Actions if they came back as 'actions' instead of 'customActions'
+          if (!sanitized.customActions && sanitized.actions) {
+              sanitized.customActions = sanitized.actions;
+          }
+
+          // Ensure basic strings exist
+          if (!sanitized.race && sanitized.Race) sanitized.race = sanitized.Race;
+          if (!sanitized.class && sanitized.Class) sanitized.class = sanitized.Class;
+          if (!sanitized.quirk) sanitized.quirk = "Forged by AI";
+
+          return sanitized;
+
+      } catch (e) { 
+          console.error("Forge Error:", e); 
+          return null; 
+      }
   };
+
+  const generateNpc = (name, ctx) => forgeEntity(name, 'npc', ctx);
+  const generatePlayer = (name, ctx) => forgeEntity(name, 'pc', ctx);
+  // END CHANGE
+
   const handleHandoutSave = (h) => {
       const newH = [...(data.handouts||[])]; h.id ? newH[newH.findIndex(x=>x.id===h.id)] = h : newH.unshift({...h, id: Date.now()});
       updateCloud({...data, handouts:newH, campaign:{...data.campaign, activeHandout:h}}); setShowHandoutCreator(false);
@@ -316,6 +490,100 @@ function App() {
       }, true); // Force immediate save
   };
 
+  // START CHANGE: Robust "Auto-Scribe" Recap
+  const generateRecap = async (scope = 'recent') => {
+      setIsLoading(true);
+      
+      // 1. Filter Chat Log based on scope ('recent' = last 4h gap, 'full' = all)
+      const sessionThreshold = 4 * 60 * 60 * 1000; 
+      let relevantLogs = data.chatLog;
+      
+      if (scope === 'recent') {
+          let lastBreakIndex = 0;
+          for (let i = 1; i < data.chatLog.length; i++) {
+              if (data.chatLog[i].timestamp - data.chatLog[i-1].timestamp > sessionThreshold) {
+                  lastBreakIndex = i;
+              }
+          }
+          relevantLogs = data.chatLog.slice(lastBreakIndex);
+      }
+      
+      const logText = relevantLogs.map(m => `${m.senderName}: ${m.content}`).join('\n');
+
+      // 2. Build the Scribe Prompt
+      const prompt = `
+      You are the Campaign Scribe. Analyze this D&D session log and generate a structured summary.
+      
+      FORMAT AS HTML (Use <h3>, <ul>, <li>, <b>):
+      
+      <h3>⚔️ The Story So Far</h3>
+      (A dramatic, 2-paragraph narrative summary of the events)
+      
+      <h3>💰 The Ledger</h3>
+      <ul>
+         <li><b>Loot:</b> (List items found and who took them)</li>
+         <li><b>Gold:</b> (Total gp found)</li>
+         <li><b>Monsters:</b> (List defeated enemies)</li>
+      </ul>
+      
+      <h3>📜 Quest Log</h3>
+      <ul>
+         <li><b>Updates:</b> (New info on existing quests)</li>
+         <li><b>New Goals:</b> (Any new objectives started)</li>
+      </ul>
+
+      LOGS:
+      ${logText}
+      `;
+
+      // 3. Ask AI
+      const summary = await queryAiService([{ role: 'user', content: prompt }]);
+      
+      // 4. Create Journal Entry
+      const newPageId = Date.now().toString();
+      const newPage = {
+          id: newPageId,
+          title: `Session Recap - ${new Date().toLocaleDateString()}`,
+          content: summary,
+          timestamp: Date.now()
+      };
+      
+      await saveJournalEntry(newPageId, newPage);
+      
+      // 5. Open Journal
+      setCurrentView('journal');
+      setIsLoading(false);
+      return summary;
+  };
+  // END CHANGE
+
+  // NEW: Upload Lore
+  const uploadLore = async (volumes) => {
+      if (!gameParams?.code) return;
+      
+      try {
+          // 1. Upload each volume (Using loop instead of batch to avoid size limits on large PDFs)
+          for (let i = 0; i < volumes.length; i++) {
+              const volId = `vol_${Date.now()}_${i}`;
+              const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'lore', volId);
+              await setDoc(ref, {
+                  id: volId,
+                  chunks: volumes[i],
+                  timestamp: Date.now(),
+                  type: 'pdf_volume'
+              });
+          }
+          
+          // 2. Optimistic Update (Immediate access)
+          const allChunks = volumes.flat();
+          setLoreChunks(prev => [...prev, ...allChunks]);
+          
+      } catch (e) {
+          console.error("Error uploading lore:", e);
+          alert("Failed to save to cloud. Check console.");
+      }
+  };
+
   if (!isAuthReady) return <div className="h-screen bg-slate-900 flex items-center justify-center text-amber-500 font-bold animate-pulse">Summoning DungeonMind...</div>;
   if (!gameParams || !data) return <Lobby fb={fb} user={user} onJoin={(c, r, u) => { localStorage.setItem('dm_last_code', c); setGameParams({code:c, role:r, isOffline:false, uid:u}) }} onOffline={() => setGameParams({code:'LOCAL', role:'dm', isOffline:true, uid:'admin'})} />;
 
@@ -337,28 +605,37 @@ function App() {
            </div>
 
            <div className="flex-1 overflow-hidden relative p-0 md:p-0">
-              {currentView === 'session' && <SessionView data={data} chatLog={data.chatLog} inputText={inputText} setInputText={setInputText} onSendMessage={sendChatMessage} onEditMessage={()=>{}} onDeleteMessage={()=>{}} isLoading={isLoading} role={effectiveRole} user={user} showTools={showTools} setShowTools={setShowTools} diceLog={diceLog} handleDiceRoll={handleDiceRoll} />}
+              {/* 1. CHAT (Session) */}
+              {/* START CHANGE: Connect deleteMessage and clearChat props */}
+              {currentView === 'session' && <SessionView data={data} chatLog={data.chatLog} inputText={inputText} setInputText={setInputText} 
+                  onSendMessage={sendChatMessage} 
+                  onEditMessage={()=>{}} 
+                  onDeleteMessage={deleteMessage} 
+                  clearChat={clearChat}
+                  isLoading={isLoading} role={effectiveRole} user={user} showTools={showTools} setShowTools={setShowTools} diceLog={diceLog} handleDiceRoll={handleDiceRoll} 
+                  onSavePage={saveJournalEntry} generateRecap={generateRecap} loreChunks={loreChunks} aiHelper={queryAiService}
+              />}
+              {/* END CHANGE */}
+              
+              {/* 2. JOURNAL */}
               {currentView === 'journal' && <JournalView data={data} role={effectiveRole} userId={user?.uid} onSavePage={saveJournalEntry} onDeletePage={deleteJournalEntryFunc} aiHelper={queryAiService} />}
               
-              {currentView === 'atlas' && (
-                  <WorldCreator 
-                      data={data} 
-                      setData={setData} 
-                      role={effectiveRole} 
-                      updateCloud={updateCloud} 
-                      updateMapState={updateMapState} 
-                      aiHelper={queryAiService} 
-                      apiKey={apiKey} 
-                  />
-              )}
-              
-              {/* IMPORTANT: Passed savePlayer so player stats persist properly */}
+              {/* 3. TACTICAL (Map) */}
               {currentView === 'map' && <WorldView data={data} setData={setData} role={effectiveRole} updateCloud={updateCloud} updateMapState={updateMapState} onDiceRoll={handleDiceRoll} user={user} apiKey={apiKey} savePlayer={savePlayer} activeTemplate={activeTemplate} onClearTemplate={() => setActiveTemplate(null)} onInitiative={handleInitiative} />}
-              
-              {currentView === 'party' && <PartyView data={data} role={effectiveRole} activeChar={data.assignments?.[user?.uid]} updateCloud={updateCloud} savePlayer={savePlayer} deletePlayer={deletePlayer} setView={setCurrentView} user={user} aiHelper={queryAiService} onDiceRoll={handleDiceRoll} apiKey={apiKey} edition={data.config?.edition} onPlaceTemplate={handlePlaceTemplate} onInitiative={handleInitiative} />}
-              
+              {currentView === 'atlas' && <WorldCreator data={data} setData={setData} role={effectiveRole} updateCloud={updateCloud} updateMapState={updateMapState} aiHelper={queryAiService} apiKey={apiKey} />}
+
+              {/* 4. PARTY (PCs) */}
+              {currentView === 'party' && <PartyView data={data} role={effectiveRole} activeChar={data.assignments?.[user?.uid]} updateCloud={updateCloud} savePlayer={savePlayer} deletePlayer={deletePlayer} setView={setCurrentView} user={user} aiHelper={queryAiService} onDiceRoll={handleDiceRoll} apiKey={apiKey} edition={data.config?.edition} onPlaceTemplate={handlePlaceTemplate} onInitiative={handleInitiative} 
+                  generatePlayer={generatePlayer}
+              />}
+
+              {/* 5. BESTIARY (NPCs) */}
               {currentView === 'npcs' && <NpcView data={data} setData={setData} role={effectiveRole} updateCloud={updateCloud} generateNpc={generateNpc} setChatInput={setInputText} setView={setCurrentView} onPossess={setPossessedNpcId} aiHelper={queryAiService} apiKey={apiKey} edition={data.config?.edition} onDiceRoll={handleDiceRoll} onPlaceTemplate={handlePlaceTemplate} onInitiative={handleInitiative} />}
               
+              {/* 6. LORE (Bible) */}
+              {currentView === 'lore' && <LoreView data={data} aiHelper={queryAiService} pdfChunks={loreChunks} setPdfChunks={setLoreChunks} onUploadLore={uploadLore} />}
+              
+              {/* 7. SETTINGS */}
               {currentView === 'settings' && <SettingsView data={data} setData={setData} apiKey={apiKey} setApiKey={setApiKey} role={effectiveRole} updateCloud={updateCloud} code={gameParams.code} user={user} onExit={() => { setGameParams(null); }} aiProvider={aiProvider} setAiProvider={setAiProvider} openAiModel={openAiModel} setOpenAiModel={setOpenAiModel} puterModel={puterModel} setPuterModel={setPuterModel} banPlayer={()=>{}} kickPlayer={()=>{}} unbanPlayer={()=>{}} />}
             </div>
        </main>

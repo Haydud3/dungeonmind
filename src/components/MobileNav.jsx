@@ -3,13 +3,13 @@ import Icon from './Icon';
 
 const MobileNav = ({ view, setView, className = "" }) => {
     const navItems = [
-        { id: 'session', icon: 'message-circle', label: 'Session' },
-        { id: 'party', icon: 'users', label: 'Party' },
-        { id: 'atlas', icon: 'globe', label: 'Atlas' },
-        { id: 'map', icon: 'map', label: 'Tactical' },
-        { id: 'npcs', icon: 'skull', label: 'Bestiary' },
+        { id: 'session', icon: 'message-circle', label: 'Chat' },
         { id: 'journal', icon: 'book', label: 'Journal' },
-        { id: 'settings', icon: 'settings', label: 'Config' }
+        { id: 'map', icon: 'map', label: 'Tact' },
+        { id: 'party', icon: 'users', label: 'Party' },
+        { id: 'npcs', icon: 'skull', label: 'Mobs' },
+        { id: 'lore', icon: 'library', label: 'Lore' },
+        { id: 'settings', icon: 'settings', label: 'Cfg' }
     ];
 
     return (

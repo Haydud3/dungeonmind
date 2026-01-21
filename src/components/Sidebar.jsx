@@ -3,12 +3,12 @@ import Icon from './Icon';
 
 const Sidebar = ({ view, setView, onExit }) => {
     const navItems = [
-        { id: 'session', icon: 'message-circle', label: 'Session' },
-        { id: 'party', icon: 'users', label: 'Party' },
-        { id: 'atlas', icon: 'globe', label: 'Atlas' },   // WAS 'creator', NOW 'atlas'
-        { id: 'map', icon: 'map', label: 'Tactical' },    // The VTT
-        { id: 'npcs', icon: 'skull', label: 'Bestiary' },
+        { id: 'session', icon: 'message-circle', label: 'Chat' },
         { id: 'journal', icon: 'book', label: 'Journal' },
+        { id: 'map', icon: 'map', label: 'Tactical' },
+        { id: 'party', icon: 'users', label: 'Party' },
+        { id: 'npcs', icon: 'skull', label: 'Bestiary' },
+        { id: 'lore', icon: 'library', label: 'Lore' },
         { id: 'settings', icon: 'settings', label: 'Settings' }
     ];
 

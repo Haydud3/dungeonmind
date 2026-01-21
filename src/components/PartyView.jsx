@@ -6,9 +6,15 @@ import { useCharacterStore } from '../stores/useCharacterStore';
 import { parsePdf } from '../utils/dndBeyondParser.js';
 import { enrichCharacter } from '../utils/srdEnricher.js';
 
-const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView, user, aiHelper, onDiceRoll, onLogAction, edition, apiKey }) => {
+// START CHANGE: Add generatePlayer to props
+const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView, user, aiHelper, onDiceRoll, onLogAction, edition, apiKey, generatePlayer }) => {
     const [showCreationMenu, setShowCreationMenu] = useState(false);
-    const [showAiCreator, setShowAiCreator] = useState(false);        
+    // START CHANGE: Add Forge State
+    const [showForge, setShowForge] = useState(false);
+    const [forgeName, setForgeName] = useState('');
+    const [forgeContext, setForgeContext] = useState('');
+    const [isForging, setIsForging] = useState(false);
+    // END CHANGE
     const [viewingCharacterId, setViewingCharacterId] = useState(null);
     const [isImporting, setIsImporting] = useState(false);
     const [importStatus, setImportStatus] = useState("Initializing...");
@@ -18,6 +24,24 @@ const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView,
     // We use a Ref to hold the latest data to prevent overwriting updates
     const dataRef = useRef(data);
     useEffect(() => { dataRef.current = data; }, [data]);
+
+    // START CHANGE: New Forge Handler
+    const handleForgeSubmit = async () => {
+        if (!forgeName.trim()) return;
+        setIsForging(true);
+        const instruction = forgeContext ? `Class/Race/Vibe: ${forgeContext}` : "Create a standard Level 1 adventurer.";
+        const newChar = await generatePlayer(forgeName, instruction);
+        if (newChar) {
+            handleNewCharacter({
+                ...newChar,
+                xp: 0, level: 1, maxHp: newChar.hp, currentHp: newChar.hp,
+                conditions: [], spellSlots: {}, isPublic: true
+            });
+            setShowForge(false); setForgeName(''); setForgeContext('');
+        } else { alert("The Forge failed."); }
+        setIsForging(false);
+    };
+    // END CHANGE
 
     const handleSheetSave = async (updatedChar) => {
         // Double check specifically for undefined here as a failsafe
@@ -205,9 +229,11 @@ const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView,
                                         </div>
 
                                         {/* AI FORGE */}
-                                        <div onClick={() => { setShowCreationMenu(false); setShowAiCreator(true); }} className="bg-slate-800 border-2 border-slate-700 hover:border-purple-500 rounded-xl p-6 cursor-pointer group transition-all hover:-translate-y-1">
+                                        {/* START CHANGE: Open new Forge Modal instead of old Creator */}
+                                        <div onClick={() => { setShowCreationMenu(false); setShowForge(true); }} className="bg-slate-800 border-2 border-slate-700 hover:border-purple-500 rounded-xl p-6 cursor-pointer group transition-all hover:-translate-y-1">
                                             <div className="w-16 h-16 bg-purple-900/30 text-purple-500 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform"><Icon name="sparkles" size={32}/></div>
                                             <h3 className="font-bold text-xl text-white mb-2">AI Forge</h3>
+                                        {/* END CHANGE */}
                                             <p className="text-xs text-slate-400">Generate instantly.</p>
                                         </div>
                                     </div>
@@ -218,14 +244,39 @@ const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView,
                 </div>
             )}
 
-            {/* AI CREATOR */}
-            {showAiCreator && (
-                <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm">
-                    <div className="max-w-2xl w-full bg-slate-900 rounded-xl overflow-hidden shadow-2xl relative border border-slate-700 h-[90vh]">
-                        <CharacterCreator aiHelper={aiHelper} apiKey={apiKey} onComplete={handleNewCharacter} onCancel={() => setShowAiCreator(false)} edition={edition} />
+            {/* AI CREATOR / FORGE */}
+            {/* START CHANGE: New Context-Aware Forge Modal */}
+            {showForge && (
+                <div className="fixed inset-0 z-50 bg-slate-900/90 backdrop-blur-sm flex items-center justify-center p-4">
+                    <div className="bg-slate-800 border border-slate-600 rounded-lg shadow-2xl w-full max-w-md p-6 animate-in zoom-in-95 duration-200">
+                        <div className="flex justify-between items-center mb-6 border-b border-slate-700 pb-2">
+                            <h3 className="text-xl font-bold text-white flex items-center gap-2"><Icon name="sparkles" className="text-indigo-400"/> Character Forge</h3>
+                            <button onClick={() => setShowForge(false)} className="text-slate-400 hover:text-white"><Icon name="x"/></button>
+                        </div>
+                        {isForging ? (
+                            <div className="text-center py-8">
+                                <Icon name="loader-2" size={48} className="animate-spin text-indigo-500 mx-auto mb-4"/>
+                                <p className="text-indigo-300 font-bold animate-pulse">Consulting the Archives...</p>
+                                <p className="text-xs text-slate-500 mt-2">Checking Lore & Rules...</p>
+                            </div>
+                        ) : (
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-400 mb-1">Name</label>
+                                    <input autoFocus className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white" placeholder="e.g. Sildar Hallwinter" value={forgeName} onChange={e => setForgeName(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleForgeSubmit()}/>
+                                    <p className="text-[10px] text-slate-500 mt-1">If this name exists in your PDF/Journal, the AI will use that history!</p>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-400 mb-1">Concept (Optional)</label>
+                                    <input className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white" placeholder="e.g. Dwarf Cleric" value={forgeContext} onChange={e => setForgeContext(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleForgeSubmit()}/>
+                                </div>
+                                <button onClick={handleForgeSubmit} disabled={!forgeName.trim()} className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded flex justify-center items-center gap-2 mt-4"><Icon name="hammer" size={18}/> Forge Hero</button>
+                            </div>
+                        )}
                     </div>
                 </div>
             )}
+            {/* END CHANGE */}
         </div>
     );
 };

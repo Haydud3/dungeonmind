@@ -185,10 +185,12 @@ const JournalView = ({ data, role, userId, aiHelper, onSavePage, onDeletePage })
                 ) : (
                     <div className="h-full overflow-y-auto custom-scroll pb-32">
                         <div className="p-6 w-full max-w-5xl mx-auto">
+                            {/* START CHANGE: Update styling to render AI headers/lists beautifully */}
                             <div 
-                                className="prose prose-invert prose-p:text-slate-300 prose-headings:text-amber-500 max-w-none break-words whitespace-pre-wrap" 
+                                className="prose prose-invert max-w-none [&>h3]:text-xl [&>h3]:font-bold [&>h3]:text-amber-500 [&>h3]:mt-6 [&>h3]:mb-2 [&>h3]:fantasy-font [&>h3]:border-b [&>h3]:border-amber-900/30 [&>h3]:pb-1 [&>ul]:list-disc [&>ul]:pl-5 [&>ul]:space-y-1 [&>ul]:text-slate-300 [&>ul]:mb-4 [&>li>b]:text-white [&>li>b]:font-bold [&>p]:mb-4 [&>p]:leading-relaxed"
                                 dangerouslySetInnerHTML={{__html: activePage.content}} 
                             />
+                            {/* END CHANGE */}
                         </div>
                     </div>
                 )}

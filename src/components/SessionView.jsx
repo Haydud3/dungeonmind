@@ -1,23 +1,112 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Icon from './Icon';
 import DiceTray from './DiceTray';
+import { retrieveContext, buildPrompt } from '../utils/loreEngine';
 
-const SessionView = (props) => {
-    const { 
-        data, chatLog, inputText, setInputText, 
-        onSendMessage, onEditMessage, onDeleteMessage, 
-        isLoading, role, user, generateRecap, saveMessageToJournal, clearChat,
-        showTools, setShowTools, diceLog, handleDiceRoll,
-        possessedNpcId 
-    } = props;
-
+// START CHANGE: Add clearChat to destructured props
+const SessionView = ({ 
+    data, chatLog, inputText, setInputText, 
+    onSendMessage, onEditMessage, onDeleteMessage, clearChat,
+    isLoading, role, user, generateRecap, saveMessageToJournal, 
+    showTools, setShowTools, diceLog, handleDiceRoll,
+    possessedNpcId, onSavePage, loreChunks, aiHelper 
+}) => {
+// END CHANGE
     const [sendMode, setSendMode] = useState('chat-public'); 
     const [targetUser, setTargetUser] = useState(''); 
     const [aiContextMode, setAiContextMode] = useState('fast'); 
     const [editingId, setEditingId] = useState(null);
     const [editContent, setEditContent] = useState('');
     const [showRecapMenu, setShowRecapMenu] = useState(false);
+    // START CHANGE: Add Ghost Message State
+    const [ghostMessage, setGhostMessage] = useState(null);
+    // END CHANGE
     const chatEndRef = useRef(null);
+
+    // START CHANGE: Enhanced Formatter with Table Support
+    const formatMessage = (text) => {
+        if (!text) return "";
+        
+        // 1. Parse Tables: Find blocks that look like markdown tables and convert to HTML
+        let formatted = text.replace(/((?:\|.*\|(?:\n|$))+)/g, (match) => {
+            const rows = match.trim().split('\n').filter(r => !r.includes('---')); // Remove separator lines
+            const htmlRows = rows.map((row, i) => {
+                const cells = row.split('|').filter(c => c.trim()).map(c => `<td class="border border-slate-700 p-2 ${i===0 ? 'font-bold bg-slate-800 text-amber-500' : ''}">${c.trim()}</td>`).join('');
+                return `<tr>${cells}</tr>`;
+            }).join('');
+            return `<div class="overflow-x-auto my-2 rounded border border-slate-700"><table class="w-full text-xs text-left border-collapse"><tbody class="divide-y divide-slate-700">${htmlRows}</tbody></table></div>`;
+        });
+
+        // 2. Standard Markdown Formatting
+        return formatted
+            .replace(/^### (.*$)/gm, '<div class="text-lg font-bold text-amber-500 mt-2 mb-1 fantasy-font">$1</div>')
+            .replace(/\*\*(.*?)\*\*/g, '<strong class="text-white">$1</strong>')
+            .replace(/^- (.*$)/gm, '<div class="ml-4 flex items-start gap-2"><span class="text-slate-500">•</span><span>$1</span></div>')
+            .replace(/\n/g, '<br/>');
+    };
+    // END CHANGE
+
+    // The New "Brain" Logic
+    const handleSmartSend = async (type) => {
+        if (!inputText.trim()) return;
+        
+        // 1. Send User Message
+        onSendMessage(inputText, 'chat-public'); // Always show user query publicly
+        const query = inputText;
+        setInputText(""); // Clear immediately
+
+        // 2. If it's an AI command, run the Lore Engine
+        if (type === 'ai-public' || type === 'ai-private') {
+            // START CHANGE: Add Ghost Message & Context Logic
+            // A. Post a "Thinking" ghost message
+            setGhostMessage({
+                id: 'ghost',
+                role: 'ai',
+                senderName: 'DungeonMind',
+                content: '<span class="animate-pulse">Consulting the archives...</span>',
+                timestamp: Date.now(),
+                type: type,
+                isGhost: true
+            });
+
+            // B. Build Context
+            const recentChat = chatLog.slice(-10).map(m => `${m.senderName}: ${m.content}`).join('\n');
+            const context = retrieveContext(query, props.loreChunks || [], data.journal_pages || {});
+            
+            // C. Build Prompt (Public flag = true if type is ai-public)
+            const isPublic = (type === 'ai-public');
+            const prompt = buildPrompt(query, context, recentChat, isPublic);
+
+            // D. Ask AI
+            if (props.aiHelper) {
+                const answer = await props.aiHelper([{ role: 'user', content: prompt }]);
+                setGhostMessage(null); // Clear ghost before sending real
+                onSendMessage(answer, type, null); 
+            } else {
+                setGhostMessage(null);
+            }
+            // END CHANGE
+        }
+    };
+
+    // START CHANGE: Logic for the Recap Button
+    const handleSmartRecap = async (scope) => {
+        if (!generateRecap) return;
+        
+        // 1. Show Feedback (Ghost Scribe)
+        setGhostMessage({
+            id: 'scribe-ghost', role: 'ai', senderName: 'DungeonMind Scribe',
+            content: '<span class="animate-pulse">Reading logs and writing journal entry...</span>',
+            timestamp: Date.now(), type: 'ai-private', isGhost: true
+        });
+
+        // 2. Generate (App.jsx will handle the redirect to JournalView on success)
+        await generateRecap(scope);
+        
+        // 3. Cleanup (If we haven't unmounted yet)
+        setGhostMessage(null);
+    };
+    // END CHANGE
 
     useEffect(() => { if (!editingId) chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [chatLog, isLoading, editingId]);
 
@@ -30,6 +119,14 @@ const SessionView = (props) => {
 
     const handleSend = () => {
         if (!inputText.trim()) return;
+
+        // START CHANGE: Route AI modes to the new Brain logic
+        if (sendMode === 'ai-public' || sendMode === 'ai-private') {
+            handleSmartSend(sendMode);
+            return;
+        }
+        // END CHANGE
+
         if (sendMode === 'chat-private' && !targetUser) return alert("Select a player.");
         onSendMessage(inputText, sendMode, targetUser, aiContextMode);
         setInputText('');
@@ -48,6 +145,12 @@ const SessionView = (props) => {
         if (role === 'dm') return true; 
         return false;
     });
+
+    // START CHANGE: Append Ghost Message if it exists
+    if (ghostMessage) {
+        visibleMessages.push(ghostMessage);
+    }
+    // END CHANGE
 
     const getMessageStyle = (msg) => {
         if (msg.role === 'ai') return "border-l-4 border-amber-500 bg-amber-900/10"; 
@@ -73,10 +176,10 @@ const SessionView = (props) => {
                         </button>
                         {showRecapMenu && (
                             <div className="absolute right-0 mt-2 w-48 bg-slate-800 border border-slate-600 rounded-lg shadow-xl overflow-hidden z-30">
-                                <button onClick={() => { generateRecap('full'); setShowRecapMenu(false); }} className="w-full text-left px-4 py-2 text-xs hover:bg-slate-700 text-slate-200 flex items-center gap-2">
+                                <button onClick={() => { handleSmartRecap('full'); setShowRecapMenu(false); }} className="w-full text-left px-4 py-2 text-xs hover:bg-slate-700 text-slate-200 flex items-center gap-2">
                                     <Icon name="book-open" size={14}/> Full Story (All)
                                 </button>
-                                <button onClick={() => { generateRecap('recent'); setShowRecapMenu(false); }} className="w-full text-left px-4 py-2 text-xs hover:bg-slate-700 text-slate-200 flex items-center gap-2">
+                                <button onClick={() => { handleSmartRecap('recent'); setShowRecapMenu(false); }} className="w-full text-left px-4 py-2 text-xs hover:bg-slate-700 text-slate-200 flex items-center gap-2">
                                     <Icon name="clock" size={14}/> Last Session
                                 </button>
                             </div>
@@ -112,17 +215,51 @@ const SessionView = (props) => {
                         return (
                             <div key={i} className={`group flex gap-3 px-2 py-1 rounded hover:bg-slate-800/50 ${getMessageStyle(msg)} ${showHeader ? 'mt-3' : 'mt-0.5'}`}>
                                 <div className="w-10 flex-shrink-0">
-                                    {showHeader && <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold text-white shadow-lg ${msg.role === 'ai' ? 'bg-amber-600' : 'bg-slate-700'}`}>{msg.role === 'ai' ? <Icon name="brain" size={20}/> : (msg.senderName?.[0] || '?').toUpperCase()}</div>}
+                                    {/* START CHANGE: Dynamic Avatar (DM Icon vs Character Image) */}
+                                    {showHeader && (() => {
+                                        // 1. Is it AI?
+                                        if (msg.role === 'ai') return (
+                                            <div className="w-10 h-10 rounded-full flex items-center justify-center text-white shadow-lg bg-gradient-to-br from-amber-600 to-purple-700 shadow-amber-500/20">
+                                                <Icon name="sparkles" size={20}/>
+                                            </div>
+                                        );
+
+                                        // 2. Is it the DM? (Check ID or Name)
+                                        const isDm = data.dmIds?.includes(msg.senderId) || msg.senderName === 'Dungeon Master';
+                                        if (isDm) return (
+                                            <div className="w-10 h-10 rounded-full flex items-center justify-center text-white shadow-lg bg-slate-700 border border-amber-500/30">
+                                                <Icon name="crown" size={20} className="text-amber-500"/>
+                                            </div>
+                                        );
+
+                                        // 3. Is it a Player Character?
+                                        // Find the character assigned to this senderId
+                                        const charId = data.assignments?.[msg.senderId];
+                                        const character = data.players?.find(p => p.id === charId);
+
+                                        if (character?.image) return (
+                                            <img src={character.image} alt={msg.senderName} className="w-10 h-10 rounded-full object-cover shadow-lg border border-slate-600"/>
+                                        );
+
+                                        // 4. Fallback Initials
+                                        return (
+                                            <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold text-white shadow-lg bg-slate-700">
+                                                {(msg.senderName?.[0] || '?').toUpperCase()}
+                                            </div>
+                                        );
+                                    })()}
+                                    {/* END CHANGE */}
                                 </div>
                                 <div className="flex-1 min-w-0 relative">
                                     {showHeader && (
                                         <div className="flex items-center gap-2">
-                                            <span className={`font-bold text-sm ${msg.role === 'ai' ? 'text-amber-400' : 'text-slate-200'}`}>{msg.senderName}</span>
-                                            {msg.type === 'chat-private' && <span className="text-[10px] text-purple-400 bg-purple-900/30 px-1 rounded border border-purple-500/30">WHISPER</span>}
-                                            {msg.type === 'ai-private' && <span className="text-[10px] text-cyan-400 bg-cyan-900/30 px-1 rounded border border-cyan-500/30">AI PRIVATE</span>}
+                                            <span className={`font-bold text-sm ${msg.role === 'ai' ? 'text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-purple-400' : 'text-slate-200'}`}>{msg.role === 'ai' ? 'Dungeon Master (AI)' : msg.senderName}</span>
+                                            {msg.type === 'chat-private' && <span className="text-[10px] text-purple-400 bg-purple-900/30 px-1 rounded border border-purple-500/30 flex items-center gap-1"><Icon name="lock" size={8}/> WHISPER</span>}
+                                            {msg.type === 'ai-private' && <span className="text-[10px] text-cyan-400 bg-cyan-900/30 px-1 rounded border border-cyan-500/30 flex items-center gap-1"><Icon name="eye-off" size={8}/> SECRET</span>}
                                             <span className="text-[10px] text-slate-500">{formatTime(msg.timestamp)}</span>
                                         </div>
                                     )}
+                                    {/* END CHANGE */}
                                     
                                     {editingId === msg.id ? (
                                         <div className="mt-1">
@@ -134,7 +271,9 @@ const SessionView = (props) => {
                                         </div>
                                     ) : (
                                         <div className="text-slate-300 text-[15px] leading-relaxed break-words whitespace-pre-wrap group-hover:text-white transition-colors relative">
-                                            <span dangerouslySetInnerHTML={{__html: msg.content.replace(/\n/g, '<br/>').replace(/\*\*(.*?)\*\*/g, '<b>$1</b>')}} />
+                                            {/* START CHANGE: Use the new formatMessage function */}
+                                            <span dangerouslySetInnerHTML={{__html: formatMessage(msg.content)}} />
+                                            {/* END CHANGE */}
                                         </div>
                                     )}
 
@@ -194,10 +333,29 @@ const SessionView = (props) => {
                         <button onClick={() => setShowTools(!showTools)} className={`rounded p-1.5 transition-colors shrink-0 ${showTools ? 'text-amber-500 bg-amber-900/20' : 'text-slate-500 hover:text-slate-300'}`}><Icon name="dices" size={20}/></button>
                     </div>
                     
-                    <div className="relative flex gap-2 items-end bg-slate-800 rounded-lg p-2 border border-slate-700 focus-within:border-slate-500 transition-colors">
-                        <textarea value={inputText} onChange={e => setInputText(e.target.value)} onKeyDown={handleKeyDown} placeholder={possessedNpcId ? `Speaking as ${data.npcs?.find(n=>n.id===possessedNpcId)?.name}...` : "Message..."} className="flex-1 bg-transparent text-slate-200 resize-none h-10 max-h-32 focus:ring-0 outline-none custom-scroll text-sm leading-relaxed py-2" rows={1} style={{ height: inputText.length > 50 ? 'auto' : '40px' }} />
+                    {/* START CHANGE: Dynamic Input Styling based on Mode */}
+                    <div className={`relative flex gap-2 items-end rounded-lg p-2 border transition-all ${
+                        sendMode === 'chat-private' ? 'bg-purple-900/10 border-purple-500/50 shadow-[0_0_10px_rgba(168,85,247,0.1)]' : 
+                        sendMode.includes('ai') ? 'bg-amber-900/10 border-amber-500/50 shadow-[0_0_10px_rgba(245,158,11,0.1)]' : 
+                        'bg-slate-800 border-slate-700 focus-within:border-slate-500'
+                    }`}>
+                        <textarea 
+                            value={inputText} 
+                            onChange={e => setInputText(e.target.value)} 
+                            onKeyDown={handleKeyDown} 
+                            placeholder={
+                                sendMode === 'chat-private' ? `Whispering to ${data.activeUsers?.[targetUser]?.split('@')[0] || 'Player'}...` :
+                                sendMode.includes('ai') ? "Ask the DungeonMind..." :
+                                possessedNpcId ? `Speaking as ${data.npcs?.find(n=>n.id===possessedNpcId)?.name}...` : 
+                                "Message..."
+                            } 
+                            className="flex-1 bg-transparent text-slate-200 resize-none h-10 max-h-32 focus:ring-0 outline-none custom-scroll text-sm leading-relaxed py-2 placeholder:text-slate-500/50" 
+                            rows={1} 
+                            style={{ height: inputText.length > 50 ? 'auto' : '40px' }} 
+                        />
                         <button onClick={handleSend} disabled={!inputText.trim()} className={`p-2 rounded-md transition-all shrink-0 ${inputText.trim() ? 'bg-indigo-600 hover:bg-indigo-500 text-white' : 'bg-slate-700 text-slate-500 cursor-not-allowed'}`}><Icon name="send" size={18}/></button>
                     </div>
+                    {/* END CHANGE */}
                 </div>
             </div>
             {showTools && (<div className="absolute z-40 right-0 top-0 bottom-0 w-64 bg-slate-900/95 backdrop-blur border-l border-slate-700 p-4 shadow-2xl animate-in slide-in-from-right duration-300 flex flex-col"><div className="flex justify-between items-center mb-4"><span className="fantasy-font text-amber-500 text-lg">Dice Roller</span><button onClick={() => setShowTools(false)} className="text-slate-400 hover:text-white"><Icon name="x" size={24}/></button></div><DiceTray diceLog={diceLog} handleDiceRoll={handleDiceRoll} /></div>)}

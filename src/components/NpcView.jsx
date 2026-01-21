@@ -6,11 +6,19 @@ import { useCharacterStore } from '../stores/useCharacterStore';
 import { parsePdf } from '../utils/dndBeyondParser.js';
 import { enrichCharacter } from '../utils/srdEnricher.js';
 
-const NpcView = ({ data, setData, role, updateCloud, setChatInput, setView, onPossess, aiHelper, apiKey, edition, onDiceRoll }) => {
+// START CHANGE: Add generateNpc to props
+const NpcView = ({ data, setData, role, updateCloud, setChatInput, setView, onPossess, aiHelper, apiKey, edition, onDiceRoll, generateNpc }) => {
     // View State
     const [viewingNpcId, setViewingNpcId] = useState(null);
+// END CHANGE
     const [showCreationMenu, setShowCreationMenu] = useState(false);
     const [showAiCreator, setShowAiCreator] = useState(false);
+    // START CHANGE: Add Forge State
+    const [showForge, setShowForge] = useState(false);
+    const [forgeName, setForgeName] = useState('');
+    const [forgeContext, setForgeContext] = useState('');
+    const [isForging, setIsForging] = useState(false);
+    // END CHANGE
     // Compendium State
     const [showCompendium, setShowCompendium] = useState(false);
     const [compendiumSearch, setCompendiumSearch] = useState("");
@@ -78,6 +86,22 @@ const NpcView = ({ data, setData, role, updateCloud, setChatInput, setView, onPo
         setShowCreationMenu(false);
         setShowCompendium(false);
     };
+
+    // START CHANGE: New NPC Forge Handler
+    const handleForgeSubmit = async () => {
+        if (!forgeName.trim()) return;
+        setIsForging(true);
+        const instruction = forgeContext ? `Role/Vibe: ${forgeContext}` : "Standard 5e Statblock.";
+        
+        const newNpc = await generateNpc(forgeName, instruction);
+        
+        if (newNpc) {
+            handleNpcComplete({ ...newNpc, quirk: "Forged from Lore" });
+            setShowForge(false); setForgeName(''); setForgeContext('');
+        } else { alert("The Forge failed."); }
+        setIsForging(false);
+    };
+    // END CHANGE
 
     // --- D&D 5e API INTEGRATION ---
     const searchCompendium = async () => {
@@ -348,9 +372,11 @@ const NpcView = ({ data, setData, role, updateCloud, setChatInput, setView, onPo
                                             <p className="text-[10px] text-slate-400">Import + SRD Enrich.</p>
                                             <input type="file" accept=".pdf" className="hidden" ref={fileInputRef} onChange={handlePdfImport}/>
                                         </div>
-                                        <div onClick={() => { setShowCreationMenu(false); setShowAiCreator(true); }} className="bg-slate-800 border-2 border-slate-700 hover:border-purple-500 rounded-xl p-4 cursor-pointer group transition-all hover:-translate-y-1">
+                                        {/* START CHANGE: Open new Forge Modal instead of old Creator */}
+                                        <div onClick={() => { setShowCreationMenu(false); setShowForge(true); }} className="bg-slate-800 border-2 border-slate-700 hover:border-purple-500 rounded-xl p-4 cursor-pointer group transition-all hover:-translate-y-1">
                                             <div className="w-12 h-12 bg-purple-900/30 text-purple-500 rounded-full flex items-center justify-center mx-auto mb-2"><Icon name="sparkles" size={24}/></div>
                                             <h3 className="font-bold text-white">AI Forge</h3>
+                                        {/* END CHANGE */}
                                             <p className="text-[10px] text-slate-400">Generative NPC.</p>
                                         </div>
                                     </div>
@@ -406,6 +432,39 @@ const NpcView = ({ data, setData, role, updateCloud, setChatInput, setView, onPo
                     </div>
                 </div>
             )}
+
+            {/* START CHANGE: Context-Aware Forge Modal */}
+            {showForge && (
+                <div className="fixed inset-0 z-50 bg-slate-900/90 backdrop-blur-sm flex items-center justify-center p-4">
+                    <div className="bg-slate-800 border border-slate-600 rounded-lg shadow-2xl w-full max-w-md p-6 animate-in zoom-in-95 duration-200">
+                        <div className="flex justify-between items-center mb-6 border-b border-slate-700 pb-2">
+                            <h3 className="text-xl font-bold text-white flex items-center gap-2"><Icon name="skull" className="text-red-500"/> Bestiary Forge</h3>
+                            <button onClick={() => setShowForge(false)} className="text-slate-400 hover:text-white"><Icon name="x"/></button>
+                        </div>
+                        {isForging ? (
+                            <div className="text-center py-8">
+                                <Icon name="loader-2" size={48} className="animate-spin text-red-500 mx-auto mb-4"/>
+                                <p className="text-red-300 font-bold animate-pulse">Consulting the Archives...</p>
+                                <p className="text-xs text-slate-500 mt-2">Checking Lore for stats...</p>
+                            </div>
+                        ) : (
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-400 mb-1">Name / Creature Type</label>
+                                    <input autoFocus className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white" placeholder="e.g. Glasstaff OR Redbrand Ruffian" value={forgeName} onChange={e => setForgeName(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleForgeSubmit()}/>
+                                    <p className="text-[10px] text-slate-500 mt-1">If this name appears in your PDFs, we use those stats!</p>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-400 mb-1">Context (Optional)</label>
+                                    <input className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white" placeholder="e.g. CR 4, fire themed" value={forgeContext} onChange={e => setForgeContext(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleForgeSubmit()}/>
+                                </div>
+                                <button onClick={handleForgeSubmit} disabled={!forgeName.trim()} className="w-full bg-red-800 hover:bg-red-700 text-white font-bold py-3 rounded flex justify-center items-center gap-2 mt-4"><Icon name="hammer" size={18}/> Forge Monster</button>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+            {/* END CHANGE */}
         </div>
     );
 };
