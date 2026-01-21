@@ -83,24 +83,29 @@ const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView,
         setShowCreationMenu(false);
     };
 
-    // --- UPDATED IMPORT HANDLER ---
-    const handlePdfImport = async (e) => {
+    const handleFileImport = async (e) => {
         const file = e.target.files[0];
         if (!file) return;
         
         setIsImporting(true);
-        setImportStatus("Reading PDF...");
+        const isJson = file.type === "application/json" || file.name.endsWith('.json');
+        setImportStatus(isJson ? "Parsing ICE JSON..." : "Reading PDF...");
         
         try {
-            // 1. Parse raw text from PDF
-            const rawData = await parsePdf(file);
-            // 2. Enrich with API Data
-            setImportStatus("Consulting 5e SRD...");
-            const charData = await enrichCharacter(rawData);
+            let charData;
+            if (isJson) {
+                const text = await file.text();
+                const rawJson = JSON.parse(text);
+                const { parseIce5e } = await import('../utils/ice5eParser');
+                charData = parseIce5e(rawJson);
+            } else {
+                const rawData = await parsePdf(file);
+                setImportStatus("Consulting 5e SRD...");
+                charData = await enrichCharacter(rawData);
+            }
 
             setImportStatus("Saving...");
             handleNewCharacter(charData);
-            
             alert(`Success! Imported ${charData.name}`);
         } catch (err) {
             console.error("Import Error:", err);
@@ -223,9 +228,9 @@ const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView,
                                         {/* D&D BEYOND */}
                                         <div onClick={() => fileInputRef.current.click()} className="bg-slate-800 border-2 border-slate-700 hover:border-red-500 rounded-xl p-6 cursor-pointer group transition-all hover:-translate-y-1">
                                             <div className="w-16 h-16 bg-red-900/30 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform"><Icon name="file-text" size={32}/></div>
-                                            <h3 className="font-bold text-xl text-white mb-2">PDF Import</h3>
-                                            <p className="text-xs text-slate-400">Smart Import + API Enrich.</p>
-                                            <input type="file" accept=".pdf" className="hidden" ref={fileInputRef} onChange={handlePdfImport}/>
+                                            <h3 className="font-bold text-xl text-white mb-2">PDF/JSON Import</h3>
+                                            <p className="text-xs text-slate-400">D&D Beyond or ICE 5e.</p>
+                                            <input type="file" accept=".pdf,.json" className="hidden" ref={fileInputRef} onChange={handleFileImport}/>
                                         </div>
 
                                         {/* AI FORGE */}
