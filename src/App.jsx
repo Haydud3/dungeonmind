@@ -17,7 +17,7 @@ import DiceOverlay from './components/DiceOverlay';
 import HandoutEditor from './components/HandoutEditor';
 import LoreView from './components/LoreView';
 import { useCharacterStore } from './stores/useCharacterStore'; 
-import { retrieveContext } from './utils/loreEngine';
+import { retrieveContext, buildPrompt, buildCastList } from './utils/loreEngine';
 
 const DB_INIT_DATA = { 
     hostId: null,
@@ -356,35 +356,24 @@ function App() {
 
   // START CHANGE: Unified Context-Aware Forge (NPCs & PCs)
   const forgeEntity = async (name, type, instructions = "") => {
-      // 1. Search Lore (The Brain)
-      const context = retrieveContext(name, loreChunks, data.journal_pages || {});
-      const contextText = context.map(c => `[SOURCE: ${c.title}]: ${c.content}`).join('\n');
+      const myCharId = data.assignments?.[user?.uid];
+      const castList = buildCastList(data); // Option B: Identity Mapping
 
-      // 2. Build Schema & Prompt (Explicitly asking for UI-compatible fields)
-      const isPc = type === 'pc';
+      // 1. Search Lore (Option A: Character Sheets + Books + Journal)
+      const context = retrieveContext(name, loreChunks, data.journal_pages || {}, data.players, effectiveRole, myCharId);
       
-      // NPC Schema: Matches NpcView.jsx expectations (customActions, bio, etc)
-      const npcSchema = `{
-          name, 
-          race, 
-          class, 
-          cr, 
-          hp: { current, max }, 
-          ac, 
-          speed, 
-          stats: { STR, DEX, CON, INT, WIS, CHA }, 
-          senses: { darkvision, passivePerception },
-          customActions: [{ name, desc, type, hit, dmg }], 
-          features: [{ name, desc }], 
-          bio: { backstory, appearance }
-      }`;
+      // 2. Build the System Prompt using the new engine logic
+      // Note: We are using buildPrompt here to wrap the schema and instructions
+      const systemPrompt = buildPrompt(
+          `Forge a D&D 5e ${type === 'pc' ? 'Player' : 'NPC'} for "${name}"`,
+          context,
+          "", // No chat history needed for forge
+          effectiveRole === 'player',
+          castList
+      );
 
-      const pcSchema = `{
-          name, race, class, background, alignment, 
-          stats: { STR, DEX, CON, INT, WIS, CHA }, 
-          hp, ac, speed, senses, 
-          skills: [], features: [], equipment: [], image_prompt
-      }`;
+      const isPc = type === 'pc';
+      const pcSchema = `{ name, race, class, background, alignment, stats: { STR, DEX, CON, INT, WIS, CHA }, hp, ac, speed, senses, skills: [], features: [], equipment: [], image_prompt }`;
 
       const prompt = `
       Forge a D&D 5e ${isPc ? 'Player Character (Level 1)' : 'NPC Stat Block'} for "${name}".

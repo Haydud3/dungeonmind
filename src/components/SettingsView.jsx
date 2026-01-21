@@ -23,9 +23,13 @@ const SettingsView = ({
 
     // --- PLAYER MANAGEMENT LOGIC ---
     const handleAssignCharacter = (uid, charId) => {
+        // START CHANGE: Set to empty string instead of deleting to force DB overwrite
         const newAssignments = { ...data.assignments, [uid]: charId };
-        if (!charId) delete newAssignments[uid]; // Remove assignment if "None" selected
-        updateCloud({ ...data, assignments: newAssignments });
+        // (Removed the 'delete' line so the empty value actually saves to the cloud)
+        
+        setData(prev => ({ ...prev, assignments: newAssignments }));
+        updateCloud({ ...data, assignments: newAssignments }, true);
+        // END CHANGE
     };
 
     const toggleDmStatus = (uid) => {
@@ -48,6 +52,8 @@ const SettingsView = ({
 
         updateCloud({ ...data, dmIds: newDmIds });
     };
+
+    // [DELETED handleRetroactiveFix FUNCTION]
 
     return (
         <div className="h-full bg-slate-900 p-4 md:p-8 overflow-y-auto custom-scroll">
@@ -106,11 +112,13 @@ const SettingsView = ({
                                         <div className="text-xs text-slate-500">Prevent players from editing their stats manually during sessions.</div>
                                     </div>
                                 </div>
-                            </div>
                         </div>
+                    </div>
 
-                        <button onClick={onExit} className="w-full py-4 rounded-xl border-2 border-red-900/50 text-red-400 hover:bg-red-900/20 hover:border-red-500 hover:text-white transition-all font-bold flex items-center justify-center gap-2">
-                            <Icon name="log-out" size={20}/> Leave Campaign
+                    {/* [DELETED DANGER ZONE BUTTON BLOCK] */}
+
+                    <button onClick={onExit} className="w-full py-4 rounded-xl border-2 border-red-900/50 text-red-400 hover:bg-red-900/20 hover:border-red-500 hover:text-white transition-all font-bold flex items-center justify-center gap-2">
+                        <Icon name="log-out" size={20}/> Leave Campaign
                         </button>
                     </div>
                 )}
@@ -229,11 +237,17 @@ const SettingsView = ({
                                         <select value={puterModel} onChange={e => setPuterModel(e.target.value)} className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white">
                                             <option value="mistral-large-latest">Mistral Large (Smart)</option>
                                             <option value="gpt-4o-mini">GPT-4o Mini (Balanced)</option>
-                                            <option value="claude-3-5-sonnet">Claude 3.5 Sonnet (Creative)</option>
-                                        </select>
-                                    </div>
-                                )}
+                                    <option value="claude-3-5-sonnet">Claude 3.5 Sonnet (Creative)</option>
+                                </select>
+                                {/* START CHANGE: Restore Manual Auth Controls */}
+                                <div className="flex gap-2 mt-2">
+                                    <button onClick={() => window.puter?.auth?.signIn()} className="flex-1 bg-indigo-900/30 border border-indigo-500 text-indigo-200 hover:bg-indigo-800 text-xs font-bold py-2 rounded transition-colors">Sign In</button>
+                                    <button onClick={() => window.location.reload()} className="flex-1 bg-slate-800 border border-slate-600 text-slate-300 hover:bg-slate-700 text-xs font-bold py-2 rounded transition-colors">Reload App</button>
+                                </div>
+                                {/* END CHANGE */}
                             </div>
+                        )}
+                    </div>
                         </div>
                     </div>
                 )}

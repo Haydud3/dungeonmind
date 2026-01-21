@@ -114,7 +114,9 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
     // Identity Check
     const myCharId = data.assignments?.[user?.uid];
     const selectedToken = tokens.find(t => t.id === selectedTokenId);
-    const canControlSelected = role === 'dm' || (selectedToken && selectedToken.characterId === myCharId);
+    // START CHANGE: Use String() conversion to ensure ID types match
+    const canControlSelected = role === 'dm' || (selectedToken && String(selectedToken.characterId) === String(myCharId));
+    // END CHANGE
 
     // --- SETUP EFFECTS ---
     useEffect(() => {
@@ -376,19 +378,8 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
         ctx.fillStyle = role === 'dm' ? 'rgba(0, 0, 0, 0.5)' : 'rgba(0, 0, 0, 1)'; 
         ctx.fillRect(0, 0, stageDim.w, stageDim.h);
 
-        // 2.5 Render Grid (Moved from CSS to Canvas for alignment & sharpness)
-        if (showGrid && cellPx > 0) {
-            ctx.beginPath();
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
-            // Keep line width 1px on SCREEN, regardless of zoom
-            ctx.lineWidth = 1 / zoom; 
-            
-            // Verticals
-            for (let x = cellPx; x < stageDim.w; x += cellPx) { ctx.moveTo(x, 0); ctx.lineTo(x, stageDim.h); }
-            // Horizontals
-            for (let y = cellPx; y < stageDim.h; y += cellPx) { ctx.moveTo(0, y); ctx.lineTo(stageDim.w, y); }
-            ctx.stroke();
-        }
+        // START CHANGE: Removed "2.5 Render Grid" block from here. 
+        // We now handle grid via CSS so it isn't erased by the vision "hole punch".
         
         // 3. Render Legacy Fog (if exists)
         if (revealPaths && Array.isArray(revealPaths) && revealPaths.length > 0) {
@@ -419,9 +410,12 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
 
         // 3.5 Render Spell Templates (Saved & Active)
         const drawTemplate = (t, isGhost = false) => {
+            // FIX: Ensure we are drawing ON TOP, not erasing the fog
+            ctx.globalCompositeOperation = 'source-over';
+            
             const x = (t.x / 100) * canvas.width;
             const y = (t.y / 100) * canvas.height;
-            // Default 20ft radius if parse fails. Map width / (100 / gridSize) = px per 5ft cell.
+            // Default 20ft radius if parse fails. Map width / (100 / gridSize) = px per 5ft cell
             const pxPerFoot = (canvas.width / (100 / gridSize)) / 5;
             const radius = (t.size || 20) * pxPerFoot;
 
@@ -446,14 +440,16 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
 
         // 4. Dynamic Lighting & Vision
         const pixelWalls = walls.map(w => ({
-            // FIX: Use stageDim (World Units) instead of canvas.width (Screen Units) to prevent double-zooming
             p1: { x: w.p1.x * stageDim.w, y: w.p1.y * stageDim.h },
             p2: { x: w.p2.x * stageDim.w, y: w.p2.y * stageDim.h }
         }));
         
         tokens.forEach(token => {
             // Permission Check: Who sees what?
-            const isMyToken = token.characterId === myCharId;
+            // START CHANGE: Use String() conversion so the loop actually runs for the player
+            const isMyToken = String(token.characterId) === String(myCharId);
+            // END CHANGE
+            
             if (role !== 'dm' && !isMyToken) return; // Skip calculation for others
 
             let tx = token.x / 100; let ty = token.y / 100;
@@ -555,6 +551,9 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
 
         // Rulers
         if ((mode === 'ruler' || mode === 'radius') && measureStart && measureEnd) {
+            // FIX: Ensure rulers draw normally and don't "cut" through the darkness
+            ctx.globalCompositeOperation = 'source-over';
+
             // FIX: Use stageDim instead of canvas.width to prevent double-scaling
             const sx = measureStart.x * stageDim.w; const sy = measureStart.y * stageDim.h;
             const ex = measureEnd.x * stageDim.w; const ey = measureEnd.y * stageDim.h;
@@ -954,11 +953,20 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
                         {/* FIX: Revert to 'object-fill' now that stageDim is correct. This locks the image to the grid pixels 1:1. */}
                         <img key={mapUrl} src={mapUrl} className="absolute inset-0 w-full h-full object-fill pointer-events-none" />
                         
-                        {/* OLD CSS GRID REMOVED HERE - Now handled in renderCanvas */}
+                        {/* START CHANGE: New CSS Grid Layer (z-5) sitting betwen Map (z-0) and Tokens (z-10) */}
+                        {showGrid && cellPx > 0 && (
+                            <div className="absolute inset-0 z-0 pointer-events-none" 
+                                style={{ 
+                                    backgroundSize: `${cellPx}px ${cellPx}px`, 
+                                    backgroundImage: `linear-gradient(to right, rgba(255,255,255,0.3) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,0.3) 1px, transparent 1px)` 
+                                }} 
+                            />
+                        )}
+                        {/* END CHANGE */}
                         
-                        <div className="absolute inset-0 w-full h-full pointer-events-none z-30">
+                        <div className="absolute inset-0 w-full h-full pointer-events-none z-10">
                             {tokens.map(t => {
-                                const isOwner = role === 'dm' || (t.characterId === myCharId);
+                                const isOwner = role === 'dm' || (String(t.characterId) === String(myCharId));
 
                                 // FIX: Calculate Animation & Turn Highlight Classes
                                 const animClass = tokenAnims[t.id] || '';
@@ -982,7 +990,7 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
                                 );
                             })}
                         </div>
-                        <canvas ref={canvasRef} className={`absolute inset-0 w-full h-full z-20 ${mode==='move'?'pointer-events-none opacity-90':'pointer-events-auto opacity-70'}`}/>
+                        <canvas ref={canvasRef} className={`absolute inset-0 w-full h-full z-20 ${mode==='move'?'pointer-events-none':'pointer-events-auto'}`}/>
                     </div>
                  ) : (
                     <div className="text-slate-500 flex flex-col items-center"><Icon name="map" size={48} className="mb-2 opacity-20"/><p>No Map Loaded</p></div>
