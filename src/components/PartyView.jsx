@@ -74,13 +74,15 @@ const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView,
         
         if(savePlayer) savePlayer(cleanChar);
         else {
-            // Use dataRef.current
             const currentData = dataRef.current;
             const newPlayers = [...(currentData.players || []), cleanChar];
             updateCloud({ ...currentData, players: newPlayers }, true);
         }
-        setShowAiCreator(false);
+
+        // START CHANGE: Remove setShowAiCreator and use setShowForge instead
+        setShowForge(false);
         setShowCreationMenu(false);
+        // END CHANGE
     };
 
     const handleFileImport = async (e) => {
@@ -234,13 +236,13 @@ const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView,
                                         </div>
 
                                         {/* AI FORGE */}
-                                        {/* START CHANGE: Open new Forge Modal instead of old Creator */}
+                                        {/* START CHANGE: Update onClick to use setShowForge instead of setShowAiCreator */}
                                         <div onClick={() => { setShowCreationMenu(false); setShowForge(true); }} className="bg-slate-800 border-2 border-slate-700 hover:border-purple-500 rounded-xl p-6 cursor-pointer group transition-all hover:-translate-y-1">
                                             <div className="w-16 h-16 bg-purple-900/30 text-purple-500 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform"><Icon name="sparkles" size={32}/></div>
                                             <h3 className="font-bold text-xl text-white mb-2">AI Forge</h3>
-                                        {/* END CHANGE */}
                                             <p className="text-xs text-slate-400">Generate instantly.</p>
                                         </div>
+                                        {/* END CHANGE */}
                                     </div>
                                 </>
                             )}

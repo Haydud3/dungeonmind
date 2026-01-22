@@ -7,6 +7,36 @@ export const parseIce5e = (json) => {
 
         return {
             name: details.name || "New Hero",
+            // START CHANGE: Map Saving Throw Proficiencies and Actions
+            savingThrows: {
+                str: attr.strength.savingThrowProficiency,
+                dex: attr.dexterity.savingThrowProficiency,
+                con: attr.constitution.savingThrowProficiency,
+                int: attr.intelligence.savingThrowProficiency,
+                wis: attr.wisdom.savingThrowProficiency,
+                cha: attr.charisma.savingThrowProficiency
+            },
+            customActions: [
+                ...(char.combat.weapons || []).map(w => ({
+                    name: w.name,
+                    hit: w.attackBonus || "0",
+                    dmg: w.damage + (w.damageType ? ` ${w.damageType}` : ""),
+                    type: "Action",
+                    category: "Attack",
+                    notes: w.properties,
+                    source: "item"
+                })),
+                ...(char.magic.spells || []).map(s => ({
+                    name: s.name,
+                    hit: s.attackBonus || "",
+                    dmg: s.damage || "",
+                    type: s.activationTime || "Action",
+                    category: "Spell",
+                    notes: s.description,
+                    source: "spell"
+                }))
+            ],
+            // END CHANGE
             race: details.species || "",
             class: details.class || "",
             level: details.level || 1,

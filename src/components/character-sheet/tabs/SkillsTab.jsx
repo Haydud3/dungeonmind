@@ -85,6 +85,48 @@ const SkillsTab = ({ onDiceRoll, onLogAction }) => {
 
     return (
         <div className="space-y-4 pb-24">
+            {/* START CHANGE: Added Clickable Saving Throws Section */}
+            <div className="bg-slate-800/30 rounded-xl p-3 border border-slate-700">
+                <h4 className="text-[10px] uppercase font-bold text-amber-500 mb-3 tracking-widest">Saving Throws</h4>
+                <div className="grid grid-cols-3 gap-3">
+                    {['str', 'dex', 'con', 'int', 'wis', 'cha'].map(stat => {
+                        const isProf = character.savingThrows?.[stat] || false;
+                        const mod = getModifier(stat);
+                        const total = mod + (isProf ? profBonus : 0);
+                        return (
+                            <div 
+                                key={stat} 
+                                onClick={async () => {
+                                    if (!onDiceRoll) return;
+                                    const roll = await onDiceRoll(20);
+                                    const final = roll + total;
+                                    onLogAction && onLogAction(`
+                                        <div class="font-bold text-white border-b border-red-900/50 pb-1 mb-1 flex justify-between">
+                                            <span>${stat.toUpperCase()} Save</span>
+                                        </div>
+                                        <div class="flex items-center gap-2 text-sm text-slate-300">
+                                            <span class="font-mono bg-slate-800 px-1 rounded">d20(${roll})</span>
+                                            <span>+</span>
+                                            <span class="text-xs text-slate-400">${total}</span>
+                                            <span>=</span>
+                                            <span class="text-xl text-red-400 font-bold">${final}</span>
+                                        </div>
+                                    `);
+                                }}
+                                className="bg-slate-900/50 p-2 rounded border border-slate-700 flex flex-col items-center cursor-pointer hover:border-amber-500 hover:bg-slate-800 transition-all active:scale-95"
+                            >
+                                <span className="text-[9px] text-slate-500 uppercase font-bold">{stat}</span>
+                                <span className={`text-sm font-bold ${isProf ? 'text-green-400' : 'text-white'}`}>
+                                    {total >= 0 ? '+' : ''}{total}
+                                </span>
+                                {isProf && <div className="w-1.5 h-1.5 bg-green-500 rounded-full mt-1 shadow-[0_0_5px_#22c55e]"></div>}
+                            </div>
+                        );
+                    })}
+                </div>
+            </div>
+            {/* END CHANGE */}
+
             {/* Header */}
             <div className="grid grid-cols-12 gap-2 text-[10px] uppercase font-bold text-slate-500 px-2 mt-2">
                 <div className="col-span-1">Prof</div>
