@@ -47,7 +47,7 @@ const SheetContainer = ({ characterId, onSave, onDiceRoll, onLogAction, onBack, 
     if (!character) return <div className="text-slate-500 p-10 text-center animate-pulse">Loading Character...</div>;
 
     return (
-        <div className="h-full flex flex-col bg-slate-950 font-sans relative overflow-hidden">
+        <div className="h-[100dvh] flex flex-col bg-slate-950 font-sans relative overflow-hidden pt-[env(safe-area-inset-top)]">
             
             {/* Header */}
             <HeaderStats 
@@ -98,7 +98,7 @@ const SheetContainer = ({ characterId, onSave, onDiceRoll, onLogAction, onBack, 
             <RollToast />
 
             {/* Navbar */}
-            <div className="flex-none bg-slate-950 border-t border-slate-800 pb-safe px-2 pt-2 z-40 shadow-2xl">
+            <div className="flex-none bg-slate-950 border-t border-slate-800 px-2 pt-2 z-40 shadow-2xl pb-[env(safe-area-inset-bottom)]">
                 <div className="flex justify-between items-center max-w-md mx-auto gap-1">
                     <NavButton id="actions" icon="sword" label="Actions" active={activeTab} onClick={setActiveTab} />
                     <NavButton id="spells" icon="sparkles" label="Spells" active={activeTab} onClick={setActiveTab} />
