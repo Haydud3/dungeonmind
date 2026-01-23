@@ -377,12 +377,13 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
         const ctx = canvas?.getContext('2d');
         if (!canvas || !ctx || stageDim.w <= 1) return;
 
-        // FIX: High-DPI Rendering. Scale internal resolution by zoom level for crisp lines.
-        canvas.width = stageDim.w * zoom;
-        canvas.height = stageDim.h * zoom;
+        // FIX: High-DPI Rendering. Scale internal resolution by zoom level AND pixel ratio for crisp lines.
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = stageDim.w * zoom * dpr;
+        canvas.height = stageDim.h * zoom * dpr;
         
-        // Normalize coordinates: We scale the context so our drawing logic (0 to 1000) works on the huge canvas
-        ctx.scale(zoom, zoom);
+        // Normalize coordinates: We scale the context so our drawing logic works on the scaled canvas
+        ctx.scale(zoom * dpr, zoom * dpr);
         
         ctx.clearRect(0, 0, stageDim.w, stageDim.h);
         ctx.save();
@@ -1193,7 +1194,8 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
                                 );
                             })}
                         </div>
-                        <canvas ref={canvasRef} className={`absolute inset-0 w-full h-full z-20 ${mode==='move'?'pointer-events-none':'pointer-events-auto'}`}/>
+                        {/* FIX: Set CSS width/height explicitly to match container, unrelated to internal resolution */}
+                        <canvas ref={canvasRef} style={{ width: '100%', height: '100%' }} className={`absolute inset-0 w-full h-full z-20 ${mode==='move'?'pointer-events-none':'pointer-events-auto'}`}/>
                     </div>
                  ) : (
                     <div className="text-slate-500 flex flex-col items-center"><Icon name="map" size={48} className="mb-2 opacity-20"/><p>No Map Loaded</p></div>
