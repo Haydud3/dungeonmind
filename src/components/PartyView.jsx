@@ -64,59 +64,100 @@ const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView,
 
     const handleNewCharacter = (newChar) => {
         // Ensure ID is a string if your DB expects it, or number if you use Date.now()
-        const charWithId = { 
-            ...newChar, 
-            id: Date.now(), 
-            ownerId: user?.uid || "anon" 
-        };
-        // Failsafe sanitization
-        const cleanChar = JSON.parse(JSON.stringify(charWithId, (k, v) => v === undefined ? null : v));
+        // START CHANGE: Smart Overwrite Logic
+        const currentData = dataRef.current;
+        const existingIndex = (currentData.players || []).findIndex(p => p.name === newChar.name);
         
-        if(savePlayer) savePlayer(cleanChar);
-        else {
-            const currentData = dataRef.current;
-            const newPlayers = [...(currentData.players || []), cleanChar];
+        let finalChar;
+
+        if (existingIndex !== -1) {
+            // MERGE STRATEGY: Keep ID and Image, overwrite stats/inventory
+            const existing = currentData.players[existingIndex];
+            finalChar = {
+                ...newChar,
+                id: existing.id, // Keep original ID
+                image: existing.image || newChar.image, // Prefer existing image if set
+                ownerId: existing.ownerId,
+                // Preserve specific fields if needed
+                bio: { ...newChar.bio, notes: existing.bio?.notes || newChar.bio?.notes } 
+            };
+        } else {
+            // Create New
+            finalChar = { 
+                ...newChar, 
+                id: Date.now(), 
+                ownerId: user?.uid || "anon" 
+            };
+        }
+        
+        // Sanitization
+        const cleanChar = JSON.parse(JSON.stringify(finalChar, (k, v) => v === undefined ? null : v));
+        
+        if(savePlayer) {
+            savePlayer(cleanChar);
+        } else {
+            let newPlayers;
+            if (existingIndex !== -1) {
+                newPlayers = [...currentData.players];
+                newPlayers[existingIndex] = cleanChar;
+                alert(`Updated existing hero: ${cleanChar.name}`);
+            } else {
+                newPlayers = [...(currentData.players || []), cleanChar];
+            }
             updateCloud({ ...currentData, players: newPlayers }, true);
         }
+        // END CHANGE
 
-        // START CHANGE: Remove setShowAiCreator and use setShowForge instead
         setShowForge(false);
         setShowCreationMenu(false);
-        // END CHANGE
     };
 
+    // START CHANGE: Anti-Meta Privacy Lock Handler
+    const handleCharacterClick = (char) => {
+        // 1. DM can see everyone
+        if (role === 'dm') {
+            openSheet(char);
+            return;
+        }
+
+        // 2. Spectators (users with no character yet) can see everyone
+        const myChar = data.players?.find(p => p.ownerId === user?.uid);
+        if (!myChar) {
+            openSheet(char);
+            return;
+        }
+
+        // 3. Owners can see their own character
+        if (char.ownerId === user?.uid) {
+            openSheet(char);
+            return;
+        }
+
+        // 4. Block everyone else
+        alert("You cannot peer into the soul of another adventurer.");
+    };
+    // END CHANGE
+
+    // START CHANGE: Missing File Import Handler
     const handleFileImport = async (e) => {
         const file = e.target.files[0];
         if (!file) return;
-        
         setIsImporting(true);
-        const isJson = file.type === "application/json" || file.name.endsWith('.json');
-        setImportStatus(isJson ? "Parsing ICE JSON..." : "Reading PDF...");
-        
+        setImportStatus("Reading Scroll...");
         try {
-            let charData;
-            if (isJson) {
-                const text = await file.text();
-                const rawJson = JSON.parse(text);
-                const { parseIce5e } = await import('../utils/ice5eParser');
-                charData = parseIce5e(rawJson);
-            } else {
-                const rawData = await parsePdf(file);
-                setImportStatus("Consulting 5e SRD...");
-                charData = await enrichCharacter(rawData);
-            }
-
-            setImportStatus("Saving...");
+            const rawData = await parsePdf(file); // Parse D&D Beyond PDF
+            setImportStatus("Consulting SRD...");
+            const charData = await enrichCharacter(rawData); // Add Rules/Spells
             handleNewCharacter(charData);
-            alert(`Success! Imported ${charData.name}`);
         } catch (err) {
-            console.error("Import Error:", err);
+            console.error(err);
             alert("Import Failed: " + err.message);
         }
-        
         setIsImporting(false);
-        e.target.value = null; 
+        e.target.value = null;
+        setShowCreationMenu(false);
     };
+    // END CHANGE
 
     const createManualCharacter = () => {
         const blankChar = {
@@ -151,6 +192,9 @@ const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView,
                     onDiceRoll={onDiceRoll} 
                     onLogAction={onLogAction}
                     onBack={() => setViewingCharacterId(null)} 
+                    // START CHANGE: Pass Role here to enable DM Tab
+                    role={role}
+                    // END CHANGE
                 />
             </div>
         );
@@ -178,7 +222,11 @@ const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView,
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                     {(data.players || []).map(p => (
-                        <div key={p.id} onClick={() => openSheet(p)} className="group relative bg-slate-800 rounded-xl overflow-hidden border border-slate-700 hover:border-amber-500/50 shadow-lg cursor-pointer transition-all hover:-translate-y-1">
+                        <div key={p.id} 
+                            // START CHANGE: Use Privacy Lock Handler
+                            onClick={() => handleCharacterClick(p)}
+                            // END CHANGE
+                            className="group relative bg-slate-800 rounded-xl overflow-hidden border border-slate-700 hover:border-amber-500/50 shadow-lg cursor-pointer transition-all hover:-translate-y-1">
                             <div className="h-32 bg-slate-700 relative overflow-hidden">
                                 {p.image ? <img src={p.image} className="w-full h-full object-cover opacity-60 group-hover:opacity-80 transition-opacity" alt={p.name} /> : <div className="w-full h-full flex items-center justify-center bg-slate-700 opacity-20"><Icon name="user" size={64}/></div>}
                                 <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-transparent to-transparent"></div>

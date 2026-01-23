@@ -14,7 +14,10 @@ const STATUS_ICONS = {
 
 const Token = ({ token, isOwner, onMouseDown, onTouchStart, cellPx, isDragging, overridePos, onClick }) => {
     // 1. Calculate Token Dimensions
-    const sizeMultiplier = token.size === 'large' ? 2 : token.size === 'huge' ? 3 : token.size === 'tiny' ? 0.5 : 1;
+    // START CHANGE: Robust Size Mapping
+    const sizeMap = { medium: 1, large: 2, huge: 3, gargantuan: 4, tiny: 0.5 };
+    const sizeMultiplier = sizeMap[token.size] || 1;
+    // END CHANGE
     const dimension = cellPx * sizeMultiplier;
     
     // 2. Dynamic Scaling Variables
@@ -72,12 +75,16 @@ const Token = ({ token, isOwner, onMouseDown, onTouchStart, cellPx, isDragging, 
             style={{ 
                 left: `${x}%`, 
                 top: `${y}%`,
+                // START CHANGE: Ensure physical dimensions update
                 width: `${dimension}px`,
                 height: `${dimension}px`,
+                // END CHANGE
                 transition: isDragging ? 'none' : 'transform 0.1s, left 0.1s linear, top 0.1s linear',
                 willChange: 'left, top'
             }}
-            title={token.name}
+            // START CHANGE: Safe Name Check
+            title={token.name || "Unknown"}
+            // END CHANGE
         >
             <div 
                 className="w-full h-full rounded-full bg-slate-900 overflow-hidden relative box-border"
@@ -95,7 +102,9 @@ const Token = ({ token, isOwner, onMouseDown, onTouchStart, cellPx, isDragging, 
                         className="w-full h-full flex items-center justify-center font-bold text-white bg-slate-700 select-none" 
                         style={{ fontSize: `${dimension * 0.4}px` }}
                     >
-                        {token.name.substring(0, 2).toUpperCase()}
+                        {/* START CHANGE: Safe Substring Check */}
+                        {(token.name || "?").substring(0, 2).toUpperCase()}
+                        {/* END CHANGE */}
                     </div>
                 )}
                 
@@ -134,7 +143,9 @@ const Token = ({ token, isOwner, onMouseDown, onTouchStart, cellPx, isDragging, 
                     textOverflow: 'ellipsis'
                 }}
             >
-                {token.name}
+                {/* START CHANGE: Safe Name Display */}
+                {token.name || "Unknown"}
+                {/* END CHANGE */}
             </div>
         </div>
     );

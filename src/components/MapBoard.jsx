@@ -4,6 +4,9 @@ import Token from './Token';
 import SheetContainer from './character-sheet/SheetContainer';
 import { useCharacterStore } from '../stores/useCharacterStore';
 import { calculateVisibilityPolygon } from '../utils/visionMath';
+// START CHANGE: Import Enricher
+import { enrichCharacter } from '../utils/srdEnricher';
+// END CHANGE
 
 // --- SUB-COMPONENTS ---
 import MapToolbar from './map/MapToolbar';
@@ -51,9 +54,13 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
     const [activeSheetId, setActiveSheetId] = useState(null);
 
     // --- NEW: VISION & WALL STATE ---
-    const [wallStart, setWallStart] = useState(null); // {x, y} start of current wall segment
-    const [ghostWall, setGhostWall] = useState(null); // {x, y} current mouse pos for ghost line
-    const [templatePos, setTemplatePos] = useState(null); // {x, y} for active spell placement
+    const [wallStart, setWallStart] = useState(null); 
+    const [ghostWall, setGhostWall] = useState(null); 
+    const [templatePos, setTemplatePos] = useState(null); 
+
+    // START CHANGE: Cinematic Mode State
+    const [theaterMode, setTheaterMode] = useState(false);
+    // END CHANGE
 
     // NEW: Manual Combat Entry State
     const [showAddCombatant, setShowAddCombatant] = useState(false);
@@ -333,6 +340,13 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
         updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...data.campaign.activeMap, tokens: newTokens } } });
     };
 
+    // START CHANGE: Add Generic Update Token Handler
+    const updateToken = (tokenId, updates) => {
+        const newTokens = tokens.map(t => t.id === tokenId ? { ...t, ...updates } : t);
+        updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...data.campaign.activeMap, tokens: newTokens } } });
+    };
+    // END CHANGE
+
     const updateTokenSize = (tokenId, size) => {
         const newTokens = tokens.map(t => t.id === tokenId ? { ...t, size } : t);
         updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...data.campaign.activeMap, tokens: newTokens } } });
@@ -443,6 +457,15 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
             p1: { x: w.p1.x * stageDim.w, y: w.p1.y * stageDim.h },
             p2: { x: w.p2.x * stageDim.w, y: w.p2.y * stageDim.h }
         }));
+
+        // START CHANGE: Filter out Open Doors from Vision Calculation
+        const visionBlockingWalls = walls
+            .filter(w => !(w.type === 'door' && w.open))
+            .map(w => ({
+                p1: { x: w.p1.x * stageDim.w, y: w.p1.y * stageDim.h },
+                p2: { x: w.p2.x * stageDim.w, y: w.p2.y * stageDim.h }
+            }));
+        // END CHANGE
         
         tokens.forEach(token => {
             // Permission Check: Who sees what?
@@ -477,8 +500,9 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
             const origin = { x: tx * stageDim.w, y: ty * stageDim.h };
 
             // Math
-            // We pass the RAW World coordinates to the math function, but we need to pass the World Dimensions for the bounds
-            const polygon = calculateVisibilityPolygon(origin, pixelWalls, { width: stageDim.w, height: stageDim.h });
+            // START CHANGE: Use visionBlockingWalls instead of pixelWalls
+            const polygon = calculateVisibilityPolygon(origin, visionBlockingWalls, { width: stageDim.w, height: stageDim.h });
+            // END CHANGE
 
             // Drawing
             ctx.globalCompositeOperation = 'destination-out';
@@ -503,33 +527,47 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
             }
         });
 
-        // // 5. Render Wall Lines (Visible ONLY when Editing)
-        if (role === 'dm' && (mode === 'wall' || mode === 'wall-erase') && walls && walls.length > 0) {
+        // 5. Render Wall Lines (Visible ONLY when Editing)
+        // START CHANGE: Draw Walls & Doors
+        if (role === 'dm' && (mode === 'wall' || mode === 'wall-erase' || mode === 'door') && walls && walls.length > 0) {
             ctx.globalCompositeOperation = 'source-over';
-            ctx.strokeStyle = '#06b6d4'; // Cyan
-            
-            // FIX: Use world-space width (5% of cell) instead of screen-space (3/zoom)
-            // This prevents blurry lines when zoomed in by treating walls as physical objects
-            ctx.lineWidth = Math.max(2, cellPx * 0.08); 
-            
             ctx.lineCap = 'round';
+            
+            // Draw Standard Walls (Cyan)
+            ctx.strokeStyle = '#06b6d4'; 
+            ctx.lineWidth = Math.max(2, cellPx * 0.08); 
             ctx.beginPath();
-            pixelWalls.forEach(w => {
-                ctx.moveTo(w.p1.x, w.p1.y);
-                ctx.lineTo(w.p2.x, w.p2.y);
+            walls.filter(w => w.type !== 'door').forEach(w => {
+                 const p1 = { x: w.p1.x * stageDim.w, y: w.p1.y * stageDim.h };
+                 const p2 = { x: w.p2.x * stageDim.w, y: w.p2.y * stageDim.h };
+                 ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y);
             });
             ctx.stroke();
 
-            // Vertices
-            ctx.fillStyle = '#06b6d4';
-            pixelWalls.forEach(w => {
-                 [w.p1, w.p2].forEach(p => {
-                     ctx.beginPath();
-                     ctx.arc(p.x, p.y, 4/zoom, 0, Math.PI*2);
-                     ctx.fill();
-                 });
+            // Draw Doors (Amber)
+            walls.filter(w => w.type === 'door').forEach(w => {
+                 const p1 = { x: w.p1.x * stageDim.w, y: w.p1.y * stageDim.h };
+                 const p2 = { x: w.p2.x * stageDim.w, y: w.p2.y * stageDim.h };
+                 
+                 ctx.beginPath();
+                 ctx.strokeStyle = w.open ? 'rgba(245, 158, 11, 0.3)' : '#f59e0b'; // Dim if open
+                 ctx.setLineDash(w.open ? [5, 5] : []); // Dashed if open
+                 ctx.lineWidth = Math.max(4, cellPx * 0.12); // Thicker for doors
+                 
+                 ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y);
+                 ctx.stroke();
+                 
+                 // Draw Door Icon/Handle
+                 const midX = (p1.x + p2.x) / 2;
+                 const midY = (p1.y + p2.y) / 2;
+                 ctx.fillStyle = '#f59e0b';
+                 ctx.beginPath();
+                 ctx.arc(midX, midY, 6/zoom, 0, Math.PI*2);
+                 ctx.fill();
             });
+            ctx.setLineDash([]);
         }
+        // END CHANGE
 
         // 6. Tools Overlay
         ctx.restore();
@@ -611,7 +649,11 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
             return;
         }
 
-        if (mode === 'pan' || e.button === 1 || (e.button === 0 && e.altKey)) {
+        // START CHANGE: Allow 1-finger Pan on mobile if hitting background
+        const isTouchPan = e.touches && e.touches.length === 1 && mode === 'move';
+
+        if (mode === 'pan' || isTouchPan || e.button === 1 || (e.button === 0 && e.altKey)) {
+        // END CHANGE
             // FIX: Get correct client coordinates for Touch events
             let cx = e.clientX; let cy = e.clientY;
             if(e.touches && e.touches.length > 0) { cx = e.touches[0].clientX; cy = e.touches[0].clientY; }
@@ -641,6 +683,55 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
         if (role === 'dm' && mode === 'wall-erase') {
             handleWallDelete(coords); return;
         }
+
+        // START CHANGE: Door Interaction (Convert Wall <-> Door, or Toggle Open/Closed)
+        if (role === 'dm' && mode === 'door') {
+            const canvas = canvasRef.current;
+            if(!canvas) return;
+            
+            // Hit Test Logic (reused from delete, but specialized)
+            const toScreen = (p) => ({ x: p.x * stageDim.w * zoom, y: p.y * stageDim.h * zoom });
+            const screenClick = toScreen(coords);
+            const threshold = 30; // Generous hit box
+
+            const distToSegment = (p, v, w) => {
+                const l2 = (w.x - v.x) ** 2 + (w.y - v.y) ** 2;
+                if (l2 === 0) return Math.hypot(p.x - v.x, p.y - v.y);
+                let t = ((p.x - v.x) * (w.x - v.x) + (p.y - v.y) * (w.y - v.y)) / l2;
+                t = Math.max(0, Math.min(1, t));
+                return Math.hypot(p.x - (v.x + t * (w.x - v.x)), p.y - (v.y + t * (w.y - v.y)));
+            };
+
+            const wallIndex = walls.findIndex(w => {
+                if (!w.p1 || !w.p2) return false;
+                return distToSegment(screenClick, toScreen(w.p1), toScreen(w.p2)) < threshold;
+            });
+
+            if (wallIndex !== -1) {
+                const target = walls[wallIndex];
+                let newWalls = [...walls];
+                
+                if (target.type !== 'door') {
+                    // Convert Wall -> Door (Closed)
+                    newWalls[wallIndex] = { ...target, type: 'door', open: false };
+                } else {
+                    // Toggle Door (Open <-> Closed)
+                    newWalls[wallIndex] = { ...target, open: !target.open };
+                }
+
+                // Sync
+                const activeId = data.campaign?.activeMap?.id;
+                updateCloud({
+                    ...dataRef.current,
+                    campaign: {
+                        ...dataRef.current.campaign,
+                        activeMap: { ...dataRef.current.campaign.activeMap, walls: newWalls }
+                    }
+                });
+            }
+            return;
+        }
+        // END CHANGE
 
         // WALL CREATION
         if (role === 'dm' && mode === 'wall') {
@@ -679,6 +770,13 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
         } else if (role === 'dm' && (mode === 'reveal' || mode === 'shroud')) {
             setIsDrawing(true); updateMapState('start_path', { mode, size: brushSize * (1000/stageDim.w), points: [coords] });
         }
+        
+        // START CHANGE: Deselect Target on empty click (if not using a tool)
+        if (mode === 'move' && !dragTokenId && !e.target.closest('.token-element')) {
+            useCharacterStore.getState().setTargetId(null);
+            setSelectedTokenId(null);
+        }
+        // END CHANGE
     };
 
     const handleMove = (e) => {
@@ -763,7 +861,13 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
         if (dragTokenId) {
             const coords = getCoords(e);
             const dist = Math.hypot(coords.x - dragStartPos.x, coords.y - dragStartPos.y);
-            if (dist < 0.005) { setSelectedTokenId(dragTokenId); if(activeSheetId) openTokenSheet(dragTokenId); }
+            if (dist < 0.005) { 
+                setSelectedTokenId(dragTokenId); 
+                // START CHANGE: Set Global Target on Click
+                useCharacterStore.getState().setTargetId(dragTokenId);
+                // END CHANGE
+                if(activeSheetId) openTokenSheet(dragTokenId); 
+            }
             else {
                 let finalX = coords.x; let finalY = coords.y;
                 if (snapToGrid) { finalX = snapCoordinate(finalX); finalY = snapCoordinate(finalY, true); }
@@ -831,49 +935,124 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
         setShowMapBar(false);
     };
 
-    const addToken = (src, type) => {
-        let finalCharId = src.id;
+    // START CHANGE: Fully Enriched Import Logic
+    const addToken = async (src, type) => {
         let newNpcs = [...(dataRef.current.npcs || [])];
-        
-        // 1. Create Character Data if new
-        if (!src.id) {
-             const newId = Date.now();
-             newNpcs.push({ name: src.name, hp: { current: 10, max: 10 }, stats: { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 }, ...src, id: newId });
-             finalCharId = newId;
-        } else if (type === 'npc' || type === 'monster') {
-             // Handle Instances
-             const originalAlreadyOnMap = tokens.some(t => t.characterId === src.id);
-             // Check if src is already an instance
-             const isSourceInstance = src.isInstance;
-             const originalId = isSourceInstance ? src.originalId : src.id;
-             
-             if (originalAlreadyOnMap || isSourceInstance) {
-                 const instanceId = Date.now();
-                 // Deep copy stats/hp to ensure unique instance state
-                 newNpcs.push({ 
-                     ...src, 
-                     id: instanceId, 
-                     hp: { ...(src.hp || {current: 10, max: 10}), current: src.hp?.max || 10 }, 
-                     isInstance: true, 
-                     originalId: originalId 
-                 });
-                 finalCharId = instanceId;
-             } else { 
-                 finalCharId = src.id; 
-             }
-        }
-        
-        // 2. Naming Logic (Goblin, Goblin 2, etc.)
-        let finalName = src.name;
-        const existingCount = tokens.filter(t => t.name.startsWith(src.name)).length;
-        if (existingCount > 0) {
-            finalName = `${src.name} ${existingCount + 1}`;
+        let masterId = null;
+        let finalImage = src.image || '';
+
+        // DETECT SRD IMPORT (Raw JSON from Compendium)
+        const isSrdImport = (src.hit_points !== undefined && !src.hp) || (src.url && src.url.includes('/api/'));
+
+        if (isSrdImport) {
+            // Check for existing Master in Bestiary
+            const existingMaster = newNpcs.find(n => !n.isInstance && n.originalId === src.index);
+
+            if (existingMaster) {
+                masterId = existingMaster.id;
+                finalImage = existingMaster.image;
+            } else {
+                // --- 1. RAW MAPPING (API -> Basic Sheet) ---
+                if (src.image && src.image.startsWith('/api')) {
+                    finalImage = `https://www.dnd5eapi.co${src.image}`;
+                }
+
+                const safeStats = {
+                    str: src.strength || 10, dex: src.dexterity || 10, con: src.constitution || 10,
+                    int: src.intelligence || 10, wis: src.wisdom || 10, cha: src.charisma || 10
+                };
+                
+                let acVal = 10;
+                if (Array.isArray(src.armor_class) && src.armor_class.length > 0) acVal = src.armor_class[0].value;
+                else if (src.ac) acVal = src.ac;
+
+                const maxHp = src.hit_points || 10;
+                
+                // Map Actions to "Pre-Enriched" format
+                const rawActions = (src.actions || []).map(a => ({
+                    name: a.name,
+                    desc: a.desc,
+                    // We let enricher refine this, but we set defaults
+                    type: "Action", 
+                    hit: a.attack_bonus ? `+${a.attack_bonus}` : "",
+                    dmg: (a.damage && a.damage[0]) ? `${a.damage[0].damage_dice} ${a.damage[0].damage_type?.name || ''}` : ""
+                }));
+
+                const basicNpc = {
+                    id: Date.now(),
+                    name: src.name || "Unknown Monster",
+                    race: src.type || "Monster",
+                    class: "NPC",
+                    level: src.challenge_rating || 1,
+                    hp: { current: maxHp, max: maxHp, temp: 0 },
+                    stats: safeStats,
+                    ac: acVal,
+                    speed: JSON.stringify(src.speed || {}),
+                    // We map API features to "features" so enricher can scan them
+                    features: (src.special_abilities || []).map(f => ({ name: f.name, desc: f.desc, source: "Trait" })),
+                    customActions: rawActions,
+                    legendaryActions: (src.legendary_actions || []).map(l => ({ name: l.name, desc: l.desc })),
+                    image: finalImage,
+                    isInstance: false, 
+                    originalId: src.index,
+                    quirk: "SRD Import"
+                };
+
+                // --- 2. ENRICHMENT (Basic Sheet -> Rich Sheet) ---
+                // This adds Reactions, Bonus Actions, Spells, and robust parsing
+                const richNpc = await enrichCharacter(basicNpc);
+                
+                newNpcs.push(richNpc);
+                masterId = richNpc.id;
+                
+                // Tiny delay for ID safety
+                await new Promise(r => setTimeout(r, 10)); 
+            }
+        } else {
+            // Handle Manual Drag from Token List
+            masterId = src.isInstance ? (src.originalId || src.id) : src.id;
+            if (!masterId) {
+                // Edge case: New Manual Token
+                const newId = Date.now();
+                newNpcs.push({ name: src.name, hp: { current: 10, max: 10 }, ...src, id: newId, isInstance: false });
+                masterId = newId;
+            }
         }
 
-        const nt = { id: Date.now() + 1, x: 50, y: 50, name: finalName, image: src.image || '', type, size: src.size || 'medium', characterId: finalCharId, statuses: [] };
+        // --- 3. CREATE MAP INSTANCE ---
+        const masterData = newNpcs.find(n => n.id === masterId);
+        const instanceId = Date.now();
+        const newInstance = {
+            ...masterData,
+            id: instanceId,
+            isInstance: true, // Hidden from Bestiary
+            originalId: masterId, 
+            hp: { ...masterData.hp } // Independent HP
+        };
+        newNpcs.push(newInstance);
+
+        // --- 4. SPAWN TOKEN ---
+        let finalName = masterData.name;
+        const existingCount = tokens.filter(t => t.name.startsWith(finalName)).length;
+        if (existingCount > 0) finalName = `${finalName} ${existingCount + 1}`;
+
+        const nt = { 
+            id: Date.now() + 50, 
+            x: 50, 
+            y: 50, 
+            name: finalName, 
+            image: finalImage || masterData.image, 
+            type: type || 'monster', 
+            size: masterData.size ? masterData.size.toLowerCase() : 'medium', 
+            characterId: instanceId, 
+            statuses: [] 
+        };
+        
         updateCloud({ ...dataRef.current, npcs: newNpcs, campaign: { ...dataRef.current.campaign, activeMap: { ...dataRef.current.campaign.activeMap, tokens: [...tokens, nt] } } });
         setShowTokenBar(false);
+        if(isSrdImport) alert(`Enriched & Spawned ${masterData.name}!`);
     };
+    // END CHANGE
 
     const openTokenSheet = (tokenId) => { 
         const token = tokens.find(t => t.id === tokenId); if (!token) return; 
@@ -914,26 +1093,49 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
                 showMapBar={showMapBar} setShowMapBar={setShowMapBar}
                 role={role}
                 zoom={zoom} setZoom={setZoom} 
-                lightingMode={lightingMode} onToggleLight={toggleLighting} 
+                lightingMode={lightingMode} onToggleLight={toggleLighting}
+                // START CHANGE: Pass Theater Mode Props
+                theaterMode={theaterMode} setTheaterMode={setTheaterMode}
+                // END CHANGE
             />
 
             {showMapBar && <MapLibrary savedMaps={savedMaps} onClose={() => setShowMapBar(false)} loadMap={loadMap} deleteMap={(id)=>updateMapState('delete_map', id)} onAddMap={(m) => updateCloud({...data, campaign: {...data.campaign, savedMaps: [...savedMaps, m]}})} apiKey={apiKey} />}
             {showTokenBar && <TokenManager data={data} onClose={() => setShowTokenBar(false)} addToken={addToken} onOpenCompendium={() => setShowCompendium(true)} onOpenSheet={openTokenSheet} />}
-            {showCompendium && <CompendiumModal onClose={() => setShowCompendium(false)} importFromApi={()=>{}} />}
+            
+            {/* START CHANGE: Fix API Search Import (Item 6) */}
+            {showCompendium && <CompendiumModal onClose={() => setShowCompendium(false)} importFromApi={(data) => addToken(data, 'monster')} />}
+            {/* END CHANGE */}
             
             {canControlSelected && (
                 // FIX: Mobile bottom-24. Desktop md:bottom-12. Z-Index lowered to 90 (below sheet).
                 <div className="absolute left-0 right-0 bottom-24 md:bottom-12 z-[90] pointer-events-none flex justify-center" style={{ transform: 'translateZ(0)' }}>
                     <div className="pointer-events-auto">
-                        <TokenMenu selectedTokenId={selectedTokenId} onClose={() => setSelectedTokenId(null)} openTokenSheet={openTokenSheet} updateTokenStatus={updateTokenStatus} updateTokenSize={updateTokenStatus} deleteToken={deleteToken} />
+                        {/* START CHANGE: Pass updateToken prop */}
+                        <TokenMenu 
+                            selectedTokenId={selectedTokenId} 
+                            onClose={() => setSelectedTokenId(null)} 
+                            openTokenSheet={openTokenSheet} 
+                            updateTokenStatus={updateTokenStatus} 
+                            updateToken={updateToken} 
+                            deleteToken={deleteToken} 
+                        />
+                        {/* END CHANGE */}
                     </div>
                 </div>
             )}
 
             {activeSheetId && (
-                 // FIX: Z-Index raised to 100 (above token menu). Desktop raised to md:bottom-12.
-                 <div className="absolute top-14 right-2 left-2 md:left-auto md:w-96 bottom-28 md:bottom-12 bg-slate-900 border border-slate-600 rounded-xl shadow-2xl z-[100] flex flex-col overflow-hidden animate-in slide-in-from-right-10">
-                    <SheetContainer characterId={activeSheetId} onBack={() => setActiveSheetId(null)} onSave={savePlayer} onDiceRoll={onDiceRoll} onInitiative={onInitiative} />
+                 <div className={`absolute top-14 right-2 left-2 md:left-auto md:w-96 bottom-28 md:bottom-12 bg-slate-900 border border-slate-600 rounded-xl shadow-2xl z-[100] flex flex-col overflow-hidden animate-in slide-in-from-right-10 ${theaterMode ? 'hidden' : ''}`}>
+                    <SheetContainer 
+                        characterId={activeSheetId} 
+                        onBack={() => setActiveSheetId(null)} 
+                        onSave={savePlayer} 
+                        onDiceRoll={onDiceRoll} 
+                        onInitiative={onInitiative}
+                        // --- FIX: PASS ROLE HERE ---
+                        role={role}
+                        // ---------------------------
+                    />
                  </div>
             )}
 
@@ -953,9 +1155,10 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
                         {/* FIX: Revert to 'object-fill' now that stageDim is correct. This locks the image to the grid pixels 1:1. */}
                         <img key={mapUrl} src={mapUrl} className="absolute inset-0 w-full h-full object-fill pointer-events-none" />
                         
-                        {/* START CHANGE: New CSS Grid Layer (z-5) sitting betwen Map (z-0) and Tokens (z-10) */}
-                        {showGrid && cellPx > 0 && (
+                        {/* START CHANGE: Hide Grid in Theater Mode */}
+                        {showGrid && cellPx > 0 && !theaterMode && (
                             <div className="absolute inset-0 z-0 pointer-events-none" 
+                        // END CHANGE
                                 style={{ 
                                     backgroundSize: `${cellPx}px ${cellPx}px`, 
                                     backgroundImage: `linear-gradient(to right, rgba(255,255,255,0.3) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,0.3) 1px, transparent 1px)` 

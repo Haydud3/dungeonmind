@@ -1,9 +1,14 @@
 import React, { useState } from 'react';
+// START CHANGE: Import Enricher
+import { enrichCharacter } from '../../../utils/srdEnricher';
+// END CHANGE
 import { useCharacterStore } from '../../../stores/useCharacterStore';
 import Icon from '../../Icon';
 
-const InventoryTab = ({ onDiceRoll, onLogAction }) => {
-    const { character, updateCurrency, addItem, removeItem, updateInfo } = useCharacterStore();
+const InventoryTab = ({ onDiceRoll, onLogAction, isOwner }) => {
+    // START CHANGE: Add toggleEquip and loadCharacter to destructuring
+    const { character, updateCurrency, addItem, removeItem, toggleEquip, loadCharacter } = useCharacterStore();
+    // END CHANGE
     const [newItemName, setNewItemName] = useState("");
     
     // SRD State
@@ -19,12 +24,9 @@ const InventoryTab = ({ onDiceRoll, onLogAction }) => {
         setNewItemName("");
     };
 
-    const toggleEquip = (index) => {
-        const newInventory = [...character.inventory];
-        const item = newInventory[index];
-        item.equipped = !item.equipped;
-        updateInfo('inventory', newInventory);
-    };
+    // START CHANGE: Delete the local toggleEquip function (it is now imported from store)
+    // The previous code block for toggleEquip was here. Delete it entirely.
+    // END CHANGE
 
     // --- SRD INTEGRATION ---
     const searchSrd = async () => {
@@ -38,33 +40,21 @@ const InventoryTab = ({ onDiceRoll, onLogAction }) => {
         setIsSearching(false);
     };
 
-    const addSrdItem = async (url) => {
-        setIsSearching(true);
+    // START CHANGE: Enrichment Handler
+    const handleEnrich = async () => {
+        if (!confirm("This will scan your inventory against the 5e SRD to fix missing stats. Continue?")) return;
+        setIsSearching(true); // Re-use searching state for spinner
         try {
-            const res = await fetch(`https://www.dnd5eapi.co${url}`);
-            const data = await res.json();
-            
-            const newItem = {
-                name: data.name,
-                qty: 1,
-                weight: data.weight || 0,
-                desc: data.desc ? data.desc.join('\n') : "",
-                equipped: false,
-                combat: data.equipment_category?.index === 'weapon' ? {
-                    hit: "+0", // Placeholder, requires stats to calc properly
-                    dmg: data.damage?.damage_dice ? `${data.damage.damage_dice} ${data.damage.damage_type?.name}` : "1d4",
-                    type: "Action",
-                    notes: data.properties?.map(p => p.name).join(', ')
-                } : null
-            };
-            
-            addItem(newItem);
-            setShowSrd(false);
-            setSrdResults([]);
-            setSearchTerm("");
-        } catch (e) { alert("Failed to fetch item details."); }
+            const enriched = await enrichCharacter(character);
+            loadCharacter(enriched);
+            alert("Inventory enriched with 5e stats!");
+        } catch (e) {
+            console.error(e);
+            alert("Enrichment failed.");
+        }
         setIsSearching(false);
     };
+    // END CHANGE
 
     return (
         <div className="space-y-6 pb-24 relative">
@@ -88,6 +78,21 @@ const InventoryTab = ({ onDiceRoll, onLogAction }) => {
                     ))}
                 </div>
             </div>
+
+            {/* START CHANGE: Enrichment Toolbar */}
+            {isOwner && (
+                <div className="flex justify-end mb-2">
+                    <button 
+                        onClick={handleEnrich} 
+                        disabled={isSearching}
+                        className="text-xs flex items-center gap-1 text-indigo-400 hover:text-indigo-300 transition-colors"
+                    >
+                        <Icon name={isSearching ? "loader-2" : "wand"} size={12} className={isSearching ? "animate-spin" : ""}/>
+                        {isSearching ? "Scanning Archives..." : "Fix Missing Stats (SRD)"}
+                    </button>
+                </div>
+            )}
+            {/* END CHANGE */}
 
             {/* Quick Add Bar */}
             <form onSubmit={handleAddItem} className="flex gap-2">
@@ -115,9 +120,11 @@ const InventoryTab = ({ onDiceRoll, onLogAction }) => {
                     character.inventory.map((item, i) => (
                         <div key={i} className={`border p-3 rounded flex justify-between items-center transition-colors ${item.equipped ? 'bg-indigo-900/20 border-indigo-500/50' : 'bg-slate-800 border-slate-700'}`}>
                             <div className="flex items-center gap-3 overflow-hidden">
-                                <div onClick={() => toggleEquip(i)} className={`w-8 h-8 shrink-0 rounded flex items-center justify-center cursor-pointer transition-all ${item.equipped ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/50' : 'bg-slate-900 text-slate-600 hover:text-indigo-400'}`}>
+                                {/* START CHANGE: Use store's toggleEquip and verify owner */}
+                                <div onClick={() => isOwner && toggleEquip(i)} className={`w-8 h-8 shrink-0 rounded flex items-center justify-center transition-all ${item.equipped ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/50' : 'bg-slate-900 text-slate-600'} ${isOwner ? 'cursor-pointer hover:text-indigo-400' : 'opacity-50 cursor-default'}`}>
                                     <Icon name={item.combat ? "sword" : "backpack"} size={16}/>
                                 </div>
+                                {/* END CHANGE */}
                                 <div className="flex flex-col min-w-0">
                                     <span className={`font-bold text-sm truncate ${item.equipped ? 'text-indigo-300' : 'text-slate-200'}`}>{typeof item === 'string' ? item : item.name}</span>
                                     {(item.weight || item.qty > 1) && <span className="text-xs text-slate-500">x{item.qty || 1} {item.weight ? `• ${item.weight}lb` : ''}</span>}

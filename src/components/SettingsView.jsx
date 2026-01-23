@@ -53,6 +53,15 @@ const SettingsView = ({
         updateCloud({ ...data, dmIds: newDmIds });
     };
 
+    // START CHANGE: Safe Exit Handler to prevent Auto-Join loop
+    const handleSafeExit = () => {
+        if (window.confirm("Disconnect from session?")) {
+            localStorage.removeItem('dm_last_code'); // Kill the auto-save code
+            if (onExit) onExit(); // Now exit the view
+        }
+    };
+    // END CHANGE
+
     // [DELETED handleRetroactiveFix FUNCTION]
 
     return (
@@ -117,9 +126,11 @@ const SettingsView = ({
 
                     {/* [DELETED DANGER ZONE BUTTON BLOCK] */}
 
-                    <button onClick={onExit} className="w-full py-4 rounded-xl border-2 border-red-900/50 text-red-400 hover:bg-red-900/20 hover:border-red-500 hover:text-white transition-all font-bold flex items-center justify-center gap-2">
+                    {/* START CHANGE: Use handleSafeExit instead of onExit */}
+                    <button onClick={handleSafeExit} className="w-full py-4 rounded-xl border-2 border-red-900/50 text-red-400 hover:bg-red-900/20 hover:border-red-500 hover:text-white transition-all font-bold flex items-center justify-center gap-2">
                         <Icon name="log-out" size={20}/> Leave Campaign
-                        </button>
+                    </button>
+                    {/* END CHANGE */}
                     </div>
                 )}
 

@@ -38,6 +38,13 @@ const HeaderStats = ({ onDiceRoll, onLogAction, onBack, onPossess, isNpc, combat
   const hpColor = hpPercent < 30 ? 'bg-red-600' : hpPercent < 60 ? 'bg-amber-500' : 'bg-green-500';
   const isDying = currentHP === 0 && !isNpc;
 
+  // START CHANGE: Destructure new actions and state
+  const { updateHitDice, updateExhaustion, toggleCondition } = useCharacterStore();
+  const hitDice = character.hitDice || { current: character.level, max: character.level, die: "d8" };
+  const exhaustion = character.exhaustion || 0;
+  const conditions = character.conditions || [];
+  // END CHANGE
+
   // --- HANDLERS ---
   const handleInitRoll = async () => { 
       if(onDiceRoll) { 
@@ -156,10 +163,60 @@ const HeaderStats = ({ onDiceRoll, onLogAction, onBack, onPossess, isNpc, combat
         </div>
 
         {/* --- EXPANDED DRAWER --- */}
-        {isExpanded && (
-            <div className="border-t border-slate-800 bg-slate-900/50 p-4 animate-in slide-in-from-top-2">
-                <div className="grid grid-cols-6 gap-2 mb-4 bg-slate-800/50 p-2 rounded-xl border border-slate-700">
-                    {['str', 'dex', 'con', 'int', 'wis', 'cha'].map((stat) => {
+      {isExpanded && (
+          <div className="border-t border-slate-800 bg-slate-900/50 p-4 animate-in slide-in-from-top-2">
+              
+              {/* START CHANGE: Resource Tracker Row */}
+              <div className="flex gap-4 mb-4">
+                  {/* Hit Dice Control */}
+                  <div className="flex-1 bg-slate-800 p-2 rounded border border-slate-700 flex flex-col items-center justify-center cursor-pointer hover:border-amber-500"
+                       onClick={async () => {
+                           if (hitDice.current > 0 && onDiceRoll) {
+                               const dieSize = parseInt(hitDice.die.replace('d', '')) || 8;
+                               const roll = await onDiceRoll(dieSize);
+                               updateHitDice(hitDice.current - 1);
+                               // Optional: Auto-heal logic could go here
+                               onLogAction && onLogAction(`Used Hit Die (${hitDice.die}): Rolled ${roll}`);
+                           }
+                       }}>
+                      <span className="text-[10px] text-slate-500 uppercase font-bold">Hit Dice</span>
+                      <div className="flex items-center gap-1">
+                          <span className="text-xl font-bold text-white">{hitDice.current}</span>
+                          <span className="text-xs text-slate-400">/ {hitDice.max}</span>
+                      </div>
+                      <span className="text-[9px] text-slate-600">{hitDice.die}</span>
+                  </div>
+
+                  {/* Exhaustion Control */}
+                  <div className="flex-1 bg-slate-800 p-2 rounded border border-slate-700 flex flex-col items-center justify-center">
+                      <span className="text-[10px] text-slate-500 uppercase font-bold">Exhaustion</span>
+                      <div className="flex items-center gap-3 mt-1">
+                          <button onClick={() => updateExhaustion(exhaustion - 1)} className="text-slate-400 hover:text-white"><Icon name="minus" size={14}/></button>
+                          <span className={`text-xl font-bold ${exhaustion > 0 ? 'text-red-500' : 'text-slate-600'}`}>{exhaustion}</span>
+                          <button onClick={() => updateExhaustion(exhaustion + 1)} className="text-slate-400 hover:text-white"><Icon name="plus" size={14}/></button>
+                      </div>
+                  </div>
+              </div>
+
+              {/* Conditions Tray */}
+              <div className="bg-slate-800 p-3 rounded border border-slate-700 mb-4">
+                  <span className="text-[10px] text-slate-500 uppercase font-bold block mb-2">Conditions</span>
+                  <div className="flex flex-wrap gap-2">
+                      {['Blinded', 'Charmed', 'Deafened', 'Frightened', 'Grappled', 'Incapacitated', 'Invisible', 'Paralyzed', 'Poisoned', 'Prone', 'Restrained', 'Stunned', 'Unconscious'].map(cond => (
+                          <button 
+                              key={cond}
+                              onClick={() => toggleCondition(cond)}
+                              className={`text-[10px] px-2 py-1 rounded border transition-all ${conditions.includes(cond) ? 'bg-red-900/50 border-red-500 text-red-200' : 'bg-slate-900 border-slate-600 text-slate-500 hover:border-slate-400'}`}
+                          >
+                              {cond}
+                          </button>
+                      ))}
+                  </div>
+              </div>
+              {/* END CHANGE */}
+
+              <div className="grid grid-cols-6 gap-2 mb-4 bg-slate-800/50 p-2 rounded-xl border border-slate-700">
+                  {['str', 'dex', 'con', 'int', 'wis', 'cha'].map((stat) => {
                         const val = character.stats?.[stat] || 10;
                         const mod = calcMod(val);
                         return (

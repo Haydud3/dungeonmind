@@ -276,6 +276,9 @@ const NpcView = ({ data, setData, role, updateCloud, setChatInput, setView, onPo
                     onDiceRoll={onDiceRoll} 
                     onLogAction={(msg) => addLogEntry({ message: msg, id: Date.now() })}
                     isNpc={true} 
+                    // --- FIX: PASS ROLE HERE ---
+                    role={role}
+                    // ---------------------------
                 />
             </div>
         );

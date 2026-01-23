@@ -17,6 +17,22 @@ const CompendiumModal = ({ onClose, importFromApi }) => {
         setIsLoading(false);
     };
 
+    // START CHANGE: Fetch details before passing to parent
+    const handleSelect = async (url) => {
+        setIsLoading(true);
+        try {
+            const r = await fetch(`https://www.dnd5eapi.co${url}`);
+            const data = await r.json();
+            importFromApi(data); // Now we pass the FULL JSON object, not just the URL
+        } catch(e) {
+            console.error(e);
+            alert("Failed to fetch monster details.");
+        }
+        setIsLoading(false);
+        onClose();
+    };
+    // END CHANGE
+
     return (
         <div className="fixed inset-0 z-[60] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
             <div className="max-w-xl w-full bg-slate-900 rounded-xl border border-slate-700 shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
@@ -32,7 +48,11 @@ const CompendiumModal = ({ onClose, importFromApi }) => {
                 </div>
                 <div className="flex-1 overflow-y-auto p-2 space-y-2 bg-slate-900">
                     {results.map(r => (
-                        <div key={r.index} onClick={() => importFromApi(r.url)} className="p-3 bg-slate-800 border border-slate-700 rounded hover:border-blue-500 cursor-pointer flex justify-between items-center group">
+                        <div key={r.index} 
+                            // START CHANGE: Use handleSelect instead of direct prop call
+                            onClick={() => handleSelect(r.url)} 
+                            // END CHANGE
+                            className="p-3 bg-slate-800 border border-slate-700 rounded hover:border-blue-500 cursor-pointer flex justify-between items-center group">
                             <div className="font-bold text-white group-hover:text-blue-400 capitalize">{r.name}</div>
                             <div className="text-xs text-slate-500 flex items-center gap-1 group-hover:text-blue-300">Import <Icon name="download" size={14}/></div>
                         </div>

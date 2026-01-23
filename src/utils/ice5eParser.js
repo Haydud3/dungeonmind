@@ -17,15 +17,7 @@ export const parseIce5e = (json) => {
                 cha: attr.charisma.savingThrowProficiency
             },
             customActions: [
-                ...(char.combat.weapons || []).map(w => ({
-                    name: w.name,
-                    hit: w.attackBonus || "0",
-                    dmg: w.damage + (w.damageType ? ` ${w.damageType}` : ""),
-                    type: "Action",
-                    category: "Attack",
-                    notes: w.properties,
-                    source: "item"
-                })),
+                // REMOVED: Weapons mapping (moved to Smart Inventory logic)
                 ...(char.magic.spells || []).map(s => ({
                     name: s.name,
                     hit: s.attackBonus || "",
@@ -53,6 +45,15 @@ export const parseIce5e = (json) => {
                 current: combat.hitPoints.current,
                 temp: combat.hitPoints.temporary || 0
             },
+            // START CHANGE: Map Advanced Resources (Hit Dice, Exhaustion)
+            hitDice: {
+                max: combat.hitDice.total || 1,
+                current: combat.hitDice.remaining || 1,
+                die: combat.hitDice.dieType || "d8"
+            },
+            exhaustion: combat.exhaustion || 0,
+            conditions: [], // ICE doesn't typically export active conditions, start empty
+            // END CHANGE
             ac: combat.armorClass,
             speed: combat.speed.walk + "ft",
             profBonus: Math.ceil(1 + (details.level / 4)), // Standard 5e calc

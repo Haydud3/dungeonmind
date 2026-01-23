@@ -1,9 +1,57 @@
 import { create } from 'zustand';
 
+// START CHANGE: Add 5e AC Calculation Helper
+const calcAC = (char) => {
+    if (!char || !char.stats) return 10;
+    const dex = Math.floor(((char.stats.dex || 10) - 10) / 2);
+    const con = Math.floor(((char.stats.con || 10) - 10) / 2);
+    const wis = Math.floor(((char.stats.wis || 10) - 10) / 2);
+    
+    // Check Inventory for Armor/Shields
+    const equippedArmor = char.inventory?.find(i => i.equipped && i.desc?.toLowerCase().includes('armor'));
+    const equippedShield = char.inventory?.find(i => i.equipped && (i.name.toLowerCase().includes('shield') || i.type === 'Shield'));
+    
+    let baseAC = 10 + dex; 
+
+    // Unarmored Defense (Barbarian/Monk)
+    if (!equippedArmor) {
+        if (char.class?.toLowerCase().includes('barbarian')) baseAC = 10 + dex + con;
+        else if (char.class?.toLowerCase().includes('monk')) baseAC = 10 + dex + wis;
+    } else {
+        // Armored Logic
+        let armorBase = 11; 
+        let maxDex = 100; 
+        const name = equippedArmor.name.toLowerCase();
+        
+        if (name.includes('leather') || name.includes('padded')) { armorBase = 11; }
+        if (name.includes('studded')) { armorBase = 12; }
+        
+        if (name.includes('hide') || name.includes('chain shirt') || name.includes('scale') || name.includes('breastplate') || name.includes('half plate')) {
+            armorBase = name.includes('hide') ? 12 : name.includes('half plate') ? 15 : 13;
+            maxDex = 2;
+        }
+        
+        if (name.includes('ring') || name.includes('chain mail') || name.includes('splint') || name.includes('plate')) {
+            armorBase = name.includes('plate') ? 18 : 14;
+            maxDex = 0;
+        }
+        const dexBonus = Math.min(dex, maxDex);
+        baseAC = armorBase + dexBonus;
+    }
+
+    if (equippedShield) baseAC += 2;
+    return baseAC;
+};
+// END CHANGE
+
 export const useCharacterStore = create((set, get) => ({
     character: null,
     isDirty: false,
     logs: [],
+    // START CHANGE: Add Global Target State
+    targetId: null,
+    setTargetId: (id) => set({ targetId: id }),
+    // END CHANGE
 
     loadCharacter: (char) => set({ character: char, isDirty: false }),
 
@@ -74,6 +122,13 @@ export const useCharacterStore = create((set, get) => ({
         const char = { ...state.character };
         if (!char.stats) char.stats = {};
         char.stats[stat] = value;
+        
+        // START CHANGE: Trigger AC Recalc on Dex/Con/Wis change
+        if (['dex', 'con', 'wis'].includes(stat)) {
+            char.ac = calcAC(char);
+        }
+        // END CHANGE
+
         return { character: char, isDirty: true };
     }),
 
@@ -92,6 +147,57 @@ export const useCharacterStore = create((set, get) => ({
         char.hp.current = Math.min(max, char.hp.current + healAmount);
         return { character: char, isDirty: true };
     }),
+
+    // START CHANGE: Resource Trackers, Inventory & Equipment Logic
+    updateHitDice: (current) => set((state) => {
+        const char = { ...state.character };
+        if (!char.hitDice) char.hitDice = { current: 1, max: 1, die: "d8" };
+        char.hitDice.current = Math.max(0, Math.min(current, char.hitDice.max));
+        return { character: char, isDirty: true };
+    }),
+
+    updateExhaustion: (level) => set((state) => {
+        const char = { ...state.character };
+        char.exhaustion = Math.max(0, Math.min(level, 6));
+        return { character: char, isDirty: true };
+    }),
+
+    toggleCondition: (condition) => set((state) => {
+        const char = { ...state.character };
+        const list = char.conditions || [];
+        if (list.includes(condition)) char.conditions = list.filter(c => c !== condition);
+        else char.conditions = [...list, condition];
+        return { character: char, isDirty: true };
+    }),
+
+    addItem: (item) => set((state) => {
+        const char = { ...state.character };
+        char.inventory = [...(char.inventory || []), item];
+        return { character: char, isDirty: true };
+    }),
+
+    removeItem: (index) => set((state) => {
+        const char = { ...state.character };
+        const newInv = [...char.inventory];
+        newInv.splice(index, 1);
+        char.inventory = newInv;
+        char.ac = calcAC(char); // Recalc on remove
+        return { character: char, isDirty: true };
+    }),
+
+    toggleEquip: (index) => set((state) => {
+        if (!state.character) return {};
+        const newInv = [...state.character.inventory];
+        const item = newInv[index];
+        item.equipped = !item.equipped;
+        
+        const tempChar = { ...state.character, inventory: newInv };
+        const newAC = calcAC(tempChar);
+        tempChar.ac = newAC;
+
+        return { character: tempChar, isDirty: true };
+    }),
+    // END CHANGE
 
     markSaved: () => set({ isDirty: false }),
     

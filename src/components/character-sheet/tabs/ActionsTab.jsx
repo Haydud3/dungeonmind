@@ -14,16 +14,18 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
 
     // --- 1. DATA GATHERING & MERGING ---
     
-    // A. Inventory (Equipped Weapons) - FIXED VARIABLE NAME HERE
+    // A. Inventory (Smart Sync: Only Equipped & Combat-Ready Items)
+    // START CHANGE: Filter inventory for equipped items with combat stats
     const inventoryActions = (character.inventory || [])
         .filter(item => item.equipped && item.combat)
         .map(item => ({
             ...item.combat,
             name: item.name,
-            id: `item-${item.name}`,
+            id: `item-${item.name}-${Date.now()}`, // Unique ID generation
             source: "item",
             notes: item.combat.notes || item.desc
         }));
+    // END CHANGE
 
     // B. Spells (Directly from Spellbook)
     const spellActions = (character.spells || [])

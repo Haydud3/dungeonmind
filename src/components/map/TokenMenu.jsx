@@ -1,7 +1,9 @@
 import React from 'react';
 import Icon from '../Icon';
 
-const TokenMenu = ({ selectedTokenId, openTokenSheet, updateTokenStatus, updateTokenSize, deleteToken, onClose }) => {
+// START CHANGE: Use generic updateToken instead of specific handlers
+const TokenMenu = ({ selectedTokenId, openTokenSheet, updateTokenStatus, updateToken, deleteToken, onClose }) => {
+// END CHANGE
     if (!selectedTokenId) return null;
 
     return (
@@ -13,9 +15,11 @@ const TokenMenu = ({ selectedTokenId, openTokenSheet, updateTokenStatus, updateT
             <button onClick={() => updateTokenStatus(selectedTokenId, 'poisoned')} className="p-2 hover:bg-slate-800 rounded-full text-green-500"><Icon name="flask-conical" size={20}/></button>
             <button onClick={() => updateTokenStatus(selectedTokenId, 'concentrating')} className="p-2 hover:bg-slate-800 rounded-full text-cyan-500"><Icon name="brain" size={20}/></button>
             <div className="w-px h-6 bg-slate-700"></div>
-            <button onClick={() => updateTokenSize(selectedTokenId, 'medium')} className="text-xs font-bold text-white px-2 py-1 hover:bg-slate-800 rounded border border-slate-700">1x</button>
-            <button onClick={() => updateTokenSize(selectedTokenId, 'large')} className="text-xs font-bold text-white px-2 py-1 hover:bg-slate-800 rounded border border-slate-700">2x</button>
-            <button onClick={() => updateTokenSize(selectedTokenId, 'huge')} className="text-xs font-bold text-white px-2 py-1 hover:bg-slate-800 rounded border border-slate-700">3x</button>
+            {/* START CHANGE: Pass object payload to updateToken */}
+            <button onClick={() => updateToken(selectedTokenId, { size: 'medium' })} className="text-xs font-bold text-white px-2 py-1 hover:bg-slate-800 rounded border border-slate-700">1x</button>
+            <button onClick={() => updateToken(selectedTokenId, { size: 'large' })} className="text-xs font-bold text-white px-2 py-1 hover:bg-slate-800 rounded border border-slate-700">2x</button>
+            <button onClick={() => updateToken(selectedTokenId, { size: 'huge' })} className="text-xs font-bold text-white px-2 py-1 hover:bg-slate-800 rounded border border-slate-700">3x</button>
+            {/* END CHANGE */}
             <div className="w-px h-6 bg-slate-700"></div>
             <button onClick={() => deleteToken(selectedTokenId)} className="p-2 hover:bg-red-900 rounded-full text-red-400"><Icon name="trash-2" size={20}/></button>
             <button onClick={onClose} className="p-2 hover:bg-slate-800 rounded-full text-slate-400"><Icon name="x" size={20}/></button>

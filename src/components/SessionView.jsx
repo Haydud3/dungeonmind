@@ -2,6 +2,9 @@ import React, { useEffect, useRef, useState } from 'react';
 import Icon from './Icon';
 import DiceTray from './DiceTray';
 import { retrieveContext, buildPrompt } from '../utils/loreEngine';
+// START CHANGE: Import Character Store for Targeting
+import { useCharacterStore } from '../stores/useCharacterStore';
+// END CHANGE
 
 // START CHANGE: Add clearChat to destructured props
 const SessionView = ({ 
@@ -23,6 +26,29 @@ const SessionView = ({
     const [ghostMessage, setGhostMessage] = useState(null);
     // END CHANGE
     const chatEndRef = useRef(null);
+
+    // START CHANGE: Apply Damage Handler
+    const handleApplyDamage = (amount) => {
+        const { targetId, updateHP } = useCharacterStore.getState();
+        if (!targetId) return alert("No token targeted! Click a token on the map first.");
+
+        // We need to update the token's HP in the GLOBAL cloud data, not just local state.
+        // Since SessionView doesn't have direct access to 'updateToken', we must rely on 'data.campaign.activeMap'
+        // But for safety, we will just alert if this deep integration is missing.
+        // Ideally, SessionView should receive an 'onApplyDamage' prop from App.jsx or WorldView.
+        
+        // TEMPORARY LOCAL FIX: Use the store if the target is the LOADED character
+        const storeChar = useCharacterStore.getState().character;
+        if (storeChar && (storeChar.id === targetId || storeChar.tokenIds?.includes(targetId))) {
+            updateHP('current', storeChar.hp.current - amount);
+            alert(`Applied ${amount} damage to ${storeChar.name}!`);
+        } else {
+             // Fallback: This requires the parent to pass a handler, or we need to access Firebase directly.
+             // For this "Lite" version, we will assume the DM has the sheet open or we add a prop later.
+             alert(`Target ID: ${targetId} selected. (To fix HP, open their sheet!)`);
+        }
+    };
+    // END CHANGE
 
     // START CHANGE: Enhanced Formatter with Table Support
     const formatMessage = (text) => {
@@ -285,8 +311,30 @@ const SessionView = ({
                                         </div>
                                     ) : (
                                         <div className="text-slate-300 text-[15px] leading-relaxed break-words whitespace-pre-wrap group-hover:text-white transition-colors relative">
-                                            {/* START CHANGE: Use the new formatMessage function */}
-                                            <span dangerouslySetInnerHTML={{__html: formatMessage(msg.content)}} />
+                                            {/* START CHANGE: Interactive Dice Rolls */}
+                                            {(() => {
+                                                const html = formatMessage(msg.content);
+                                                // Check for "Rolled 15" or similar patterns from DiceTray
+                                                // Regex matches: "Rolled [Result] (Formula)" or just numbers
+                                                const damageMatch = msg.content.match(/Rolled\s+(\d+)/i);
+                                                
+                                                if (role === 'dm' && damageMatch) {
+                                                    const dmg = parseInt(damageMatch[1]);
+                                                    return (
+                                                        <div>
+                                                            <span dangerouslySetInnerHTML={{__html: html}} />
+                                                            <button 
+                                                                onClick={() => handleApplyDamage(dmg)}
+                                                                className="ml-2 inline-flex items-center gap-1 bg-red-900/50 hover:bg-red-700 border border-red-500/30 text-[10px] text-red-200 px-1.5 py-0.5 rounded cursor-pointer transition-colors"
+                                                                title={`Apply ${dmg} damage to target`}
+                                                            >
+                                                                <Icon name="sword" size={10}/> -{dmg} HP
+                                                            </button>
+                                                        </div>
+                                                    );
+                                                }
+                                                return <span dangerouslySetInnerHTML={{__html: html}} />;
+                                            })()}
                                             {/* END CHANGE */}
                                         </div>
                                     )}

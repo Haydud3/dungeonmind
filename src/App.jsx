@@ -19,6 +19,10 @@ import LoreView from './components/LoreView';
 import { useCharacterStore } from './stores/useCharacterStore'; 
 import { retrieveContext, buildPrompt, buildCastList } from './utils/loreEngine';
 
+// START CHANGE: Import SheetContainer
+import SheetContainer from './components/character-sheet/SheetContainer';
+// END CHANGE
+
 const DB_INIT_DATA = { 
     hostId: null,
     dmIds: [], 
@@ -52,6 +56,9 @@ function App() {
   // 1. Map internal IDs to friendly URL slugs
   const VIEW_SLUGS = {
       'session': 'session',
+      // START CHANGE: Add Sheet Route
+      'sheet': 'sheet',
+      // END CHANGE
       'journal': 'journal',
       'map': 'tactical',
       'party': 'player-character',
@@ -604,7 +611,17 @@ function App() {
               {/* END CHANGE */}
               
               {/* 2. JOURNAL */}
-              {currentView === 'journal' && <JournalView data={data} role={effectiveRole} userId={user?.uid} onSavePage={saveJournalEntry} onDeletePage={deleteJournalEntryFunc} aiHelper={queryAiService} />}
+              {currentView === 'journal' && <JournalView 
+                  data={data} 
+                  role={effectiveRole} 
+                  userId={user?.uid} 
+                  // START CHANGE: Pass Character ID for granular permissions
+                  myCharId={data.assignments?.[user?.uid]}
+                  // END CHANGE
+                  onSavePage={saveJournalEntry} 
+                  onDeletePage={deleteJournalEntryFunc} 
+                  aiHelper={queryAiService} 
+              />}
               
               {/* 3. TACTICAL (Map) */}
               {currentView === 'map' && <WorldView data={data} setData={setData} role={effectiveRole} updateCloud={updateCloud} updateMapState={updateMapState} onDiceRoll={handleDiceRoll} user={user} apiKey={apiKey} savePlayer={savePlayer} activeTemplate={activeTemplate} onClearTemplate={() => setActiveTemplate(null)} onInitiative={handleInitiative} />}
@@ -618,7 +635,25 @@ function App() {
               {/* 5. BESTIARY (NPCs) */}
               {currentView === 'npcs' && <NpcView data={data} setData={setData} role={effectiveRole} updateCloud={updateCloud} generateNpc={generateNpc} setChatInput={setInputText} setView={setCurrentView} onPossess={setPossessedNpcId} aiHelper={queryAiService} apiKey={apiKey} edition={data.config?.edition} onDiceRoll={handleDiceRoll} onPlaceTemplate={handlePlaceTemplate} onInitiative={handleInitiative} />}
               
+              {/* 5.5 CHARACTER SHEET VIEW */}
+              {currentView === 'sheet' && (
+                  <div className="flex-1 overflow-hidden relative">
+                      <SheetContainer 
+                          characterId={data.assignments?.[user?.uid]} 
+                          onSave={savePlayer} 
+                          onDiceRoll={handleDiceRoll} 
+                          // --- FIX: PASS ROLE HERE ---
+                          role={effectiveRole}
+                          // ---------------------------
+                          isOwner={true}
+                          onLogAction={(msg) => addLogEntry({ message: msg, id: Date.now() })}
+                      />
+                  </div>
+              )}
+              {/* END CHANGE */}
+
               {/* 6. LORE (Bible) */}
+              {currentView === 'lore' && <LoreView data={data} aiHelper={queryAiService} pdfChunks={loreChunks} setPdfChunks={setLoreChunks} onUploadLore={uploadLore} />}
               {currentView === 'lore' && <LoreView data={data} aiHelper={queryAiService} pdfChunks={loreChunks} setPdfChunks={setLoreChunks} onUploadLore={uploadLore} />}
               
               {/* 7. SETTINGS */}
