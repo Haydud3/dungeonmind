@@ -1,23 +1,40 @@
 import React, { useState, useEffect } from 'react';
 import HeaderStats from './HeaderStats';
+// START CHANGE: Restore correct tab imports
 import ActionsTab from './tabs/ActionsTab';
-import SkillsTab from './tabs/SkillsTab'; // <--- Make sure this import is here!
-import SpellsTab from './tabs/SpellsTab'; 
+import SkillsTab from './tabs/SkillsTab';
+import SpellsTab from './tabs/SpellsTab';
 import InventoryTab from './tabs/InventoryTab';
 import BioTab from './tabs/BioTab';
 import FeaturesTab from './tabs/FeaturesTab';
-import DmNotesTab from './tabs/DmNotesTab'; // <--- Ensure DmNotesTab exists
+import DmNotesTab from './tabs/DmNotesTab';
+// END CHANGE
 import RollToast from './widgets/RollToast';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import Icon from '../Icon';
 
-const SheetContainer = ({ characterId, onSave, onDiceRoll, onLogAction, onBack, onPossess, isNpc, combatActive, onInitiative, onPlaceTemplate, isOwner = true, role }) => {
+// START CHANGE: Add 'data' to props definition
+const SheetContainer = ({ characterId, data, onSave, onDiceRoll, onLogAction, onBack, onPossess, isNpc, combatActive, onInitiative, onPlaceTemplate, isOwner = true, role }) => {
+// END CHANGE
     const [activeTab, setActiveTab] = useState('actions');
     
     const character = useCharacterStore((state) => state.character);
     const isDirty = useCharacterStore((state) => state.isDirty);
     const markSaved = useCharacterStore((state) => state.markSaved);
     const addLogEntry = useCharacterStore((state) => state.addLogEntry);
+
+    // START CHANGE: Hot-Swap Effect
+    const loadCharacter = useCharacterStore((state) => state.loadCharacter);
+
+    useEffect(() => {
+        // If we have an ID and Data, find the character and load it into the store
+        if (characterId && data) {
+            const allChars = [...(data.players || []), ...(data.npcs || [])];
+            const target = allChars.find(c => c.id === characterId);
+            if (target) loadCharacter(target);
+        }
+    }, [characterId, data]);
+    // END CHANGE
 
     const handleLogAction = (msg) => {
         addLogEntry(msg);

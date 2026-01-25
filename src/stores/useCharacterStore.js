@@ -48,12 +48,13 @@ export const useCharacterStore = create((set, get) => ({
     character: null,
     isDirty: false,
     logs: [],
-    // START CHANGE: Add Global Target State
-    targetId: null,
-    setTargetId: (id) => set({ targetId: id }),
+    // START CHANGE: Ensure loading a character resets the dirty flag and logs
+    loadCharacter: (char) => set({ 
+        character: char ? JSON.parse(JSON.stringify(char)) : null, 
+        isDirty: false,
+        logs: [] 
+    }),
     // END CHANGE
-
-    loadCharacter: (char) => set({ character: char, isDirty: false }),
 
     updateHP: (type, value) => set((state) => {
         if (!state.character) return {};
@@ -123,7 +124,7 @@ export const useCharacterStore = create((set, get) => ({
         if (!char.stats) char.stats = {};
         char.stats[stat] = value;
         
-        // START CHANGE: Trigger AC Recalc on Dex/Con/Wis change
+        // START CHANGE: Ensure AC recalc handles Master Templates correctly
         if (['dex', 'con', 'wis'].includes(stat)) {
             char.ac = calcAC(char);
         }

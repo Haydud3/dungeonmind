@@ -5,6 +5,7 @@ const Sidebar = ({ view, setView, onExit }) => {
     const navItems = [
         { id: 'session', icon: 'message-circle', label: 'Chat' },
         { id: 'journal', icon: 'book', label: 'Journal' },
+        // START CHANGE: Ensure Tactical Map button is clean
         { id: 'map', icon: 'map', label: 'Tactical' },
         { id: 'party', icon: 'users', label: 'Party' },
         { id: 'npcs', icon: 'skull', label: 'Bestiary' },

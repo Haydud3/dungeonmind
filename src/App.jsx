@@ -196,7 +196,11 @@ function DungeonMindApp() {
           if (target && target.url === newMap.url) {
               newMap = { url: null, revealPaths: [], walls: [], tokens: [], view: { zoom: 1, pan: {x:0,y:0} } };
           }
+      // START CHANGE: Add update_token case to Map State engine
+      } else if (action === 'update_token') {
+          newMap.tokens = newMap.tokens.map(t => t.id === payload.id ? { ...t, ...payload } : t);
       }
+      // END CHANGE
       updateCloud({ ...data, campaign: { ...data.campaign, activeMap: newMap, savedMaps: newSavedMaps } });
   };
 
@@ -581,9 +585,9 @@ function DungeonMindApp() {
               {/* 5. BESTIARY (NPCs) */}
               {currentView === 'npcs' && <NpcView data={data} setData={setData} role={effectiveRole} updateCloud={updateCloud} generateNpc={generateNpc} setChatInput={setInputText} setView={setCurrentView} onPossess={setPossessedNpcId} aiHelper={queryAiService} apiKey={apiKey} edition={data.config?.edition} onDiceRoll={handleDiceRoll} onPlaceTemplate={handlePlaceTemplate} onInitiative={handleInitiative} />}
               
-              {/* 5.5 CHARACTER SHEET VIEW */}
+              {/* START CHANGE: Ensure 'sheet' view only renders when explicitly active and not overriding others */}
               {currentView === 'sheet' && (
-                  <div className="flex-1 overflow-hidden relative">
+                  <div className="flex-1 h-full overflow-hidden">
                       <SheetContainer 
                           characterId={data.assignments?.[user?.uid]} 
                           onSave={savePlayer} 

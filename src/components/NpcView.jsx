@@ -285,10 +285,11 @@ const NpcView = ({ data, setData, role, updateCloud, setChatInput, setView, onPo
     }
 
     return (
-        <div className="h-full bg-slate-900 p-4 overflow-y-auto custom-scroll pb-24">
-            <div className="max-w-6xl mx-auto space-y-6">
-                
-                {/* HEADER */}
+        <> {/* START CHANGE: Added Fragment wrapper */}
+            <div className="h-full bg-slate-900 p-4 overflow-y-auto custom-scroll pb-24">
+                <div className="max-w-6xl mx-auto space-y-6">
+                    
+                    {/* HEADER */}
                 <div className="flex flex-col md:flex-row justify-between items-center gap-4 border-b border-slate-700 pb-4">
                     <div>
                         <h2 className="text-3xl fantasy-font text-amber-500">NPCs & Monsters</h2>
@@ -320,9 +321,13 @@ const NpcView = ({ data, setData, role, updateCloud, setChatInput, setView, onPo
                                     </div>
                                     <div className="flex-1 ml-3 mb-1 min-w-0">
                                         <h3 className="text-xl font-bold text-slate-100 leading-tight group-hover:text-amber-400 truncate">{npc.name}</h3>
-                                        <p className="text-xs text-amber-600 font-bold uppercase tracking-wider truncate">{npc.race} {npc.class}</p>
+                                        {/* START CHANGE: Master Blueprint Tag */}
+                                        <div className="flex items-center gap-2">
+                                            <p className="text-xs text-amber-600 font-bold uppercase tracking-wider truncate">{npc.race} {npc.class}</p>
+                                            <span className="text-[9px] bg-indigo-500/20 text-indigo-400 px-1 rounded border border-indigo-500/30 font-mono">MASTER</span>
+                                        </div>
                                     </div>
-                                </div>
+                                </div> {/* START CHANGE: Added missing closing div for nameplate area */}
                             </div>
                             {role === 'dm' && (
                                 <div className="absolute top-2 left-2 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -335,9 +340,10 @@ const NpcView = ({ data, setData, role, updateCloud, setChatInput, setView, onPo
                     {visibleNpcs.length === 0 && <div className="col-span-full py-12 text-center border-2 border-dashed border-slate-700 rounded-xl"><Icon name="ghost" size={48} className="mx-auto text-slate-600 mb-4"/><p className="text-slate-500">No entities found.</p></div>}
                 </div>
             </div>
+        </div>
 
-            {/* CREATION HUB MODAL */}
-            {showCreationMenu && (
+        {/* CREATION HUB MODAL */}
+        {showCreationMenu && (
                 <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
                     <div className="max-w-5xl w-full bg-slate-900 rounded-xl overflow-hidden shadow-2xl relative border border-slate-700">
                         <button onClick={() => setShowCreationMenu(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white"><Icon name="x" size={24}/></button>
@@ -467,8 +473,8 @@ const NpcView = ({ data, setData, role, updateCloud, setChatInput, setView, onPo
                     </div>
                 </div>
             )}
-            {/* END CHANGE */}
-        </div>
+            {/* START CHANGE: Closing the Fragment added at the start of the return */}
+        </> 
     );
 };
 

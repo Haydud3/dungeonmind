@@ -449,21 +449,34 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             const pos = getMapCoords(e);
             const img = mapImageRef.current;
             if (img) {
-                // START CHANGE: Calculate snapped coordinates
+                // START CHANGE: Scribe Logic - Deep clone and auto-numbering
                 const { x, y } = snapToGrid(pos.x, pos.y, img.naturalWidth, img.naturalHeight);
-                // END CHANGE
                 
+                const masterNpc = data.npcs?.find(n => n.id === entityId) || 
+                                  data.players?.find(p => p.id === entityId);
+                
+                const existingCount = tokens.filter(t => t.characterId === entityId).length;
+                const instanceName = existingCount > 0 
+                    ? `${masterNpc?.name || name} ${existingCount + 1}` 
+                    : (masterNpc?.name || name);
+
                 const newToken = {
                     id: Date.now(),
                     characterId: entityId,
                     type,
-                    x: x, 
-                    y: y,
-                    image,
-                    name,
-                    size: 'medium',
-                    statuses: []
+                    x, y,
+                    image: masterNpc?.image || image,
+                    name: instanceName,
+                    size: masterNpc?.size || 'medium',
+                    hp: { 
+                        current: masterNpc?.hp?.max || 10, 
+                        max: masterNpc?.hp?.max || 10, 
+                        temp: 0 
+                    },
+                    statuses: [],
+                    isInstance: true
                 };
+                // END CHANGE
                 updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...mapData, tokens: [...tokens, newToken] } } });
             }
         }
@@ -700,7 +713,8 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                                     style={{ 
                                         backgroundImage: `linear-gradient(to right, #fff ${lineWidth}px, transparent ${lineWidth}px), linear-gradient(to bottom, #fff ${lineWidth}px, transparent ${lineWidth}px)`, 
                                         backgroundSize: `${mapGrid.size}px ${mapGrid.size}px`,
-                                        backgroundPosition: `${mapGrid.offsetX}px ${mapGrid.offsetY}px`
+                                        backgroundPosition: `${mapGrid.offsetX}px ${mapGrid.offsetY}px`,
+                                        imageRendering: 'pixelated'
                                     }}
                                 ></div>
                             );

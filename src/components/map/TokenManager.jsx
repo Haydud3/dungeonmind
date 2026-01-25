@@ -3,7 +3,9 @@ import Icon from '../Icon';
 
 const TokenManager = ({ data, onDragStart }) => {
     const players = data.players || [];
-    const npcs = data.npcs || [];
+    // START CHANGE: Filter out instances so only Master Blueprints appear in the sidebar
+    const npcs = (data.npcs || []).filter(n => !n.isInstance);
+    // END CHANGE
 
     return (
         <div className="flex flex-col h-full text-slate-200">
@@ -14,7 +16,8 @@ const TokenManager = ({ data, onDragStart }) => {
                 <div>
                     <h4 className="text-xs font-bold text-indigo-400 mb-2 flex items-center gap-2"><Icon name="users" size={12}/> Party</h4>
                     <div className="space-y-2">
-                        {players.map(p => (
+                        {/* START CHANGE: Filter out PCs already on the map */}
+                        {players.filter(p => !data.campaign?.activeMap?.tokens?.some(t => t.characterId === p.id)).map(p => (
                             <div 
                                 key={p.id} 
                                 draggable 
