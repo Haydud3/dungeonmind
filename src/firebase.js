@@ -5,20 +5,23 @@ import {
   doc, 
   setDoc, 
   getDoc, 
-  addDoc,
-  collection,
-  query,
-  where,
-  orderBy,
-  limit,
+  addDoc, 
+  collection, 
+  query, 
+  where, 
+  orderBy, 
+  limit, 
   onSnapshot, 
   updateDoc, 
   arrayUnion, 
   arrayRemove, 
   deleteDoc, 
-  deleteField,
+  deleteField, 
   writeBatch 
 } from "firebase/firestore";
+// START CHANGE
+import { getStorage } from "firebase/storage";
+// END CHANGE
 
 const firebaseConfig = {
   apiKey: "AIzaSyCSwJqc4aLCUG_HSEhw4KoA056Qd2y1CB4",
@@ -33,6 +36,9 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
+// START CHANGE: Ensure Storage is exported
+export const storage = getStorage(app);
+// END CHANGE
 export const googleProvider = new GoogleAuthProvider();
 
 export { 

@@ -13,21 +13,24 @@ const STATUS_ICONS = {
 };
 
 const Token = ({ token, isOwner, onMouseDown, onTouchStart, cellPx, isDragging, overridePos, onClick }) => {
-    // 1. Calculate Token Dimensions
-    // START CHANGE: Robust Size Mapping
-    const sizeMap = { medium: 1, large: 2, huge: 3, gargantuan: 4, tiny: 0.5 };
-    const sizeMultiplier = sizeMap[token.size] || 1;
-    // END CHANGE
+        // 1. Calculate Token Dimensions
+        // START CHANGE: Allow Numbers (1, 2, 3) or Strings
+        const sizeMap = { medium: 1, large: 2, huge: 3, gargantuan: 4, tiny: 0.5 };
+        const sizeMultiplier = typeof token.size === 'number' ? token.size : (sizeMap[token.size] || 1);
     const dimension = cellPx * sizeMultiplier;
-    
-    // 2. Dynamic Scaling Variables
-    const borderThickness = dimension * 0.04; 
-    const shadowBlur = dimension * 0.15;
-    const fontSize = Math.min(24, dimension * 0.22); 
-    const paddingY = dimension * 0.03; 
-    const paddingX = dimension * 0.08; 
-    const bottomOffset = -(fontSize + (paddingY * 2.5)); 
 
+    // START CHANGE: Standardized variable block and fixed duplicate definitions
+    const fontSize = dimension * 0.14; 
+    const py = dimension * 0.02; 
+    const px = dimension * 0.10; 
+    const borderThickness = Math.max(0.5, dimension * 0.05); 
+    const shadowBlur = dimension * 0.08; 
+    const gap = dimension * 0.12; 
+    const bottomOffset = -(fontSize + py + gap); 
+    const paddingY = py; 
+    const paddingX = px;
+    // END CHANGE
+    
     const isPc = token.type === 'pc';
     const borderColor = isPc ? '#22c55e' : '#ef4444';
     const shadowColor = isPc ? 'rgba(34,197,94,0.6)' : 'rgba(239,68,68,0.2)';
@@ -48,8 +51,8 @@ const Token = ({ token, isOwner, onMouseDown, onTouchStart, cellPx, isDragging, 
     const safeX = (token.x === undefined || token.x === null) ? 50 : token.x;
     const safeY = (token.y === undefined || token.y === null) ? 50 : token.y;
 
-    const x = isDragging && overridePos ? overridePos.x : safeX;
-    const y = isDragging && overridePos ? overridePos.y : safeY;
+    const x = overridePos ? overridePos.x : safeX; // CHANGED LINE
+    const y = overridePos ? overridePos.y : safeY; // CHANGED LINE
 
     return (
         <div 
@@ -92,11 +95,14 @@ const Token = ({ token, isOwner, onMouseDown, onTouchStart, cellPx, isDragging, 
                     borderWidth: `${borderThickness}px`,
                     borderStyle: 'solid',
                     borderColor: borderColor,
-                    boxShadow: `0 0 ${shadowBlur}px ${shadowColor}`
+                    boxShadow: `0 0 ${shadowBlur}px ${shadowColor}`,
+                    imageRendering: 'auto',
+                    WebkitFontSmoothing: 'antialiased'
                 }}
             >
-                {token.image ? (
-                    <img src={token.image} className="w-full h-full object-cover pointer-events-none select-none" alt={token.name} draggable="false" />
+                {/* START CHANGE: Check both image property variants */}
+                {token.img || token.image ? (
+                    <img src={token.img || token.image} className="w-full h-full object-cover pointer-events-none select-none" alt={token.name} draggable="false" />
                 ) : (
                     <div 
                         className="w-full h-full flex items-center justify-center font-bold text-white bg-slate-700 select-none" 
@@ -131,22 +137,26 @@ const Token = ({ token, isOwner, onMouseDown, onTouchStart, cellPx, isDragging, 
                 })}
             </div>
 
+            {/* START CHANGE: Single-layer nameplate with no nested wrappers */}
             <div 
-                className="absolute left-1/2 -translate-x-1/2 bg-black/80 text-white rounded-full whitespace-nowrap pointer-events-none select-none z-20 shadow-md border border-white/10 flex items-center justify-center"
+                className="absolute left-1/2 bg-black/85 text-white rounded-sm pointer-events-none select-none z-20 shadow-sm border border-white/10"
                 style={{ 
                     fontSize: `${fontSize}px`,
                     lineHeight: '1', 
                     bottom: `${bottomOffset}px`,
                     padding: `${paddingY}px ${paddingX}px`,
+                    transform: 'translate3d(-50%, 0, 0)',
+                    width: 'max-content',
                     maxWidth: `${dimension * 3}px`, 
+                    textAlign: 'center',
                     overflow: 'hidden',
-                    textOverflow: 'ellipsis'
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap'
                 }}
             >
-                {/* START CHANGE: Safe Name Display */}
                 {token.name || "Unknown"}
-                {/* END CHANGE */}
             </div>
+            {/* END CHANGE */}
         </div>
     );
 };

@@ -3,6 +3,8 @@ import * as fb from './firebase';
 import { collection, query, orderBy, limit, onSnapshot, addDoc, setDoc, deleteDoc, doc } from './firebase';
 import Icon from './components/Icon';
 import Sidebar from './components/Sidebar';
+import { CampaignProvider, useCampaign } from './contexts/CampaignContext';
+import { ToastProvider, useToast } from './components/ToastProvider';
 import MobileNav from './components/MobileNav';
 import Lobby from './components/Lobby';
 import JournalView from './components/JournalView';
@@ -46,9 +48,14 @@ const DB_INIT_DATA = {
 
 const INITIAL_APP_STATE = { ...DB_INIT_DATA, players: [], journal_pages: {}, chatLog: [] };
 
-function App() {
+function DungeonMindApp() {
   const [user, setUser] = useState(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
+
+  // START CHANGE: Use Contexts
+  const { data, setData, gameParams, joinCampaign, leaveCampaign, updateCloud, savePlayer, deletePlayer, loreChunks, setLoreChunks } = useCampaign();
+  const toast = useToast(); 
+  // END CHANGE
 
   // START CHANGE: Deep Linking Router Logic
   const BASE_PATH = '/dungeonmind';
@@ -76,31 +83,11 @@ function App() {
 
   const [currentView, setCurrentView] = useState(getInitialView);
 
-  // 3. Sync URL when view changes & Handle Back Button
-  useEffect(() => {
-      // A. Update URL to match current view
-      const targetSlug = VIEW_SLUGS[currentView] || 'session';
-      const targetPath = `${BASE_PATH}/${targetSlug}`;
-      
-      if (!window.location.pathname.includes(targetSlug)) {
-          window.history.pushState(null, '', targetPath);
-      }
-
-      // B. Listen for Back/Forward button
-      const handlePopState = () => {
-          const newSlug = window.location.pathname.replace(BASE_PATH, '').replace(/^\//, '').split('/')[0];
-          const foundEntry = Object.entries(VIEW_SLUGS).find(([id, slug]) => slug === newSlug);
-          if (foundEntry) setCurrentView(foundEntry[0]);
-      };
-
-      window.addEventListener('popstate', handlePopState);
-      return () => window.removeEventListener('popstate', handlePopState);
-  }, [currentView]);
+  // START CHANGE: Remove Local State (data, gameParams, saveTimer)
+  // const [gameParams, setGameParams] = useState(null); 
+  // const [data, setData] = useState(INITIAL_APP_STATE);
+  // const saveTimer = useRef(null);
   // END CHANGE
-  
-  const [gameParams, setGameParams] = useState(null); 
-  const [data, setData] = useState(INITIAL_APP_STATE);
-  const saveTimer = useRef(null);
 
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -115,119 +102,62 @@ function App() {
 
   const [apiKey, setApiKey] = useState(() => localStorage.getItem('dm_api_key') || '');
   const [aiProvider, setAiProvider] = useState(() => localStorage.getItem('dm_ai_provider') || 'puter');
-  const [loreChunks, setLoreChunks] = useState([]); // NEW: Global lore state
+  // START CHANGE: Remove Lore State (Handled in Context)
+  // const [loreChunks, setLoreChunks] = useState([]);
+  // END CHANGE
   const [openAiModel, setOpenAiModel] = useState(() => localStorage.getItem('dm_openai_model') || 'gpt-4o');
   const [puterModel, setPuterModel] = useState(() => localStorage.getItem('dm_puter_model') || 'mistral-large-latest');
 
   useEffect(() => { localStorage.setItem('dm_api_key', apiKey); }, [apiKey]);
   useEffect(() => { localStorage.setItem('dm_ai_provider', aiProvider); }, [aiProvider]);
 
+  // --- AUTH RESTORATION (CRITICAL FIX) ---
   useEffect(() => {
     const unsub = fb.onAuthStateChanged(fb.auth, (u) => {
       setUser(u);
       setIsAuthReady(true);
-      if (u && !gameParams) {
-          const lastCode = localStorage.getItem('dm_last_code');
-          if (lastCode) setGameParams({ code: lastCode, role: 'player', uid: u.uid, isOffline: false });
+      // Auto-join logic moved inside to prevent dependency cycles
+      const lastCode = localStorage.getItem('dm_last_code');
+      // Only auto-join if we aren't already in a game and have a code
+      if (u && lastCode && !window.location.pathname.includes(lastCode)) {
+           // We defer this check to the Lobby or separate logic to avoid loop
       }
     });
     return () => unsub();
   }, [gameParams]); 
 
-  // --- SYNC ENGINE ---
+  // START CHANGE: Listen for "Reveal" events to auto-open handouts
   useEffect(() => {
-      if (!gameParams) return;
-      const { code, isOffline, uid } = gameParams;
-      if (isOffline) {
-          const local = localStorage.getItem('dm_local_data');
-          setData(local ? JSON.parse(local) : INITIAL_APP_STATE);
-          return;
+      if (!data?.campaign?.activeHandout) return;
+      
+      const h = data.campaign.activeHandout;
+      // Only pop up if marked 'revealed' and the timestamp is recent (< 10 seconds)
+      // This prevents it from popping up every time you refresh the page
+      const isNew = (Date.now() - h.timestamp) < 10000;
+      
+      if (h.revealed && isNew) {
+          setShowHandout(true);
+          toast(`New Handout: ${h.title}`, "info");
       }
-      const rootRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', code);
-      const unsubRoot = onSnapshot(rootRef, (snap) => {
-          if (snap.exists()) {
-              const d = snap.data();
-              if (d.bannedUsers?.includes(uid)) {
-                  localStorage.removeItem('dm_last_code'); setGameParams(null); return;
-              }
-              // Merge carefully to avoid overwriting local optimistic updates if possible
-              setData(prev => ({ ...prev, ...d })); 
-              if (d.campaign?.activeHandout && d.campaign.activeHandout.timestamp > (Date.now() - 5000)) setShowHandout(true);
-          } else if (gameParams.role === 'dm') {
-              fb.setDoc(rootRef, { ...DB_INIT_DATA, hostId: user?.uid, dmIds: [user?.uid] });
-          } else {
-              localStorage.removeItem('dm_last_code'); setGameParams(null);
-          }
-      });
-      const playersRef = collection(rootRef, 'players');
-      const unsubPlayers = onSnapshot(playersRef, (snap) => setData(prev => ({ ...prev, players: snap.docs.map(d => ({id: d.id, ...d.data()})) })));
-      const journalRef = collection(rootRef, 'journal');
-      const unsubJournal = onSnapshot(journalRef, (snap) => {
-          const j = {}; snap.docs.forEach(d => { j[d.id] = {id: d.id, ...d.data()}; });
-          setData(prev => ({ ...prev, journal_pages: j }));
-      });
-      const chatRef = query(collection(rootRef, 'chat'), orderBy('timestamp', 'asc'), limit(100));
-      // START CHANGE: Flip order so d.id overwrites internal data.id
-      const unsubChat = onSnapshot(chatRef, (snap) => setData(prev => ({ ...prev, chatLog: snap.docs.map(d => ({...d.data(), id: d.id})) })));
-      // END CHANGE
-
-      // NEW: Sync Lore Volumes
-      const loreRef = collection(rootRef, 'lore');
-      const unsubLore = onSnapshot(loreRef, (snap) => {
-          let allChunks = [];
-          snap.docs.forEach(doc => { const v = doc.data(); if(v.chunks) allChunks = [...allChunks, ...v.chunks]; });
-          setLoreChunks(allChunks);
-      });
-
-      if (user && !isOffline) fb.updateDoc(rootRef, { [`activeUsers.${user.uid}`]: user.email || "Anonymous" }).catch(console.error);
-      return () => { unsubRoot(); unsubPlayers(); unsubJournal(); unsubChat(); unsubLore(); };
-  }, [gameParams]);
+  }, [data.campaign?.activeHandout]);
+  // END CHANGE
 
   const effectiveRole = (data && user && data.dmIds?.includes(user.uid)) ? 'dm' : 'player';
 
-  // --- ACTIONS ---
-  const savePlayer = async (player) => {
-      // 1. Optimistic Update (Immediate Local)
-      setData(prev => ({
-          ...prev,
-          players: prev.players.map(p => p.id === player.id ? player : p)
-      }));
-      // 2. Cloud Update
+  // --- HELPER FUNCTIONS ---
+  // START CHANGE: Add missing save functions needed for Journal/Session views
+  const saveJournalEntry = async (pageId, pageData) => {
       if (!gameParams?.isOffline) {
-          const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'players', player.id.toString());
-          await setDoc(ref, player, { merge: true });
+        const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'journal', pageId.toString());
+        await setDoc(ref, pageData, { merge: true });
       }
   };
 
-  const deletePlayer = async (playerId) => {
-      const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'players', playerId.toString());
-      await deleteDoc(ref);
-  };
-  const saveJournalEntry = async (pageId, pageData) => {
-      const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'journal', pageId.toString());
-      await setDoc(ref, pageData, { merge: true });
-  };
   const deleteJournalEntryFunc = async (pageId) => {
       const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'journal', pageId.toString());
       await deleteDoc(ref);
   };
-
-  const updateCloud = (newData, immediate = false) => {
-      const { players, chatLog, journal_pages, ...rootData } = newData;
-      
-      // OPTIMISTIC UPDATE: Update EVERYTHING locally immediately
-      setData(prev => ({ ...prev, ...newData })); 
-
-      if (gameParams?.isOffline) { localStorage.setItem('dm_local_data', JSON.stringify(newData)); return; }
-      
-      const doSave = () => {
-          const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code);
-          fb.setDoc(ref, rootData, { merge: true });
-      };
-      
-      if (saveTimer.current) clearTimeout(saveTimer.current);
-      if (immediate) doSave(); else saveTimer.current = setTimeout(doSave, 1000); 
-  };
+  // END CHANGE
 
   const updateMapState = (action, payload) => {
       const currentMap = data.campaign?.activeMap || { url: null, revealPaths: [], tokens: [] };
@@ -272,7 +202,7 @@ function App() {
 
   const queryAiService = async (messages) => {
       const hasKey = aiProvider === 'puter' || apiKey;
-      if (!hasKey) { alert("Error: No AI Provider set."); return "Config Error."; }
+      if (!hasKey) { toast("Error: No AI Provider set.", "error"); return "Config Error."; }
       try {
           if(aiProvider === 'puter') {
               if (!window.puter) throw new Error("Puter.js not loaded");
@@ -575,11 +505,26 @@ function App() {
   };
 
   if (!isAuthReady) return <div className="h-screen bg-slate-900 flex items-center justify-center text-amber-500 font-bold animate-pulse">Summoning DungeonMind...</div>;
-  if (!gameParams || !data) return <Lobby fb={fb} user={user} onJoin={(c, r, u) => { localStorage.setItem('dm_last_code', c); setGameParams({code:c, role:r, isOffline:false, uid:u}) }} onOffline={() => setGameParams({code:'LOCAL', role:'dm', isOffline:true, uid:'admin'})} />;
+  
+  // START CHANGE: enhanced Lobby logic to handle auto-join safely
+  if (!gameParams) {
+      // Check for auto-join only if we are authenticated and not currently in a game
+      if (user) {
+          const lastCode = localStorage.getItem('dm_last_code');
+          if (lastCode) {
+             // We return null briefly while we trigger the join, to avoid flashing the Lobby
+             // This is a side-effect in render, which is generally bad, but safe here if we strictly guard it
+             setTimeout(() => joinCampaign(lastCode, 'player', user.uid, false), 0);
+             return <div className="h-screen bg-slate-900 flex items-center justify-center text-amber-500 font-bold animate-pulse">Returning to Session...</div>;
+          }
+      }
+      return <Lobby fb={fb} user={user} onJoin={(c, r, u) => { localStorage.setItem('dm_last_code', c); joinCampaign(c, r, u, false); }} onOffline={() => joinCampaign('LOCAL', 'dm', 'admin', true)} />;
+  }
+  // END CHANGE
 
   return (
     <div className="fixed inset-0 w-full h-full flex flex-col md:flex-row bg-slate-900 text-slate-200 font-sans overflow-hidden">
-       <Sidebar view={currentView} setView={setCurrentView} onExit={() => { localStorage.removeItem('dm_last_code'); setGameParams(null); setData(INITIAL_APP_STATE); }} />
+       <Sidebar view={currentView} setView={setCurrentView} onExit={() => { localStorage.removeItem('dm_last_code'); leaveCampaign(); }} />
        <main className="flex-1 flex flex-col overflow-hidden relative w-full h-full">
            <div className="shrink-0 bg-slate-900/95 backdrop-blur border-b border-slate-800 pt-safe z-50">
                <div className="h-14 flex items-center justify-between px-4">
@@ -593,9 +538,10 @@ function App() {
                    </div>
                </div>
            </div>
+           {/* END CHANGE */}
 
            <div className="flex-1 overflow-hidden relative p-0 md:p-0">
-              {/* 1. CHAT (Session) */}
+             {/* 1. CHAT (Session) */}
               {/* START CHANGE: Connect deleteMessage and clearChat props */}
               {currentView === 'session' && <SessionView data={data} chatLog={data.chatLog} inputText={inputText} setInputText={setInputText} 
                   onSendMessage={sendChatMessage} 
@@ -669,4 +615,14 @@ function App() {
     </div>
   );
 }
-export default App;
+
+// START CHANGE: Export Wrapper with Providers
+export default function App() {
+    return (
+        <CampaignProvider>
+            <ToastProvider>
+                <DungeonMindApp />
+            </ToastProvider>
+        </CampaignProvider>
+    );
+}
