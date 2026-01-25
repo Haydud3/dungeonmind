@@ -48,13 +48,22 @@ export const useCharacterStore = create((set, get) => ({
     character: null,
     isDirty: false,
     logs: [],
-    // START CHANGE: Ensure loading a character resets the dirty flag and logs
+    // Ensure loading a character resets the dirty flag and logs
+    // CRITICAL: Do a deep copy to prevent reference mutations from triggering updates
     loadCharacter: (char) => set({ 
-        character: char ? JSON.parse(JSON.stringify(char)) : null, 
+        character: char ? JSON.parse(JSON.stringify({
+            ...char,
+            hp: char.hp || { current: 10, max: 10 },
+            stats: char.stats || { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 },
+            skills: char.skills || [],
+            spells: char.spells || [],
+            inventory: char.inventory || [],
+            features: char.features || [],
+            classes: char.classes || []
+        })) : null, 
         isDirty: false,
         logs: [] 
     }),
-    // END CHANGE
 
     updateHP: (type, value) => set((state) => {
         if (!state.character) return {};

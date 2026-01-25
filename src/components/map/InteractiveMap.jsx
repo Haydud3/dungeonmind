@@ -24,6 +24,9 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     const [activeTool, setActiveTool] = useState('move');
     const [showLibrary, setShowLibrary] = useState(false);
     const [showTokens, setShowTokens] = useState(false);
+    // START CHANGE: Add wall delete hover state
+    const [hoveredWallId, setHoveredWallId] = useState(null);
+    // END CHANGE
     // START CHANGE: Grid Defaults
     const mapGrid = data.campaign?.activeMap?.grid || { size: 50, offsetX: 0, offsetY: 0, visible: true, snap: true };
     
@@ -118,11 +121,19 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
         // 3. Fill "The Shadows"
         ctx.fillStyle = '#000000';
-        // DM sees dim shadows (0.6), Players see pitch black (1.0)
-        ctx.globalAlpha = role === 'dm' ? 0.6 : 1.0; 
+        // START CHANGE: Use additive blending for DM mode to show stacked vision
+        if (role === 'dm') {
+            // DM uses additive mode so multiple tokens' vision blends together
+            ctx.globalCompositeOperation = 'lighter';
+            ctx.globalAlpha = 0.3; // Each token adds 30% brightness
+        } else {
+            // Players see pitch black shadows
+            ctx.globalAlpha = 1.0;
+        }
+        // END CHANGE
         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-        // 4. Cut Holes (Vision)
+        // 4. Cut Holes (Vision) - Always blocks vision regardless of visionActive setting
         ctx.globalCompositeOperation = 'destination-out';
         ctx.globalAlpha = 1.0;
         ctx.shadowBlur = 30; // Soft edges
@@ -141,8 +152,14 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             };
             // END CHANGE
 
+            // START CHANGE: Walls always block vision, regardless of toggle
             // Raycasting Logic
-            const blockingSegments = walls.filter(w => !w.open);
+            const blockingSegments = walls.filter(w => {
+                // Only open doors don't block vision
+                if (w.type === 'door' && w.open) return false;
+                // All other walls (closed doors, regular walls) always block
+                return true;
+            });
             const polygon = calculateVisibilityPolygon(origin, blockingSegments, { width: canvas.width, height: canvas.height });
 
             // Draw Polygon
@@ -284,11 +301,14 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
     // START CHANGE: Restore Mouse Down Handler
     const handleMouseDown = (e) => {
-        // Middle Click OR Left Click with Move Tool -> Pan
-        if (e.button === 1 || (e.button === 0 && activeTool === 'move')) {
-            setIsDraggingMap(true);
-            setDragStart({ x: e.clientX - view.x, y: e.clientY - view.y });
-            setSelectedTokenId(null);
+        // START CHANGE: Restore Mouse Down Handler
+        if (activeTool === 'move' || activeTool === 'grid') {
+            // Middle Click OR Left Click with Move Tool -> Pan
+            if (e.button === 1 || (e.button === 0 && activeTool === 'move')) {
+                setIsDraggingMap(true);
+                setDragStart({ x: e.clientX - view.x, y: e.clientY - view.y });
+                setSelectedTokenId(null);
+            }
         }
 
         // Start Drawing Wall/Door
@@ -320,7 +340,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         // END CHANGE
     };
 
-    const handleMouseUp = () => {
+    const handleMouseUp = (e) => {
         setIsDraggingMap(false);
         
         // START CHANGE: Finalize Token Move OR Select
@@ -440,10 +460,15 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
     const handleDrop = (e) => {
         e.preventDefault();
-        const entityId = e.dataTransfer.getData("entityId");
+        let entityId = e.dataTransfer.getData("entityId");
         const type = e.dataTransfer.getData("type");
         const image = e.dataTransfer.getData("image");
         const name = e.dataTransfer.getData("name");
+
+        // Convert entityId to number if it looks like a number (drag data comes as string)
+        if (entityId && !isNaN(entityId)) {
+            entityId = Number(entityId);
+        }
 
         if (entityId) {
             const pos = getMapCoords(e);
@@ -499,16 +524,26 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     // START CHANGE: Connect Sheet Opener
     const handleOpenSheet = (tokenId) => {
         const token = tokens.find(t => t.id === tokenId);
-        if (token && token.characterId) {
-            // Tell parent to switch layout and load this character
-            updateMapState('open_sheet', token.characterId);
-            setSelectedTokenId(null); // Close HUD
+        if (token) {
+            // Tell parent to open sheet with TOKEN data (not character ID)
+            updateMapState('open_sheet', { 
+                type: 'token',
+                tokenId: token.id,
+                mapId: mapData.id,
+                token: token  // Pass full token object
+            });
+            setSelectedTokenId(null);
         }
     };
 
-    // START CHANGE: Door Toggle Logic
+    // START CHANGE: Door Toggle and Wall Delete Logic
     const handleToggleDoor = (wallId) => {
         const newWalls = walls.map(w => w.id === wallId ? { ...w, open: !w.open } : w);
+        updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...mapData, walls: newWalls } } });
+    };
+
+    const handleDeleteWall = (wallId) => {
+        const newWalls = walls.filter(w => w.id !== wallId);
         updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...mapData, walls: newWalls } } });
     };
     // END CHANGE
@@ -569,19 +604,17 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         container.addEventListener('wheel', onWheel, { passive: false });
 
         return () => container.removeEventListener('wheel', onWheel);
-    }, [view]); // Re-bind when view changes to keep math accurate
+    }, [view]); 
     // END CHANGE
 
     return (
         <div 
             ref={containerRef}
-            // REMOVE or DELETE this line: onWheel={handleWheel} 
             className={`w-full h-full bg-[#1a1a1a] overflow-hidden relative select-none ${activeTool === 'move' ? 'cursor-grab' : 'cursor-crosshair'}`}
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
             onMouseLeave={handleMouseUp}
-            onWheel={handleWheel}
             onDragOver={(e) => e.preventDefault()}
             onDrop={handleDrop}
         >
@@ -725,30 +758,44 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                         <svg className="absolute top-0 left-0 w-full h-full pointer-events-auto z-[8]" style={{ viewBox: `0 0 ${mapImageRef.current?.naturalWidth} ${mapImageRef.current?.naturalHeight}` }}>
                             {/* 1. Render Saved Walls */}
                             {walls.map(w => {
-                                // START CHANGE: Visibility Logic
+                                // START CHANGE: Visibility and Delete Logic
                                 // Only show 'wall' lines if DM is using the Wall/Door tool
                                 const isEditing = role === 'dm' && (activeTool === 'wall' || activeTool === 'door');
+                                const isDeleting = role === 'dm' && activeTool === 'delete';
                                 const isDoor = w.type === 'door';
+                                const isHovered = hoveredWallId === w.id;
                                 
-                                // Skip rendering simple walls if not editing
-                                if (!isDoor && !isEditing) return null;
+                                // Skip rendering simple walls if not editing or deleting
+                                if (!isDoor && !isEditing && !isDeleting) return null;
                                 // END CHANGE
 
                                 return (
-                                    <g key={w.id} onClick={(e) => { e.stopPropagation(); if(isDoor) handleToggleDoor(w.id); }} className={isDoor ? 'cursor-pointer hover:opacity-70' : ''}>
-                                        {/* Only draw the line if editing OR if it's a door (so we see the doorway) */}
-                                        {(isEditing || isDoor) && (
+                                    <g key={w.id} 
+                                       onMouseEnter={() => isDeleting && setHoveredWallId(w.id)}
+                                       onMouseLeave={() => setHoveredWallId(null)}
+                                       onClick={(e) => { 
+                                           e.stopPropagation(); 
+                                           if (isDoor && isEditing) handleToggleDoor(w.id);
+                                           if (isDeleting) handleDeleteWall(w.id);
+                                       }} 
+                                       className={isDeleting ? 'cursor-pointer' : (isDoor ? 'cursor-pointer hover:opacity-70' : '')}>
+                                        {/* Draw the line */}
+                                        {(isEditing || isDoor || isDeleting) && (
                                             <line 
                                                 x1={w.p1.x} y1={w.p1.y} x2={w.p2.x} y2={w.p2.y} 
-                                                stroke={w.type === 'wall' ? '#3b82f6' : (w.open ? '#22c55e' : '#f59e0b')} 
-                                                strokeWidth={6} 
+                                                stroke={isDeleting && isHovered ? '#ff6b6b' : (w.type === 'wall' ? '#3b82f6' : (w.open ? '#22c55e' : '#f59e0b'))} 
+                                                strokeWidth={isDeleting && isHovered ? 8 : 6} 
                                                 strokeLinecap="round"
-                                                opacity={isDoor && w.open ? 0.3 : 0.8}
+                                                opacity={isDeleting && isHovered ? 1 : (isDoor && w.open ? 0.3 : 0.8)}
                                             />
                                         )}
-                                        {/* Door Handle Icon (Always visible for Doors) */}
-                                        {isDoor && (
+                                        {/* Door Handle Icon (Only visible when on Pen/Wall/Door tool) */}
+                                        {isDoor && isEditing && (
                                             <circle cx={(w.p1.x + w.p2.x)/2} cy={(w.p1.y + w.p2.y)/2} r={5} fill="white" stroke="black" strokeWidth={1} />
+                                        )}
+                                        {/* Delete Indicator (Only visible when on Delete tool) */}
+                                        {isDeleting && (
+                                            <circle cx={(w.p1.x + w.p2.x)/2} cy={(w.p1.y + w.p2.y)/2} r={8} fill="none" stroke="#ff6b6b" strokeWidth={2} opacity={isHovered ? 1 : 0.5} />
                                         )}
                                     </g>
                                 );

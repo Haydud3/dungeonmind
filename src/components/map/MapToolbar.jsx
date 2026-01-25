@@ -8,6 +8,9 @@ const MapToolbar = ({ activeTool, setTool, visionActive, onToggleVision }) => {
         { id: 'move', icon: 'mouse-pointer-2', label: 'Move' },
         { id: 'wall', icon: 'brick-wall', label: 'Wall' },
         { id: 'door', icon: 'door-closed', label: 'Door' },
+        // START CHANGE: Add Delete Tool
+        { id: 'delete', icon: 'trash-2', label: 'Delete Wall' },
+        // END CHANGE
         { id: 'grid', icon: 'grid', label: 'Grid' },
     ];
 

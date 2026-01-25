@@ -8,36 +8,40 @@ import { useCharacterStore } from '../stores/useCharacterStore';
 const WorldView = ({ data, role, updateCloud, updateMapState, user, apiKey, onDiceRoll, savePlayer, onInitiative }) => {
     // State to track which sheet is open
     const [activeSheetId, setActiveSheetId] = useState(null);
+    const [sheetContext, setSheetContext] = useState(null); // NEW STATE FOR SHEET CONTEXT
 
     // --- HOT SWAP LOGIC ---
     useEffect(() => {
         if (activeSheetId) {
-            // START CHANGE: Hybrid Logic - Merge Instance data with Master stats
-            const tokens = data.campaign?.activeMap?.tokens || [];
-            const instance = tokens.find(t => t.id === activeSheetId);
-            
-            const allMasters = [...(data.players || []), ...(data.npcs || [])];
-            const master = allMasters.find(c => c.id === (instance?.characterId || activeSheetId));
-            
-            if (master) {
-                // START CHANGE: Deep copy to break reference and force state refresh
-                const sheetData = instance 
-                    ? { ...master, ...instance, id: instance.id, isInstance: true } 
-                    : { ...master, isInstance: false };
-                
-                // Clear old state before loading new to prevent "Stickiness"
-                useCharacterStore.getState().loadCharacter(null);
-                setTimeout(() => useCharacterStore.getState().loadCharacter(sheetData), 0);
-                // END CHANGE
-            }
+            // START CHANGE: Remove store loading logic - centralized in SheetContainer
+            // We only need to track activeSheetId to render the sidebar.
+            // SheetContainer now handles its own loading.
+            // END CHANGE
         }
     }, [activeSheetId, data]);
 
     const handleMapAction = (action, payload) => {
         if (action === 'open_sheet') {
-            // START CHANGE: Set local ID for sidebar, DO NOT change global currentView
-            setActiveSheetId(payload);
-            // setView('sheet'); <--- DELETE THIS LINE IF IT EXISTS
+            // START CHANGE: Handle both character sheets and token sheets
+            if (payload?.type === 'token') {
+                // It's a token instance - set both the token ID and the characterId
+                setActiveSheetId(payload.tokenId);
+                setSheetContext({ tokenId: payload.tokenId, isTokenSheet: true, token: payload.token });
+            } else {
+                // It's a regular character sheet (from bestiary)
+                setActiveSheetId(payload);
+                setSheetContext({ characterId: payload, isTokenSheet: false });
+            }
+            // END CHANGE
+        } else if (action === 'update_token') {
+            // START CHANGE: Handle token updates from SheetContainer onSave
+            const tokens = data.campaign?.activeMap?.tokens || [];
+            const updatedTokens = tokens.map(t => 
+                t.id === payload.id 
+                    ? { ...t, hp: payload.hp, statuses: payload.statuses, name: payload.name }
+                    : t
+            );
+            updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...data.campaign.activeMap, tokens: updatedTokens } } });
             // END CHANGE
         } else {
             // Pass map-specific actions (fog, tokens) to the parent updater
@@ -60,29 +64,35 @@ const WorldView = ({ data, role, updateCloud, updateMapState, user, apiKey, onDi
             {/* The Sidebar Character Sheet */}
             {activeSheetId && (
                 <div className="absolute top-0 right-0 bottom-0 w-full sm:w-96 bg-slate-950 border-l border-slate-700 shadow-2xl z-[80] animate-in slide-in-from-right duration-300 flex flex-col">
-                    {/* START CHANGE: Added unique key using activeSheetId to force re-render */}
+                    {/* START CHANGE: Hot-Swap - Remove key to allow data swap without re-render */}
                     <SheetContainer 
-                        key={activeSheetId}
-                        characterId={activeSheetId}
+                        data={data}
                         role={role}
-                        onBack={() => setActiveSheetId(null)}
-                        // START CHANGE: Redirect save based on Instance flag
+                        characterId={sheetContext?.characterId}
+                        tokenId={sheetContext?.tokenId}
+                        isTokenSheet={sheetContext?.isTokenSheet}
+                        onClose={() => { setActiveSheetId(null); setSheetContext(null); }}
+                        onDiceRoll={onDiceRoll}
+                        onInitiative={onInitiative}
+                        onLogAction={(msg) => {}}
+                        onPlaceTemplate={(spell) => {}}
+                        onPossess={(npcId) => {}}
                         onSave={(char) => {
                             if (char.isInstance) {
-                                // Save only volatile state back to the map token
+                                // Token instance - update using tokenId, not id
                                 updateMapState('update_token', { 
-                                    id: char.id, 
+                                    id: char.tokenId || char.id,  // Use tokenId if available
                                     hp: char.hp, 
                                     statuses: char.statuses || [],
-                                    name: char.name // Allow renaming "Goblin 2" to "Goblin Boss"
+                                    name: char.name
                                 });
                             } else {
-                                // Standard global save for Masters/PCs
+                                // Regular character - save to bestiary
                                 savePlayer(char);
                             }
                         }}
-                        // END CHANGE
                     />
+                    {/* END CHANGE */}
                 </div>
             )}
         </div>

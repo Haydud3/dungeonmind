@@ -13,8 +13,8 @@ import RollToast from './widgets/RollToast';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import Icon from '../Icon';
 
-// START CHANGE: Add 'data' to props definition
-const SheetContainer = ({ characterId, data, onSave, onDiceRoll, onLogAction, onBack, onPossess, isNpc, combatActive, onInitiative, onPlaceTemplate, isOwner = true, role }) => {
+// START CHANGE: Add 'data' and 'tokenId' to props definition
+const SheetContainer = ({ characterId, tokenId, data, onSave, onDiceRoll, onLogAction, onBack, onClose, onPossess, isNpc, combatActive, onInitiative, onPlaceTemplate, isOwner = true, role }) => {
 // END CHANGE
     const [activeTab, setActiveTab] = useState('actions');
     
@@ -23,17 +23,47 @@ const SheetContainer = ({ characterId, data, onSave, onDiceRoll, onLogAction, on
     const markSaved = useCharacterStore((state) => state.markSaved);
     const addLogEntry = useCharacterStore((state) => state.addLogEntry);
 
-    // START CHANGE: Hot-Swap Effect
+    // START CHANGE: Hot-Swap Effect - Handle Both Character and Token Loading
     const loadCharacter = useCharacterStore((state) => state.loadCharacter);
 
     useEffect(() => {
-        // If we have an ID and Data, find the character and load it into the store
-        if (characterId && data) {
+        // If we have tokenId, find the token instance and load it with its HP/stats
+        if (tokenId && data) {
+            const token = data.campaign?.activeMap?.tokens?.find(t => t.id === tokenId);
+            if (token) {
+                // Find the master character this token is an instance of
+                const allChars = [...(data.players || []), ...(data.npcs || [])];
+                
+                // Try exact match first, then try string comparison for type mismatches
+                let masterChar = allChars.find(c => c.id === token.characterId);
+                if (!masterChar) {
+                    masterChar = allChars.find(c => String(c.id) === String(token.characterId));
+                }
+                
+                if (masterChar) {
+                    // Create a merged character: master data with token instance overrides
+                    const instanceChar = {
+                        ...masterChar,
+                        tokenId: token.id,
+                        isInstance: true,
+                        name: token.name, // Use token's renamed name (e.g., "Owlbear 2")
+                        hp: token.hp || masterChar.hp,
+                        statuses: token.statuses || []
+                    };
+                    loadCharacter(instanceChar);
+                }
+            }
+        }
+        // If we have a regular characterId (non-token), load the character directly
+        else if (characterId && data) {
             const allChars = [...(data.players || []), ...(data.npcs || [])];
-            const target = allChars.find(c => c.id === characterId);
+            let target = allChars.find(c => c.id === characterId);
+            if (!target) {
+                target = allChars.find(c => String(c.id) === String(characterId));
+            }
             if (target) loadCharacter(target);
         }
-    }, [characterId, data]);
+    }, [tokenId, characterId, data, loadCharacter]);
     // END CHANGE
 
     const handleLogAction = (msg) => {
@@ -47,18 +77,20 @@ const SheetContainer = ({ characterId, data, onSave, onDiceRoll, onLogAction, on
             onSave(safeCharacter); 
             markSaved(); 
         }
-        if (onBack) onBack(); 
+        // Use onClose if provided (from WorldView), otherwise use onBack (legacy)
+        if (onClose) onClose(); 
+        else if (onBack) onBack(); 
     };
 
     // Auto-save
     useEffect(() => {
-        const interval = setInterval(() => {
+        const timeout = setTimeout(() => {
             if (isDirty && character && onSave) {
                 onSave(character);
                 markSaved();
             }
-        }, 3000);
-        return () => clearInterval(interval);
+        }, 2000); // NEW: Only fires after idle
+        return () => clearTimeout(timeout);
     }, [isDirty, character, onSave, markSaved]);
 
     if (!character) return <div className="text-slate-500 p-10 text-center animate-pulse">Loading Character...</div>;
