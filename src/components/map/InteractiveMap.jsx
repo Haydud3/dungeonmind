@@ -14,11 +14,9 @@ import CombatTracker from './CombatTracker';
 import RadialHUD from './RadialHUD';
 // END CHANGE
 
-const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, activeTemplate }) => {
+const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, activeTemplate, sidebarIsOpen }) => {
     // View & Interaction State
     const [view, setView] = useState({ x: 0, y: 0, scale: 1 });
-    const [isDraggingMap, setIsDraggingMap] = useState(false);
-    const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
     
     // Feature Toggles
     const [activeTool, setActiveTool] = useState('move');
@@ -100,7 +98,68 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     }, [data.campaign?.combat?.active]);
     // END CHANGE
 
+    // START CHANGE: Hot-Swap Sheets on Token Selection
+    // When sidebar is open and a new token is selected, automatically open its sheet
+    // WITHOUT closing the RadialHUD
+    useEffect(() => {
+        if (sidebarIsOpen && selectedTokenId) {
+            const token = tokens.find(t => t.id === selectedTokenId);
+            if (token) {
+                // Open sheet WITHOUT setting selectedTokenId to null (keeps HUD open)
+                updateMapState('open_sheet', { 
+                    type: 'token',
+                    tokenId: token.id,
+                    mapId: mapData.id,
+                    token: token,
+                    forceOpen: true
+                });
+            }
+        }
+    }, [selectedTokenId, sidebarIsOpen]);
+    // END CHANGE
+
     // --- 1. RENDERERS (Vision Logic) ---
+    
+    // Helper: Calculate vision radius based on character darkvision and equipment
+    const calculateVisionRadius = (token, character) => {
+        if (!visionActive) return 99999; // Infinite range when lights off (but walls still block)
+        
+        // Convert D&D feet to pixels: 50px = 5ft (1 grid square)
+        const ftToPixels = (ft) => (ft / 5) * 50;
+        
+        let visionRadius = 0;
+        let hasTorch = false;
+        let hasLantern = false;
+        
+        // Check inventory for light sources
+        if (character.inventory && Array.isArray(character.inventory)) {
+            for (const item of character.inventory) {
+                const itemName = (item.name || '').toLowerCase();
+                if (itemName.includes('torch')) hasTorch = true;
+                if (itemName.includes('lantern')) hasLantern = true;
+            }
+        }
+        
+        // Calculate base vision
+        const darkVisionFt = character.senses?.darkvision || 0;
+        
+        if (hasTorch) {
+            // Torch: 20ft bright light + 20ft dim light (use 40ft as full range)
+            visionRadius = ftToPixels(40);
+        } else if (hasLantern) {
+            // Lantern: Similar to torch (30ft bright + 30ft dim, use 60ft)
+            visionRadius = ftToPixels(60);
+        } else if (darkVisionFt > 0) {
+            // Has darkvision
+            visionRadius = ftToPixels(darkVisionFt);
+        } else {
+            // No light source, no darkvision: 2ft vision (very limited)
+            visionRadius = ftToPixels(2);
+        }
+        
+        return visionRadius;
+    };
+
     // START CHANGE: The Unified Vision Engine (Replaces Fog)
     const renderVision = () => {
         const canvas = visionCanvasRef.current;
@@ -116,80 +175,196 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         const ctx = canvas.getContext('2d');
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        // 2. TOGGLE CHECK: If Vision is OFF, stop here (Map is fully revealed)
-        if (!visionActive) return;
+        // ===== UNIFIED VISION PASS (FIX FOR DOUBLE-PUNCH EFFECT) =====
+        // Instead of per-token rendering with overlapping destination-out operations,
+        // collect all token vision polygons FIRST, then apply a single unified shadow pass.
+        // This ensures the raycasting layer is the final authority without conflicts.
+        // NOTE: Even when visionActive is OFF, walls still block vision (infinite range mode)
 
-        // 3. Fill "The Shadows"
-        ctx.fillStyle = '#000000';
-        // START CHANGE: Use additive blending for DM mode to show stacked vision
-        if (role === 'dm') {
-            // DM uses additive mode so multiple tokens' vision blends together
-            ctx.globalCompositeOperation = 'lighter';
-            ctx.globalAlpha = 0.3; // Each token adds 30% brightness
-        } else {
-            // Players see pitch black shadows
-            ctx.globalAlpha = 1.0;
-        }
-        // END CHANGE
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-        // 4. Cut Holes (Vision) - Always blocks vision regardless of visionActive setting
-        ctx.globalCompositeOperation = 'destination-out';
-        ctx.globalAlpha = 1.0;
-        ctx.shadowBlur = 30; // Soft edges
-        ctx.shadowColor = 'black';
-
-        // 5. Calculate Vision for Each Token
+        // 2. COLLECT PHASE: Build token vision data WITHOUT rendering yet
+        const tokenVisionData = [];
+        
         tokens.forEach(token => {
-            // Only PCs emit vision (unless you want NPC vision too)
-            if (token.type !== 'pc') return; 
+            // Only PCs emit vision (NPCs don't reveal fog)
+            if (token.type !== 'pc') return;
 
-            // START CHANGE: Simplified Vision Origin
-            // Token.x/y is now the CENTER, so we use it directly.
+            // Vision Origin (center of token)
             const origin = {
                 x: (token.x / 100) * img.naturalWidth,
                 y: (token.y / 100) * img.naturalHeight
             };
-            // END CHANGE
 
-            // START CHANGE: Walls always block vision, regardless of toggle
-            // Raycasting Logic
+            // Calculate vision radius based on character sheet (darkvision + equipment)
+            let visionRadius = 200; // Fallback default
+            if (data.campaign?.characters?.[token.characterId]) {
+                const character = data.campaign.characters[token.characterId];
+                visionRadius = calculateVisionRadius(token, character);
+            } else {
+                // No character data, use fallback
+                visionRadius = visionActive ? 200 : 99999;
+            }
+
+            // Wall & Door Blocking Logic
             const blockingSegments = walls.filter(w => {
-                // Only open doors don't block vision
-                if (w.type === 'door' && w.open) return false;
-                // All other walls (closed doors, regular walls) always block
+                if (w.type === 'door' && w.isOpen) return false;
                 return true;
             });
-            const polygon = calculateVisibilityPolygon(origin, blockingSegments, { width: canvas.width, height: canvas.height });
 
-            // Draw Polygon
-            ctx.beginPath();
-            if (polygon.length > 0) {
-                ctx.moveTo(polygon[0].x, polygon[0].y);
-                for (let i = 1; i < polygon.length; i++) {
-                    ctx.lineTo(polygon[i].x, polygon[i].y);
-                }
-            }
-            ctx.closePath();
-            ctx.fill();
+            // Raycasting to calculate visibility polygon
+            // Walls always block, even when lights are off
+            const polygon = calculateVisibilityPolygon(origin, blockingSegments, { 
+                width: canvas.width, 
+                height: canvas.height,
+                maxRange: visionRadius
+            });
 
-            // Draw Central Glow (The "Torch" effect) to smooth the center
-            const rangePx = 200; // Standard torch radius approx
-            ctx.beginPath();
-            ctx.arc(origin.x, origin.y, rangePx, 0, Math.PI * 2);
-            ctx.fill();
+            tokenVisionData.push({
+                origin,
+                visionRadius,
+                polygon,
+                token
+            });
         });
+
+        // 3. RENDER PHASE: Apply unified shadow pass
+        // Step A: Only fill with shadow if vision is ACTIVE
+        // When vision is OFF, skip shadow fill to show full map
+        // But raycasting below still renders wall-based blocking
+        if (visionActive) {
+            ctx.fillStyle = '#000000';
+            if (role === 'dm') {
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.globalAlpha = 0.55;
+            } else {
+                ctx.globalAlpha = 1.0;
+            }
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+
+        // Step B: Carve out UNIFIED vision region using combined visibility
+        // This is the key fix: all token vision combines into ONE erase operation
+        ctx.globalCompositeOperation = 'destination-out';
+        ctx.globalAlpha = 1.0;
+        ctx.shadowBlur = 25;
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
+
+        // Step B: Carve out UNIFIED vision region using combined visibility
+        // This is the key fix: all token vision combines into ONE erase operation
+        // Only carve if there's a base shadow to carve from
+        if (visionActive) {
+            // Draw all visibility polygons combined (additive merge)
+            tokenVisionData.forEach(({ polygon }) => {
+                ctx.beginPath();
+                if (polygon.length > 0) {
+                    ctx.moveTo(polygon[0].x, polygon[0].y);
+                    for (let i = 1; i < polygon.length; i++) {
+                        ctx.lineTo(polygon[i].x, polygon[i].y);
+                    }
+                    ctx.closePath();
+                }
+                ctx.fill();
+            });
+
+            // Step C: Apply gradient softening on vision edges
+            ctx.globalCompositeOperation = 'destination-out';
+            tokenVisionData.forEach(({ origin, visionRadius }) => {
+                const gradient = ctx.createRadialGradient(origin.x, origin.y, visionRadius * 0.8, origin.x, origin.y, visionRadius);
+                gradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
+                gradient.addColorStop(1, 'rgba(0, 0, 0, 0.4)');
+                ctx.fillStyle = gradient;
+                ctx.beginPath();
+                ctx.arc(origin.x, origin.y, visionRadius, 0, Math.PI * 2);
+                ctx.fill();
+            });
+
+            // Step D: Apply hard darkvision limits (player-only boundary enforcement)
+            if (role !== 'dm') {
+                ctx.globalCompositeOperation = 'source-over';
+                tokenVisionData.forEach(({ origin, visionRadius }) => {
+                    ctx.beginPath();
+                    ctx.arc(origin.x, origin.y, visionRadius + 50, 0, Math.PI * 2);
+                    ctx.arc(origin.x, origin.y, visionRadius, 0, Math.PI * 2, true);
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+                    ctx.fill();
+                });
+            }
+
+            // Step E: GATEKEEPER PHASE (Vision ON) - Final shadow pass - raycasting wins over pen tool
+            // This re-applies shadows using the unified vision data to ensure no leaks
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.globalAlpha = role === 'dm' ? 0.3 : 0.6;
+            ctx.fillStyle = '#000000';
+
+            // For each token, draw the inverse (everything OUTSIDE their polygon)
+            tokenVisionData.forEach(({ polygon }) => {
+                ctx.beginPath();
+                ctx.rect(0, 0, canvas.width, canvas.height);
+                if (polygon.length > 0) {
+                    ctx.moveTo(polygon[0].x, polygon[0].y);
+                    for (let i = 1; i < polygon.length; i++) {
+                        ctx.lineTo(polygon[i].x, polygon[i].y);
+                    }
+                }
+                ctx.fill('evenodd');
+            });
+        } else {
+            // Step B (Vision OFF): Render wall-based vision blocking without shadow fog
+            // Draw walls as opaque black to block line of sight, even though map is visible
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.globalAlpha = 1.0;
+            
+            tokenVisionData.forEach(({ polygon }) => {
+                // Draw everything OUTSIDE the polygon as a wall shadow
+                // This creates a "light-safe" mode where you can see everything but walls still block
+                ctx.fillStyle = '#000000';
+                ctx.beginPath();
+                ctx.rect(0, 0, canvas.width, canvas.height);
+                if (polygon.length > 0) {
+                    ctx.moveTo(polygon[0].x, polygon[0].y);
+                    for (let i = 1; i < polygon.length; i++) {
+                        ctx.lineTo(polygon[i].x, polygon[i].y);
+                    }
+                }
+                ctx.fill('evenodd');
+            });
+        }
 
         // Reset
         ctx.globalCompositeOperation = 'source-over';
+        ctx.globalAlpha = 1.0;
         ctx.shadowBlur = 0;
     };
 
     // Re-render when relevant state changes
-    useEffect(() => { renderVision(); }, [tokens, walls, visionActive, role, mapUrl]);
+    useEffect(() => { renderVision(); }, [tokens, walls, visionActive, role, mapUrl, data.campaign?.characters]);
     // END CHANGE
 
     // --- 2. MATH HELPERS ---
+    
+    // START CHANGE: Point-to-Line Segment Distance Helper (For Door/Delete Hit-Testing)
+    // Returns the perpendicular distance from point (px, py) to line segment (x1,y1)-(x2,y2)
+    const pointToSegmentDistance = (px, py, x1, y1, x2, y2) => {
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        const lengthSquared = dx * dx + dy * dy;
+        
+        if (lengthSquared === 0) {
+            // Point is a line (degenerate case)
+            return Math.sqrt((px - x1) ** 2 + (py - y1) ** 2);
+        }
+        
+        // Calculate parameter t: projection of point onto line
+        let t = ((px - x1) * dx + (py - y1) * dy) / lengthSquared;
+        t = Math.max(0, Math.min(1, t)); // Clamp to segment
+        
+        // Find closest point on segment
+        const closestX = x1 + t * dx;
+        const closestY = y1 + t * dy;
+        
+        // Distance from point to closest point on segment
+        return Math.sqrt((px - closestX) ** 2 + (py - closestY) ** 2);
+    };
+    // END CHANGE
     
     // START CHANGE: Line Segment Intersection Helper
     // Returns true if line (p1-p2) intersects with line (p3-p4)
@@ -300,48 +475,60 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     };
 
     // START CHANGE: Restore Mouse Down Handler
-    const handleMouseDown = (e) => {
-        // START CHANGE: Restore Mouse Down Handler
-        if (activeTool === 'move' || activeTool === 'grid') {
-            // Middle Click OR Left Click with Move Tool -> Pan
-            if (e.button === 1 || (e.button === 0 && activeTool === 'move')) {
-                setIsDraggingMap(true);
-                setDragStart({ x: e.clientX - view.x, y: e.clientY - view.y });
-                setSelectedTokenId(null);
-            }
-        }
+    const [isPanning, setIsPanning] = useState(false);
+    const [lastMousePos, setLastMousePos] = useState({ x: 0, y: 0 });
+    const [isDraggingToken, setIsDraggingToken] = useState(false);
 
-        // Start Drawing Wall/Door
-        if (e.button === 0 && (activeTool === 'wall' || activeTool === 'door') && role === 'dm') {
-            setWallStart(getMapCoords(e));
-        }
+    const handleMouseDown = (e) => {
+        if (e.button !== 0) return; // Right-click still passes for HUD
+        
+        // START CHANGE: We no longer 'return' early here.
+        // We let the map prepare to pan regardless of what was clicked.
+        setIsPanning(true);
+        setLastMousePos({ x: e.clientX, y: e.clientY });
     };
-    // END CHANGE
 
     const handleMouseMove = (e) => {
-        if (isDraggingMap) {
-            setView(prev => ({ ...prev, x: e.clientX - dragStart.x, y: e.clientY - dragStart.y }));
+        // Pan the map if not moving a token and not dragging
+        if (isPanning && !movingTokenId && !isDraggingToken) {
+            const dx = e.clientX - lastMousePos.x;
+            const dy = e.clientY - lastMousePos.y;
+            setView(prev => ({ ...prev, x: prev.x + dx, y: prev.y + dy }));
+            setLastMousePos({ x: e.clientX, y: e.clientY });
         }
         
-        // START CHANGE: Remove Fog Drawing Logic
-        // Was: if (isDrawingFog) { ... }
-        
-        // Update Wall Preview Cursor
-        if (activeTool === 'wall' || activeTool === 'door') {
-            setCursorPos(getMapCoords(e));
+        // Update Cursor Position for Drawing/Door/Delete Tools
+        if (activeTool === 'wall' || activeTool === 'door' || activeTool === 'delete') {
+            const img = mapImageRef.current;
+            if (img && img.naturalWidth && img.naturalHeight) {
+                // Use same coordinate transformation as handleMapClick
+                const rect = containerRef.current.getBoundingClientRect();
+                const mouseX = e.clientX - rect.left;
+                const mouseY = e.clientY - rect.top;
+                
+                // Convert to world space
+                const worldX = (mouseX - view.x) / view.scale;
+                const worldY = (mouseY - view.y) / view.scale;
+                
+                // Convert to pixel coordinates (same as wall anchor)
+                const percentX = (worldX / img.naturalWidth) * 100;
+                const percentY = (worldY / img.naturalHeight) * 100;
+                const pixelX = (percentX / 100) * img.naturalWidth;
+                const pixelY = (percentY / 100) * img.naturalHeight;
+                
+                setCursorPos({ x: pixelX, y: pixelY });
+            }
         }
-        // END CHANGE
 
         // Update Moving Token Position
         if (movingTokenId) {
             const pos = getMapCoords(e);
             setMovingTokenPos(pos);
         }
-        // END CHANGE
     };
 
-    const handleMouseUp = (e) => {
-        setIsDraggingMap(false);
+    const handleMouseUp = () => {
+        setIsPanning(false);
         
         // START CHANGE: Finalize Token Move OR Select
         if (movingTokenId && movingTokenPos) {
@@ -424,32 +611,6 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         // END CHANGE
     };
 
-    // Zoom towards Mouse Cursor
-    const handleWheel = (e) => {
-        e.preventDefault();
-        
-        // 1. Determine zoom direction and speed
-        const scaleSensitivity = 0.001;
-        const delta = -e.deltaY * scaleSensitivity;
-        const newScale = Math.min(Math.max(0.1, view.scale + delta), 5); // Clamp 0.1x to 5x
-
-        // 2. Get mouse position relative to the container
-        const rect = containerRef.current.getBoundingClientRect();
-        const mouseX = e.clientX - rect.left;
-        const mouseY = e.clientY - rect.top;
-
-        // 3. Calculate "World Point" under mouse (before zoom)
-        const worldX = (mouseX - view.x) / view.scale;
-        const worldY = (mouseY - view.y) / view.scale;
-
-        // 4. Calculate new Pan to keep World Point under mouse (after zoom)
-        const newX = mouseX - (worldX * newScale);
-        const newY = mouseY - (worldY * newScale);
-
-        setView({ x: newX, y: newY, scale: newScale });
-    };
-    // END CHANGE
-
     // --- 4. DRAG & DROP SPAWNING ---
     const handleDragStart = (e, entity, type) => {
         e.dataTransfer.setData("entityId", entity.id);
@@ -530,7 +691,8 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                 type: 'token',
                 tokenId: token.id,
                 mapId: mapData.id,
-                token: token  // Pass full token object
+                token: token,  // Pass full token object
+                forceOpen: true  // Flag: Always open sheet when HUD button is clicked
             });
             setSelectedTokenId(null);
         }
@@ -570,6 +732,128 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             handleMapLoad();
         }
     }, [mapUrl]);
+    // END CHANGE
+
+    // START CHANGE: Wall Drawing Handlers
+    const handleMapClick = (e) => {
+        // Only DM can use these tools
+        if (role !== 'dm') return;
+        
+        // Only respond to left-click
+        if (e.button !== 0) return;
+        
+        const img = mapImageRef.current;
+        if (!img || !img.naturalWidth) return;
+
+        // Get click position
+        const rect = containerRef.current.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+        
+        // Convert to world space
+        const worldX = (mouseX - view.x) / view.scale;
+        const worldY = (mouseY - view.y) / view.scale;
+        
+        // Convert to pixel coordinates
+        const percentX = (worldX / img.naturalWidth) * 100;
+        const percentY = (worldY / img.naturalHeight) * 100;
+        const pixelX = (percentX / 100) * img.naturalWidth;
+        const pixelY = (percentY / 100) * img.naturalHeight;
+
+        // --- DOOR TOOL: Hit-Test to Convert Wall to Door or Toggle Door Open/Close ---
+        if (activeTool === 'door') {
+            const HIT_THRESHOLD = 10; // pixels
+            
+            // Search for nearby walls
+            const nearbyWall = walls.find(w => {
+                const distance = pointToSegmentDistance(
+                    pixelX, pixelY, 
+                    w.p1.x, w.p1.y, 
+                    w.p2.x, w.p2.y
+                );
+                return distance <= HIT_THRESHOLD;
+            });
+            
+            if (nearbyWall) {
+                let updatedWall;
+                
+                if (nearbyWall.type === 'door') {
+                    // Already a door: toggle isOpen
+                    updatedWall = {
+                        ...nearbyWall,
+                        isOpen: !nearbyWall.isOpen
+                    };
+                } else {
+                    // Regular wall: convert to door (closed by default)
+                    updatedWall = {
+                        ...nearbyWall,
+                        type: 'door',
+                        isOpen: false
+                    };
+                }
+                
+                const newWalls = walls.map(w => w.id === nearbyWall.id ? updatedWall : w);
+                updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...mapData, walls: newWalls } } });
+            }
+            return;
+        }
+
+        // --- DELETE TOOL: Hit-Test and Remove Wall ---
+        if (activeTool === 'delete') {
+            const HIT_THRESHOLD = 10; // pixels
+            
+            // Search for nearby walls
+            const wallToDelete = walls.find(w => {
+                const distance = pointToSegmentDistance(
+                    pixelX, pixelY, 
+                    w.p1.x, w.p1.y, 
+                    w.p2.x, w.p2.y
+                );
+                return distance <= HIT_THRESHOLD;
+            });
+            
+            if (wallToDelete) {
+                // Delete the wall
+                const newWalls = walls.filter(w => w.id !== wallToDelete.id);
+                updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...mapData, walls: newWalls } } });
+            }
+            return;
+        }
+
+        // --- WALL TOOL: Draw walls with anchor/lock/chain ---
+        if (activeTool !== 'wall') return;
+
+        if (!wallStart) {
+            // ANCHOR: First click - set anchor point
+            setWallStart({ x: pixelX, y: pixelY });
+        } else {
+            // LOCK: Second click - create wall and chain
+            const newWall = {
+                id: `wall-${Date.now()}`,
+                p1: { x: wallStart.x, y: wallStart.y },
+                p2: { x: pixelX, y: pixelY },
+                type: 'wall',
+                isOpen: false,
+                percentStart: { x: (wallStart.x / img.naturalWidth) * 100, y: (wallStart.y / img.naturalHeight) * 100 },
+                percentEnd: { x: (pixelX / img.naturalWidth) * 100, y: (pixelY / img.naturalHeight) * 100 }
+            };
+            
+            // Add wall to cloud
+            const newWalls = [...walls, newWall];
+            updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...mapData, walls: newWalls } } });
+            
+            // CHAIN: Start new anchor at this point
+            setWallStart({ x: pixelX, y: pixelY });
+        }
+    };
+
+    const handleMapRightClick = (e) => {
+        if (role !== 'dm' || (activeTool !== 'wall' && activeTool !== 'door' && activeTool !== 'delete')) return;
+        
+        e.preventDefault();
+        // CUT: Right-click stops the chain
+        setWallStart(null);
+    };
     // END CHANGE
 
     // START CHANGE: Native Non-Passive Wheel Listener (Fixes "Whole App" Zoom)
@@ -617,6 +901,9 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             onMouseLeave={handleMouseUp}
             onDragOver={(e) => e.preventDefault()}
             onDrop={handleDrop}
+            onDragEnter={() => setIsDraggingToken(true)}
+            onDragLeave={() => setIsDraggingToken(false)}
+            onDragEnd={() => setIsDraggingToken(false)}
         >
             {/* --- TOP RIGHT CONTROLS (Library, Tokens, Zoom) --- */}
             <div className="absolute top-4 right-4 z-50 flex gap-2 pointer-events-auto">
@@ -711,7 +998,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                 style={{ 
                     transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})`,
                     transformOrigin: '0 0',
-                    transition: isDraggingMap ? 'none' : 'transform 0.1s ease-out'
+                    transition: isPanning ? 'none' : 'transform 0.1s ease-out'
                 }}
                 className="absolute top-0 left-0 w-full h-full will-change-transform"
             >
@@ -755,59 +1042,56 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                         {/* END CHANGE */}
 
                         {/* Phase 3 Wall/Door SVG Layer */}
-                        <svg className="absolute top-0 left-0 w-full h-full pointer-events-auto z-[8]" style={{ viewBox: `0 0 ${mapImageRef.current?.naturalWidth} ${mapImageRef.current?.naturalHeight}` }}>
-                            {/* 1. Render Saved Walls */}
+                        <svg 
+                            className="absolute top-0 left-0 w-full h-full pointer-events-auto z-[8]" 
+                            style={{ viewBox: `0 0 ${mapImageRef.current?.naturalWidth} ${mapImageRef.current?.naturalHeight}` }}
+                            onClick={handleMapClick}
+                            onContextMenu={handleMapRightClick}
+                        >
+                            {/* 1. Render Saved Walls & Doors (Only visible when using wall/door/delete tools) */}
                             {walls.map(w => {
-                                // START CHANGE: Visibility and Delete Logic
-                                // Only show 'wall' lines if DM is using the Wall/Door tool
-                                const isEditing = role === 'dm' && (activeTool === 'wall' || activeTool === 'door');
-                                const isDeleting = role === 'dm' && activeTool === 'delete';
-                                const isDoor = w.type === 'door';
-                                const isHovered = hoveredWallId === w.id;
+                                // Only show walls when DM is using the Wall, Door, or Delete tool
+                                const isToolActive = role === 'dm' && (activeTool === 'wall' || activeTool === 'door' || activeTool === 'delete');
+                                if (!isToolActive) return null;
                                 
-                                // Skip rendering simple walls if not editing or deleting
-                                if (!isDoor && !isEditing && !isDeleting) return null;
+                                const isDoor = w.type === 'door';
+                                const lineColor = isDoor ? (w.isOpen ? '#22c55e' : '#f59e0b') : '#3b82f6';
                                 // END CHANGE
 
                                 return (
-                                    <g key={w.id} 
-                                       onMouseEnter={() => isDeleting && setHoveredWallId(w.id)}
-                                       onMouseLeave={() => setHoveredWallId(null)}
-                                       onClick={(e) => { 
-                                           e.stopPropagation(); 
-                                           if (isDoor && isEditing) handleToggleDoor(w.id);
-                                           if (isDeleting) handleDeleteWall(w.id);
-                                       }} 
-                                       className={isDeleting ? 'cursor-pointer' : (isDoor ? 'cursor-pointer hover:opacity-70' : '')}>
-                                        {/* Draw the line */}
-                                        {(isEditing || isDoor || isDeleting) && (
-                                            <line 
-                                                x1={w.p1.x} y1={w.p1.y} x2={w.p2.x} y2={w.p2.y} 
-                                                stroke={isDeleting && isHovered ? '#ff6b6b' : (w.type === 'wall' ? '#3b82f6' : (w.open ? '#22c55e' : '#f59e0b'))} 
-                                                strokeWidth={isDeleting && isHovered ? 8 : 6} 
-                                                strokeLinecap="round"
-                                                opacity={isDeleting && isHovered ? 1 : (isDoor && w.open ? 0.3 : 0.8)}
-                                            />
-                                        )}
-                                        {/* Door Handle Icon (Only visible when on Pen/Wall/Door tool) */}
-                                        {isDoor && isEditing && (
-                                            <circle cx={(w.p1.x + w.p2.x)/2} cy={(w.p1.y + w.p2.y)/2} r={5} fill="white" stroke="black" strokeWidth={1} />
-                                        )}
-                                        {/* Delete Indicator (Only visible when on Delete tool) */}
-                                        {isDeleting && (
-                                            <circle cx={(w.p1.x + w.p2.x)/2} cy={(w.p1.y + w.p2.y)/2} r={8} fill="none" stroke="#ff6b6b" strokeWidth={2} opacity={isHovered ? 1 : 0.5} />
-                                        )}
-                                    </g>
+                                    <line 
+                                        key={w.id}
+                                        x1={w.p1.x} y1={w.p1.y} x2={w.p2.x} y2={w.p2.y} 
+                                        stroke={lineColor}
+                                        strokeWidth={6} 
+                                        strokeLinecap="round"
+                                        opacity={0.8}
+                                    />
                                 );
                             })}
                             
-                            {/* 2. Render Live Preview Line */}
-                            {wallStart && (
+                            {/* 2. Render Ghost Line (Live Preview for Wall/Door Drawing) */}
+                            {wallStart && (activeTool === 'wall' || activeTool === 'door') && (
                                 <line 
                                     x1={wallStart.x} y1={wallStart.y} x2={cursorPos.x} y2={cursorPos.y} 
                                     stroke={activeTool === 'wall' ? '#3b82f6' : '#f59e0b'} 
                                     strokeWidth={4} 
                                     strokeDasharray="10,5"
+                                    opacity={0.6}
+                                    pointerEvents="none"
+                                />
+                            )}
+                            
+                            {/* 3. Render Proximity Circle for Door/Delete Tools */}
+                            {(activeTool === 'delete' || activeTool === 'door') && (
+                                <circle 
+                                    cx={cursorPos.x} cy={cursorPos.y} r={10}
+                                    fill="none"
+                                    stroke={activeTool === 'delete' ? '#ef4444' : '#f59e0b'}
+                                    strokeWidth={2}
+                                    strokeDasharray="5,5"
+                                    opacity={0.4}
+                                    pointerEvents="none"
                                 />
                             )}
                         </svg>

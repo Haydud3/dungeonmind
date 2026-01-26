@@ -22,16 +22,22 @@ const WorldView = ({ data, role, updateCloud, updateMapState, user, apiKey, onDi
 
     const handleMapAction = (action, payload) => {
         if (action === 'open_sheet') {
-            // START CHANGE: Handle both character sheets and token sheets
-            if (payload?.type === 'token') {
-                // It's a token instance - set both the token ID and the characterId
-                setActiveSheetId(payload.tokenId);
-                setSheetContext({ tokenId: payload.tokenId, isTokenSheet: true, token: payload.token });
-            } else {
-                // It's a regular character sheet (from bestiary)
-                setActiveSheetId(payload);
-                setSheetContext({ characterId: payload, isTokenSheet: false });
+            // START CHANGE: Apply Gatekeeper Logic with HUD Override
+            // If forceOpen is true (HUD button clicked), always open regardless of sidebar state
+            // Otherwise, only open if sidebar is already visible
+            if (payload?.forceOpen || activeSheetId !== null) {
+                // Sidebar is open OR user clicked HUD button: open/swap the sheet
+                if (payload?.type === 'token') {
+                    setActiveSheetId(payload.tokenId);
+                    setSheetContext({ tokenId: payload.tokenId, isTokenSheet: true, token: payload.token });
+                } else {
+                    // It's a regular character sheet (from bestiary)
+                    setActiveSheetId(payload);
+                    setSheetContext({ characterId: payload, isTokenSheet: false });
+                }
             }
+            // If sidebar is closed and no forceOpen flag, ignore the request silently
+            // Token remains selected on the map for movement/interaction
             // END CHANGE
         } else if (action === 'update_token') {
             // START CHANGE: Handle token updates from SheetContainer onSave
@@ -57,7 +63,8 @@ const WorldView = ({ data, role, updateCloud, updateMapState, user, apiKey, onDi
                     data={data} 
                     role={role} 
                     updateCloud={updateCloud} 
-                    updateMapState={handleMapAction} 
+                    updateMapState={handleMapAction}
+                    sidebarIsOpen={activeSheetId !== null}
                 />
             </div>
 

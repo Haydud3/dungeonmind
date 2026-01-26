@@ -30,6 +30,21 @@ const RadialHUD = ({ token, position, onUpdateToken, onDelete, onOpenSheet, onCl
         { id: 'size', icon: 'maximize', angle: -30, color: 'text-blue-400', bg: 'hover:bg-blue-900/30', action: () => cycleSize(), title: `Current Size: ${currentSize}x` },
     ];
 
+    const hudRef = React.useRef(null);
+
+    React.useEffect(() => {
+        function handleClick(e) {
+            // If click is inside HUD, ignore
+            if (hudRef.current && hudRef.current.contains(e.target)) return;
+            // If click is on the token, ignore
+            if (e.target && e.target.classList.contains('token-element')) return;
+            // Otherwise, close HUD
+            onClose && onClose();
+        }
+        document.addEventListener('mousedown', handleClick);
+        return () => document.removeEventListener('mousedown', handleClick);
+    }, [onClose]);
+
     const toggleStatus = (status) => {
         const current = token.statuses || [];
         const newStatuses = current.includes(status) 
@@ -55,6 +70,8 @@ const RadialHUD = ({ token, position, onUpdateToken, onDelete, onOpenSheet, onCl
 
     return (
         <div 
+            ref={hudRef}
+            onClick={(e) => e.stopPropagation()} // Prevent closing when clicking the HUD itself
             className="absolute z-[70] pointer-events-none"
             style={{ left: position.x, top: position.y }}
         >

@@ -12,7 +12,7 @@ const STATUS_ICONS = {
     burning: { icon: 'flame', color: 'text-orange-500', bg: 'bg-orange-900' }
 };
 
-const Token = ({ token, isOwner, onMouseDown, onTouchStart, cellPx, isDragging, overridePos, onClick }) => {
+const Token = ({ token, isOwner, onMouseDown, onTouchStart, cellPx, isDragging, overridePos, onClick, isSelected }) => {
         // 1. Calculate Token Dimensions
         // START CHANGE: Allow Numbers (1, 2, 3) or Strings
         const sizeMap = { medium: 1, large: 2, huge: 3, gargantuan: 4, tiny: 0.5 };
@@ -20,13 +20,13 @@ const Token = ({ token, isOwner, onMouseDown, onTouchStart, cellPx, isDragging, 
     const dimension = cellPx * sizeMultiplier;
 
     // START CHANGE: Standardized variable block and fixed duplicate definitions
-    const fontSize = dimension * 0.14; 
+    const fontSize = dimension * 0.14 * 1.69;  // Increased by 69% (30% more than previous 30%)
     const py = dimension * 0.02; 
     const px = dimension * 0.10; 
     const borderThickness = Math.max(0.5, dimension * 0.05); 
     const shadowBlur = dimension * 0.08; 
-    const gap = dimension * 0.12; 
-    const bottomOffset = -(fontSize + py + gap); 
+    const gap = dimension * 0.05;  // Reduced from 0.12 to move nameplate closer
+    const bottomOffset = -(fontSize + py + gap + dimension * 0.08) * 0.7; // 30% closer to token, overlaps bottom
     const paddingY = py; 
     const paddingX = px;
     // END CHANGE
@@ -57,18 +57,23 @@ const Token = ({ token, isOwner, onMouseDown, onTouchStart, cellPx, isDragging, 
     return (
         <div 
             onMouseDown={(e) => {
+                // REMOVED: e.stopPropagation()
+                // We let the event bubble so the map knows a click happened.
                 if (isOwner) {
-                    // REMOVED: e.stopPropagation(); to allow global window listeners to catch drag
                     if(onMouseDown) onMouseDown(e, token.id);
                 }
             }}
             onTouchStart={(e) => {
+                e.stopPropagation();
                 if (isOwner) {
-                    // REMOVED: e.stopPropagation();
                     if(onTouchStart) onTouchStart(e, token.id);
                 }
             }}
-            onClick={(e) => onClick && onClick(e, token.id)}
+            onClick={(e) => {
+                // Only block left-click; Right-click needs to bubble to trigger HUD
+                if (e.button === 0) e.stopPropagation(); 
+                onClick && onClick(e, token.id);
+            }}
             className={`absolute transform -translate-x-1/2 -translate-y-1/2 cursor-grab active:cursor-grabbing hover:z-50 
                 ${isOwner ? 'hover:scale-105' : ''} 
                 ${isDead ? 'grayscale opacity-80' : ''}
@@ -95,7 +100,7 @@ const Token = ({ token, isOwner, onMouseDown, onTouchStart, cellPx, isDragging, 
                     borderWidth: `${borderThickness}px`,
                     borderStyle: 'solid',
                     borderColor: borderColor,
-                    boxShadow: `0 0 ${shadowBlur}px ${shadowColor}`,
+                    boxShadow: `0 0 ${shadowBlur}px ${shadowColor}${isSelected ? ', 0 0 20px rgba(99, 102, 241, 0.8)' : ''}`,
                     imageRendering: 'auto',
                     WebkitFontSmoothing: 'antialiased'
                 }}
