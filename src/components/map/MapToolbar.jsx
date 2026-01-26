@@ -6,6 +6,8 @@ const MapToolbar = ({ activeTool, setTool, visionActive, onToggleVision }) => {
     // No more fog-reveal/shroud tools
     const tools = [
         { id: 'move', icon: 'mouse-pointer-2', label: 'Move' },
+        { id: 'ruler', icon: 'ruler', label: 'Ruler' },
+        { id: 'sphere', icon: 'circle-dot', label: 'Sphere AoE' },
         { id: 'wall', icon: 'brick-wall', label: 'Wall' },
         { id: 'door', icon: 'door-closed', label: 'Door' },
         // START CHANGE: Add Delete Tool

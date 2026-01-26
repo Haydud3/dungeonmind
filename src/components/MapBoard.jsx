@@ -1210,7 +1210,7 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
                  <div className="absolute top-16 left-4 z-30 bg-slate-900/95 backdrop-blur border border-slate-600 rounded-lg p-3 w-48 shadow-2xl animate-in slide-in-from-left-5">
                      <div className="flex justify-between items-center mb-2 border-b border-slate-700 pb-1">
                          <span className="text-xs font-bold text-amber-500 flex items-center gap-1"><Icon name="swords" size={12}/> Round {data.campaign.combat.round}</span>
-                         {role === 'dm' && <button onClick={() => updateCloud({...data, campaign: {...data.campaign, combat: { ...data.campaign.combat, active: false }}})} className="text-[10px] text-red-400 hover:text-white bg-slate-800 px-2 rounded">End</button>}
+                         {role === 'dm' && <button onClick={() => { if (onClearRolls) onClearRolls(); updateCloud({...data, campaign: {...data.campaign, combat: { active: false, round: 1, turn: 0, combatants: [] }}}); }} className="text-[10px] text-red-400 hover:text-white bg-slate-800 px-2 rounded">End</button>}
                      </div>
                      <div className="max-h-40 overflow-y-auto custom-scroll space-y-1 mb-2">
                          {(data.campaign.combat.combatants || []).map((c, i) => (

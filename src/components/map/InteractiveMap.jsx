@@ -50,7 +50,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
     const handleEndCombat = () => {
         if(confirm("End the encounter?")) {
-            updateCloud({ ...data, campaign: { ...data.campaign, combat: { ...data.campaign.combat, active: false } } });
+            updateCloud({ ...data, campaign: { ...data.campaign, combat: { active: false, round: 1, turn: 0, combatants: [] } } });
             setShowCombat(false);
         }
     };
@@ -76,7 +76,24 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     const [cursorPos, setCursorPos] = useState({x:0, y:0}); 
     const [shakingTokenId, setShakingTokenId] = useState(null);
     const [selectedTokenId, setSelectedTokenId] = useState(null);
-    
+    const [pings, setPings] = useState([]); 
+    const [dragStartPx, setDragStartPx] = useState(null); 
+    const [activeMeasurement, setActiveMeasurement] = useState(null); 
+    const [activeStack, setActiveStack] = useState(null); 
+    const [isDraggingToken, setIsDraggingToken] = useState(false);
+    const [isPanning, setIsPanning] = useState(false);
+    const [lastMousePos, setLastMousePos] = useState({ x: 0, y: 0 });
+    const lastSnappedCell = useRef({ x: -1, y: -1 });
+
+    // Haptic Feedback Helper
+    const triggerHaptic = (style = 'light') => {
+        if (!window.navigator.vibrate) return;
+        if (style === 'light') window.navigator.vibrate(5); // Sharp tick
+        else if (style === 'medium') window.navigator.vibrate(40); // Standard pulse
+        else if (style === 'heavy') window.navigator.vibrate([40, 60, 40]); // Double thud
+        else if (style === 'ping') window.navigator.vibrate(100); // Sharp pulse
+    };
+
     // START CHANGE: Spawning State (The "Dummy Token")
     // Stores { x, y, name } of the monster being fetched
     const [spawningToken, setSpawningToken] = useState(null);
@@ -201,96 +218,52 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         });
 
         // 3. RENDER PHASE: Apply unified shadow pass
-        // Step A: Only fill with shadow if vision is ACTIVE
-        // When vision is OFF, skip shadow fill to show full map
-        // But raycasting below still renders wall-based blocking
+        // Step A: Initial Fill (The "Fog")
         if (visionActive) {
             ctx.fillStyle = '#000000';
-            if (role === 'dm') {
-                ctx.globalCompositeOperation = 'lighter';
-                ctx.globalAlpha = 0.55;
-            } else {
-                ctx.globalAlpha = 1.0;
-            }
+            ctx.globalAlpha = role === 'dm' ? 0.5 : 1.0; // DM sees through the fog
             ctx.fillRect(0, 0, canvas.width, canvas.height);
         }
 
-        // Step B: Carve out UNIFIED vision region using combined visibility
-        // This is the key fix: all token vision combines into ONE erase operation
+        // Step B: Carve out visible areas based on LOS + Range
         ctx.globalCompositeOperation = 'destination-out';
-        ctx.globalAlpha = 1.0;
-        ctx.shadowBlur = 25;
-        ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
+        ctx.globalAlpha = 1.0; // Erase fully within the mask
 
-        // Step B: Carve out UNIFIED vision region using combined visibility
-        // This is the key fix: all token vision combines into ONE erase operation
-        // Only carve if there's a base shadow to carve from
-        if (visionActive) {
-            // Draw all visibility polygons combined (additive merge)
-            tokenVisionData.forEach(({ polygon }) => {
+        tokenVisionData.forEach(({ origin, visionRadius, polygon }) => {
+            ctx.save();
+            
+            // 1. Create a clipping mask from the raycasted LOS polygon
+            if (polygon.length > 0) {
                 ctx.beginPath();
-                if (polygon.length > 0) {
-                    ctx.moveTo(polygon[0].x, polygon[0].y);
-                    for (let i = 1; i < polygon.length; i++) {
-                        ctx.lineTo(polygon[i].x, polygon[i].y);
-                    }
-                    ctx.closePath();
+                ctx.moveTo(polygon[0].x, polygon[0].y);
+                for (let i = 1; i < polygon.length; i++) {
+                    ctx.lineTo(polygon[i].x, polygon[i].y);
                 }
-                ctx.fill();
-            });
-
-            // Step C: Apply gradient softening on vision edges
-            ctx.globalCompositeOperation = 'destination-out';
-            tokenVisionData.forEach(({ origin, visionRadius }) => {
-                const gradient = ctx.createRadialGradient(origin.x, origin.y, visionRadius * 0.8, origin.x, origin.y, visionRadius);
-                gradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
-                gradient.addColorStop(1, 'rgba(0, 0, 0, 0.4)');
-                ctx.fillStyle = gradient;
-                ctx.beginPath();
-                ctx.arc(origin.x, origin.y, visionRadius, 0, Math.PI * 2);
-                ctx.fill();
-            });
-
-            // Step D: Apply hard darkvision limits (player-only boundary enforcement)
-            if (role !== 'dm') {
-                ctx.globalCompositeOperation = 'source-over';
-                tokenVisionData.forEach(({ origin, visionRadius }) => {
-                    ctx.beginPath();
-                    ctx.arc(origin.x, origin.y, visionRadius + 50, 0, Math.PI * 2);
-                    ctx.arc(origin.x, origin.y, visionRadius, 0, Math.PI * 2, true);
-                    ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
-                    ctx.fill();
-                });
+                ctx.closePath();
+                ctx.clip(); // Restricts erasure to Line of Sight only
             }
 
-            // Step E: GATEKEEPER PHASE (Vision ON) - Final shadow pass - raycasting wins over pen tool
-            // This re-applies shadows using the unified vision data to ensure no leaks
-            ctx.globalCompositeOperation = 'source-over';
-            ctx.globalAlpha = role === 'dm' ? 0.3 : 0.6;
-            ctx.fillStyle = '#000000';
-
-            // For each token, draw the inverse (everything OUTSIDE their polygon)
-            tokenVisionData.forEach(({ polygon }) => {
-                ctx.beginPath();
-                ctx.rect(0, 0, canvas.width, canvas.height);
-                if (polygon.length > 0) {
-                    ctx.moveTo(polygon[0].x, polygon[0].y);
-                    for (let i = 1; i < polygon.length; i++) {
-                        ctx.lineTo(polygon[i].x, polygon[i].y);
-                    }
-                }
-                ctx.fill('evenodd');
-            });
-        } else {
-            // Step B (Vision OFF): Render wall-based vision blocking without shadow fog
-            // Draw walls as opaque black to block line of sight, even though map is visible
-            ctx.globalCompositeOperation = 'source-over';
-            ctx.globalAlpha = 1.0;
+            // 2. Erase the darkness within the vision radius (torches/darkvision)
+            const grad = ctx.createRadialGradient(origin.x, origin.y, 0, origin.x, origin.y, visionRadius);
+            grad.addColorStop(0, 'rgba(255, 255, 255, 1)');
+            grad.addColorStop(0.8, 'rgba(255, 255, 255, 1)');
+            grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
             
+            ctx.fillStyle = grad;
+            ctx.beginPath();
+            ctx.arc(origin.x, origin.y, visionRadius, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.restore();
+        });
+
+        // Step C: Draw LOS Blocking Shadows (used when Lights are On or to deepen shadows)
+        if (!visionActive) {
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.fillStyle = '#000000';
+            ctx.globalAlpha = role === 'dm' ? 0.4 : 1.0; // DM sees through wall shadows too
+
             tokenVisionData.forEach(({ polygon }) => {
-                // Draw everything OUTSIDE the polygon as a wall shadow
-                // This creates a "light-safe" mode where you can see everything but walls still block
-                ctx.fillStyle = '#000000';
                 ctx.beginPath();
                 ctx.rect(0, 0, canvas.width, canvas.height);
                 if (polygon.length > 0) {
@@ -299,11 +272,11 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                         ctx.lineTo(polygon[i].x, polygon[i].y);
                     }
                 }
-                ctx.fill('evenodd');
+                ctx.fill('evenodd'); // Fills everything OUTSIDE the visibility polygon
             });
         }
 
-        // Reset
+        // Reset context state for next render
         ctx.globalCompositeOperation = 'source-over';
         ctx.globalAlpha = 1.0;
         ctx.shadowBlur = 0;
@@ -311,7 +284,31 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
     // Re-render when relevant state changes
     useEffect(() => { renderVision(); }, [tokens, walls, visionActive, role, mapUrl, data.campaign?.characters]);
-    // END CHANGE
+
+    // --- 1.5 GLOBAL INTERACTION ESCAPE ---
+    useEffect(() => {
+        const handleGlobalMove = (e) => {
+            if (movingTokenId || isPanning || activeMeasurement) {
+                handleMouseMove(e);
+            }
+        };
+
+        const handleGlobalUp = (e) => {
+            if (movingTokenId || isPanning || activeMeasurement) {
+                handleMouseUp(e);
+            }
+        };
+
+        if (movingTokenId || isPanning || activeMeasurement) {
+            window.addEventListener('mousemove', handleGlobalMove);
+            window.addEventListener('mouseup', handleGlobalUp);
+        }
+
+        return () => {
+            window.removeEventListener('mousemove', handleGlobalMove);
+            window.removeEventListener('mouseup', handleGlobalUp);
+        };
+    }, [movingTokenId, isPanning, activeMeasurement]);
 
     // --- 2. MATH HELPERS ---
     
@@ -349,75 +346,29 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     // END CHANGE
 
     // START CHANGE: Add sizeMult to parameters
-    const snapToGrid = (rawX, rawY, imgWidth, imgHeight, sizeMult = 1) => {
+     const snapToGrid = (rawX, rawY, imgWidth, imgHeight, sizeMult = 1) => {
         if (!mapGrid.snap || !mapGrid.visible) return { x: (rawX / imgWidth) * 100, y: (rawY / imgHeight) * 100 };
 
         // 1. Adjust for Offset
         const adjX = rawX - mapGrid.offsetX;
         const adjY = rawY - mapGrid.offsetY;
 
-        // 2. Snap to nearest cell index
+        // 2. Calculate cell index (Use floor to prevent drift loop)
         const col = Math.floor(adjX / mapGrid.size);
         const row = Math.floor(adjY / mapGrid.size);
 
-        // START CHANGE: Treat 0.5 like an odd number (center snap)
+        // 3. Center logic: Treat 0.5 like an odd number (center snap)
         const isEven = Math.round(sizeMult) % 2 === 0 && sizeMult >= 1;
         const gridOffset = isEven ? 0 : (mapGrid.size / 2);
 
         const centerX = (col * mapGrid.size) + mapGrid.offsetX + gridOffset;
         const centerY = (row * mapGrid.size) + mapGrid.offsetY + gridOffset;
 
-        // 4. Convert back to %
         return {
             x: (centerX / imgWidth) * 100,
             y: (centerY / imgHeight) * 100
         };
-        // END CHANGE
     };
-
-    // START CHANGE: Manual Snap Function (Fixes Alignment on Load)
-    const snapAllTokens = () => {
-        const img = mapImageRef.current;
-        if (!img || !img.complete || !mapGrid.snap) return;
-
-        let hasChanges = false;
-        const newTokens = tokens.map(t => {
-            // Convert % to Px
-            const pxX = (t.x / 100) * img.naturalWidth;
-            const pxY = (t.y / 100) * img.naturalHeight;
-
-            // START CHANGE: Get sizeMult for initial snapping
-            const sizeMap = { tiny: 0.5, small: 1, medium: 1, large: 2, huge: 3, gargantuan: 4 };
-            const sMult = typeof t.size === 'number' ? t.size : (sizeMap[t.size] || 1);
-
-            const snapped = snapToGrid(pxX, pxY, img.naturalWidth, img.naturalHeight, sMult);
-            // END CHANGE
-
-            // Check if it needs moving (tolerance 0.1%)
-            if (Math.abs(snapped.x - t.x) > 0.1 || Math.abs(snapped.y - t.y) > 0.1) {
-                hasChanges = true;
-                return { ...t, x: snapped.x, y: snapped.y };
-            }
-            return t;
-        });
-
-        if (hasChanges) {
-            updateCloud({ 
-                ...data, 
-                campaign: { 
-                    ...data.campaign, 
-                    activeMap: { ...mapData, tokens: newTokens } 
-                } 
-            });
-        }
-    };
-
-    // Auto-Snap when Grid Settings Change
-    useEffect(() => {
-        const timer = setTimeout(snapAllTokens, 500); 
-        return () => clearTimeout(timer);
-    }, [mapGrid]); 
-    // END CHANGE
 
     const getMapCoords = (e) => {
         const rect = containerRef.current.getBoundingClientRect();
@@ -427,161 +378,120 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         };
     };
 
-    // --- 3. MOUSE HANDLERS ---
-    // START CHANGE: Token Move Handler
+    // --- 3. MOUSE HANDLERS (UNIFIED) ---
     const handleTokenMouseDown = (e, tokenId) => {
-    if (activeTool !== 'move') return;
-    
-    e.stopPropagation(); // Stop Map Pan
-        const img = mapImageRef.current;
-        if (!img) return;
-
+        if (activeTool !== 'move') return;
+        
+        // DO NOT stopPropagation - we need the container to see the Down event
         const token = tokens.find(t => t.id === tokenId);
         if (!token) return;
 
-        // Calculate initial pixel position
-        const px = (token.x / 100) * img.naturalWidth;
-        const py = (token.y / 100) * img.naturalHeight;
+        const img = mapImageRef.current;
+        if (!img) return;
 
         setMovingTokenId(tokenId);
-        setMovingTokenPos({ x: px, y: py });
+        setDragStartPx({ x: (token.x / 100) * img.naturalWidth, y: (token.y / 100) * img.naturalHeight });
     };
 
-    // START CHANGE: Restore Mouse Down Handler
-    const [isPanning, setIsPanning] = useState(false);
-    const [lastMousePos, setLastMousePos] = useState({ x: 0, y: 0 });
-    const [isDraggingToken, setIsDraggingToken] = useState(false);
-
     const handleMouseDown = (e) => {
-        if (e.button !== 0) return; // Right-click still passes for HUD
+        if (e.button !== 0 && e.button !== 2) return; 
         
-        // START CHANGE: We no longer 'return' early here.
-        // We let the map prepare to pan regardless of what was clicked.
-        setIsPanning(true);
+        const coords = getMapCoords(e);
+        touchStartPos.current = { x: e.clientX, y: e.clientY };
         setLastMousePos({ x: e.clientX, y: e.clientY });
+
+        // A. Ruler/Sphere drawing
+        if (activeTool === 'ruler' || activeTool === 'sphere') {
+            const img = mapImageRef.current;
+            let startX = coords.x;
+            let startY = coords.y;
+
+            if (mapGrid.snap && img) {
+                const isSphere = activeTool === 'sphere';
+                const snapOffset = isSphere ? 0 : (mapGrid.size / 2);
+                startX = Math.floor((coords.x - mapGrid.offsetX) / mapGrid.size) * mapGrid.size + mapGrid.offsetX + snapOffset;
+                startY = Math.floor((coords.y - mapGrid.offsetY) / mapGrid.size) * mapGrid.size + mapGrid.offsetY + snapOffset;
+            }
+
+            setActiveMeasurement({ start: { x: startX, y: startY }, end: { x: startX, y: startY }, type: activeTool });
+            return; 
+        }
+
+        // B. Handle Panning if not dragging a token
+        if (!movingTokenId) {
+            setIsPanning(true);
+        }
+
+        // C. Long Press Timer
+        longPressTimer.current = setTimeout(() => {
+            triggerHaptic('medium');
+            if (activeTool === 'move' && !movingTokenId) {
+                const newPing = { id: Date.now(), x: coords.x, y: coords.y };
+                setPings(prev => [...prev, newPing]);
+                setTimeout(() => setPings(prev => prev.filter(p => p.id !== newPing.id)), 2000);
+            }
+        }, 600);
     };
 
     const handleMouseMove = (e) => {
-        // Pan the map if not moving a token and not dragging
-        if (isPanning && !movingTokenId && !isDraggingToken) {
+        const coords = getMapCoords(e);
+
+        if (activeMeasurement) {
+            setActiveMeasurement(prev => ({ ...prev, end: coords }));
+            return;
+        }
+
+        if (movingTokenId) {
+            setMovingTokenPos(coords);
+            return; 
+        }
+        
+        if (isPanning) {
             const dx = e.clientX - lastMousePos.x;
             const dy = e.clientY - lastMousePos.y;
             setView(prev => ({ ...prev, x: prev.x + dx, y: prev.y + dy }));
             setLastMousePos({ x: e.clientX, y: e.clientY });
-        }
-        
-        // Update Cursor Position for Drawing/Door/Delete Tools
-        if (activeTool === 'wall' || activeTool === 'door' || activeTool === 'delete') {
-            const img = mapImageRef.current;
-            if (img && img.naturalWidth && img.naturalHeight) {
-                // Use same coordinate transformation as handleMapClick
-                const rect = containerRef.current.getBoundingClientRect();
-                const mouseX = e.clientX - rect.left;
-                const mouseY = e.clientY - rect.top;
-                
-                // Convert to world space
-                const worldX = (mouseX - view.x) / view.scale;
-                const worldY = (mouseY - view.y) / view.scale;
-                
-                // Convert to pixel coordinates (same as wall anchor)
-                const percentX = (worldX / img.naturalWidth) * 100;
-                const percentY = (worldY / img.naturalHeight) * 100;
-                const pixelX = (percentX / 100) * img.naturalWidth;
-                const pixelY = (percentY / 100) * img.naturalHeight;
-                
-                setCursorPos({ x: pixelX, y: pixelY });
+
+            if (longPressTimer.current) {
+                if (Math.hypot(e.clientX - touchStartPos.current.x, e.clientY - touchStartPos.current.y) > 15) {
+                    clearTimeout(longPressTimer.current);
+                    longPressTimer.current = null;
+                }
             }
         }
-
-        // Update Moving Token Position
-        if (movingTokenId) {
-            const pos = getMapCoords(e);
-            setMovingTokenPos(pos);
+        
+        if (activeTool === 'wall' || activeTool === 'door' || activeTool === 'delete') {
+            setCursorPos(coords);
         }
     };
 
-    const handleMouseUp = () => {
-        setIsPanning(false);
-        
-        // START CHANGE: Finalize Token Move OR Select
-        if (movingTokenId && movingTokenPos) {
+    const handleMouseUp = (e) => {
+        const now = Date.now();
+        const dist = Math.hypot(e.clientX - touchStartPos.current.x, e.clientY - touchStartPos.current.y);
+        const isClick = dist < 5;
+
+        // Radial HUD Logic
+        if (isClick && movingTokenId) {
+            setSelectedTokenId(movingTokenId);
+        }
+
+        // Token Move Logic
+        if (movingTokenId && movingTokenPos && !isClick) {
             const img = mapImageRef.current;
-            const token = tokens.find(t => t.id === movingTokenId);
-            
-            if (img && token) {
-                // Calculate distance from start to determine Click vs Drag
-                const startX = (token.x / 100) * img.naturalWidth;
-                const startY = (token.y / 100) * img.naturalHeight;
-                const dist = Math.hypot(movingTokenPos.x - startX, movingTokenPos.y - startY);
-
-                if (dist < 5) {
-                    // It was a static click -> Select it
-                    setSelectedTokenId(movingTokenId);
-                } else {
-                    // START CHANGE: Physics & Collision Detection
-                    let illegalMove = false;
-                    
-                    // Only check collision if not DM (DMs are gods who walk through walls)
-                    if (role !== 'dm') {
-                        const startP = { x: startX, y: startY };
-                        const endP = movingTokenPos; // Current drag position (pixels)
-
-                        // Check intersection with ALL walls
-                        for (const w of walls) {
-                            // Ignore open doors
-                            if (w.type === 'door' && w.open) continue;
-
-                            // Intersection Check
-                            if (linesIntersect(startP, endP, w.p1, w.p2)) {
-                                illegalMove = true;
-                                break;
-                            }
-                        }
-                    }
-
-                    if (illegalMove) {
-                        // REJECT MOVE: Snap back and Shake
-                        setShakingTokenId(movingTokenId);
-                        setTimeout(() => setShakingTokenId(null), 500); // Clear shake after animation
-                        // Do NOT update cloud. The token component will re-render at original pos.
-                    } else {
-                        // ALLOW MOVE: Snap and Save
-                        // START CHANGE: Calculate size multiplier here too
-                        const sizeMap = { tiny: 0.5, small: 1, medium: 1, large: 2, huge: 3, gargantuan: 4 };
-                        const sMult = typeof token.size === 'number' ? token.size : (sizeMap[token.size] || 1);
-                        
-                        const { x, y } = snapToGrid(movingTokenPos.x, movingTokenPos.y, img.naturalWidth, img.naturalHeight, sMult);
-                        // END CHANGE
-                        const newTokens = tokens.map(t => t.id === movingTokenId ? { ...t, x, y } : t);
-                        updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...mapData, tokens: newTokens } } });
-                    }
-                    // END CHANGE
-                }
+            if (img) {
+                const { x, y } = snapToGrid(movingTokenPos.x, movingTokenPos.y, img.naturalWidth, img.naturalHeight);
+                const newTokens = tokens.map(t => t.id === movingTokenId ? { ...t, x, y } : t);
+                updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...mapData, tokens: newTokens } } });
             }
-            setMovingTokenId(null);
-            setMovingTokenPos(null);
         }
 
-        // START CHANGE: Remove Fog Drawing Logic
-        // Was: if (isDrawingFog) { ... }
-        
-        // Finalize Wall Creation
-        if (wallStart && (activeTool === 'wall' || activeTool === 'door')) {
-            const end = getMapCoords(e); 
-            // Only create if line is long enough (>10px) to prevent accidental clicks
-            if (Math.hypot(end.x - wallStart.x, end.y - wallStart.y) > 10) {
-                const newWall = {
-                    id: Date.now(),
-                    type: activeTool,
-                    p1: wallStart,
-                    p2: end,
-                    open: false, // Only relevant for doors
-                };
-                updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...mapData, walls: [...walls, newWall] } } });
-            }
-            setWallStart(null);
-        }
-        // END CHANGE
+        // Global Reset
+        setMovingTokenId(null);
+        setMovingTokenPos(null);
+        setIsPanning(false);
+        setActiveMeasurement(null);
+        clearTimeout(longPressTimer.current);
+        longPressTimer.current = null;
     };
 
     // --- 4. DRAG & DROP SPAWNING ---
@@ -796,8 +706,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             canvas.height = img.naturalHeight;
             renderVision();
             
-            // 2. Fix Token Alignment (The "Still Not Working" Fix)
-            snapAllTokens();
+            // REMOVED: snapAllTokens(); (Fixes ReferenceError)
         }
     };
 
@@ -899,26 +808,22 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         if (activeTool !== 'wall') return;
 
         if (!wallStart) {
-            // ANCHOR: First click - set anchor point
+            // ANCHOR: First tap sets the start point
             setWallStart({ x: pixelX, y: pixelY });
+            triggerHaptic('light');
         } else {
-            // LOCK: Second click - create wall and chain
+            // CHAIN: Create wall and immediately set new start to this point
             const newWall = {
                 id: `wall-${Date.now()}`,
+                type: activeTool,
                 p1: { x: wallStart.x, y: wallStart.y },
                 p2: { x: pixelX, y: pixelY },
-                type: 'wall',
-                isOpen: false,
-                percentStart: { x: (wallStart.x / img.naturalWidth) * 100, y: (wallStart.y / img.naturalHeight) * 100 },
-                percentEnd: { x: (pixelX / img.naturalWidth) * 100, y: (pixelY / img.naturalHeight) * 100 }
+                open: false,
             };
             
-            // Add wall to cloud
-            const newWalls = [...walls, newWall];
-            updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...mapData, walls: newWalls } } });
-            
-            // CHAIN: Start new anchor at this point
-            setWallStart({ x: pixelX, y: pixelY });
+            updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...mapData, walls: [...walls, newWall] } } });
+            setWallStart({ x: pixelX, y: pixelY }); // Automatically start next wall here
+            triggerHaptic('medium');
         }
     };
 
@@ -1062,7 +967,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                     role={role}
                     updateCombatant={updateCombatant}
                     onRemove={removeCombatant}
-                    onClearRolls={onClearRolls} // Pass the clear rolls function
+                    onClearRolls={onClearRolls}
                 />
             )}
             {/* END CHANGE */}
@@ -1087,14 +992,20 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                 className="absolute top-0 left-0 w-full h-full will-change-transform"
             >
                 {mapUrl ? (
-                    <div className="relative inline-block shadow-2xl">
+                    <div 
+                        className="relative inline-block shadow-2xl"
+                        style={{ willChange: 'transform' }} // Hint to browser for GPU usage
+                    >
                         <img 
                             ref={mapImageRef}
                             src={mapUrl}
-                            // START CHANGE: Use new handler & Fix CSS
                             onLoad={handleMapLoad}
-                            className="block object-contain pointer-events-none select-none"
-                            // END CHANGE
+                            decoding="async" // Off-thread image decoding
+                            className="block pointer-events-none select-none max-w-none h-auto"
+                            style={{ 
+                                imageRendering: view.scale < 1 ? 'auto' : 'pixelated', // Keep high fidelity when zoomed in
+                                transform: 'translateZ(0)' // Force GPU composite layer
+                            }}
                             alt="Map Board"
                         />
 
@@ -1104,7 +1015,20 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                         ref={visionCanvasRef}
                         className="absolute top-0 left-0 w-full h-full pointer-events-none z-[6]"
                     />
-                    {/* END CHANGE */}
+
+                    {pings.map(ping => (
+                        <div 
+                            key={ping.id}
+                            className="absolute pointer-events-none z-50"
+                            style={{ left: ping.x, top: ping.y }}
+                        >
+                            <div className="relative flex items-center justify-center -translate-x-1/2 -translate-y-1/2">
+                                <div className="absolute w-12 h-12 bg-amber-500 rounded-full animate-ping opacity-75"></div>
+                                <div className="absolute w-24 h-24 border-2 border-amber-500 rounded-full animate-ping [animation-delay:0.2s]"></div>
+                                <div className="w-4 h-4 bg-amber-400 rounded-full shadow-[0_0_15px_#f59e0b]"></div>
+                            </div>
+                        </div>
+                    ))}
 
                     {/* Dynamic Grid Layer */}
                     {mapGrid.visible && (() => {
@@ -1127,7 +1051,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
                         {/* Phase 3 Wall/Door SVG Layer */}
                         <svg 
-                            className="absolute top-0 left-0 w-full h-full pointer-events-auto z-[8]" 
+                            className={`absolute top-0 left-0 w-full h-full z-[8] ${['wall', 'door', 'delete'].includes(activeTool) ? 'pointer-events-auto' : 'pointer-events-none'}`} 
                             style={{ viewBox: `0 0 ${mapImageRef.current?.naturalWidth} ${mapImageRef.current?.naturalHeight}` }}
                             onClick={handleMapClick}
                             onContextMenu={handleMapRightClick}
@@ -1150,20 +1074,60 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                                         strokeWidth={6} 
                                         strokeLinecap="round"
                                         opacity={0.8}
-                                    />
-                                );
-                            })}
-                            
-                            {/* 2. Render Ghost Line (Live Preview for Wall/Door Drawing) */}
-                            {wallStart && (activeTool === 'wall' || activeTool === 'door') && (
-                                <line 
-                                    x1={wallStart.x} y1={wallStart.y} x2={cursorPos.x} y2={cursorPos.y} 
-                                    stroke={activeTool === 'wall' ? '#3b82f6' : '#f59e0b'} 
-                                    strokeWidth={4} 
-                                    strokeDasharray="10,5"
-                                    opacity={0.6}
-                                    pointerEvents="none"
                                 />
+                            );
+                        })}
+
+                        {/* Ruler & Sphere Visuals */}
+                        {activeMeasurement && (
+                            <g pointerEvents="none">
+                                {activeMeasurement.type === 'ruler' ? (
+                                    <>
+                                        <line 
+                                            x1={activeMeasurement.start.x} y1={activeMeasurement.start.y} 
+                                            x2={activeMeasurement.end.x} y2={activeMeasurement.end.y} 
+                                            stroke="#fbbf24" strokeWidth={4} strokeDasharray="10,5"
+                                        />
+                                        <circle cx={activeMeasurement.start.x} cy={activeMeasurement.start.y} r={4} fill="#fbbf24" />
+                                    </>
+                                ) : (
+                                    <>
+                                        <circle 
+                                            cx={activeMeasurement.start.x} cy={activeMeasurement.start.y} 
+                                            r={Math.hypot(activeMeasurement.end.x - activeMeasurement.start.x, activeMeasurement.end.y - activeMeasurement.start.y)} 
+                                            fill="rgba(245, 158, 11, 0.15)" stroke="#f59e0b" strokeWidth={2} strokeDasharray="5,5"
+                                        />
+                                        <line 
+                                            x1={activeMeasurement.start.x} y1={activeMeasurement.start.y} 
+                                            x2={activeMeasurement.end.x} y2={activeMeasurement.end.y} 
+                                            stroke="#f59e0b" strokeWidth={2} opacity={0.5}
+                                        />
+                                    </>
+                                )}
+                                {(() => {
+                                    const distPx = Math.hypot(activeMeasurement.end.x - activeMeasurement.start.x, activeMeasurement.end.y - activeMeasurement.start.y);
+                                    const feet = Math.round(distPx / mapGrid.size) * 5;
+                                    return (
+                                        <g transform={`translate(${activeMeasurement.end.x}, ${activeMeasurement.end.y - 20})`}>
+                                            <rect x="-20" y="-12" width="40" height="20" rx="4" fill="rgba(0,0,0,0.8)" />
+                                            <text textAnchor="middle" y="2" fill="white" fontSize="12" fontWeight="bold" className="font-mono">{feet}ft</text>
+                                        </g>
+                                    );
+                                })()}
+                            </g>
+                        )}
+                        {/* END CHANGE */}
+                        
+                        {/* 2. Render Ghost Line (Live Preview for Wall/Door Drawing) */}
+                            {wallStart && (activeTool === 'wall' || activeTool === 'door') && (
+                                <>
+                                    <line 
+                                        x1={wallStart.x} y1={wallStart.y} x2={cursorPos.x} y2={cursorPos.y} 
+                                        stroke={activeTool === 'wall' ? '#3b82f6' : '#f59e0b'} 
+                                        strokeWidth={4} strokeDasharray="10,5" opacity={0.6}
+                                    />
+                                    <circle cx={wallStart.x} cy={wallStart.y} r={8} fill={activeTool === 'wall' ? '#3b82f6' : '#f59e0b'} className="animate-pulse" />
+                                </>
                             )}
                             
                             {/* 3. Render Proximity Circle for Door/Delete Tools */}
@@ -1240,19 +1204,16 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                                     id={`token-node-${token.id}`}
                                     style={{ 
                                         position: 'absolute', 
-                                        // START CHANGE: Use Raw Coords (Grid now returns Center)
-                                        // CRITICAL: Ensure NO "+ (dimension / 2)" is here. Just raw px/py.
                                         left: px, 
                                         top: py, 
-                                        transform: 'translate(-50%, -50%)', // ADDED LINE
-                                        // END CHANGE
+                                        transform: 'translate(-50%, -50%)',
                                         width: dimension,   
                                         height: dimension, 
-                                        zIndex: isMoving ? 100 : 10 
+                                        zIndex: isMoving ? 100 : 10,
+                                        transition: isMoving ? 'none' : 'all 0.2s ease-out'
                                     }}
-                                    // START CHANGE: Visual Feedback for Collision
                                     className={isShaking ? "animate-bounce bg-red-500/50 rounded-full" : ""}
-                                    // END CHANGE
+                                    // UPDATED: Handle drag start but don't call handleMouseDown manually
                                     onMouseDown={(e) => handleTokenMouseDown(e, token.id)}
                                 >
                                     <Token 
@@ -1279,7 +1240,59 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                 )}
             </div>
 
-            {/* START CHANGE: Radial HUD Integration */}
+            {/* START CHANGE: Token Stack Picker */}
+            {activeStack && (
+                <div 
+                    className="absolute z-[100] bg-slate-900/95 border border-slate-700 p-2 rounded-xl shadow-2xl flex flex-col gap-2 animate-in zoom-in-95"
+                    style={{ left: activeStack.x, top: activeStack.y, transform: 'translate(-50%, -110%)' }}
+                >
+                    <div className="text-[10px] uppercase font-bold text-slate-500 px-2 border-b border-slate-800 pb-1 flex justify-between gap-4">
+                        <span>Select Unit</span>
+                        <button onClick={() => setActiveStack(null)}><Icon name="x" size={12}/></button>
+                    </div>
+                    {activeStack.tokens.map(t => (
+                        <button 
+                            key={t.id}
+                            onMouseDown={(e) => {
+                                // 1. CRITICAL: Stop event from bubbling to Map Container (prevents panning)
+                                e.stopPropagation();
+                                e.preventDefault();
+                                
+                                const img = mapImageRef.current;
+                                if (!img) return;
+
+                                // 2. Calculate coordinates using the same math as getMapCoords
+                                const rect = containerRef.current.getBoundingClientRect();
+                                const startCoords = {
+                                    x: (e.clientX - rect.left - view.x) / view.scale,
+                                    y: (e.clientY - rect.top - view.y) / view.scale
+                                };
+
+                                // 3. Manually reset pan state and initialize drag
+                                setIsPanning(false); 
+                                setIsDraggingToken(true);
+                                setDragStartPx({ x: (t.x / 100) * img.naturalWidth, y: (t.y / 100) * img.naturalHeight });
+                                setMovingTokenId(t.id);
+                                setMovingTokenPos(startCoords);
+                                
+                                // 4. Select and Close Menu
+                                setSelectedTokenId(t.id);
+                                setActiveStack(null);
+                                triggerHaptic('medium');
+                            }}
+                            className="flex items-center gap-3 p-2 hover:bg-indigo-600 rounded-lg transition-colors group text-left w-full pointer-events-auto"
+                        >
+                            <div className="w-10 h-10 rounded-full overflow-hidden border border-slate-700 shrink-0">
+                                <img src={t.image || t.img} className="w-full h-full object-cover" />
+                            </div>
+                            <span className="text-sm font-bold text-slate-200 group-hover:text-white truncate max-w-[100px]">{t.name}</span>
+                        </button>
+                    ))}
+                </div>
+            )}
+            {/* END CHANGE */}
+
+            {/* Radial HUD Integration */}
             {selectedTokenId && (() => {
                 const token = tokens.find(t => t.id === selectedTokenId);
                 const tokenElement = document.getElementById(`token-node-${selectedTokenId}`);
