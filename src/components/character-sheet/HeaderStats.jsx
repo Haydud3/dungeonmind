@@ -51,12 +51,20 @@ const HeaderStats = ({ onDiceRoll, onLogAction, onBack, onPossess, isNpc, combat
           const r = await onDiceRoll(20); 
           const total = r + init;
           
-          // FIX: Pass character object + roll. Remove combatActive check to allow auto-start.
           if (onInitiative) {
+              // This now triggers the improved handleInitiative in App.jsx
+              // It will update the existing entry or add a new one
               onInitiative(character, total);
-              if(onLogAction) onLogAction(`<span class="text-amber-500 font-bold">Joined Combat</span>: ${total}`);
-          } else {
-              if(onLogAction) onLogAction(`Init: ${total}`); 
+              
+              if(onLogAction) {
+                  onLogAction(`
+                    <div class="flex justify-between items-center">
+                        <span class="font-bold text-slate-300">Initiative</span>
+                        <span class="text-amber-500 font-bold text-xl">${total}</span>
+                    </div>
+                    <div class="text-xs text-slate-500 text-right">Rolled ${r} + ${init}</div>
+                  `);
+              }
           }
       } 
   };

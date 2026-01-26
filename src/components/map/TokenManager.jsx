@@ -1,7 +1,22 @@
-import React from 'react';
+import React, { useState } from 'react';
 import Icon from '../Icon';
 
 const TokenManager = ({ data, onDragStart }) => {
+    const [search, setSearch] = useState("");
+    const [results, setResults] = useState([]);
+    const [isLoading, setIsLoading] = useState(false);
+
+    const handleSearch = async () => {
+        if (!search.trim()) return;
+        setIsLoading(true);
+        try {
+            const res = await fetch(`https://www.dnd5eapi.co/api/monsters?name=${search}`);
+            const json = await res.json();
+            setResults(json.results.slice(0, 20));
+        } catch (e) { console.error(e); }
+        setIsLoading(false);
+    };
+
     const players = data.players || [];
     // START CHANGE: Filter out instances so only Master Blueprints appear in the sidebar
     const npcs = (data.npcs || []).filter(n => !n.isInstance);
@@ -9,9 +24,53 @@ const TokenManager = ({ data, onDragStart }) => {
 
     return (
         <div className="flex flex-col h-full text-slate-200">
-            <h3 className="text-xs font-bold text-slate-500 uppercase mb-4 px-1">Drag to Spawn</h3>
+            <h3 className="text-xs font-bold text-slate-500 uppercase mb-2 px-1">Drag to Spawn</h3>
+
+            {/* SEARCH BAR */}
+            <div className="flex gap-1 mb-4">
+                <input 
+                    className="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1 text-xs text-white" 
+                    placeholder="Search SRD..." 
+                    value={search}
+                    onChange={e => setSearch(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && handleSearch()}
+                />
+                <button onClick={handleSearch} disabled={isLoading} className="bg-indigo-600 px-2 rounded text-white">
+                    {isLoading ? <Icon name="loader" size={12} className="animate-spin"/> : <Icon name="search" size={12}/>}
+                </button>
+            </div>
             
             <div className="flex-1 overflow-y-auto custom-scroll space-y-6 pr-2">
+                {/* SEARCH RESULTS */}
+                {results.length > 0 && (
+                    <div className="border-b border-slate-700 pb-4">
+                        <h4 className="text-xs font-bold text-amber-400 mb-2 flex items-center gap-2"><Icon name="globe" size={12}/> Web Results</h4>
+                        <div className="space-y-1">
+                            {results.map(r => (
+    <div 
+        key={r.index}
+        draggable
+        onDragStart={(e) => {
+            // FIX: Bundle data into a single JSON object using standard 'text/plain'
+            // This ensures the data survives the drag operation across all browsers
+            const dragPayload = {
+                type: 'api-import',
+                url: r.url,
+                name: r.name
+            };
+            e.dataTransfer.effectAllowed = "copy";
+            e.dataTransfer.setData("text/plain", JSON.stringify(dragPayload));
+        }}
+        className="bg-slate-800 p-2 rounded border border-slate-700 hover:border-amber-500 cursor-grab active:cursor-grabbing text-xs truncate flex items-center gap-2"
+    >
+        <div className="w-2 h-2 rounded-full bg-amber-500"></div>
+        {r.name}
+    </div>
+))}
+                        </div>
+                    </div>
+                )}
+
                 {/* PLAYERS */}
                 <div>
                     <h4 className="text-xs font-bold text-indigo-400 mb-2 flex items-center gap-2"><Icon name="users" size={12}/> Party</h4>

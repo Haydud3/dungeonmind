@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import Icon from '../Icon';
 import Token from '../Token'; 
 // START CHANGE: Import Vision Math
-import { calculateVisibilityPolygon } from '../../utils/visionMath';
+import { calculateVisibilityPolygon, getCharacterVisionSettings } from '../../utils/visionMath';
 // END CHANGE
 import MapToolbar from './MapToolbar';
 import MapLibrary from './MapLibrary';
@@ -14,7 +14,9 @@ import CombatTracker from './CombatTracker';
 import RadialHUD from './RadialHUD';
 // END CHANGE
 
-const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, activeTemplate, sidebarIsOpen }) => {
+// START CHANGE: Add updateCombatant and removeCombatant to props
+const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, activeTemplate, sidebarIsOpen, updateCombatant, removeCombatant, onClearRolls }) => {
+// END CHANGE
     // View & Interaction State
     const [view, setView] = useState({ x: 0, y: 0, scale: 1 });
     
@@ -74,6 +76,11 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     const [cursorPos, setCursorPos] = useState({x:0, y:0}); 
     const [shakingTokenId, setShakingTokenId] = useState(null);
     const [selectedTokenId, setSelectedTokenId] = useState(null);
+    
+    // START CHANGE: Spawning State (The "Dummy Token")
+    // Stores { x, y, name } of the monster being fetched
+    const [spawningToken, setSpawningToken] = useState(null);
+    // END CHANGE
 
     // Refs
     const containerRef = useRef(null);
@@ -120,46 +127,6 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
     // --- 1. RENDERERS (Vision Logic) ---
     
-    // Helper: Calculate vision radius based on character darkvision and equipment
-    const calculateVisionRadius = (token, character) => {
-        if (!visionActive) return 99999; // Infinite range when lights off (but walls still block)
-        
-        // Convert D&D feet to pixels: 50px = 5ft (1 grid square)
-        const ftToPixels = (ft) => (ft / 5) * 50;
-        
-        let visionRadius = 0;
-        let hasTorch = false;
-        let hasLantern = false;
-        
-        // Check inventory for light sources
-        if (character.inventory && Array.isArray(character.inventory)) {
-            for (const item of character.inventory) {
-                const itemName = (item.name || '').toLowerCase();
-                if (itemName.includes('torch')) hasTorch = true;
-                if (itemName.includes('lantern')) hasLantern = true;
-            }
-        }
-        
-        // Calculate base vision
-        const darkVisionFt = character.senses?.darkvision || 0;
-        
-        if (hasTorch) {
-            // Torch: 20ft bright light + 20ft dim light (use 40ft as full range)
-            visionRadius = ftToPixels(40);
-        } else if (hasLantern) {
-            // Lantern: Similar to torch (30ft bright + 30ft dim, use 60ft)
-            visionRadius = ftToPixels(60);
-        } else if (darkVisionFt > 0) {
-            // Has darkvision
-            visionRadius = ftToPixels(darkVisionFt);
-        } else {
-            // No light source, no darkvision: 2ft vision (very limited)
-            visionRadius = ftToPixels(2);
-        }
-        
-        return visionRadius;
-    };
-
     // START CHANGE: The Unified Vision Engine (Replaces Fog)
     const renderVision = () => {
         const canvas = visionCanvasRef.current;
@@ -194,14 +161,21 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                 y: (token.y / 100) * img.naturalHeight
             };
 
-            // Calculate vision radius based on character sheet (darkvision + equipment)
-            let visionRadius = 200; // Fallback default
-            if (data.campaign?.characters?.[token.characterId]) {
-                const character = data.campaign.characters[token.characterId];
-                visionRadius = calculateVisionRadius(token, character);
-            } else {
-                // No character data, use fallback
-                visionRadius = visionActive ? 200 : 99999;
+            // Calculate vision settings using centralized 5e logic
+            // Use current grid size for pixel conversion (default 50)
+            const gridSize = mapGrid.size || 50;
+            let visionRadius = visionActive ? (200 / 50) * gridSize : 99999; // Fallback default
+            let visionColor = '#000000';
+
+            // Find character data
+            // Check both players array and npcs array for the character ID
+            const character = data.players?.find(p => p.id === token.characterId) || 
+                              data.npcs?.find(n => n.id === token.characterId);
+
+            if (character && visionActive) {
+                const settings = getCharacterVisionSettings(character, gridSize);
+                visionRadius = settings.radius;
+                visionColor = settings.color;
             }
 
             // Wall & Door Blocking Logic
@@ -214,15 +188,15 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             // Walls always block, even when lights are off
             const polygon = calculateVisibilityPolygon(origin, blockingSegments, { 
                 width: canvas.width, 
-                height: canvas.height,
-                maxRange: visionRadius
-            });
+                height: canvas.height
+            }, visionRadius); // Pass maxRadius as 4th arg
 
             tokenVisionData.push({
                 origin,
                 visionRadius,
                 polygon,
-                token
+                token,
+                color: visionColor // Store color for rendering warmth (optional future use)
             });
         });
 
@@ -456,10 +430,9 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     // --- 3. MOUSE HANDLERS ---
     // START CHANGE: Token Move Handler
     const handleTokenMouseDown = (e, tokenId) => {
-        // Only allow move if Move Tool is active
-        if (activeTool !== 'move') return;
-        
-        e.stopPropagation(); // Stop Map Pan
+    if (activeTool !== 'move') return;
+    
+    e.stopPropagation(); // Stop Map Pan
         const img = mapImageRef.current;
         if (!img) return;
 
@@ -619,54 +592,156 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         e.dataTransfer.setData("name", entity.name);
     };
 
-    const handleDrop = (e) => {
+    // START CHANGE: Async Drop Handler with Optimistic UI
+    const handleDrop = async (e) => {
         e.preventDefault();
-        let entityId = e.dataTransfer.getData("entityId");
-        const type = e.dataTransfer.getData("type");
-        const image = e.dataTransfer.getData("image");
-        const name = e.dataTransfer.getData("name");
+        
+        // 1. Parse Data (JSON or Legacy)
+        let droppedData = {};
+        try {
+            const raw = e.dataTransfer.getData("text/plain");
+            if (raw.startsWith("{")) droppedData = JSON.parse(raw);
+        } catch (err) {}
 
-        // Convert entityId to number if it looks like a number (drag data comes as string)
-        if (entityId && !isNaN(entityId)) {
-            entityId = Number(entityId);
+        if (!droppedData.type) {
+            droppedData.type = e.dataTransfer.getData("type");
+            droppedData.entityId = e.dataTransfer.getData("entityId");
+            droppedData.image = e.dataTransfer.getData("image");
         }
+
+        const { type, name, url, entityId: rawEntityId, image } = droppedData;
+
+        // 2. API IMPORT LOGIC (From Search)
+        if (type === 'api-import') {
+            if (!url) return;
+
+            const pos = getMapCoords(e);
+            const img = mapImageRef.current;
+            
+            // Calculate Position
+            let finalX = 50, finalY = 50;
+            let pxX = 0, pxY = 0;
+
+            if (img && img.naturalWidth) {
+                const snapped = snapToGrid(pos.x, pos.y, img.naturalWidth, img.naturalHeight);
+                finalX = snapped.x;
+                finalY = snapped.y;
+                pxX = (finalX / 100) * img.naturalWidth;
+                pxY = (finalY / 100) * img.naturalHeight;
+            }
+
+            // Visual Feedback
+            setSpawningToken({ x: pxX, y: pxY, name: "Summoning " + name + "..." });
+
+            try {
+                const res = await fetch(`https://www.dnd5eapi.co${url}`);
+                const m = await res.json();
+
+                // --- FIX STARTS HERE: Image Extraction ---
+                let imageUrl = "";
+                if (m.image) {
+                    // The API returns relative paths like "/api/images/monsters/..."
+                    imageUrl = `https://www.dnd5eapi.co${m.image}`;
+                }
+                // --- FIX ENDS HERE ---
+
+                // Robust AC Parser
+                let acVal = 10;
+                if (Array.isArray(m.armor_class) && m.armor_class.length > 0) acVal = m.armor_class[0].value;
+                else if (typeof m.armor_class === 'number') acVal = m.armor_class;
+
+                const newNpcId = Date.now();
+                
+                // 1. Create NPC Data (Bestiary Entry)
+                const newNpc = {
+                    id: newNpcId,
+                    name: m.name,
+                    image: imageUrl, // Save image to Bestiary
+                    race: `${m.size} ${m.type}`,
+                    class: "Monster",
+                    hp: { current: m.hit_points, max: m.hit_points },
+                    ac: acVal,
+                    stats: { str: m.strength, dex: m.dexterity, con: m.constitution, int: m.intelligence, wis: m.wisdom, cha: m.charisma },
+                    senses: { darkvision: m.senses?.darkvision ? parseInt(m.senses.darkvision) : 0 },
+                    customActions: (m.actions || []).map(a => ({ name: a.name, desc: a.desc, type: "Action" })),
+                    isHidden: true, 
+                    quirk: "Imported from SRD"
+                };
+
+                // 2. Create Token Data (Map Instance)
+                const newToken = {
+                    id: newNpcId + 1,
+                    characterId: newNpcId,
+                    type: 'npc',
+                    x: finalX, 
+                    y: finalY,
+                    name: m.name,
+                    image: imageUrl, // Save image to Token
+                    size: (m.size || 'medium').toLowerCase(),
+                    hp: { current: m.hit_points, max: m.hit_points, temp: 0 },
+                    statuses: [],
+                    isInstance: true
+                };
+
+                // 3. Save to Cloud
+                const currentNpcs = data.npcs || [];
+                const currentTokens = mapData.tokens || [];
+
+                updateCloud({
+                    ...data,
+                    npcs: [...currentNpcs, newNpc],
+                    campaign: {
+                        ...data.campaign,
+                        activeMap: { ...mapData, tokens: [...currentTokens, newToken] }
+                    }
+                });
+
+            } catch (err) {
+                console.error("Spawn failed:", err);
+            } finally {
+                setSpawningToken(null);
+            }
+            return;
+        }
+
+        // ... (rest of standard drop logic remains the same) ...
+        
+        // 3. STANDARD SPAWN LOGIC (Dragging existing character)
+        let entityId = rawEntityId;
+        if (entityId && !isNaN(entityId)) entityId = Number(entityId);
 
         if (entityId) {
             const pos = getMapCoords(e);
             const img = mapImageRef.current;
+            
             if (img) {
-                // START CHANGE: Scribe Logic - Deep clone and auto-numbering
                 const { x, y } = snapToGrid(pos.x, pos.y, img.naturalWidth, img.naturalHeight);
+                const masterNpc = data.npcs?.find(n => n.id === entityId) || data.players?.find(p => p.id === entityId);
                 
-                const masterNpc = data.npcs?.find(n => n.id === entityId) || 
-                                  data.players?.find(p => p.id === entityId);
-                
-                const existingCount = tokens.filter(t => t.characterId === entityId).length;
-                const instanceName = existingCount > 0 
-                    ? `${masterNpc?.name || name} ${existingCount + 1}` 
-                    : (masterNpc?.name || name);
-
                 const newToken = {
                     id: Date.now(),
                     characterId: entityId,
-                    type,
+                    type: type || 'npc',
                     x, y,
                     image: masterNpc?.image || image,
-                    name: instanceName,
+                    name: masterNpc?.name || name,
                     size: masterNpc?.size || 'medium',
-                    hp: { 
-                        current: masterNpc?.hp?.max || 10, 
-                        max: masterNpc?.hp?.max || 10, 
-                        temp: 0 
-                    },
+                    hp: { current: masterNpc?.hp?.max || 10, max: masterNpc?.hp?.max || 10 },
                     statuses: [],
                     isInstance: true
                 };
-                // END CHANGE
-                updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...mapData, tokens: [...tokens, newToken] } } });
+                
+                updateCloud({ 
+                    ...data, 
+                    campaign: { 
+                        ...data.campaign, 
+                        activeMap: { ...mapData, tokens: [...(mapData.tokens || []), newToken] } 
+                    } 
+                });
             }
         }
     };
+    // END CHANGE
 
     // START CHANGE: HUD Action Handlers
     const handleUpdateToken = (updatedToken) => {
@@ -862,6 +937,12 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         if (!container) return;
 
         const onWheel = (e) => {
+            // FIX: Check if we are scrolling inside a sidebar or list
+            // If the target is inside a scrollable element, let the browser handle it.
+            if (e.target.closest('.overflow-y-auto') || e.target.closest('.custom-scroll')) {
+                return;
+            }
+
             e.preventDefault(); // STOP browser from zooming the whole page
             
             // 1. Zoom Logic
@@ -979,6 +1060,9 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                     onNextTurn={handleNextTurn} 
                     onEndCombat={handleEndCombat}
                     role={role}
+                    updateCombatant={updateCombatant}
+                    onRemove={removeCombatant}
+                    onClearRolls={onClearRolls} // Pass the clear rolls function
                 />
             )}
             {/* END CHANGE */}
@@ -1095,6 +1179,27 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                                 />
                             )}
                         </svg>
+                        
+                        {/* START CHANGE: Render The Ghost/Dummy Token */}
+                        {spawningToken && (
+                            <div 
+                                className="absolute flex flex-col items-center justify-center z-[100] pointer-events-none animate-pulse"
+                                style={{ 
+                                    left: spawningToken.x, 
+                                    top: spawningToken.y, 
+                                    width: mapGrid.size || 50, 
+                                    height: mapGrid.size || 50,
+                                    transform: 'translate(-50%, -50%)'
+                                }}
+                            >
+                                <div className="w-full h-full rounded-full bg-slate-900/80 border-2 border-dashed border-amber-500 flex items-center justify-center">
+                                    <Icon name="loader-2" size={24} className="text-amber-500 animate-spin"/>
+                                </div>
+                                <div className="absolute top-full mt-2 bg-black/80 text-amber-500 text-[10px] font-bold px-2 py-1 rounded whitespace-nowrap">
+                                    {spawningToken.name}
+                                </div>
+                            </div>
+                        )}
                         {/* END CHANGE */}
 
                         {/* Render Tokens */}

@@ -100,6 +100,13 @@ function DungeonMindApp() {
   const [activeTemplate, setActiveTemplate] = useState(null); // NEW: Track active spell template
   const addLogEntry = useCharacterStore((state) => state.addLogEntry);
 
+  // START CHANGE: Handler to clear dice history
+  const handleClearRolls = () => {
+      setDiceLog([]);
+      toast("Combat ended: Dice history cleared.", "info");
+  };
+  // END CHANGE
+
   const [apiKey, setApiKey] = useState(() => localStorage.getItem('dm_api_key') || '');
   const [aiProvider, setAiProvider] = useState(() => localStorage.getItem('dm_ai_provider') || 'puter');
   // START CHANGE: Remove Lore State (Handled in Context)
@@ -372,12 +379,13 @@ function DungeonMindApp() {
 
   const handlePlaceTemplate = (spell) => { setActiveTemplate(spell); setCurrentView('map'); };
 
-  const handleInitiative = (char, roll) => {
+  // START CHANGE: Enhanced Initiative Handler
+  const handleInitiative = (char, roll = null) => {
       const c = data.campaign?.combat;
-      // Auto-start combat if needed so the roll isn't lost
+      // Auto-start combat if needed
       const combatState = (c && c.active) ? c : { active: true, round: 1, turn: 0, combatants: [] };
       
-      const combatants = [...(combatState.combatants || [])];
+      let combatants = [...(combatState.combatants || [])];
       const idx = combatants.findIndex(x => x.id === char.id);
       
       // Determine type & Image
@@ -394,16 +402,29 @@ function DungeonMindApp() {
       const entry = { 
           id: char.id, 
           name: char.name, 
-          init: roll, 
+          init: roll, // Can be null (Pending)
           type, 
           tokenId,
-          image // Save image for the tracker
+          image
       };
       
-      if (idx > -1) combatants[idx] = { ...combatants[idx], ...entry }; 
-      else combatants.push(entry);
+      if (idx > -1) {
+          // Update existing
+          combatants[idx] = { ...combatants[idx], ...entry };
+          // If roll is null (just adding to tracker), keep existing init if present
+          if (roll === null && combatants[idx].init !== undefined) {
+              entry.init = combatants[idx].init;
+          }
+      } else {
+          combatants.push(entry);
+      }
       
-      combatants.sort((a,b) => b.init - a.init);
+      // Sort: High numbers top, Nulls bottom
+      combatants.sort((a,b) => {
+          if (a.init === null) return 1;
+          if (b.init === null) return -1;
+          return b.init - a.init;
+      });
       
       updateCloud({ 
           ...data, 
@@ -411,8 +432,30 @@ function DungeonMindApp() {
               ...data.campaign, 
               combat: { ...combatState, combatants } 
           } 
-      }, true); // Force immediate save
+      }, true);
   };
+
+  const updateCombatant = (id, changes) => {
+      const c = data.campaign?.combat;
+      if (!c) return;
+      let combatants = [...c.combatants];
+      const idx = combatants.findIndex(x => x.id === id);
+      if (idx > -1) {
+          combatants[idx] = { ...combatants[idx], ...changes };
+          
+          // Re-sort if init changed
+          if (changes.init !== undefined) {
+              combatants.sort((a,b) => {
+                  if (a.init === null) return 1;
+                  if (b.init === null) return -1;
+                  return b.init - a.init;
+              });
+          }
+          
+          updateCloud({ ...data, campaign: { ...data.campaign, combat: { ...c, combatants } } });
+      }
+  };
+  // END CHANGE
 
   // START CHANGE: Robust "Auto-Scribe" Recap
   const generateRecap = async (scope = 'recent') => {
@@ -574,7 +617,29 @@ function DungeonMindApp() {
               />}
               
               {/* 3. TACTICAL (Map) */}
-              {currentView === 'map' && <WorldView data={data} setData={setData} role={effectiveRole} updateCloud={updateCloud} updateMapState={updateMapState} onDiceRoll={handleDiceRoll} user={user} apiKey={apiKey} savePlayer={savePlayer} activeTemplate={activeTemplate} onClearTemplate={() => setActiveTemplate(null)} onInitiative={handleInitiative} />}
+              {currentView === 'map' && <WorldView 
+                  data={data} 
+                  setData={setData} 
+                  role={effectiveRole} 
+                  updateCloud={updateCloud} 
+                  updateMapState={updateMapState} 
+                  onDiceRoll={handleDiceRoll} 
+                  user={user} 
+                  apiKey={apiKey} 
+                  savePlayer={savePlayer} 
+                  activeTemplate={activeTemplate} 
+                  onClearTemplate={() => setActiveTemplate(null)} 
+                  onInitiative={handleInitiative}
+                  updateCombatant={updateCombatant} // Pass new function
+                  // START CHANGE: Pass the clear function down
+                  onClearRolls={handleClearRolls}
+                  // END CHANGE
+                  removeCombatant={(id) => { // Pass inline delete function
+                      const c = data.campaign?.combat;
+                      const newCombatants = c.combatants.filter(x => x.id !== id);
+                      updateCloud({ ...data, campaign: { ...data.campaign, combat: { ...c, combatants: newCombatants } } });
+                  }}
+              />}
               {currentView === 'atlas' && <WorldCreator data={data} setData={setData} role={effectiveRole} updateCloud={updateCloud} updateMapState={updateMapState} aiHelper={queryAiService} apiKey={apiKey} />}
 
               {/* 4. PARTY (PCs) */}

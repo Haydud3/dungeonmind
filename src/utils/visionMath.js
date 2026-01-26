@@ -1,8 +1,45 @@
 /**
+ * Calculates visibility radius based on 5e Rules (Darkvision, Equipment).
+ * Returns radius in PIXELS (assuming 50px = 5ft).
+ */
+export const getCharacterVisionSettings = (character, cellPx = 50) => {
+    if (!character) return { radius: Infinity, color: '#000000' };
+
+    // 1. Base Darkvision (Stats)
+    let rangeFt = character.senses?.darkvision || 0;
+
+    // 2. Inventory Scan (Light Sources)
+    // Priority: Lantern (60) > Torch (40 total, 20 bright) > Candle (5)
+    // We treat bright/dim as visible for this basic engine.
+    const inventory = character.inventory || [];
+    
+    // Check equipped light sources
+    const hasLantern = inventory.some(i => i.equipped && i.name.toLowerCase().includes('lantern'));
+    const hasTorch = inventory.some(i => i.equipped && i.name.toLowerCase().includes('torch'));
+    const hasCandle = inventory.some(i => i.equipped && i.name.toLowerCase().includes('candle'));
+    const hasLightSpell = character.conditions?.includes('Light Spell'); // Optional future-proof
+
+    if (hasLantern) rangeFt = Math.max(rangeFt, 60);
+    else if (hasTorch || hasLightSpell) rangeFt = Math.max(rangeFt, 40);
+    else if (hasCandle) rangeFt = Math.max(rangeFt, 5);
+
+    // 3. Blindness / No Vision Fallback
+    // If range is 0, they are blind. Give 2ft (0.4 squares) just to see self/walls.
+    if (rangeFt === 0) rangeFt = 2;
+
+    // 4. Convert to Pixels (5ft = cellPx)
+    return { 
+        radius: (rangeFt / 5) * cellPx,
+        color: (hasLantern || hasTorch || hasCandle) ? '#ffaa00' : '#ffffff' // Warm light vs Cold Darkvision
+    };
+};
+
+/**
  * Calculates a visibility polygon from a given point (origin).
  * Optimized for 60FPS rendering.
+ * Added maxRadius to support limited vision range.
  */
-export const calculateVisibilityPolygon = (origin, walls, bounds) => {
+export const calculateVisibilityPolygon = (origin, walls, bounds, maxRadius = Infinity) => {
     // 1. Add map boundaries to prevent infinite vision
     const allSegments = [
         ...walls,
@@ -32,7 +69,8 @@ export const calculateVisibilityPolygon = (origin, walls, bounds) => {
         const dx = Math.cos(angle);
         const dy = Math.sin(angle);
         
-        let minT = Infinity;
+        // Start with the max vision radius as the limit
+        let minT = maxRadius;
         let closest = null;
 
         // Check against EVERY wall
@@ -46,7 +84,17 @@ export const calculateVisibilityPolygon = (origin, walls, bounds) => {
             }
         }
 
-        if (closest) intersections.push(closest);
+        // If we hit a wall, push the hit. 
+        // If we didn't (minT is still maxRadius), create a point at maxRadius.
+        if (closest) {
+            intersections.push(closest);
+        } else if (maxRadius !== Infinity) {
+            intersections.push({
+                x: origin.x + dx * maxRadius,
+                y: origin.y + dy * maxRadius,
+                param: maxRadius
+            });
+        }
     };
 
     sortedAngles.forEach(angle => {

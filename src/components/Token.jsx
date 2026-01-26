@@ -57,8 +57,7 @@ const Token = ({ token, isOwner, onMouseDown, onTouchStart, cellPx, isDragging, 
     return (
         <div 
             onMouseDown={(e) => {
-                // REMOVED: e.stopPropagation()
-                // We let the event bubble so the map knows a click happened.
+                // Removed stopPropagation so event bubbles to the wrapper in InteractiveMap
                 if (isOwner) {
                     if(onMouseDown) onMouseDown(e, token.id);
                 }
