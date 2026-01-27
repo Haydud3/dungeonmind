@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import Icon from '../Icon';
 import { uploadImage } from '../../utils/storageUtils';
+import { compressImage } from '../../utils/imageCompressor';
 
 const GOOGLE_SEARCH_CX = "c38cb56920a4f45df"; 
 const GOOGLE_SEARCH_KEY = "AIzaSyA6PqsRueHv17l4hvldnAo4dFMgeyqoPCM"; 
@@ -59,9 +60,28 @@ const MapLibrary = ({ savedMaps, onSelect, onClose, onDelete }) => {
         if (!file) return;
         
         setIsUploading(true);
+        // START CHANGE: Add Debugging
+        console.log(`[DEBUG] Starting upload for: ${file.name}. Initial size: ${file.size} bytes.`);
+        // END CHANGE
         try {
-            const path = `maps/${Date.now()}_${file.name.replace(/\s+/g, '_')}`;
-            const url = await uploadImage(file, path);
+            // START CHANGE: Resize the map image to a safe max dimension (4096px)
+            const resizedBlob = await compressImage(file, 4096, 0.9);
+            
+            // START CHANGE: Debug Resized Blob size
+            console.log(`[DEBUG] Resizing complete. Blob type: ${resizedBlob.type}, size: ${resizedBlob.size} bytes.`);
+            // END CHANGE
+
+            const path = `maps/${Date.now()}_${file.name.replace(/\s+/g, '_')}.jpg`;
+            // Upload the resulting Blob to Firebase Storage
+            
+            // START CHANGE: Debug Upload Start
+            console.log(`[DEBUG] Starting Firebase upload to path: ${path}`);
+            // END CHANGE
+            const url = await uploadImage(resizedBlob, path);
+            
+            // START CHANGE: Debug Upload Success
+            console.log(`[DEBUG] Upload SUCCESS. URL received: ${url.substring(0, 50)}...`);
+            // END CHANGE
             
             // Standardized payload with isNew flag
             onSelect({ 
@@ -74,7 +94,10 @@ const MapLibrary = ({ savedMaps, onSelect, onClose, onDelete }) => {
             });
         } catch (e) {
             console.error("Upload failed", e);
-            alert("Upload failed. Check storage settings."); 
+            // START CHANGE: Debug Error
+            console.log("[DEBUG] Upload FAILED during processing or Firebase call.");
+            // END CHANGE
+            alert("Upload failed. Check console for details."); 
         }
         setIsUploading(false);
     };

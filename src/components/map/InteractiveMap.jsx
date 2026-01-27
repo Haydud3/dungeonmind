@@ -91,6 +91,11 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     const containerRef = useRef(null);
     const visionCanvasRef = useRef(null);
     const mapImageRef = useRef(null);
+    // START CHANGE: View Ref to fix Desktop Zoom Stutter/Lock
+    // We store the view in a ref so the wheel event listener can read it 
+    // without needing to be removed/re-added on every frame.
+    const viewRef = useRef(view);
+    // END CHANGE
     const lastSnappedCell = useRef({ x: -1, y: -1 });
     const touchStartPos = useRef({ x: 0, y: 0 });
     const longPressTimer = useRef(null);
@@ -103,6 +108,11 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     const latestMeasurementRef = useRef(activeMeasurement);
 
     // 5. EFFECTS & SYNCING
+    useEffect(() => {
+        viewRef.current = view;
+    }, [view]);
+    // END CHANGE
+
     useEffect(() => {
         latestDataRef.current = data;
         latestTokensRef.current = tokens;
@@ -137,6 +147,31 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             }
         }
     }, [selectedTokenId, sidebarIsOpen]);
+
+    // START CHANGE: iOS Safari Gesture Prevention (Stops Ghosting/Crashing)
+    // This strictly prevents the browser from taking a snapshot (ghosting) for native zoom
+    useEffect(() => {
+        const preventGestures = (e) => {
+            e.preventDefault();
+            // Critical: If we don't preventDefault here, Safari tries to zoom the viewport 
+            // while React zooms the div, causing memory overload (crash) and visual artifacts.
+        };
+
+        const container = containerRef.current;
+        if (!container) return;
+
+        // Note: These are non-standard WebKit events specifically for the pinch gesture
+        container.addEventListener('gesturestart', preventGestures, { passive: false });
+        container.addEventListener('gesturechange', preventGestures, { passive: false });
+        container.addEventListener('gestureend', preventGestures, { passive: false });
+
+        return () => {
+            container.removeEventListener('gesturestart', preventGestures);
+            container.removeEventListener('gesturechange', preventGestures);
+            container.removeEventListener('gestureend', preventGestures);
+        };
+    }, []);
+    // END CHANGE
 
     // --- 1. RENDERERS (Vision Logic) ---
     
@@ -1021,37 +1056,41 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     };
     // END CHANGE
 
-    // START CHANGE: Native Non-Passive Wheel Listener (Fixes "Whole App" Zoom)
+    // START CHANGE: Persistent Wheel Listener (Fixes Desktop Zoom)
     useEffect(() => {
         const container = containerRef.current;
         if (!container) return;
 
         const onWheel = (e) => {
             // FIX: Check if we are scrolling inside a sidebar or list
-            // If the target is inside a scrollable element, let the browser handle it.
             if (e.target.closest('.overflow-y-auto') || e.target.closest('.custom-scroll')) {
                 return;
             }
 
-            e.preventDefault(); // STOP browser from zooming the whole page
+            e.preventDefault(); // Stop browser page zoom
             
-            // 1. Zoom Logic
-            const scaleSensitivity = 0.001;
-            const delta = -e.deltaY * scaleSensitivity;
-            const newScale = Math.min(Math.max(0.1, view.scale + delta), 5);
+            // 1. Get fresh state from Ref (Solves the Stale Closure issue)
+            const currentView = viewRef.current;
 
-            // 2. Mouse Position relative to container
+            // 2. Zoom Logic
+            // Increased sensitivity slightly for better feel
+            const scaleSensitivity = 0.001; 
+            const delta = -e.deltaY * scaleSensitivity;
+            const newScale = Math.min(Math.max(0.1, currentView.scale + delta), 5.0);
+
+            // 3. Mouse Position relative to container
             const rect = container.getBoundingClientRect();
             const mouseX = e.clientX - rect.left;
             const mouseY = e.clientY - rect.top;
 
-            // 3. Math to keep cursor focused
-            const worldX = (mouseX - view.x) / view.scale;
-            const worldY = (mouseY - view.y) / view.scale;
+            // 4. Math to keep cursor focused
+            const worldX = (mouseX - currentView.x) / currentView.scale;
+            const worldY = (mouseY - currentView.y) / currentView.scale;
 
             const newX = mouseX - (worldX * newScale);
             const newY = mouseY - (worldY * newScale);
 
+            // 5. Update State
             setView({ x: newX, y: newY, scale: newScale });
         };
 
@@ -1059,7 +1098,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         container.addEventListener('wheel', onWheel, { passive: false });
 
         return () => container.removeEventListener('wheel', onWheel);
-    }, [view]); 
+    }, []); // Empty dependency array = Listener attaches ONCE and stays active
     // END CHANGE
 
     return (
@@ -1108,7 +1147,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                 className={`absolute top-4 left-4 z-50 pointer-events-none transition-all duration-300 ${
                     sidebarIsOpen 
                         ? 'max-[1150px]:opacity-0 max-[1150px]:pointer-events-none' 
-                        : 'opacity-100'
+                        : 'max-[650px]:opacity-0 max-[650px]:pointer-events-none opacity-100'
                 }`}
                 onPointerDown={(e) => e.stopPropagation()}
             >

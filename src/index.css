@@ -6,7 +6,17 @@
 
 html, body, #root { height: 100dvh; width: 100%; overflow: hidden; overscroll-behavior-y: none; -webkit-tap-highlight-color: transparent; }
 
-body { font-family: 'Lato', sans-serif; background-color: var(--bg-dark); color: #e2e8f0; overflow: hidden; touch-action: manipulation; }
+/* START CHANGE: Add touch-action none to body to prevent browser interference globally, while allowing specific elements to opt-in */
+body { 
+    font-family: 'Lato', sans-serif; 
+    background-color: var(--bg-dark); 
+    color: #e2e8f0; 
+    overflow: hidden; 
+    touch-action: none; /* Disables browser handling of gestures */
+    overscroll-behavior: none; /* Disables pull-to-refresh/bounce */
+}
+/* END CHANGE */
+
 h1, h2, h3, .fantasy-font { font-family: 'Cinzel', serif; }
 .mono-font { font-family: 'Fira Code', monospace; }
 
