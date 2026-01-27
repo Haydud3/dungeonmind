@@ -3,14 +3,20 @@ import Icon from '../Icon';
 
 const GridControls = ({ grid, onUpdate, onClose }) => {
     const handleChange = (key, val) => {
+// ---------------------------------------------------------
         onUpdate({ ...grid, [key]: val });
     };
 
     return (
-        <div className="absolute bottom-20 left-1/2 -translate-x-1/2 bg-slate-900/95 backdrop-blur border border-slate-700 p-4 rounded-xl shadow-2xl w-64 animate-in slide-in-from-bottom-5 z-50">
+        <div 
+            className="absolute bottom-36 md:bottom-22 left-1/2 -translate-x-1/2 bg-slate-900/95 backdrop-blur border border-slate-700 p-4 rounded-xl shadow-2xl w-64 animate-in slide-in-from-bottom-5 z-50 pointer-events-auto"
+            // FIX: Stop the event from reaching the InteractiveMap container
+            onPointerDown={(e) => e.stopPropagation()} 
+        >
             <div className="flex justify-between items-center mb-4">
                 <h3 className="font-bold text-white flex items-center gap-2"><Icon name="grid" size={16}/> Grid Config</h3>
-                <button onClick={onClose} className="text-slate-400 hover:text-white"><Icon name="x" size={16}/></button>
+                {/* FIX: Ensure onClose is actually called */}
+                <button onClick={onClose} className="text-slate-400 hover:text-white p-1"><Icon name="x" size={16}/></button>
             </div>
 
             <div className="space-y-4">

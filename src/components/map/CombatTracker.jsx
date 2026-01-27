@@ -2,34 +2,30 @@ import React from 'react';
 import Icon from '../Icon';
 
 // 1. Added onClearRolls to the props
-const CombatTracker = ({ combat, onNextTurn, onEndCombat, onClearRolls, role, updateCombatant, onRemove }) => {
+const CombatTracker = ({ combat, onNextTurn, onEndCombat, onClearRolls, role, updateCombatant, onRemove, onAutoRoll }) => {
     const combatants = combat?.combatants || [];
     const currentTurn = combat?.turn || 0;
     const currentRound = combat?.round || 1;
 
-    // 2. Created a handler to manage ending combat and clearing rolls
+    // START CHANGE: Define the missing handler to fix ReferenceError
     const handleEndCombat = () => {
         if (onEndCombat) onEndCombat();
         if (onClearRolls) onClearRolls();
     };
+    // END CHANGE
 
     return (
         <div className="absolute top-20 left-4 bottom-auto w-72 bg-slate-900/95 backdrop-blur border border-slate-700 rounded-xl shadow-2xl z-40 p-0 overflow-hidden flex flex-col max-h-[60vh] animate-in slide-in-from-left">
-            {/* Header */}
             <div className="p-3 bg-slate-800 border-b border-slate-700 flex justify-between items-center">
-                <div>
-                    <h3 className="font-bold text-red-500 fantasy-font flex items-center gap-2">
-                        <Icon name="swords" size={16}/> Round {currentRound}
-                    </h3>
+                <h3 className="font-bold text-red-500 fantasy-font flex items-center gap-2"><Icon name="swords" size={16}/> Round {currentRound}</h3>
+                <div className="flex gap-1">
+                    {role === 'dm' && (
+                        <>
+                            <button onClick={onAutoRoll} title="Auto-roll Monsters" className="p-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded transition-colors shadow-lg"><Icon name="zap" size={14}/></button>
+                            <button onClick={handleEndCombat} className="text-[10px] bg-slate-700 hover:bg-red-900 px-2 py-1 rounded">End</button>
+                        </>
+                    )}
                 </div>
-                {role === 'dm' && (
-                    <button 
-                        onClick={handleEndCombat} // 3. Updated onClick to use the new handler
-                        className="text-[10px] bg-slate-700 hover:bg-red-900 text-slate-300 hover:text-white px-2 py-1 rounded transition-colors"
-                    >
-                        End
-                    </button>
-                )}
             </div>
 
             {/* List */}

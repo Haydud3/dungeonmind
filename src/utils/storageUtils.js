@@ -21,8 +21,8 @@ export const imageElementToBlob = async (imgElement) => {
         } else {
             // Fallback: Draw to canvas to sanitize/convert
             const canvas = document.createElement('canvas');
-            canvas.width = imgElement.width || 1024;
-            canvas.height = imgElement.height || 1024;
+            canvas.width = imgElement.naturalWidth || 2048; // Increased from 1024
+            canvas.height = imgElement.naturalHeight || 2048; 
             const ctx = canvas.getContext('2d');
             ctx.drawImage(imgElement, 0, 0, canvas.width, canvas.height);
             canvas.toBlob(resolve, 'image/jpeg', 0.85);

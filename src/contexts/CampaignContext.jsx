@@ -85,13 +85,25 @@ export const CampaignProvider = ({ children, user }) => {
         return () => { unsubRoot(); unsubPlayers(); unsubJournal(); unsubChat(); unsubLore(); };
     }, [gameParams, user]);
 
-    // --- 2. ACTIONS ---
+     // --- 2. ACTIONS ---
     const updateCloud = (newData, immediate = false) => {
-        const { players, chatLog, journal_pages, ...rootData } = newData;
-        setData(prev => ({ ...prev, ...newData })); // Optimistic
+// ---------------------------------------------------------
+        // NEW: Sanitizer function to strip 'undefined' which Firebase hates
+        const sanitize = (obj) => {
+            return JSON.parse(JSON.stringify(obj, (key, value) =>
+                value === undefined ? null : value
+            ));
+        };
+
+        const sanitizedData = sanitize(newData);
+        const { players, chatLog, journal_pages, ...rootData } = sanitizedData;
+        
+        setData(prev => ({ ...prev, ...sanitizedData })); // Optimistic UI
+// ---------------------------------------------------------
 
         if (gameParams?.isOffline) {
-            localStorage.setItem('dm_local_data', JSON.stringify(newData));
+// context: line 88 (updated to use sanitizedData)
+            localStorage.setItem('dm_local_data', JSON.stringify(sanitizedData));
             return;
         }
         

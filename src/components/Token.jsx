@@ -12,28 +12,26 @@ const STATUS_ICONS = {
     burning: { icon: 'flame', color: 'text-orange-500', bg: 'bg-orange-900' }
 };
 
-const Token = ({ token, isOwner, onMouseDown, onTouchStart, cellPx, isDragging, overridePos, onClick, isSelected }) => {
-        // 1. Calculate Token Dimensions
-        // START CHANGE: Allow Numbers (1, 2, 3) or Strings
-        const sizeMap = { medium: 1, large: 2, huge: 3, gargantuan: 4, tiny: 0.5 };
-        const sizeMultiplier = typeof token.size === 'number' ? token.size : (sizeMap[token.size] || 1);
+const Token = ({ token, isOwner, onMouseDown, onTouchStart, cellPx, isDragging, overridePos, onClick, isSelected, isTurn }) => {
+    const sizeMap = { medium: 1, large: 2, huge: 3, gargantuan: 4, tiny: 0.5 };
+    const sizeMultiplier = typeof token.size === 'number' ? token.size : (sizeMap[token.size] || 1);
     const dimension = cellPx * sizeMultiplier;
 
-    // START CHANGE: Standardized variable block and fixed duplicate definitions
-    const fontSize = dimension * 0.14 * 1.69;  // Increased by 69% (30% more than previous 30%)
-    const py = dimension * 0.02; 
-    const px = dimension * 0.10; 
-    const borderThickness = Math.max(0.5, dimension * 0.05); 
-    const shadowBlur = dimension * 0.08; 
-    const gap = dimension * 0.05;  // Reduced from 0.12 to move nameplate closer
-    const bottomOffset = -(fontSize + py + gap + dimension * 0.08) * 0.7; // 30% closer to token, overlaps bottom
-    const paddingY = py; 
-    const paddingX = px;
-    // END CHANGE
-    
     const isPc = token.type === 'pc';
     const borderColor = isPc ? '#22c55e' : '#ef4444';
+    
+    // NEW: Active Turn Highlight
+    const turnShadow = isTurn ? '0 0 30px #f59e0b, 0 0 15px #f59e0b' : '';
     const shadowColor = isPc ? 'rgba(34,197,94,0.6)' : 'rgba(239,68,68,0.2)';
+
+    // START CHANGE: Define missing scaling variables to fix ReferenceErrors
+    const shadowBlur = dimension * 0.08;
+    const borderThickness = Math.max(1, dimension * 0.05);
+    const fontSize = Math.max(10, dimension * 0.22); // Scaled font size
+    const paddingY = dimension * 0.02;
+    const paddingX = dimension * 0.12;
+    const bottomOffset = -(fontSize + paddingY * 2 + 5); // Position nameplate below token
+    // END CHANGE
 
     const statuses = token.statuses || [];
     const isDead = statuses.includes('dead');
@@ -75,19 +73,16 @@ const Token = ({ token, isOwner, onMouseDown, onTouchStart, cellPx, isDragging, 
             }}
             className={`absolute transform -translate-x-1/2 -translate-y-1/2 cursor-grab active:cursor-grabbing hover:z-50 
                 ${isOwner ? 'hover:scale-105' : ''} 
-                ${isDead ? 'grayscale opacity-80' : ''}
-                ${isDragging ? 'opacity-60 pointer-events-none z-[100] scale-110' : 'opacity-100 z-10'} 
-                ${animClass}
+                ${isTurn ? 'animate-pulse scale-110 z-50' : ''}
+                ${isDragging ? 'opacity-60 pointer-events-none z-[100]' : 'opacity-100 z-10'} 
             `}
             style={{ 
                 left: `${x}%`, 
                 top: `${y}%`,
-                // START CHANGE: Ensure physical dimensions update
                 width: `${dimension}px`,
                 height: `${dimension}px`,
-                // END CHANGE
-                transition: isDragging ? 'none' : 'transform 0.1s, left 0.1s linear, top 0.1s linear',
-                willChange: 'left, top'
+                // boxShadow: REMOVED FROM HERE
+                transition: isDragging ? 'none' : 'all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275)',
             }}
             // START CHANGE: Safe Name Check
             title={token.name || "Unknown"}
@@ -99,7 +94,10 @@ const Token = ({ token, isOwner, onMouseDown, onTouchStart, cellPx, isDragging, 
                     borderWidth: `${borderThickness}px`,
                     borderStyle: 'solid',
                     borderColor: borderColor,
-                    boxShadow: `0 0 ${shadowBlur}px ${shadowColor}${isSelected ? ', 0 0 20px rgba(99, 102, 241, 0.8)' : ''}`,
+                    // FIX: Moved shadow logic here so it follows the circle shape
+                    boxShadow: isTurn 
+                        ? '0 0 30px #f59e0b, 0 0 15px #f59e0b' 
+                        : `0 0 ${shadowBlur}px ${shadowColor}${isSelected ? ', 0 0 20px rgba(99, 102, 241, 0.8)' : ''}`,
                     imageRendering: 'auto',
                     WebkitFontSmoothing: 'antialiased'
                 }}

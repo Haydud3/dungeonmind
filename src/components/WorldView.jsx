@@ -5,7 +5,8 @@ import SheetContainer from './character-sheet/SheetContainer';
 // END CHANGE
 import { useCharacterStore } from '../stores/useCharacterStore';
 
-const WorldView = ({ data, role, updateCloud, updateMapState, user, apiKey, onDiceRoll, savePlayer, onInitiative, updateCombatant, removeCombatant, onClearRolls }) => {
+// START CHANGE: Add onAutoRoll to destructured props
+const WorldView = ({ data, role, updateCloud, updateMapState, user, apiKey, onDiceRoll, savePlayer, onInitiative, updateCombatant, removeCombatant, onClearRolls, onAutoRoll }) => {
     // State to track which sheet is open
     const [activeSheetId, setActiveSheetId] = useState(null);
     const [sheetContext, setSheetContext] = useState(null); // NEW STATE FOR SHEET CONTEXT
@@ -65,9 +66,12 @@ const WorldView = ({ data, role, updateCloud, updateMapState, user, apiKey, onDi
                     updateCloud={updateCloud} 
                     updateMapState={handleMapAction}
                     sidebarIsOpen={activeSheetId !== null}
-                    updateCombatant={updateCombatant} // Pass down
-                    removeCombatant={removeCombatant} // Pass down
+                    updateCombatant={updateCombatant} 
+                    removeCombatant={removeCombatant} 
                     onClearRolls={onClearRolls}
+                    // START CHANGE: Pass it down
+                    onAutoRoll={onAutoRoll}
+                    // END CHANGE
                 />
             </div>
 

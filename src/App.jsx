@@ -167,27 +167,56 @@ function DungeonMindApp() {
   // END CHANGE
 
   const updateMapState = (action, payload) => {
-      const currentMap = data.campaign?.activeMap || { url: null, revealPaths: [], tokens: [] };
+      const currentMap = data.campaign?.activeMap || { url: null, revealPaths: [], tokens: [], walls: [], grid: null };
       const savedMaps = data.campaign?.savedMaps || [];
       let newMap = { ...currentMap };
       let newSavedMaps = [...savedMaps];
 
-      // Helper: Save current map state before switching
-      if ((action === 'set_image' || action === 'load_map') && currentMap.url) {
-          const idx = newSavedMaps.findIndex(m => m.url === currentMap.url);
-          if (idx > -1) newSavedMaps[idx] = { ...newSavedMaps[idx], ...currentMap };
-          else newSavedMaps.push({ id: Date.now(), name: "Unsaved Map", ...currentMap });
+      // CRITICAL: Before we do anything else, if there is an active map, 
+      // save its CURRENT tokens/walls into the library array so we don't "forget" positions.
+      if (currentMap.url) {
+          const currentIdx = newSavedMaps.findIndex(m => m.url === currentMap.url);
+          if (currentIdx > -1) {
+              newSavedMaps[currentIdx] = { ...currentMap };
+          }
       }
 
       if (action === 'set_image') { 
           if (payload && !newSavedMaps.find(m => m.url === payload)) {
-             newSavedMaps.push({ id: Date.now(), name: `Map ${newSavedMaps.length + 1}`, url: payload });
+             newSavedMaps.push({ 
+                 id: Date.now(), 
+                 name: `Map ${newSavedMaps.length + 1}`, 
+                 url: payload,
+                 grid: { size: 50, offsetX: 0, offsetY: 0, visible: true, snap: true },
+                 walls: [],
+                 tokens: [],
+                 templates: []
+             });
           }
           newMap = { url: payload, revealPaths: [], walls: [], tokens: [], view: { zoom: 1, pan: {x:0,y:0} } };
       } else if (action === 'load_map') {
-          const existing = newSavedMaps.find(m => m.url === payload.url);
-          if (existing) newMap = { ...existing }; 
-          else newMap = { url: payload.url, revealPaths: [], walls: [], tokens: [], view: { zoom: 1, pan: {x:0,y:0} } };
+          if (!payload || payload.url === null) {
+              newMap = { url: null, revealPaths: [], walls: [], tokens: [], templates: [], grid: { size: 50, offsetX: 0, offsetY: 0, visible: true, snap: true }, view: { zoom: 1, pan: { x: 0, y: 0 } } };
+          } else {
+              const existingIdx = newSavedMaps.findIndex(m => m.url === payload.url);
+              
+              if (existingIdx === -1) {
+                  // It's brand new (from Search/Link)
+                  const newEntry = {
+                      ...payload,
+                      id: payload.id || Date.now(),
+                      revealPaths: payload.revealPaths || [],
+                      walls: payload.walls || [],
+                      tokens: payload.tokens || [], // Ensure this exists!
+                      grid: payload.grid || { size: 50, offsetX: 0, offsetY: 0, visible: true, snap: true }
+                  };
+                  newSavedMaps = [...newSavedMaps, newEntry];
+                  newMap = newEntry;
+              } else {
+                  // It exists: Use the version we just "Snapshotted" or found in the cabinet
+                  newMap = { ...newSavedMaps[existingIdx] };
+              }
+          }
       } else if (action === 'start_path') { newMap.revealPaths = [...newMap.revealPaths, payload]; 
       } else if (action === 'append_point') {
           const lastPath = { ...newMap.revealPaths[newMap.revealPaths.length - 1] };
@@ -197,15 +226,31 @@ function DungeonMindApp() {
           newMap.revealPaths = newPaths;
       } else if (action === 'clear_fog') { newMap.revealPaths = []; 
       } else if (action === 'delete_map') {
-          const target = newSavedMaps.find(m => m.id === payload);
-          newSavedMaps = newSavedMaps.filter(m => m.id !== payload);
-          // If deleting the active map, reset the board
-          if (target && target.url === newMap.url) {
-              newMap = { url: null, revealPaths: [], walls: [], tokens: [], view: { zoom: 1, pan: {x:0,y:0} } };
+          const targetId = payload;
+          const mapBeingDeleted = newSavedMaps.find(m => m.id === targetId);
+          newSavedMaps = newSavedMaps.filter(m => m.id !== targetId);
+
+          // CRITICAL FIX: If deleting the active map, reset to a standardized empty state
+          if (mapBeingDeleted && mapBeingDeleted.url === currentMap.url) {
+              newMap = { 
+                  url: null, 
+                  revealPaths: [], 
+                  walls: [], 
+                  tokens: [], 
+                  templates: [],
+                  grid: { size: 50, offsetX: 0, offsetY: 0, visible: true, snap: true }, 
+                  view: { zoom: 1, pan: { x: 0, y: 0 } } 
+              };
           }
       // START CHANGE: Add update_token case to Map State engine
       } else if (action === 'update_token') {
           newMap.tokens = newMap.tokens.map(t => t.id === payload.id ? { ...t, ...payload } : t);
+      } else if (action === 'rename_map') {
+          // payload: { id, name }
+          newSavedMaps = newSavedMaps.map(m => m.id === payload.id ? { ...m, name: payload.name } : m);
+          if (currentMap.id === payload.id) {
+              newMap = { ...newMap, name: payload.name };
+          }
       }
       // END CHANGE
       updateCloud({ ...data, campaign: { ...data.campaign, activeMap: newMap, savedMaps: newSavedMaps } });
@@ -379,60 +424,75 @@ function DungeonMindApp() {
 
   const handlePlaceTemplate = (spell) => { setActiveTemplate(spell); setCurrentView('map'); };
 
-  // START CHANGE: Enhanced Initiative Handler
-  const handleInitiative = (char, roll = null) => {
+  // START CHANGE: Token-aware Initiative Handler
+  const handleInitiative = (charOrToken, roll = null) => {
       const c = data.campaign?.combat;
-      // Auto-start combat if needed
       const combatState = (c && c.active) ? c : { active: true, round: 1, turn: 0, combatants: [] };
       
       let combatants = [...(combatState.combatants || [])];
-      const idx = combatants.findIndex(x => x.id === char.id);
       
-      // Determine type & Image
-      const isPlayer = data.players.some(p => p.id === char.id);
-      const type = isPlayer ? 'pc' : 'npc';
+      const uniqueId = charOrToken.tokenId || charOrToken.id;
+      const idx = combatants.findIndex(x => x.id === uniqueId);
       
-      // Find linked Token ID for map integration
-      const linkedToken = data.campaign?.activeMap?.tokens?.find(t => t.characterId === char.id);
-      const tokenId = linkedToken ? linkedToken.id : null;
-      
-      // Grab image from Character OR Token (fallback)
-      const image = char.image || linkedToken?.image || null;
+      // FIX: Check if this ID belongs to a Player if type is not explicit
+      const isPlayer = data.players?.some(p => p.id === (charOrToken.characterId || charOrToken.id));
+      const finalType = charOrToken.type || (isPlayer ? 'pc' : 'npc');
 
       const entry = { 
-          id: char.id, 
-          name: char.name, 
-          init: roll, // Can be null (Pending)
-          type, 
-          tokenId,
-          image
+          id: uniqueId, 
+          characterId: charOrToken.characterId || charOrToken.id,
+          name: charOrToken.name, 
+          init: roll, 
+          type: finalType, // Use the corrected type
+          image: charOrToken.image || charOrToken.img
       };
       
       if (idx > -1) {
-          // Update existing
           combatants[idx] = { ...combatants[idx], ...entry };
-          // If roll is null (just adding to tracker), keep existing init if present
-          if (roll === null && combatants[idx].init !== undefined) {
-              entry.init = combatants[idx].init;
-          }
       } else {
           combatants.push(entry);
       }
       
-      // Sort: High numbers top, Nulls bottom
-      combatants.sort((a,b) => {
-          if (a.init === null) return 1;
-          if (b.init === null) return -1;
-          return b.init - a.init;
-      });
+      combatants.sort((a,b) => (b.init || 0) - (a.init || 0));
+      updateCloud({ ...data, campaign: { ...data.campaign, combat: { ...combatState, combatants } } }, true);
+  };
+
+  const autoRollNPCs = () => {
+      const tokens = data.campaign?.activeMap?.tokens || [];
+      const npcs = tokens.filter(t => t.type !== 'pc');
       
-      updateCloud({ 
-          ...data, 
-          campaign: { 
-              ...data.campaign, 
-              combat: { ...combatState, combatants } 
-          } 
-      }, true);
+      // Get current combatants or start fresh
+      const c = data.campaign?.combat;
+      const combatState = (c && c.active) ? c : { active: true, round: 1, turn: 0, combatants: [] };
+      let newCombatants = [...(combatState.combatants || [])];
+
+      npcs.forEach(token => {
+          // Calculate Dex Mod
+          const master = data.npcs?.find(n => n.id === token.characterId);
+          const dexMod = master ? Math.floor(((master.stats?.dex || 10) - 10) / 2) : 0;
+          const roll = Math.floor(Math.random() * 20) + 1;
+          const total = roll + dexMod;
+
+          // Create Entry
+          const entry = {
+              id: token.id, // Token ID is unique
+              characterId: token.characterId,
+              name: token.name,
+              init: total,
+              type: 'npc',
+              image: token.image || token.img
+          };
+
+          // Update or Push
+          const idx = newCombatants.findIndex(x => x.id === entry.id);
+          if (idx > -1) newCombatants[idx] = { ...newCombatants[idx], ...entry };
+          else newCombatants.push(entry);
+      });
+
+      // Sort and Save ONCE
+      newCombatants.sort((a,b) => (b.init || 0) - (a.init || 0));
+      updateCloud({ ...data, campaign: { ...data.campaign, combat: { ...combatState, combatants: newCombatants } } }, true);
+      toast(`Rolled initiative for ${npcs.length} monsters!`, "info");
   };
 
   const updateCombatant = (id, changes) => {
@@ -585,9 +645,8 @@ function DungeonMindApp() {
                    </div>
                </div>
            </div>
-           {/* END CHANGE */}
 
-           <div className="flex-1 overflow-hidden relative p-0 md:p-0">
+           <div className="flex-1 overflow-hidden relative p-0 pb-[70px] md:pb-0">
              {/* 1. CHAT (Session) */}
               {/* START CHANGE: Connect deleteMessage and clearChat props */}
               {currentView === 'session' && <SessionView data={data} chatLog={data.chatLog} inputText={inputText} setInputText={setInputText} 
@@ -639,6 +698,9 @@ function DungeonMindApp() {
                       const newCombatants = c.combatants.filter(x => x.id !== id);
                       updateCloud({ ...data, campaign: { ...data.campaign, combat: { ...c, combatants: newCombatants } } });
                   }}
+                  // START CHANGE: Pass the Auto-Roll function
+                  onAutoRoll={autoRollNPCs}
+                  // END CHANGE
               />}
               {currentView === 'atlas' && <WorldCreator data={data} setData={setData} role={effectiveRole} updateCloud={updateCloud} updateMapState={updateMapState} aiHelper={queryAiService} apiKey={apiKey} />}
 

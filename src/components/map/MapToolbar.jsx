@@ -17,7 +17,7 @@ const MapToolbar = ({ activeTool, setTool, visionActive, onToggleVision }) => {
     ];
 
     return (
-        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 bg-slate-900/90 backdrop-blur border border-slate-700 p-2 rounded-2xl shadow-2xl flex gap-2 pointer-events-auto z-50">
+        <div className="absolute bottom-20 md:bottom-6 left-1/2 -translate-x-1/2 bg-slate-900/90 backdrop-blur border border-slate-700 p-2 rounded-2xl shadow-2xl flex gap-2 pointer-events-auto z-50">
             {tools.map(tool => (
                 <button
                     key={tool.id}

@@ -12,10 +12,10 @@ import GridControls from './GridControls';
 import CombatTracker from './CombatTracker';
 // START CHANGE: Import Radial HUD
 import RadialHUD from './RadialHUD';
-// END CHANGE
+import { enrichCharacter } from '../../utils/srdEnricher';
 
-// START CHANGE: Add updateCombatant and removeCombatant to props
-const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, activeTemplate, sidebarIsOpen, updateCombatant, removeCombatant, onClearRolls }) => {
+// START CHANGE: Add onAutoRoll to destructured props
+const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, activeTemplate, sidebarIsOpen, updateCombatant, removeCombatant, onClearRolls, onAutoRoll }) => {
     // 1. ALL STATE HOOKS
     const [view, setView] = useState({ x: 0, y: 0, scale: 1 });
     const [activeTool, setActiveTool] = useState('move');
@@ -95,6 +95,9 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     const touchStartPos = useRef({ x: 0, y: 0 });
     const longPressTimer = useRef(null);
     const lastMousePosRef = useRef({ x: 0, y: 0 });
+    const pointerCache = useRef([]); // Track multiple fingers
+    const pinchStartDist = useRef(0); // Initial distance between fingers
+    const pinchStartScale = useRef(1); // Initial scale when pinch began
     const latestDataRef = useRef(data);
     const latestTokensRef = useRef(tokens);
     const latestMeasurementRef = useRef(activeMeasurement);
@@ -281,7 +284,41 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     // --- 1.5 GLOBAL INTERACTION ESCAPE ---
     useEffect(() => {
         const handleGlobalMove = (e) => {
-            // Only process if we are actually doing something
+            // Update pointer position in cache
+            const index = pointerCache.current.findIndex(p => p.id === e.pointerId);
+            if (index !== -1) {
+                pointerCache.current[index] = { id: e.pointerId, x: e.clientX, y: e.clientY };
+            }
+
+            // A. PINCH ZOOM LOGIC (2 Fingers)
+            if (pointerCache.current.length === 2) {
+                const p1 = pointerCache.current[0];
+                const p2 = pointerCache.current[1];
+                const currentDist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+                
+                if (pinchStartDist.current > 0) {
+                    const rect = containerRef.current.getBoundingClientRect();
+                    const zoomFactor = currentDist / pinchStartDist.current;
+                    const newScale = Math.min(Math.max(0.1, pinchStartScale.current * zoomFactor), 5);
+                    
+                    // Midpoint in screen space relative to container
+                    const midX = ((p1.x + p2.x) / 2) - rect.left;
+                    const midY = ((p1.y + p2.y) / 2) - rect.top;
+
+                    // Zoom at Midpoint math
+                    setView(prev => {
+                        const scaleRatio = newScale / prev.scale;
+                        return {
+                            scale: newScale,
+                            x: midX - (midX - prev.x) * scaleRatio,
+                            y: midY - (midY - prev.y) * scaleRatio
+                        };
+                    });
+                }
+                return;
+            }
+
+            // B. NORMAL MOVE LOGIC (1 Finger/Mouse)
             if (!movingTokenId && !isPanning && !activeMeasurement) return;
             
             const coords = getMapCoords(e);
@@ -307,6 +344,14 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         };
 
         const handleGlobalUp = (e) => {
+            // Remove pointer from cache
+            pointerCache.current = pointerCache.current.filter(p => p.id !== e.pointerId);
+            
+            // If we fall below 2 fingers, reset pinch tracking
+            if (pointerCache.current.length < 2) {
+                pinchStartDist.current = 0;
+            }
+
             const mTokenId = movingTokenId;
             const mPos = movingTokenPos;
             const mData = latestDataRef.current;
@@ -455,7 +500,19 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     };
 
     const handlePointerDown = (e) => {
-        if (e.button !== 0 && e.button !== 2) return; 
+        if (e.button !== 0 && e.button !== 2 && e.pointerType !== 'touch') return; 
+// ---------------------------------------------------------
+        
+        // NEW: Do NOT capture pointer if using drawing tools.
+        // This allows the SVG layer and specific click handlers to receive the event.
+        const isDrawingTool = ['wall', 'door', 'delete'].includes(activeTool);
+        if (!isDrawingTool) {
+            e.currentTarget.setPointerCapture(e.pointerId);
+        }
+
+        // Add to pointer cache for multi-touch support
+        pointerCache.current.push({ id: e.pointerId, x: e.clientX, y: e.clientY });
+
         if (movingTokenId) return; 
 
         // CRITICAL: Tells the browser to stick to this element for dragging
@@ -464,6 +521,19 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         const coords = getMapCoords(e);
         touchStartPos.current = { x: e.clientX, y: e.clientY };
         lastMousePosRef.current = { x: e.clientX, y: e.clientY };
+
+        // 0. Pinch Detection: If two fingers are down, start pinch logic
+        if (pointerCache.current.length === 2) {
+            clearTimeout(longPressTimer.current);
+            longPressTimer.current = null;
+            
+            const p1 = pointerCache.current[0];
+            const p2 = pointerCache.current[1];
+            pinchStartDist.current = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+            pinchStartScale.current = view.scale;
+            setIsPanning(false); // Stop panning to focus on zoom
+            return;
+        }
 
         // 1. Measurement Priority
         if (activeTool === 'ruler' || activeTool === 'sphere') {
@@ -485,7 +555,13 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
         // 2. Map Panning (Move Tool Priority)
         if (activeTool === 'move') {
+// ---------------------------------------------------------
             setIsPanning(true);
+        }
+
+        // NEW: Explicitly trigger Drawing Logic on Pointer Down for better responsiveness
+        if (['wall', 'door', 'delete'].includes(activeTool)) {
+            handleMapClick(e);
         }
 
         // 3. Wall/Door Tools (Claimed by SVG layer via pointer-events, but safe-guard here)
@@ -619,33 +695,77 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                 const res = await fetch(`https://www.dnd5eapi.co${url}`);
                 const m = await res.json();
 
+                // Robust Image Handling
                 let imageUrl = m.image ? `https://www.dnd5eapi.co${m.image}` : "";
+                
+                // Robust AC & Speed Handling
                 let acVal = Array.isArray(m.armor_class) ? (m.armor_class[0]?.value || 10) : (m.armor_class || 10);
+                const speedStr = typeof m.speed === 'object' ? 
+                    Object.entries(m.speed).map(([k,v]) => `${k} ${v}`).join(', ') : m.speed;
 
                 const newNpcId = Date.now();
                 
-                const newNpc = {
-                    id: newNpcId, name: m.name, image: imageUrl,
-                    race: `${m.size} ${m.type}`, class: "Monster",
-                    hp: { current: m.hit_points, max: m.hit_points },
+                // Construct the "Basic" NPC using the Bestiary Importer's Logic
+                const basicNpc = {
+                    id: newNpcId, 
+                    name: m.name, 
+                    image: imageUrl,
+                    race: `${m.size} ${m.type}`, 
+                    class: "Monster",
+                    hp: { current: m.hit_points, max: m.hit_points, temp: 0 },
                     ac: acVal,
-                    stats: { str: m.strength, dex: m.dexterity, con: m.constitution, int: m.intelligence, wis: m.wisdom, cha: m.charisma },
-                    senses: { darkvision: m.senses?.darkvision ? parseInt(m.senses.darkvision) : 0 },
-                    customActions: (m.actions || []).map(a => ({ name: a.name, desc: a.desc, type: "Action" })),
-                    isHidden: true, quirk: "Imported from SRD"
+                    speed: speedStr,
+                    stats: { 
+                        str: m.strength, dex: m.dexterity, con: m.constitution, 
+                        int: m.intelligence, wis: m.wisdom, cha: m.charisma 
+                    },
+                    senses: { 
+                        darkvision: m.senses?.darkvision ? parseInt(m.senses.darkvision) : 0,
+                        passivePerception: m.senses?.passive_perception || 10
+                    },
+                    // Map Actions with Hit/Dmg info
+                    customActions: (m.actions || []).map(a => {
+                        let dmgString = "";
+                        if (a.damage && a.damage[0] && a.damage[0].damage_dice) {
+                            dmgString = a.damage[0].damage_dice;
+                            if(a.damage[0].damage_type?.name) dmgString += ` ${a.damage[0].damage_type.name}`;
+                        }
+                        return {
+                            name: a.name,
+                            desc: a.desc,
+                            type: "Action",
+                            hit: a.attack_bonus ? `+${a.attack_bonus}` : "",
+                            dmg: dmgString 
+                        };
+                    }),
+                    features: (m.special_abilities || []).map(f => ({ name: f.name, desc: f.desc, source: "Trait" })),
+                    legendaryActions: (m.legendary_actions || []).map(l => ({ name: l.name, desc: l.desc })),
+                    isHidden: true, 
+                    quirk: "SRD Import"
                 };
 
+                // CRITICAL: Run through the Enricher to fix ActionsTab compatibility
+                const enrichedNpc = await enrichCharacter(basicNpc);
+
+                // Create the Token Instance
                 const newToken = {
-                    id: newNpcId + 1, characterId: newNpcId, type: 'npc',
-                    x: finalX, y: finalY, name: m.name, image: imageUrl,
+                    id: newNpcId + 1, 
+                    characterId: newNpcId, 
+                    type: 'npc',
+                    x: finalX, 
+                    y: finalY, 
+                    name: m.name, 
+                    image: imageUrl,
                     size: (m.size || 'medium').toLowerCase(),
                     hp: { current: m.hit_points, max: m.hit_points, temp: 0 },
-                    statuses: [], isInstance: true
+                    statuses: [], 
+                    isInstance: true
                 };
 
+                // Sync to Cloud
                 updateCloud({
                     ...currentData,
-                    npcs: [...(currentData.npcs || []), newNpc],
+                    npcs: [...(currentData.npcs || []), enrichedNpc],
                     campaign: {
                         ...currentData.campaign,
                         activeMap: { ...currentData.campaign.activeMap, tokens: [...currentTokens, newToken] }
@@ -653,7 +773,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                 }, true);
 
             } catch (err) {
-                console.error("Spawn failed:", err);
+                console.error("Spawn enrichment failed:", err);
             } finally {
                 setSpawningToken(null);
             }
@@ -944,10 +1064,10 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             onDragLeave={() => setIsDraggingToken(false)}
             onDragEnd={() => setIsDraggingToken(false)}
         >
-            {/* --- TOP RIGHT CONTROLS (Library, Tokens, Zoom) --- */}
+            {/* --- TOP RIGHT CONTROLS (Library, Tokens, Combat, Zoom) --- */}
             <div 
-                className="absolute top-4 right-4 z-50 flex gap-2 pointer-events-auto"
-                onPointerDown={(e) => e.stopPropagation()} // STOPS MAP FROM STEALING CLICK
+                className={`absolute top-4 z-50 flex gap-2 pointer-events-auto transition-all duration-300 ${sidebarIsOpen ? 'sm:right-[400px] right-4' : 'right-4'}`}
+                onPointerDown={(e) => e.stopPropagation()} 
             >
                 <div className="bg-slate-900/90 border border-slate-700 rounded-lg p-1 flex gap-1 shadow-xl">
                     <button onClick={() => setShowLibrary(true)} className="p-2 text-slate-300 hover:text-white hover:bg-slate-800 rounded" title="Maps">
@@ -957,11 +1077,9 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                     <button onClick={() => setShowTokens(!showTokens)} className={`p-2 rounded transition-colors ${showTokens ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:text-white hover:bg-slate-800'}`} title="Tokens">
                         <Icon name="users" size={20}/>
                     </button>
-                    {/* START CHANGE: Add Fight Button */}
                     <button onClick={() => showCombat ? setShowCombat(false) : handleStartCombat()} className={`p-2 rounded transition-colors ${showCombat || data.campaign?.combat?.active ? 'bg-red-600 text-white animate-pulse' : 'text-slate-300 hover:text-white hover:bg-slate-800'}`} title="Combat Tracker">
                         <Icon name="swords" size={20}/>
                     </button>
-                    {/* END CHANGE */}
                 </div>
                 
                 <div className="bg-slate-900/90 border border-slate-700 rounded-lg p-1 flex gap-1 shadow-xl">
@@ -972,14 +1090,24 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
             {/* --- TOP LEFT HUD (Status) --- */}
             <div 
-                className="absolute top-4 left-4 z-50 pointer-events-none"
+                // NEW: Logic to only hide if the screen is narrow enough to cause a collision.
+                // If Sidebar is open: 
+                // - On screens < 1150px (Laptops/Tablets), it fades out to prevent overlap.
+                // - On screens > 1150px (Large Monitors), it stays visible because there is room.
+                className={`absolute top-4 left-4 z-50 pointer-events-none transition-all duration-300 ${
+                    sidebarIsOpen 
+                        ? 'max-[1150px]:opacity-0 max-[1150px]:pointer-events-none' 
+                        : 'opacity-100'
+                }`}
                 onPointerDown={(e) => e.stopPropagation()}
             >
                 <div className="bg-slate-900/90 backdrop-blur border border-slate-700 px-3 py-2 rounded-lg shadow-xl pointer-events-auto flex items-center gap-3">
                     <div className={`w-3 h-3 rounded-full ${data.activeUsers ? 'bg-green-500 shadow-[0_0_8px_#22c55e]' : 'bg-red-500'}`}></div>
                     <div>
                         <div className="text-xs font-bold text-amber-500 fantasy-font tracking-widest">{data.campaign?.genesis?.campaignName || "Unknown Realm"}</div>
-                        <div className="text-[9px] text-slate-400 font-mono">LOC: {data.campaign?.location || "Void"}</div>
+                        <div className="text-[9px] text-slate-400 font-mono uppercase tracking-tighter">
+                            LOCATION: {mapData.url ? (mapData.name || "Unnamed Map") : "The Void"}
+                        </div>
                     </div>
                 </div>
             </div>
@@ -987,21 +1115,29 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             {/* START CHANGE: Pass Vision Props to Toolbar */}
             {/* --- BOTTOM CENTER TOOLBAR (DM Only) --- */}
             {role === 'dm' && (
-                <div onPointerDown={(e) => e.stopPropagation()}>
-                    <MapToolbar 
-                        activeTool={activeTool} 
-                        setTool={setActiveTool} 
-                        visionActive={visionActive}
-                        onToggleVision={() => {
-                            updateCloud({ 
-                                ...data, 
-                                campaign: { 
-                                    ...data.campaign, 
-                                    activeMap: { ...mapData, visionActive: !visionActive } 
-                                } 
-                            });
-                        }}
-                    />
+                <div 
+                    // NEW: Full-width container that calculates the center of the VISIBLE area.
+                    // If sidebar is open, we add 384px of padding to the right, pushing the center point to the left.
+                    className={`absolute bottom-20 md:bottom-6 left-0 w-full flex justify-center pointer-events-none transition-all duration-300 z-50 ${
+                        sidebarIsOpen ? 'md:pr-[384px]' : ''
+                    }`}
+                >
+                    <div className="pointer-events-auto" onPointerDown={(e) => e.stopPropagation()}>
+                        <MapToolbar 
+                            activeTool={activeTool} 
+                            setTool={setActiveTool} 
+                            visionActive={visionActive}
+                            onToggleVision={() => {
+                                updateCloud({ 
+                                    ...data, 
+                                    campaign: { 
+                                        ...data.campaign, 
+                                        activeMap: { ...mapData, visionActive: !visionActive } 
+                                    } 
+                                });
+                            }}
+                        />
+                    </div>
                 </div>
             )}
             {/* END CHANGE */}
@@ -1033,19 +1169,32 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                         updateCombatant={updateCombatant}
                         onRemove={removeCombatant}
                         onClearRolls={onClearRolls}
+                        // START CHANGE: Pass it down
+                        onAutoRoll={onAutoRoll}
+                        // END CHANGE
                     />
                 </div>
             )}
             {/* END CHANGE */}
 
-            {/* --- MAP LIBRARY MODAL --- */}
+           {/* --- MAP LIBRARY MODAL --- */}
             {showLibrary && (
                 <div onPointerDown={(e) => e.stopPropagation()}>
                     <MapLibrary 
                         savedMaps={data.campaign?.savedMaps || []} 
-                        onSelect={(m) => { updateMapState('load_map', m); setShowLibrary(false); }} 
+                        onSelect={(selectedMap) => { 
+                            updateMapState('load_map', selectedMap); 
+                            setShowLibrary(false); 
+                        }} 
                         onClose={() => setShowLibrary(false)} 
-                        onDelete={(id) => updateMapState('delete_map', id)}
+                        onDelete={(id) => {
+                            // If id is an object (contains {action: 'rename'}), route to rename logic
+                            if (typeof id === 'object' && id.action === 'rename') {
+                                updateMapState('rename_map', id);
+                            } else {
+                                updateMapState('delete_map', id);
+                            }
+                        }}
                     />
                 </div>
             )}
@@ -1071,7 +1220,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                             decoding="async" // Off-thread image decoding
                             className="block pointer-events-none select-none max-w-none h-auto"
                             style={{ 
-                                imageRendering: view.scale < 1 ? 'auto' : 'pixelated',
+                                imageRendering: 'auto', // Changed from 'pixelated' to 'auto' for smooth scaling
                                 transform: 'translateZ(0)' // Force GPU composite layer
                             }}
                             alt="Map Board"
@@ -1100,17 +1249,17 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
                     {/* Dynamic Grid Layer */}
                     {mapGrid.visible && (() => {
-                            // START CHANGE: Set a hard minimum to prevent disappearing lines
-                            const lineWidth = Math.max(0.5, mapGrid.size / 80); 
+                            // NEW: Calculate line width based on grid size (approx 1.25% of cell size)
+                            // ensures lines are visible on 3000px maps but don't disappear on small ones.
+                            const lineWidth = Math.max(0.8, mapGrid.size / 60); 
 
                             return (
                                 <div 
-                                    className="absolute inset-0 pointer-events-none opacity-30 transition-all duration-300" 
+                                    className="absolute inset-0 pointer-events-none opacity-40 transition-all duration-300" 
                                     style={{ 
-                                        backgroundImage: `linear-gradient(to right, #fff ${lineWidth}px, transparent ${lineWidth}px), linear-gradient(to bottom, #fff ${lineWidth}px, transparent ${lineWidth}px)`, 
+                                        backgroundImage: `linear-gradient(to right, rgba(255,255,255,0.6) ${lineWidth}px, transparent ${lineWidth}px), linear-gradient(to bottom, rgba(255,255,255,0.6) ${lineWidth}px, transparent ${lineWidth}px)`, 
                                         backgroundSize: `${mapGrid.size}px ${mapGrid.size}px`,
                                         backgroundPosition: `${mapGrid.offsetX}px ${mapGrid.offsetY}px`,
-                                        imageRendering: 'pixelated'
                                     }}
                                 ></div>
                             );
@@ -1237,6 +1386,11 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                         {/* Render Tokens */}
                         {tokens.map(token => {
                             const img = mapImageRef.current;
+                            
+                            // NEW: Differentiate identical tokens visually during their turn
+                            const currentCombatant = data.campaign?.combat?.combatants?.[data.campaign.combat.turn];
+                            const isMyTurn = data.campaign?.combat?.active && currentCombatant?.id === token.id;
+
                             const isMoving = movingTokenId === token.id;
                             
                             let px = 0, py = 0;
@@ -1290,7 +1444,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                                         cellPx={currentGridSize} 
                                         isDragging={isMoving}
                                         isSelected={selectedTokenId === token.id}
-                                        overridePos={{ x: 50, y: 50 }} // ADDED LINE
+                                        isTurn={isMyTurn}
                                     />
                                 </div>
                             );
