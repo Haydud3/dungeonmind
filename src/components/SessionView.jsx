@@ -353,11 +353,11 @@ const SessionView = ({
                         );
                     })}
                     {isLoading && <div className="flex gap-3 px-2 mt-2 animate-pulse opacity-50"><div className="w-10 h-10 rounded-full bg-slate-700"></div><div className="flex-1 space-y-2 py-1"><div className="h-4 bg-slate-700 rounded w-1/4"></div><div className="h-4 bg-slate-700 rounded w-3/4"></div></div></div>}
-                    <div ref={chatEndRef}></div>
+                     <div ref={chatEndRef}></div>
                 </div>
                 
-                {/* FIX: Condensed Bottom HUD. Reduced padding to p-2. Single row for Selectors + Fast Button + Dice. */}
-                <div className="p-2 bg-slate-900 border-t border-slate-800 flex flex-col gap-2 shrink-0 z-10 mb-20 md:mb-0 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.5)]">
+                {/* FIX: Removed 'mb-20 md:mb-0' so it sits flush against the bottom padding defined in App.jsx */}
+                <div className="p-2 bg-slate-900 border-t border-slate-800 flex flex-col gap-2 shrink-0 z-10 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.5)]">
                     <div className="flex items-center gap-2">
                         {/* FIX: sendMode is now flex-1 to share space, instead of w-full */}
                         <select value={sendMode} onChange={(e) => setSendMode(e.target.value)} className="flex-1 min-w-0 bg-slate-800 text-xs font-bold text-slate-300 border border-slate-600 rounded px-2 py-1.5 outline-none focus:border-amber-500 md:w-36 md:flex-none">

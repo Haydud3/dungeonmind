@@ -55,7 +55,6 @@ function DungeonMindApp() {
   // START CHANGE: Use Contexts
   const { data, setData, gameParams, joinCampaign, leaveCampaign, updateCloud, savePlayer, deletePlayer, loreChunks, setLoreChunks } = useCampaign();
   const toast = useToast(); 
-  // END CHANGE
 
   // START CHANGE: Deep Linking Router Logic
   const BASE_PATH = '/dungeonmind';
@@ -63,9 +62,7 @@ function DungeonMindApp() {
   // 1. Map internal IDs to friendly URL slugs
   const VIEW_SLUGS = {
       'session': 'session',
-      // START CHANGE: Add Sheet Route
       'sheet': 'sheet',
-      // END CHANGE
       'journal': 'journal',
       'map': 'tactical',
       'party': 'player-character',
@@ -83,10 +80,23 @@ function DungeonMindApp() {
 
   const [currentView, setCurrentView] = useState(getInitialView);
 
-  // START CHANGE: Remove Local State (data, gameParams, saveTimer)
-  // const [gameParams, setGameParams] = useState(null); 
-  // const [data, setData] = useState(INITIAL_APP_STATE);
-  // const saveTimer = useRef(null);
+  // 3. Update URL when view changes
+  useEffect(() => {
+      const slug = VIEW_SLUGS[currentView] || 'session';
+      const url = `${BASE_PATH}/${slug}`;
+      
+      // Only push if different (prevents loop)
+      if (window.location.pathname !== url) {
+          window.history.pushState({ view: currentView }, '', url);
+      }
+  }, [currentView]);
+
+  // 4. Handle Back/Forward Browser Buttons
+  useEffect(() => {
+      const handlePopState = () => setCurrentView(getInitialView());
+      window.addEventListener('popstate', handlePopState);
+      return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
   // END CHANGE
 
   const [inputText, setInputText] = useState('');

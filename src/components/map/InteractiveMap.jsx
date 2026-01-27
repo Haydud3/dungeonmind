@@ -1429,9 +1429,8 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                                         position: 'absolute', 
                                         left: px, 
                                         top: py, 
-                                        transform: 'translate(-50%, -50%)',
-                                        width: dimension,   
-                                        height: dimension, 
+                                        // REMOVED: transform: 'translate(-50%, -50%)',
+                                        // REMOVED: width: dimension, height: dimension,
                                         zIndex: isMoving ? 100 : 10,
                                         pointerEvents: isMoving ? 'none' : 'auto',
                                         transition: isMoving ? 'none' : 'all 0.2s ease-out'
