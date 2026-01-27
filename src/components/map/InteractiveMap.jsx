@@ -16,26 +16,42 @@ import RadialHUD from './RadialHUD';
 
 // START CHANGE: Add updateCombatant and removeCombatant to props
 const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, activeTemplate, sidebarIsOpen, updateCombatant, removeCombatant, onClearRolls }) => {
-// END CHANGE
-    // View & Interaction State
+    // 1. ALL STATE HOOKS
     const [view, setView] = useState({ x: 0, y: 0, scale: 1 });
-    
-    // Feature Toggles
     const [activeTool, setActiveTool] = useState('move');
     const [showLibrary, setShowLibrary] = useState(false);
     const [showTokens, setShowTokens] = useState(false);
-    // START CHANGE: Add wall delete hover state
     const [hoveredWallId, setHoveredWallId] = useState(null);
-    // END CHANGE
-    // START CHANGE: Grid Defaults
-    const mapGrid = data.campaign?.activeMap?.grid || { size: 50, offsetX: 0, offsetY: 0, visible: true, snap: true };
-    
+    const [showCombat, setShowCombat] = useState(false);
+    const [isDrawingFog, setIsDrawingFog] = useState(false);
+    const [currentPath, setCurrentPath] = useState([]);
+    const [movingTokenId, setMovingTokenId] = useState(null);
+    const [movingTokenPos, setMovingTokenPos] = useState(null); 
+    const [wallStart, setWallStart] = useState(null);
+    const [cursorPos, setCursorPos] = useState({x:0, y:0}); 
+    const [shakingTokenId, setShakingTokenId] = useState(null);
+    const [selectedTokenId, setSelectedTokenId] = useState(null);
+    const [pings, setPings] = useState([]); 
+    const [dragStartPx, setDragStartPx] = useState(null); 
+    const [activeMeasurement, setActiveMeasurement] = useState(null); 
+    const [activeStack, setActiveStack] = useState(null); 
+    const [isDraggingToken, setIsDraggingToken] = useState(false);
+    const [isPanning, setIsPanning] = useState(false);
+    const [lastMousePos, setLastMousePos] = useState({ x: 0, y: 0 });
+    const [spawningToken, setSpawningToken] = useState(null);
+
+    // 2. DATA SHORTCUTS (Must be after state)
+    const mapData = data.campaign?.activeMap || {};
+    const tokens = mapData.tokens || [];
+    const walls = mapData.walls || [];
+    const mapUrl = mapData.url;
+    const visionActive = mapData.visionActive !== false; 
+    const mapGrid = mapData.grid || { size: 50, offsetX: 0, offsetY: 0, visible: true, snap: true };
+
+    // 3. HANDLERS
     const handleGridUpdate = (newGrid) => {
         updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...data.campaign.activeMap, grid: newGrid } } });
     };
-    // END CHANGE
-    
-    const [showCombat, setShowCombat] = useState(false);
 
     const handleNextTurn = () => {
         const c = data.campaign?.combat || { active: true, round: 1, turn: 0, combatants: [] };
@@ -62,74 +78,52 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         }
         setShowCombat(true);
     };
-    // END CHANGE
 
-    // Fog State
-    const [isDrawingFog, setIsDrawingFog] = useState(false);
-    const [currentPath, setCurrentPath] = useState([]);
-
-    // START CHANGE: Token Movement State
-    const [movingTokenId, setMovingTokenId] = useState(null);
-    const [movingTokenPos, setMovingTokenPos] = useState(null); 
-    // START CHANGE: Clean State & Add Vision Toggle
-    const [wallStart, setWallStart] = useState(null);
-    const [cursorPos, setCursorPos] = useState({x:0, y:0}); 
-    const [shakingTokenId, setShakingTokenId] = useState(null);
-    const [selectedTokenId, setSelectedTokenId] = useState(null);
-    const [pings, setPings] = useState([]); 
-    const [dragStartPx, setDragStartPx] = useState(null); 
-    const [activeMeasurement, setActiveMeasurement] = useState(null); 
-    const [activeStack, setActiveStack] = useState(null); 
-    const [isDraggingToken, setIsDraggingToken] = useState(false);
-    const [isPanning, setIsPanning] = useState(false);
-    const [lastMousePos, setLastMousePos] = useState({ x: 0, y: 0 });
-    const lastSnappedCell = useRef({ x: -1, y: -1 });
-
-    // Haptic Feedback Helper
     const triggerHaptic = (style = 'light') => {
         if (!window.navigator.vibrate) return;
-        if (style === 'light') window.navigator.vibrate(5); // Sharp tick
-        else if (style === 'medium') window.navigator.vibrate(40); // Standard pulse
-        else if (style === 'heavy') window.navigator.vibrate([40, 60, 40]); // Double thud
-        else if (style === 'ping') window.navigator.vibrate(100); // Sharp pulse
+        if (style === 'light') window.navigator.vibrate(5);
+        else if (style === 'medium') window.navigator.vibrate(40);
+        else if (style === 'heavy') window.navigator.vibrate([40, 60, 40]);
+        else if (style === 'ping') window.navigator.vibrate(100);
     };
 
-    // START CHANGE: Spawning State (The "Dummy Token")
-    // Stores { x, y, name } of the monster being fetched
-    const [spawningToken, setSpawningToken] = useState(null);
-    // END CHANGE
-
-    // Refs
+    // 4. ALL REFS
     const containerRef = useRef(null);
-    // START CHANGE: Switch from fogCanvasRef to visionCanvasRef
     const visionCanvasRef = useRef(null);
-    // END CHANGE
     const mapImageRef = useRef(null);
+    const lastSnappedCell = useRef({ x: -1, y: -1 });
+    const touchStartPos = useRef({ x: 0, y: 0 });
+    const longPressTimer = useRef(null);
+    const lastMousePosRef = useRef({ x: 0, y: 0 });
+    const latestDataRef = useRef(data);
+    const latestTokensRef = useRef(tokens);
+    const latestMeasurementRef = useRef(activeMeasurement);
 
-    // Data shortcuts
-    const mapData = data.campaign?.activeMap || {};
-    const mapUrl = mapData.url;
-    const tokens = mapData.tokens || [];
-    const walls = mapData.walls || [];
-    
-    // Vision Toggle (Synced or Local) - Default to TRUE
-    const visionActive = mapData.visionActive !== false; 
-    // END CHANGE
+    // 5. EFFECTS & SYNCING
+    useEffect(() => {
+        latestDataRef.current = data;
+        latestTokensRef.current = tokens;
+        latestMeasurementRef.current = activeMeasurement;
+    }, [data, tokens, activeMeasurement]);
 
-    // START CHANGE: Auto-open tracker when combat goes active
+    useEffect(() => {
+        if (mapData.view) {
+            setView(prev => ({
+                x: mapData.view.pan?.x ?? prev.x,
+                y: mapData.view.pan?.y ?? prev.y,
+                scale: mapData.view.zoom ?? prev.scale
+            }));
+        }
+    }, [mapData.id]);
+
     useEffect(() => {
         if (data.campaign?.combat?.active) setShowCombat(true);
     }, [data.campaign?.combat?.active]);
-    // END CHANGE
 
-    // START CHANGE: Hot-Swap Sheets on Token Selection
-    // When sidebar is open and a new token is selected, automatically open its sheet
-    // WITHOUT closing the RadialHUD
     useEffect(() => {
         if (sidebarIsOpen && selectedTokenId) {
             const token = tokens.find(t => t.id === selectedTokenId);
             if (token) {
-                // Open sheet WITHOUT setting selectedTokenId to null (keeps HUD open)
                 updateMapState('open_sheet', { 
                     type: 'token',
                     tokenId: token.id,
@@ -140,7 +134,6 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             }
         }
     }, [selectedTokenId, sidebarIsOpen]);
-    // END CHANGE
 
     // --- 1. RENDERERS (Vision Logic) ---
     
@@ -288,27 +281,86 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     // --- 1.5 GLOBAL INTERACTION ESCAPE ---
     useEffect(() => {
         const handleGlobalMove = (e) => {
-            if (movingTokenId || isPanning || activeMeasurement) {
-                handleMouseMove(e);
+            // Only process if we are actually doing something
+            if (!movingTokenId && !isPanning && !activeMeasurement) return;
+            
+            const coords = getMapCoords(e);
+
+            if (activeMeasurement) {
+                setActiveMeasurement(prev => ({ ...prev, end: coords }));
+            } else if (movingTokenId) {
+                setMovingTokenPos(coords);
+            } else if (isPanning) {
+                // Smooth panning using the MousePos Ref to avoid React state lag
+                const dx = e.clientX - lastMousePosRef.current.x;
+                const dy = e.clientY - lastMousePosRef.current.y;
+                
+                setView(prev => ({ ...prev, x: prev.x + dx, y: prev.y + dy }));
+                lastMousePosRef.current = { x: e.clientX, y: e.clientY };
+
+                // Break long-press ping if user is actually dragging the map
+                if (longPressTimer.current && Math.hypot(dx, dy) > 2) {
+                    clearTimeout(longPressTimer.current);
+                    longPressTimer.current = null;
+                }
             }
         };
 
         const handleGlobalUp = (e) => {
-            if (movingTokenId || isPanning || activeMeasurement) {
-                handleMouseUp(e);
+            const mTokenId = movingTokenId;
+            const mPos = movingTokenPos;
+            const mData = latestDataRef.current;
+            const currentTokens = latestTokensRef.current;
+
+            // 1. CLICK LOGIC: Open Radial HUD (Check distance from touchStartPos)
+            const dist = Math.hypot(e.clientX - touchStartPos.current.x, e.clientY - touchStartPos.current.y);
+            const isClick = dist < 5;
+
+            if (mTokenId && isClick) {
+                setSelectedTokenId(mTokenId);
+                triggerHaptic('light');
+            }
+
+            // 2. MOVE LOGIC: Save Position
+            if (mTokenId && mPos && !isClick) {
+                const img = mapImageRef.current;
+                if (img) {
+                    const tokenObj = currentTokens.find(t => t.id === mTokenId);
+                    const sizeMap = { tiny: 0.5, small: 1, medium: 1, large: 2, huge: 3, gargantuan: 4 };
+                    const sMult = typeof tokenObj?.size === 'number' ? tokenObj.size : (sizeMap[tokenObj?.size] || 1);
+                    const { x, y } = snapToGrid(mPos.x, mPos.y, img.naturalWidth, img.naturalHeight, sMult);
+                    
+                    const newTokens = currentTokens.map(t => t.id === mTokenId ? { ...t, x, y } : t);
+                    updateCloud({ ...mData, campaign: { ...data.campaign, activeMap: { ...mData.campaign.activeMap, tokens: newTokens } } }, true);
+                }
+            }
+
+            // 3. UNCONDITIONAL RESET (Fixes the "Sticking" bug)
+            setMovingTokenId(null);
+            setMovingTokenPos(null);
+            setIsPanning(false);
+            setIsDraggingToken(false);
+            setActiveMeasurement(null);
+            
+            // Release the pointer lock from the browser
+            if (e.target && e.target.releasePointerCapture) {
+                try { e.target.releasePointerCapture(e.pointerId); } catch(err) {}
+            }
+            
+            if (longPressTimer.current) {
+                clearTimeout(longPressTimer.current);
+                longPressTimer.current = null;
             }
         };
 
-        if (movingTokenId || isPanning || activeMeasurement) {
-            window.addEventListener('mousemove', handleGlobalMove);
-            window.addEventListener('mouseup', handleGlobalUp);
-        }
+        window.addEventListener('pointermove', handleGlobalMove, { passive: true });
+        window.addEventListener('pointerup', handleGlobalUp);
 
         return () => {
-            window.removeEventListener('mousemove', handleGlobalMove);
-            window.removeEventListener('mouseup', handleGlobalUp);
+            window.removeEventListener('pointermove', handleGlobalMove);
+            window.removeEventListener('pointerup', handleGlobalUp);
         };
-    }, [movingTokenId, isPanning, activeMeasurement]);
+    }, [movingTokenId, isPanning, activeMeasurement, movingTokenPos, tokens, view.scale]);
 
     // --- 2. MATH HELPERS ---
     
@@ -379,28 +431,41 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     };
 
     // --- 3. MOUSE HANDLERS (UNIFIED) ---
-    const handleTokenMouseDown = (e, tokenId) => {
+    const handleTokenPointerDown = (e, tokenId) => {
         if (activeTool !== 'move') return;
+        e.stopPropagation(); 
         
-        // DO NOT stopPropagation - we need the container to see the Down event
-        const token = tokens.find(t => t.id === tokenId);
+        // Hierarchy: Token click stops map panning immediately
+        setIsPanning(false);
+
+        // Track start position for Radial HUD (Click vs Drag)
+        e.currentTarget.setPointerCapture(e.pointerId);
+        touchStartPos.current = { x: e.clientX, y: e.clientY };
+        lastMousePosRef.current = { x: e.clientX, y: e.clientY };
+
+        const token = latestTokensRef.current.find(t => t.id === tokenId);
         if (!token) return;
 
         const img = mapImageRef.current;
         if (!img) return;
 
         setMovingTokenId(tokenId);
+        setIsDraggingToken(true);
         setDragStartPx({ x: (token.x / 100) * img.naturalWidth, y: (token.y / 100) * img.naturalHeight });
     };
 
-    const handleMouseDown = (e) => {
+    const handlePointerDown = (e) => {
         if (e.button !== 0 && e.button !== 2) return; 
-        
+        if (movingTokenId) return; 
+
+        // CRITICAL: Tells the browser to stick to this element for dragging
+        e.currentTarget.setPointerCapture(e.pointerId);
+
         const coords = getMapCoords(e);
         touchStartPos.current = { x: e.clientX, y: e.clientY };
-        setLastMousePos({ x: e.clientX, y: e.clientY });
+        lastMousePosRef.current = { x: e.clientX, y: e.clientY };
 
-        // A. Ruler/Sphere drawing
+        // 1. Measurement Priority
         if (activeTool === 'ruler' || activeTool === 'sphere') {
             const img = mapImageRef.current;
             let startX = coords.x;
@@ -409,34 +474,38 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             if (mapGrid.snap && img) {
                 const isSphere = activeTool === 'sphere';
                 const snapOffset = isSphere ? 0 : (mapGrid.size / 2);
-                startX = Math.floor((coords.x - mapGrid.offsetX) / mapGrid.size) * mapGrid.size + mapGrid.offsetX + snapOffset;
-                startY = Math.floor((coords.y - mapGrid.offsetY) / mapGrid.size) * mapGrid.size + mapGrid.offsetY + snapOffset;
+                startX = (Math.round((coords.x - mapGrid.offsetX) / mapGrid.size) * mapGrid.size) + mapGrid.offsetX + snapOffset;
+                startY = (Math.round((coords.y - mapGrid.offsetY) / mapGrid.size) * mapGrid.size) + mapGrid.offsetY + snapOffset;
             }
 
+            setIsPanning(false);
             setActiveMeasurement({ start: { x: startX, y: startY }, end: { x: startX, y: startY }, type: activeTool });
             return; 
         }
 
-        // B. Handle Panning if not dragging a token
-        if (!movingTokenId) {
+        // 2. Map Panning (Move Tool Priority)
+        if (activeTool === 'move') {
             setIsPanning(true);
         }
 
-        // C. Long Press Timer
+        // 3. Wall/Door Tools (Claimed by SVG layer via pointer-events, but safe-guard here)
+        if (['wall', 'door', 'delete'].includes(activeTool)) return;
+
+        // 4. Ping Logic
         longPressTimer.current = setTimeout(() => {
             triggerHaptic('medium');
-            if (activeTool === 'move' && !movingTokenId) {
-                const newPing = { id: Date.now(), x: coords.x, y: coords.y };
-                setPings(prev => [...prev, newPing]);
-                setTimeout(() => setPings(prev => prev.filter(p => p.id !== newPing.id)), 2000);
-            }
+            const newPing = { id: Date.now(), x: coords.x, y: coords.y };
+            setPings(prev => [...prev, newPing]);
+            setTimeout(() => setPings(prev => prev.filter(p => p.id !== newPing.id)), 2000);
         }, 600);
     };
+
 
     const handleMouseMove = (e) => {
         const coords = getMapCoords(e);
 
         if (activeMeasurement) {
+            // Ensure measurement updates even if cursor moves over a token
             setActiveMeasurement(prev => ({ ...prev, end: coords }));
             return;
         }
@@ -505,30 +574,34 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     // START CHANGE: Async Drop Handler with Optimistic UI
     const handleDrop = async (e) => {
         e.preventDefault();
+        e.stopPropagation();
         
-        // 1. Parse Data (JSON or Legacy)
+        setIsDraggingToken(false);
+        setIsPanning(false);
+        
+        // 1. Use Mirror Refs for absolute latest data
+        const currentTokens = latestTokensRef.current || [];
+        const currentData = latestDataRef.current;
+
+        // 2. Parse unified JSON payload
         let droppedData = {};
         try {
             const raw = e.dataTransfer.getData("text/plain");
-            if (raw.startsWith("{")) droppedData = JSON.parse(raw);
-        } catch (err) {}
-
-        if (!droppedData.type) {
-            droppedData.type = e.dataTransfer.getData("type");
-            droppedData.entityId = e.dataTransfer.getData("entityId");
-            droppedData.image = e.dataTransfer.getData("image");
+            droppedData = JSON.parse(raw);
+        } catch (err) {
+            console.error("Drop Parse Error: Invalid JSON", err);
+            return;
         }
 
         const { type, name, url, entityId: rawEntityId, image } = droppedData;
 
-        // 2. API IMPORT LOGIC (From Search)
+        // 3. API IMPORT LOGIC (From Search)
         if (type === 'api-import') {
             if (!url) return;
 
             const pos = getMapCoords(e);
             const img = mapImageRef.current;
             
-            // Calculate Position
             let finalX = 50, finalY = 50;
             let pxX = 0, pxY = 0;
 
@@ -540,71 +613,44 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                 pxY = (finalY / 100) * img.naturalHeight;
             }
 
-            // Visual Feedback
             setSpawningToken({ x: pxX, y: pxY, name: "Summoning " + name + "..." });
 
             try {
                 const res = await fetch(`https://www.dnd5eapi.co${url}`);
                 const m = await res.json();
 
-                // --- FIX STARTS HERE: Image Extraction ---
-                let imageUrl = "";
-                if (m.image) {
-                    // The API returns relative paths like "/api/images/monsters/..."
-                    imageUrl = `https://www.dnd5eapi.co${m.image}`;
-                }
-                // --- FIX ENDS HERE ---
-
-                // Robust AC Parser
-                let acVal = 10;
-                if (Array.isArray(m.armor_class) && m.armor_class.length > 0) acVal = m.armor_class[0].value;
-                else if (typeof m.armor_class === 'number') acVal = m.armor_class;
+                let imageUrl = m.image ? `https://www.dnd5eapi.co${m.image}` : "";
+                let acVal = Array.isArray(m.armor_class) ? (m.armor_class[0]?.value || 10) : (m.armor_class || 10);
 
                 const newNpcId = Date.now();
                 
-                // 1. Create NPC Data (Bestiary Entry)
                 const newNpc = {
-                    id: newNpcId,
-                    name: m.name,
-                    image: imageUrl, // Save image to Bestiary
-                    race: `${m.size} ${m.type}`,
-                    class: "Monster",
+                    id: newNpcId, name: m.name, image: imageUrl,
+                    race: `${m.size} ${m.type}`, class: "Monster",
                     hp: { current: m.hit_points, max: m.hit_points },
                     ac: acVal,
                     stats: { str: m.strength, dex: m.dexterity, con: m.constitution, int: m.intelligence, wis: m.wisdom, cha: m.charisma },
                     senses: { darkvision: m.senses?.darkvision ? parseInt(m.senses.darkvision) : 0 },
                     customActions: (m.actions || []).map(a => ({ name: a.name, desc: a.desc, type: "Action" })),
-                    isHidden: true, 
-                    quirk: "Imported from SRD"
+                    isHidden: true, quirk: "Imported from SRD"
                 };
 
-                // 2. Create Token Data (Map Instance)
                 const newToken = {
-                    id: newNpcId + 1,
-                    characterId: newNpcId,
-                    type: 'npc',
-                    x: finalX, 
-                    y: finalY,
-                    name: m.name,
-                    image: imageUrl, // Save image to Token
+                    id: newNpcId + 1, characterId: newNpcId, type: 'npc',
+                    x: finalX, y: finalY, name: m.name, image: imageUrl,
                     size: (m.size || 'medium').toLowerCase(),
                     hp: { current: m.hit_points, max: m.hit_points, temp: 0 },
-                    statuses: [],
-                    isInstance: true
+                    statuses: [], isInstance: true
                 };
 
-                // 3. Save to Cloud
-                const currentNpcs = data.npcs || [];
-                const currentTokens = mapData.tokens || [];
-
                 updateCloud({
-                    ...data,
-                    npcs: [...currentNpcs, newNpc],
+                    ...currentData,
+                    npcs: [...(currentData.npcs || []), newNpc],
                     campaign: {
-                        ...data.campaign,
-                        activeMap: { ...mapData, tokens: [...currentTokens, newToken] }
+                        ...currentData.campaign,
+                        activeMap: { ...currentData.campaign.activeMap, tokens: [...currentTokens, newToken] }
                     }
-                });
+                }, true);
 
             } catch (err) {
                 console.error("Spawn failed:", err);
@@ -614,11 +660,11 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             return;
         }
 
-        // ... (rest of standard drop logic remains the same) ...
-        
-        // 3. STANDARD SPAWN LOGIC (Dragging existing character)
+        // 4. STANDARD SPAWN LOGIC (Dragging existing character)
         let entityId = rawEntityId;
-        if (entityId && !isNaN(entityId)) entityId = Number(entityId);
+        if (entityId && typeof entityId === 'string' && !isNaN(entityId)) {
+            entityId = Number(entityId);
+        }
 
         if (entityId) {
             const pos = getMapCoords(e);
@@ -626,28 +672,37 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             
             if (img) {
                 const { x, y } = snapToGrid(pos.x, pos.y, img.naturalWidth, img.naturalHeight);
-                const masterNpc = data.npcs?.find(n => n.id === entityId) || data.players?.find(p => p.id === entityId);
                 
+                const master = (currentData.players || []).find(p => p.id === entityId) || 
+                               (currentData.npcs || []).find(n => n.id === entityId);
+                
+                if (!master) return;
+
                 const newToken = {
                     id: Date.now(),
                     characterId: entityId,
                     type: type || 'npc',
                     x, y,
-                    image: masterNpc?.image || image,
-                    name: masterNpc?.name || name,
-                    size: masterNpc?.size || 'medium',
-                    hp: { current: masterNpc?.hp?.max || 10, max: masterNpc?.hp?.max || 10 },
+                    image: master.image || image,
+                    name: master.name,
+                    size: master.size || 'medium',
+                    hp: master.hp ? { ...master.hp } : { current: 10, max: 10 },
                     statuses: [],
                     isInstance: true
                 };
                 
                 updateCloud({ 
-                    ...data, 
+                    ...currentData, 
                     campaign: { 
-                        ...data.campaign, 
-                        activeMap: { ...mapData, tokens: [...(mapData.tokens || []), newToken] } 
+                        ...currentData.campaign, 
+                        activeMap: { 
+                            ...currentData.campaign.activeMap, 
+                            tokens: [...currentTokens, newToken] 
+                        } 
                     } 
-                });
+                }, true);
+                
+                triggerHaptic('medium');
             }
         }
     };
@@ -881,18 +936,19 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         <div 
             ref={containerRef}
             className={`w-full h-full bg-[#1a1a1a] overflow-hidden relative select-none ${activeTool === 'move' ? 'cursor-grab' : 'cursor-crosshair'}`}
-            onMouseDown={handleMouseDown}
-            onMouseMove={handleMouseMove}
-            onMouseUp={handleMouseUp}
-            onMouseLeave={handleMouseUp}
-            onDragOver={(e) => e.preventDefault()}
+            style={{ touchAction: 'none' }}
+            onPointerDown={handlePointerDown}
+            onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; }}
             onDrop={handleDrop}
             onDragEnter={() => setIsDraggingToken(true)}
             onDragLeave={() => setIsDraggingToken(false)}
             onDragEnd={() => setIsDraggingToken(false)}
         >
             {/* --- TOP RIGHT CONTROLS (Library, Tokens, Zoom) --- */}
-            <div className="absolute top-4 right-4 z-50 flex gap-2 pointer-events-auto">
+            <div 
+                className="absolute top-4 right-4 z-50 flex gap-2 pointer-events-auto"
+                onPointerDown={(e) => e.stopPropagation()} // STOPS MAP FROM STEALING CLICK
+            >
                 <div className="bg-slate-900/90 border border-slate-700 rounded-lg p-1 flex gap-1 shadow-xl">
                     <button onClick={() => setShowLibrary(true)} className="p-2 text-slate-300 hover:text-white hover:bg-slate-800 rounded" title="Maps">
                         <Icon name="map" size={20}/>
@@ -915,7 +971,10 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             </div>
 
             {/* --- TOP LEFT HUD (Status) --- */}
-            <div className="absolute top-4 left-4 z-50 pointer-events-none">
+            <div 
+                className="absolute top-4 left-4 z-50 pointer-events-none"
+                onPointerDown={(e) => e.stopPropagation()}
+            >
                 <div className="bg-slate-900/90 backdrop-blur border border-slate-700 px-3 py-2 rounded-lg shadow-xl pointer-events-auto flex items-center gap-3">
                     <div className={`w-3 h-3 rounded-full ${data.activeUsers ? 'bg-green-500 shadow-[0_0_8px_#22c55e]' : 'bg-red-500'}`}></div>
                     <div>
@@ -928,20 +987,22 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             {/* START CHANGE: Pass Vision Props to Toolbar */}
             {/* --- BOTTOM CENTER TOOLBAR (DM Only) --- */}
             {role === 'dm' && (
-                <MapToolbar 
-                    activeTool={activeTool} 
-                    setTool={setActiveTool} 
-                    visionActive={visionActive}
-                    onToggleVision={() => {
-                        updateCloud({ 
-                            ...data, 
-                            campaign: { 
-                                ...data.campaign, 
-                                activeMap: { ...mapData, visionActive: !visionActive } 
-                            } 
-                        });
-                    }}
-                />
+                <div onPointerDown={(e) => e.stopPropagation()}>
+                    <MapToolbar 
+                        activeTool={activeTool} 
+                        setTool={setActiveTool} 
+                        visionActive={visionActive}
+                        onToggleVision={() => {
+                            updateCloud({ 
+                                ...data, 
+                                campaign: { 
+                                    ...data.campaign, 
+                                    activeMap: { ...mapData, visionActive: !visionActive } 
+                                } 
+                            });
+                        }}
+                    />
+                </div>
             )}
             {/* END CHANGE */}
 
@@ -953,33 +1014,40 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
             {/* --- RIGHT SIDEBAR (Token Manager) --- */}
             {showTokens && (
-                <div className="absolute top-20 right-4 bottom-24 w-64 bg-slate-900/95 backdrop-blur border border-slate-700 rounded-xl shadow-2xl z-40 p-4 animate-in slide-in-from-right pointer-events-auto">
+                <div 
+                    onPointerDown={(e) => e.stopPropagation()}
+                    className="absolute top-20 right-4 bottom-24 w-64 bg-slate-900/95 backdrop-blur border border-slate-700 rounded-xl shadow-2xl z-40 p-4 animate-in slide-in-from-right pointer-events-auto"
+                >
                     <TokenManager data={data} onDragStart={handleDragStart} />
                 </div>
             )}
 
             {/* START CHANGE: Render Combat Tracker */}
             {showCombat && (
-                <CombatTracker 
-                    combat={data.campaign?.combat} 
-                    onNextTurn={handleNextTurn} 
-                    onEndCombat={handleEndCombat}
-                    role={role}
-                    updateCombatant={updateCombatant}
-                    onRemove={removeCombatant}
-                    onClearRolls={onClearRolls}
-                />
+                <div onPointerDown={(e) => e.stopPropagation()}>
+                    <CombatTracker 
+                        combat={data.campaign?.combat} 
+                        onNextTurn={handleNextTurn} 
+                        onEndCombat={handleEndCombat}
+                        role={role}
+                        updateCombatant={updateCombatant}
+                        onRemove={removeCombatant}
+                        onClearRolls={onClearRolls}
+                    />
+                </div>
             )}
             {/* END CHANGE */}
 
             {/* --- MAP LIBRARY MODAL --- */}
             {showLibrary && (
-                <MapLibrary 
-                    savedMaps={data.campaign?.savedMaps || []} 
-                    onSelect={(m) => { updateMapState('load_map', m); setShowLibrary(false); }} 
-                    onClose={() => setShowLibrary(false)} 
-                    onDelete={(id) => updateMapState('delete_map', id)}
-                />
+                <div onPointerDown={(e) => e.stopPropagation()}>
+                    <MapLibrary 
+                        savedMaps={data.campaign?.savedMaps || []} 
+                        onSelect={(m) => { updateMapState('load_map', m); setShowLibrary(false); }} 
+                        onClose={() => setShowLibrary(false)} 
+                        onDelete={(id) => updateMapState('delete_map', id)}
+                    />
+                </div>
             )}
 
             {/* --- TRANSFORM LAYER --- */}
@@ -1003,7 +1071,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                             decoding="async" // Off-thread image decoding
                             className="block pointer-events-none select-none max-w-none h-auto"
                             style={{ 
-                                imageRendering: view.scale < 1 ? 'auto' : 'pixelated', // Keep high fidelity when zoomed in
+                                imageRendering: view.scale < 1 ? 'auto' : 'pixelated',
                                 transform: 'translateZ(0)' // Force GPU composite layer
                             }}
                             alt="Map Board"
@@ -1051,7 +1119,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
                         {/* Phase 3 Wall/Door SVG Layer */}
                         <svg 
-                            className={`absolute top-0 left-0 w-full h-full z-[8] ${['wall', 'door', 'delete'].includes(activeTool) ? 'pointer-events-auto' : 'pointer-events-none'}`} 
+                            className={`absolute top-0 left-0 w-full h-full z-[8] ${(['wall', 'door', 'delete'].includes(activeTool) || activeMeasurement) ? 'pointer-events-auto' : 'pointer-events-none'}`} 
                             style={{ viewBox: `0 0 ${mapImageRef.current?.naturalWidth} ${mapImageRef.current?.naturalHeight}` }}
                             onClick={handleMapClick}
                             onContextMenu={handleMapRightClick}
@@ -1210,11 +1278,11 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                                         width: dimension,   
                                         height: dimension, 
                                         zIndex: isMoving ? 100 : 10,
+                                        pointerEvents: isMoving ? 'none' : 'auto',
                                         transition: isMoving ? 'none' : 'all 0.2s ease-out'
                                     }}
                                     className={isShaking ? "animate-bounce bg-red-500/50 rounded-full" : ""}
-                                    // UPDATED: Handle drag start but don't call handleMouseDown manually
-                                    onMouseDown={(e) => handleTokenMouseDown(e, token.id)}
+                                    onPointerDown={(e) => handleTokenPointerDown(e, token.id)}
                                 >
                                     <Token 
                                         token={token} 
@@ -1298,27 +1366,29 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                 const tokenElement = document.getElementById(`token-node-${selectedTokenId}`);
                 const container = containerRef.current;
 
-                // Safety: Need token data, the rendered DOM element, and the map container
                 if (!token || !tokenElement || !container) return null;
 
-                // 1. Measure positions directly from the DOM (Perfect Accuracy)
                 const tRect = tokenElement.getBoundingClientRect();
                 const cRect = container.getBoundingClientRect();
-
-                // 2. Calculate Center relative to the container
                 const centerX = (tRect.left - cRect.left) + (tRect.width / 2);
                 const centerY = (tRect.top - cRect.top) + (tRect.height / 2);
 
                 return (
-                    <RadialHUD 
-                        key={token.id}
-                        token={token}
-                        position={{ x: centerX, y: centerY }}
-                        onUpdateToken={handleUpdateToken}
-                        onDelete={() => handleDeleteToken(token.id)}
-                        onOpenSheet={() => handleOpenSheet(token.id)}
-                        onClose={() => setSelectedTokenId(null)}
-                    />
+                    <div 
+                        onPointerDown={(e) => e.stopPropagation()} 
+                        onMouseDown={(e) => e.stopPropagation()}
+                        className="absolute inset-0 pointer-events-none z-[100]"
+                    >
+                        <RadialHUD 
+                            key={token.id}
+                            token={token}
+                            position={{ x: centerX, y: centerY }}
+                            onUpdateToken={handleUpdateToken}
+                            onDelete={() => handleDeleteToken(token.id)}
+                            onOpenSheet={() => handleOpenSheet(token.id)}
+                            onClose={() => setSelectedTokenId(null)}
+                        />
+                    </div>
                 );
             })()}
             {/* END CHANGE */}

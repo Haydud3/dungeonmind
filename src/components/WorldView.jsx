@@ -67,7 +67,6 @@ const WorldView = ({ data, role, updateCloud, updateMapState, user, apiKey, onDi
                     sidebarIsOpen={activeSheetId !== null}
                     updateCombatant={updateCombatant} // Pass down
                     removeCombatant={removeCombatant} // Pass down
-                    onClearRolls={onClearRolls} // Pass down
                     onClearRolls={onClearRolls}
                 />
             </div>

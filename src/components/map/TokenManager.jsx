@@ -75,12 +75,15 @@ const TokenManager = ({ data, onDragStart }) => {
                 <div>
                     <h4 className="text-xs font-bold text-indigo-400 mb-2 flex items-center gap-2"><Icon name="users" size={12}/> Party</h4>
                     <div className="space-y-2">
-                        {/* START CHANGE: Filter out PCs already on the map */}
+                        {/* PC LOOP */}
                         {players.filter(p => !data.campaign?.activeMap?.tokens?.some(t => t.characterId === p.id)).map(p => (
                             <div 
                                 key={p.id} 
                                 draggable 
-                                onDragStart={(e) => onDragStart(e, p, 'pc')}
+                                onDragStart={(e) => {
+                                    const payload = { type: 'pc', entityId: String(p.id), name: p.name, image: p.image };
+                                    e.dataTransfer.setData("text/plain", JSON.stringify(payload));
+                                }}
                                 className="flex items-center gap-3 bg-slate-800 p-2 rounded border border-slate-700 hover:border-indigo-500 cursor-grab active:cursor-grabbing transition-colors"
                             >
                                 <div className="w-8 h-8 rounded bg-slate-900 overflow-hidden border border-slate-600 shrink-0">
@@ -101,7 +104,10 @@ const TokenManager = ({ data, onDragStart }) => {
                             <div 
                                 key={n.id} 
                                 draggable 
-                                onDragStart={(e) => onDragStart(e, n, 'npc')}
+                                onDragStart={(e) => {
+                                    const payload = { type: 'npc', entityId: String(n.id), name: n.name, image: n.image };
+                                    e.dataTransfer.setData("text/plain", JSON.stringify(payload));
+                                }}
                                 className="flex items-center gap-3 bg-slate-800 p-2 rounded border border-slate-700 hover:border-red-500 cursor-grab active:cursor-grabbing transition-colors"
                             >
                                 <div className="w-8 h-8 rounded bg-slate-900 overflow-hidden border border-slate-600 shrink-0">

@@ -94,7 +94,8 @@ const RadialHUD = ({ token, position, onUpdateToken, onDelete, onOpenSheet, onCl
                 return (
                     <button
                         key={btn.id}
-                        onMouseDown={(e) => e.stopPropagation()}
+                        // CHANGE: Use onPointerDown and stopPropagation
+                        onPointerDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
                         onClick={(e) => { e.stopPropagation(); btn.action(); }}
                         title={btn.title}
                         className={`absolute pointer-events-auto w-10 h-10 -ml-5 -mt-5 rounded-full flex items-center justify-center border shadow-xl backdrop-blur-md transition-transform duration-200 hover:scale-110 active:scale-95 ${isActive ? 'bg-indigo-600 border-indigo-400 text-white' : `bg-slate-900/90 border-slate-700 ${btn.color} ${btn.bg}`}`}
