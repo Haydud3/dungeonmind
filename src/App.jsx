@@ -646,8 +646,8 @@ function DungeonMindApp() {
                </div>
            </div>
 
-           {/* UPDATED: Dynamic bottom padding. 50px for Compact, 70px for Normal. Matches MobileNav height. */}
-           <div className={`flex-1 overflow-hidden relative p-0 md:pb-0 ${data.config?.mobileCompact ? 'pb-[50px]' : 'pb-[70px]'}`}>
+           {/* UPDATED: Changed compact padding from 50px to 52px to match the new MobileNav height exactly */}
+           <div className={`flex-1 overflow-hidden relative p-0 md:pb-0 ${data.config?.mobileCompact ? 'pb-[52px]' : 'pb-[70px]'}`}>
              {/* 1. CHAT (Session) */}
               {/* START CHANGE: Connect deleteMessage and clearChat props */}
               {currentView === 'session' && <SessionView data={data} chatLog={data.chatLog} inputText={inputText} setInputText={setInputText} 
