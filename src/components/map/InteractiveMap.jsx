@@ -1116,9 +1116,10 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             {/* --- BOTTOM CENTER TOOLBAR (DM Only) --- */}
             {role === 'dm' && (
                 <div 
-                    // NEW: Full-width container that calculates the center of the VISIBLE area.
-                    // If sidebar is open, we add 384px of padding to the right, pushing the center point to the left.
-                    className={`absolute bottom-20 md:bottom-6 left-0 w-full flex justify-center pointer-events-none transition-all duration-300 z-50 ${
+                    // UPDATED: Check config.mobileCompact. 
+                    // If TRUE: use 'bottom-[68px]' (sits right on top of nav bar).
+                    // If FALSE: use 'bottom-24' (higher up, more clearance).
+                    className={`absolute ${data.config?.mobileCompact ? 'bottom-[68px]' : 'bottom-24'} md:bottom-6 left-0 w-full flex justify-center pointer-events-none transition-all duration-300 z-50 ${
                         sidebarIsOpen ? 'md:pr-[384px]' : ''
                     }`}
                 >

@@ -121,6 +121,20 @@ const SettingsView = ({
                                         <div className="text-xs text-slate-500">Prevent players from editing their stats manually during sessions.</div>
                                     </div>
                                 </div>
+
+                                {/* NEW: Compact UI Toggle */}
+                                <div className="flex items-center gap-3 p-3 bg-slate-900/50 rounded border border-slate-700">
+                                    <input 
+                                        type="checkbox" 
+                                        checked={data.config?.mobileCompact || false} 
+                                        onChange={(e) => updateCloud({ ...data, config: { ...data.config, mobileCompact: e.target.checked } })}
+                                        className="w-5 h-5 accent-indigo-500"
+                                    />
+                                    <div>
+                                        <div className="font-bold text-slate-200">Compact Mobile HUD</div>
+                                        <div className="text-xs text-slate-500">Lowers the map toolbar to maximize screen space on phones.</div>
+                                    </div>
+                                </div>
                         </div>
                     </div>
 

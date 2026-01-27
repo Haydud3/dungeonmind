@@ -3,14 +3,15 @@ import Icon from '../Icon';
 
 const GridControls = ({ grid, onUpdate, onClose }) => {
     const handleChange = (key, val) => {
-// ---------------------------------------------------------
         onUpdate({ ...grid, [key]: val });
     };
 
+    // We can't easily read global data here without passing it down, 
+    // but we can use a slightly lower default that works for both, or just lower it generally.
+    // Let's set it to 'bottom-24' (on mobile) which clears the new compacted toolbar.
     return (
         <div 
-            className="absolute bottom-36 md:bottom-22 left-1/2 -translate-x-1/2 bg-slate-900/95 backdrop-blur border border-slate-700 p-4 rounded-xl shadow-2xl w-64 animate-in slide-in-from-bottom-5 z-50 pointer-events-auto"
-            // FIX: Stop the event from reaching the InteractiveMap container
+            className="absolute bottom-24 md:bottom-22 left-1/2 -translate-x-1/2 bg-slate-900/95 backdrop-blur border border-slate-700 p-4 rounded-xl shadow-2xl w-64 animate-in slide-in-from-bottom-5 z-50 pointer-events-auto"
             onPointerDown={(e) => e.stopPropagation()} 
         >
             <div className="flex justify-between items-center mb-4">
