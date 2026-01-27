@@ -403,16 +403,17 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             }
         };
 
-        // FIX: Change passive to FALSE. This allows e.preventDefault() to work, stopping the browser crash.
+        // FIX: Keep pointermove with passive: false to allow preventDefault()
         window.addEventListener('pointermove', handleGlobalMove, { passive: false });
         window.addEventListener('pointerup', handleGlobalUp);
-        // ADD: Touchmove listener specifically for Safari iOS stability
-        window.addEventListener('touchmove', handleGlobalMove, { passive: false });
+        
+        // REMOVED: window.addEventListener('touchmove', handleGlobalMove, { passive: false });
+        // ^^^ This was the cause. It sent incompatible event data to the handler.
 
         return () => {
             window.removeEventListener('pointermove', handleGlobalMove);
             window.removeEventListener('pointerup', handleGlobalUp);
-            window.removeEventListener('touchmove', handleGlobalMove);
+            // REMOVED: window.removeEventListener('touchmove', handleGlobalMove);
         };
     }, [movingTokenId, isPanning, activeMeasurement, movingTokenPos, tokens, view.scale]);
 
@@ -1064,9 +1065,9 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     return (
         <div 
             ref={containerRef}
-            // Ensure touch-action: none is set directly on the style or class
             className={`w-full h-full bg-[#1a1a1a] overflow-hidden relative select-none ${activeTool === 'move' ? 'cursor-grab' : 'cursor-crosshair'}`}
-            style={{ touchAction: 'none' }}
+            // ENSURE THIS IS HERE:
+            style={{ touchAction: 'none' }} 
             onPointerDown={handlePointerDown}
             onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; }}
             onDrop={handleDrop}
