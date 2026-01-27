@@ -284,6 +284,11 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     // --- 1.5 GLOBAL INTERACTION ESCAPE ---
     useEffect(() => {
         const handleGlobalMove = (e) => {
+            // CRITICAL FIX: Stop browser native zoom/scroll to prevent "Double Image" crash
+            if (e.cancelable && (isPanning || pointerCache.current.length >= 2 || movingTokenId)) {
+                e.preventDefault();
+            }
+
             // Update pointer position in cache
             const index = pointerCache.current.findIndex(p => p.id === e.pointerId);
             if (index !== -1) {
@@ -398,12 +403,16 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             }
         };
 
-        window.addEventListener('pointermove', handleGlobalMove, { passive: true });
+        // FIX: Change passive to FALSE. This allows e.preventDefault() to work, stopping the browser crash.
+        window.addEventListener('pointermove', handleGlobalMove, { passive: false });
         window.addEventListener('pointerup', handleGlobalUp);
+        // ADD: Touchmove listener specifically for Safari iOS stability
+        window.addEventListener('touchmove', handleGlobalMove, { passive: false });
 
         return () => {
             window.removeEventListener('pointermove', handleGlobalMove);
             window.removeEventListener('pointerup', handleGlobalUp);
+            window.removeEventListener('touchmove', handleGlobalMove);
         };
     }, [movingTokenId, isPanning, activeMeasurement, movingTokenPos, tokens, view.scale]);
 
@@ -1055,6 +1064,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     return (
         <div 
             ref={containerRef}
+            // Ensure touch-action: none is set directly on the style or class
             className={`w-full h-full bg-[#1a1a1a] overflow-hidden relative select-none ${activeTool === 'move' ? 'cursor-grab' : 'cursor-crosshair'}`}
             style={{ touchAction: 'none' }}
             onPointerDown={handlePointerDown}
