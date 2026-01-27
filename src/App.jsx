@@ -646,7 +646,8 @@ function DungeonMindApp() {
                </div>
            </div>
 
-           <div className="flex-1 overflow-hidden relative p-0 pb-[70px] md:pb-0">
+           {/* UPDATED: Dynamic bottom padding. 50px for Compact, 70px for Normal. Matches MobileNav height. */}
+           <div className={`flex-1 overflow-hidden relative p-0 md:pb-0 ${data.config?.mobileCompact ? 'pb-[50px]' : 'pb-[70px]'}`}>
              {/* 1. CHAT (Session) */}
               {/* START CHANGE: Connect deleteMessage and clearChat props */}
               {currentView === 'session' && <SessionView data={data} chatLog={data.chatLog} inputText={inputText} setInputText={setInputText} 
@@ -741,7 +742,8 @@ function DungeonMindApp() {
        {showHandoutCreator && <HandoutEditor savedHandouts={data.handouts || []} onSave={handleHandoutSave} onCancel={() => setShowHandoutCreator(false)} />}
        {showHandout && data.campaign?.activeHandout && <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setShowHandout(false)}><div className="p-8 max-w-2xl w-full bg-white text-black rounded relative" onClick={e=>e.stopPropagation()}><div dangerouslySetInnerHTML={{__html: data.campaign.activeHandout.content}} /></div></div>}
        <div className="fixed inset-0 pointer-events-none z-[99999]">{rollingDice && <DiceOverlay roll={rollingDice} />}</div>
-       <MobileNav view={currentView} setView={setCurrentView} />
+       {/* UPDATED: Pass compact prop */}
+       <MobileNav view={currentView} setView={setCurrentView} compact={data.config?.mobileCompact} />
        {effectiveRole === 'dm' && !data.onboardingComplete && <OnboardingWizard onComplete={() => updateCloud({...data, onboardingComplete:true})} aiHelper={queryAiService} />}
     </div>
   );
