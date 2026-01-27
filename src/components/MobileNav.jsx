@@ -14,9 +14,15 @@ const MobileNav = ({ view, setView, compact, className = "" }) => {
 
     return (
         <nav 
-            // UPDATED: Tighter padding and reduced height (48px) in compact mode
-            className={`md:hidden fixed bottom-0 left-0 right-0 bg-slate-900/95 backdrop-blur-md border-t border-slate-800 flex items-center justify-between px-1 z-50 ${compact ? 'pb-[env(safe-area-inset-bottom,0px)]' : 'pb-[env(safe-area-inset-bottom,4px)]'} ${className}`}
-            style={{ height: `calc(${compact ? '48px' : '60px'} + env(safe-area-inset-bottom, 0px))` }}
+            // UPDATED: 
+            // 1. When compact, use 'pb-2' (fixed small padding) instead of 'env(safe-area-inset-bottom)'
+            // 2. This forces the content into the bottom "unsafe" area, removing the empty gap.
+            className={`md:hidden fixed bottom-0 left-0 right-0 bg-slate-900/95 backdrop-blur-md border-t border-slate-800 flex items-center justify-between px-1 z-50 ${compact ? 'pb-2' : 'pb-[env(safe-area-inset-bottom,4px)]'} ${className}`}
+            
+            // UPDATED:
+            // 1. When compact, set a fixed height of '52px'.
+            // 2. When normal, add the safe-area env variable so it expands on iPhones.
+            style={{ height: compact ? '52px' : 'calc(60px + env(safe-area-inset-bottom, 0px))' }}
         >
             {navItems.map(item => (
                 <button 
