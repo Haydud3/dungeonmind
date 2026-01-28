@@ -1,10 +1,44 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import Icon from '../Icon';
+import { useCharacterStore } from '../../stores/useCharacterStore';
 
 const TokenManager = ({ data, onDragStart }) => {
     const [search, setSearch] = useState("");
     const [results, setResults] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
+    const setSidebarDragEntity = useCharacterStore(state => state.setSidebarDragEntity);
+    const setDragPosition = useCharacterStore(state => state.setDragPosition);
+    const holdTimer = useRef(null);
+
+    const handlePointerDown = (e, entity, type) => {
+        const startX = e.clientX;
+        const startY = e.clientY;
+
+        holdTimer.current = setTimeout(() => {
+            if (window.navigator.vibrate) window.navigator.vibrate(40);
+            
+            setSidebarDragEntity({ 
+                ...entity, 
+                type,
+                image: entity.image || entity.img
+            });
+            setDragPosition({ x: e.clientX, y: e.clientY });
+        }, 300);
+
+        const cancelHold = (moveEvent) => {
+            const dist = Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY);
+            if (dist > 10) {
+                clearTimeout(holdTimer.current);
+                window.removeEventListener('pointermove', cancelHold);
+            }
+        };
+
+        window.addEventListener('pointermove', cancelHold);
+        window.addEventListener('pointerup', () => {
+            clearTimeout(holdTimer.current);
+            window.removeEventListener('pointermove', cancelHold);
+        }, { once: true });
+    };
 
     const handleSearch = async () => {
         if (!search.trim()) return;
@@ -20,11 +54,10 @@ const TokenManager = ({ data, onDragStart }) => {
     const players = data.players || [];
     // START CHANGE: Filter out instances so only Master Blueprints appear in the sidebar
     const npcs = (data.npcs || []).filter(n => !n.isInstance);
-    // END CHANGE
 
     return (
-        <div className="flex flex-col h-full text-slate-200">
-            <h3 className="text-xs font-bold text-slate-500 uppercase mb-2 px-1">Drag to Spawn</h3>
+        <div className="flex flex-col h-full text-slate-200" style={{ touchAction: 'pan-y' }}>
+            <h3 className="text-xs font-bold text-slate-500 uppercase mb-2 px-1">Hold to Spawn</h3>
 
             {/* SEARCH BAR */}
             <div className="flex gap-1 mb-4">
@@ -47,23 +80,12 @@ const TokenManager = ({ data, onDragStart }) => {
                         <h4 className="text-xs font-bold text-amber-400 mb-2 flex items-center gap-2"><Icon name="globe" size={12}/> Web Results</h4>
                         <div className="space-y-1">
                             {results.map(r => (
-    <div 
-        key={r.index}
-        draggable
-        onDragStart={(e) => {
-            // FIX: Bundle data into a single JSON object using standard 'text/plain'
-            // This ensures the data survives the drag operation across all browsers
-            const dragPayload = {
-                type: 'api-import',
-                url: r.url,
-                name: r.name
-            };
-            e.dataTransfer.effectAllowed = "copy";
-            e.dataTransfer.setData("text/plain", JSON.stringify(dragPayload));
-        }}
-        className="bg-slate-800 p-2 rounded border border-slate-700 hover:border-amber-500 cursor-grab active:cursor-grabbing text-xs truncate flex items-center gap-2"
-    >
-        <div className="w-2 h-2 rounded-full bg-amber-500"></div>
+                                <div 
+                                    key={r.index}
+                                    onPointerDown={(e) => handlePointerDown(e, { name: r.name, url: r.url }, 'api-import')}
+                                    className="bg-slate-800 p-2 rounded border border-slate-700 hover:border-amber-500 cursor-grab active:cursor-grabbing text-xs truncate flex items-center gap-2"
+                                >
+                                    <div className="w-2 h-2 rounded-full bg-amber-500"></div>
         {r.name}
     </div>
 ))}
@@ -79,11 +101,7 @@ const TokenManager = ({ data, onDragStart }) => {
                         {players.filter(p => !data.campaign?.activeMap?.tokens?.some(t => t.characterId === p.id)).map(p => (
                             <div 
                                 key={p.id} 
-                                draggable 
-                                onDragStart={(e) => {
-                                    const payload = { type: 'pc', entityId: String(p.id), name: p.name, image: p.image };
-                                    e.dataTransfer.setData("text/plain", JSON.stringify(payload));
-                                }}
+                                onPointerDown={(e) => handlePointerDown(e, p, 'pc')}
                                 className="flex items-center gap-3 bg-slate-800 p-2 rounded border border-slate-700 hover:border-indigo-500 cursor-grab active:cursor-grabbing transition-colors"
                             >
                                 <div className="w-8 h-8 rounded bg-slate-900 overflow-hidden border border-slate-600 shrink-0">
@@ -103,11 +121,7 @@ const TokenManager = ({ data, onDragStart }) => {
                         {npcs.map(n => (
                             <div 
                                 key={n.id} 
-                                draggable 
-                                onDragStart={(e) => {
-                                    const payload = { type: 'npc', entityId: String(n.id), name: n.name, image: n.image };
-                                    e.dataTransfer.setData("text/plain", JSON.stringify(payload));
-                                }}
+                                onPointerDown={(e) => handlePointerDown(e, n, 'npc')}
                                 className="flex items-center gap-3 bg-slate-800 p-2 rounded border border-slate-700 hover:border-red-500 cursor-grab active:cursor-grabbing transition-colors"
                             >
                                 <div className="w-8 h-8 rounded bg-slate-900 overflow-hidden border border-slate-600 shrink-0">

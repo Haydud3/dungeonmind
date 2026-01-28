@@ -1,21 +1,20 @@
 import React, { useState, useRef, useEffect } from 'react';
 import Icon from '../Icon';
 import Token from '../Token'; 
-// START CHANGE: Import Vision Math
-import { calculateVisibilityPolygon, getCharacterVisionSettings } from '../../utils/visionMath';
+// START CHANGE: Import isPointInPolygon
+import { calculateVisibilityPolygon, getCharacterVisionSettings, isPointInPolygon } from '../../utils/visionMath';
 // END CHANGE
 import MapToolbar from './MapToolbar';
 import MapLibrary from './MapLibrary';
 import TokenManager from './TokenManager';
-// START CHANGE: Import GridControls
 import GridControls from './GridControls';
 import CombatTracker from './CombatTracker';
-// START CHANGE: Import Radial HUD
 import RadialHUD from './RadialHUD';
 import { enrichCharacter } from '../../utils/srdEnricher';
+import { useCharacterStore } from '../../stores/useCharacterStore';
 
-// START CHANGE: Add onAutoRoll to destructured props
-const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, activeTemplate, sidebarIsOpen, updateCombatant, removeCombatant, onClearRolls, onAutoRoll }) => {
+// START CHANGE: Add user to destructured props
+const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, activeTemplate, sidebarIsOpen, updateCombatant, removeCombatant, onClearRolls, onAutoRoll, setShowHandoutCreator, code, addManualCombatant, players, npcs, user }) => {
     // 1. ALL STATE HOOKS
     const [view, setView] = useState({ x: 0, y: 0, scale: 1 });
     const [activeTool, setActiveTool] = useState('move');
@@ -39,12 +38,28 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     const [isPanning, setIsPanning] = useState(false);
     const [lastMousePos, setLastMousePos] = useState({ x: 0, y: 0 });
     const [spawningToken, setSpawningToken] = useState(null);
+    const [gridCalStart, setGridCalStart] = useState(null);
+    const [activeLightId, setActiveLightId] = useState(null);
+    const [assembledMapUrl, setAssembledMapUrl] = useState(null);
 
     // 2. DATA SHORTCUTS (Must be after state)
     const mapData = data.campaign?.activeMap || {};
     const tokens = mapData.tokens || [];
     const walls = mapData.walls || [];
+    const lights = mapData.lights || [];
     const mapUrl = mapData.url;
+
+    // Phase 2: Handle Chunked Map Loading from Firestore
+    useEffect(() => {
+        if (mapUrl?.startsWith('chunked:')) {
+            import('../../utils/storageUtils').then(({ retrieveChunkedMap }) => {
+                retrieveChunkedMap(mapUrl).then(setAssembledMapUrl);
+            });
+        } else {
+            setAssembledMapUrl(mapUrl);
+        }
+    }, [mapUrl]);
+
     const visionActive = mapData.visionActive !== false; 
     const mapGrid = mapData.grid || { size: 50, offsetX: 0, offsetY: 0, visible: true, snap: true };
 
@@ -198,6 +213,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
         // 2. COLLECT PHASE: Build token vision data WITHOUT rendering yet
         const tokenVisionData = [];
+        const pcVisionPolygons = []; // Master Clip
         
         tokens.forEach(token => {
             // Only PCs emit vision (NPCs don't reveal fog)
@@ -233,11 +249,14 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             });
 
             // Raycasting to calculate visibility polygon
-            // Walls always block, even when lights are off
             const polygon = calculateVisibilityPolygon(origin, blockingSegments, { 
                 width: canvas.width, 
                 height: canvas.height
-            }, visionRadius); // Pass maxRadius as 4th arg
+            }, visionRadius);
+
+            if (token.type === 'pc') {
+                pcVisionPolygons.push(polygon);
+            }
 
             tokenVisionData.push({
                 origin,
@@ -258,12 +277,11 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
         // Step B: Carve out visible areas based on LOS + Range
         ctx.globalCompositeOperation = 'destination-out';
-        ctx.globalAlpha = 1.0; // Erase fully within the mask
+        ctx.globalAlpha = 1.0;
 
         tokenVisionData.forEach(({ origin, visionRadius, polygon }) => {
             ctx.save();
             
-            // 1. Create a clipping mask from the raycasted LOS polygon
             if (polygon.length > 0) {
                 ctx.beginPath();
                 ctx.moveTo(polygon[0].x, polygon[0].y);
@@ -271,10 +289,9 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                     ctx.lineTo(polygon[i].x, polygon[i].y);
                 }
                 ctx.closePath();
-                ctx.clip(); // Restricts erasure to Line of Sight only
+                ctx.clip();
             }
 
-            // 2. Erase the darkness within the vision radius (torches/darkvision)
             const grad = ctx.createRadialGradient(origin.x, origin.y, 0, origin.x, origin.y, visionRadius);
             grad.addColorStop(0, 'rgba(255, 255, 255, 1)');
             grad.addColorStop(0.8, 'rgba(255, 255, 255, 1)');
@@ -287,6 +304,51 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             
             ctx.restore();
         });
+
+        // Step B2: Process Static Light Sources (Ambient Intersect Engine)
+        if (lights.length > 0 && pcVisionPolygons.length > 0) {
+            ctx.save();
+            
+            // Create Master Clip from all PC vision
+            ctx.beginPath();
+            pcVisionPolygons.forEach(poly => {
+                if (poly.length === 0) return;
+                ctx.moveTo(poly[0].x, poly[0].y);
+                for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i].x, poly[i].y);
+                ctx.closePath();
+            });
+            ctx.clip();
+
+            // Draw Lights
+            lights.forEach(light => {
+                const origin = {
+                    x: (light.x / 100) * img.naturalWidth,
+                    y: (light.y / 100) * img.naturalHeight
+                };
+                const radiusPx = (light.radius / 5) * (mapGrid.size || 50);
+
+                const blockingSegments = walls.filter(w => !(w.type === 'door' && w.isOpen));
+                const poly = calculateVisibilityPolygon(origin, blockingSegments, { width: canvas.width, height: canvas.height }, radiusPx);
+
+                ctx.save();
+                if (poly.length > 0) {
+                    ctx.beginPath();
+                    ctx.moveTo(poly[0].x, poly[0].y);
+                    for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i].x, poly[i].y);
+                    ctx.closePath();
+                    ctx.clip();
+                }
+
+                const grad = ctx.createRadialGradient(origin.x, origin.y, 0, origin.x, origin.y, radiusPx);
+                grad.addColorStop(0, light.color || 'rgba(255, 200, 100, 1)');
+                grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+                
+                ctx.fillStyle = grad;
+                ctx.fillRect(origin.x - radiusPx, origin.y - radiusPx, radiusPx * 2, radiusPx * 2);
+                ctx.restore();
+            });
+            ctx.restore();
+        }
 
         // Step C: Draw LOS Blocking Shadows (used when Lights are On or to deepen shadows)
         if (!visionActive) {
@@ -314,11 +376,17 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     };
 
     // Re-render when relevant state changes
-    useEffect(() => { renderVision(); }, [tokens, walls, visionActive, role, mapUrl, data.campaign?.characters]);
+    useEffect(() => { renderVision(); }, [tokens, walls, lights, visionActive, role, mapUrl, data.campaign?.characters]);
 
     // --- 1.5 GLOBAL INTERACTION ESCAPE ---
     useEffect(() => {
         const handleGlobalMove = (e) => {
+            const sidebarDragEntity = useCharacterStore.getState().sidebarDragEntity;
+            if (sidebarDragEntity) {
+                useCharacterStore.getState().setDragPosition({ x: e.clientX, y: e.clientY });
+                return;
+            }
+
             // CRITICAL FIX: Stop browser native zoom/scroll to prevent "Double Image" crash
             if (e.cancelable && (isPanning || pointerCache.current.length >= 2 || movingTokenId)) {
                 e.preventDefault();
@@ -359,12 +427,14 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             }
 
             // B. NORMAL MOVE LOGIC (1 Finger/Mouse)
-            if (!movingTokenId && !isPanning && !activeMeasurement) return;
+            if (!movingTokenId && !isPanning && !activeMeasurement && !gridCalStart) return;
             
             const coords = getMapCoords(e);
 
             if (activeMeasurement) {
                 setActiveMeasurement(prev => ({ ...prev, end: coords }));
+            } else if (gridCalStart) {
+                setCursorPos(coords);
             } else if (movingTokenId) {
                 setMovingTokenPos(coords);
             } else if (isPanning) {
@@ -384,6 +454,37 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         };
 
         const handleGlobalUp = (e) => {
+            const sidebarDragEntity = useCharacterStore.getState().sidebarDragEntity;
+            const setSidebarDragEntity = useCharacterStore.getState().setSidebarDragEntity;
+
+            if (sidebarDragEntity) {
+                const rect = containerRef.current.getBoundingClientRect();
+                if (e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom) {
+                    const coords = getMapCoords(e);
+                    const droppedData = {
+                        type: sidebarDragEntity.type,
+                        name: sidebarDragEntity.name,
+                        url: sidebarDragEntity.url,
+                        entityId: sidebarDragEntity.id,
+                        image: sidebarDragEntity.image
+                    };
+                    
+                    // Construct a mock event object for handleDrop
+                    const mockEvent = {
+                        preventDefault: () => {},
+                        stopPropagation: () => {},
+                        clientX: e.clientX,
+                        clientY: e.clientY,
+                        dataTransfer: {
+                            getData: () => JSON.stringify(droppedData)
+                        }
+                    };
+                    handleDrop(mockEvent);
+                }
+                setSidebarDragEntity(null);
+                return;
+            }
+
             // Remove pointer from cache
             pointerCache.current = pointerCache.current.filter(p => p.id !== e.pointerId);
             
@@ -394,8 +495,29 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
             const mTokenId = movingTokenId;
             const mPos = movingTokenPos;
+            const gStart = gridCalStart;
             const mData = latestDataRef.current;
             const currentTokens = latestTokensRef.current;
+
+            const coords = getMapCoords(e);
+
+            // Grid Calibration Math
+            if (activeTool === 'grid_cal' && gStart) {
+                const cellSize = coords.x - gStart.x;
+                if (cellSize > 5) {
+                    const newGrid = {
+                        ...mData.campaign.activeMap.grid,
+                        size: Math.round(cellSize),
+                        offsetX: Math.round(gStart.x % cellSize),
+                        offsetY: Math.round(gStart.y % cellSize)
+                    };
+                    handleGridUpdate(newGrid);
+                    triggerHaptic('medium');
+                }
+                setGridCalStart(null);
+                setActiveTool('move');
+                return;
+            }
 
             // 1. CLICK LOGIC: Open Radial HUD (Check distance from touchStartPos)
             const dist = Math.hypot(e.clientX - touchStartPos.current.x, e.clientY - touchStartPos.current.y);
@@ -550,7 +672,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         
         // NEW: Do NOT capture pointer if using drawing tools.
         // This allows the SVG layer and specific click handlers to receive the event.
-        const isDrawingTool = ['wall', 'door', 'delete'].includes(activeTool);
+        const isDrawingTool = ['wall', 'door', 'delete', 'light'].includes(activeTool);
         if (!isDrawingTool) {
             e.currentTarget.setPointerCapture(e.pointerId);
         }
@@ -598,6 +720,12 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             return; 
         }
 
+        if (activeTool === 'grid_cal') {
+            setGridCalStart(coords);
+            setCursorPos(coords);
+            return;
+        }
+
         // 2. Map Panning (Move Tool Priority)
         if (activeTool === 'move') {
 // ---------------------------------------------------------
@@ -605,7 +733,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         }
 
         // NEW: Explicitly trigger Drawing Logic on Pointer Down for better responsiveness
-        if (['wall', 'door', 'delete'].includes(activeTool)) {
+        if (['wall', 'door', 'delete', 'light'].includes(activeTool)) {
             handleMapClick(e);
         }
 
@@ -1002,11 +1130,53 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             return;
         }
 
-        // --- DELETE TOOL: Hit-Test and Remove Wall ---
-        if (activeTool === 'delete') {
-            const HIT_THRESHOLD = 10; // pixels
+        // --- LIGHT TOOL: Place or Select a light source ---
+        if (activeTool === 'light') {
+            const HIT_THRESHOLD = 20; // Radius in pixels to select existing light
             
-            // Search for nearby walls
+            const existingLight = (mapData.lights || []).find(l => {
+                const lx = (l.x / 100) * img.naturalWidth;
+                const ly = (l.y / 100) * img.naturalHeight;
+                return Math.hypot(pixelX - lx, pixelY - ly) <= HIT_THRESHOLD;
+            });
+
+            if (existingLight) {
+                setActiveLightId(existingLight.id);
+                triggerHaptic('light');
+                return;
+            }
+
+            const newLight = {
+                id: `light-${Date.now()}`,
+                x: percentX,
+                y: percentY,
+                radius: 20, // 20ft default
+                color: 'rgba(255, 170, 0, 0.8)'
+            };
+            updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...mapData, lights: [...(mapData.lights || []), newLight] } } });
+            setActiveLightId(newLight.id);
+            triggerHaptic('medium');
+            return;
+        }
+
+        // --- DELETE TOOL: Hit-Test and Remove Wall or Light ---
+        if (activeTool === 'delete') {
+            const HIT_THRESHOLD = 15; // pixels
+            
+            // 1. Check Lights first
+            const lightToDelete = lights.find(l => {
+                const lx = (l.x / 100) * img.naturalWidth;
+                const ly = (l.y / 100) * img.naturalHeight;
+                return Math.hypot(pixelX - lx, pixelY - ly) <= HIT_THRESHOLD;
+            });
+
+            if (lightToDelete) {
+                const newLights = lights.filter(l => l.id !== lightToDelete.id);
+                updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...mapData, lights: newLights } } });
+                return;
+            }
+
+            // 2. Search for nearby walls
             const wallToDelete = walls.find(w => {
                 const distance = pointToSegmentDistance(
                     pixelX, pixelY, 
@@ -1116,13 +1286,20 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         >
             {/* --- TOP RIGHT CONTROLS (Library, Tokens, Combat, Zoom) --- */}
             <div 
-                className={`absolute top-4 z-50 flex gap-2 pointer-events-auto transition-all duration-300 ${sidebarIsOpen ? 'sm:right-[400px] right-4' : 'right-4'}`}
-                onPointerDown={(e) => e.stopPropagation()} 
+                className={`absolute top-4 z-50 flex gap-2 pointer-events-none transition-all duration-300 ${sidebarIsOpen ? 'sm:right-[400px] right-4' : 'right-4'}`}
             >
-                <div className="bg-slate-900/90 border border-slate-700 rounded-lg p-1 flex gap-1 shadow-xl">
+                <div 
+                    className="bg-slate-900/90 border border-slate-700 rounded-lg p-1 flex gap-1 shadow-xl pointer-events-auto"
+                    onPointerDown={(e) => e.stopPropagation()} 
+                >
                     <button onClick={() => setShowLibrary(true)} className="p-2 text-slate-300 hover:text-white hover:bg-slate-800 rounded" title="Maps">
                         <Icon name="map" size={20}/>
                     </button>
+                    {role === 'dm' && (
+                        <button onClick={() => setShowHandoutCreator(true)} className="p-2 text-slate-300 hover:text-white hover:bg-slate-800 rounded" title="Send Handout">
+                            <Icon name="scroll" size={20}/>
+                        </button>
+                    )}
                     <div className="w-px h-6 bg-slate-700 my-auto"></div>
                     <button onClick={() => setShowTokens(!showTokens)} className={`p-2 rounded transition-colors ${showTokens ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:text-white hover:bg-slate-800'}`} title="Tokens">
                         <Icon name="users" size={20}/>
@@ -1132,7 +1309,10 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                     </button>
                 </div>
                 
-                <div className="bg-slate-900/90 border border-slate-700 rounded-lg p-1 flex gap-1 shadow-xl">
+                <div 
+                    className="bg-slate-900/90 border border-slate-700 rounded-lg p-1 flex gap-1 shadow-xl pointer-events-auto"
+                    onPointerDown={(e) => e.stopPropagation()}
+                >
                     <button onClick={() => setView(v => ({...v, scale: v.scale / 1.2}))} className="p-2 text-slate-300 hover:text-white hover:bg-slate-800 rounded"><Icon name="minus" size={20}/></button>
                     <button onClick={() => setView(v => ({...v, scale: v.scale * 1.2}))} className="p-2 text-slate-300 hover:text-white hover:bg-slate-800 rounded"><Icon name="plus" size={20}/></button>
                 </div>
@@ -1140,23 +1320,21 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
             {/* --- TOP LEFT HUD (Status) --- */}
             <div 
-                // NEW: Logic to only hide if the screen is narrow enough to cause a collision.
-                // If Sidebar is open: 
-                // - On screens < 1150px (Laptops/Tablets), it fades out to prevent overlap.
-                // - On screens > 1150px (Large Monitors), it stays visible because there is room.
                 className={`absolute top-4 left-4 z-50 pointer-events-none transition-all duration-300 ${
                     sidebarIsOpen 
                         ? 'max-[1150px]:opacity-0 max-[1150px]:pointer-events-none' 
                         : 'max-[650px]:opacity-0 max-[650px]:pointer-events-none opacity-100'
                 }`}
-                onPointerDown={(e) => e.stopPropagation()}
             >
-                <div className="bg-slate-900/90 backdrop-blur border border-slate-700 px-3 py-2 rounded-lg shadow-xl pointer-events-auto flex items-center gap-3">
+                <div 
+                    className="bg-slate-900/90 backdrop-blur border border-slate-700 px-3 py-2 rounded-lg shadow-xl pointer-events-auto flex items-center gap-3"
+                    onPointerDown={(e) => e.stopPropagation()}
+                >
                     <div className={`w-3 h-3 rounded-full ${data.activeUsers ? 'bg-green-500 shadow-[0_0_8px_#22c55e]' : 'bg-red-500'}`}></div>
                     <div>
-                        <div className="text-xs font-bold text-amber-500 fantasy-font tracking-widest">{data.campaign?.genesis?.campaignName || "Unknown Realm"}</div>
+                        <div className="text-xs font-bold text-amber-500 fantasy-font tracking-widest"> {data.campaign?.genesis?.campaignName || "Unknown Realm"}</div>
                         <div className="text-[9px] text-slate-400 font-mono uppercase tracking-tighter">
-                            LOCATION: {mapData.url ? (mapData.name || "Unnamed Map") : "The Void"}
+                            [{code}] • LOCATION: {mapData.url ? (mapData.name || "Unnamed Map") : "The Void"}
                         </div>
                     </div>
                 </div>
@@ -1166,10 +1344,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             {/* --- BOTTOM CENTER TOOLBAR (DM Only) --- */}
             {role === 'dm' && (
                 <div 
-                    // UPDATED: Check config.mobileCompact. 
-                    // If TRUE: use 'bottom-[68px]' (sits right on top of nav bar).
-                    // If FALSE: use 'bottom-24' (higher up, more clearance).
-                    className={`absolute ${data.config?.mobileCompact ? 'bottom-[68px]' : 'bottom-24'} md:bottom-6 left-0 w-full flex justify-center pointer-events-none transition-all duration-300 z-50 ${
+                    className={`absolute ${data.config?.mobileCompact ? 'bottom-[0px]' : 'bottom-0'} md:bottom-6 left-0 w-full flex justify-center pointer-events-none transition-all duration-300 z-50 ${
                         sidebarIsOpen ? 'md:pr-[384px]' : ''
                     }`}
                 >
@@ -1195,9 +1370,68 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
             {/* Grid Config Panel */}
             {role === 'dm' && activeTool === 'grid' && (
-                <GridControls grid={mapGrid} onUpdate={handleGridUpdate} onClose={() => setActiveTool('move')} />
+                <GridControls 
+                    grid={mapGrid} 
+                    onUpdate={handleGridUpdate} 
+                    onClose={() => setActiveTool('move')} 
+                    activeTool={activeTool}
+                    setActiveTool={setActiveTool}
+                />
             )}
-            {/* END CHANGE */}
+            
+            {/* Light Adjustment HUD */}
+            {role === 'dm' && activeTool === 'light' && activeLightId && (() => {
+                const light = (mapData.lights || []).find(l => l.id === activeLightId);
+                if (!light) return null;
+
+                const updateLight = (changes) => {
+                    const newLights = mapData.lights.map(l => l.id === activeLightId ? { ...l, ...changes } : l);
+                    updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...mapData, lights: newLights } } });
+                };
+
+                return (
+                    <div 
+                        className="absolute bottom-24 left-1/2 -translate-x-1/2 bg-slate-900/95 backdrop-blur border border-slate-700 p-4 rounded-xl shadow-2xl w-64 z-50 pointer-events-auto"
+                        onPointerDown={(e) => e.stopPropagation()}
+                    >
+                        <div className="flex justify-between items-center mb-3">
+                            <h4 className="text-xs font-bold text-amber-500 uppercase tracking-widest flex items-center gap-2">
+                                <Icon name="lamp" size={14}/> Light Settings
+                            </h4>
+                            <button onClick={() => setActiveLightId(null)} className="text-slate-500 hover:text-white"><Icon name="x" size={14}/></button>
+                        </div>
+                        <div className="space-y-4">
+                            <div>
+                                <label className="text-[10px] text-slate-500 font-bold uppercase flex justify-between mb-1">
+                                    <span>Radius</span>
+                                    <span className="text-white">{light.radius}ft</span>
+                                </label>
+                                <input 
+                                    type="range" min="5" max="100" step="5"
+                                    value={light.radius}
+                                    onChange={(e) => updateLight({ radius: parseInt(e.target.value) })}
+                                    className="w-full accent-amber-500 h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer"
+                                />
+                            </div>
+                            <div className="flex gap-2">
+                                {[
+                                    { label: 'Warm', color: 'rgba(255, 170, 0, 0.8)' },
+                                    { label: 'Cold', color: 'rgba(100, 200, 255, 0.6)' },
+                                    { label: 'Void', color: 'rgba(150, 0, 255, 0.5)' }
+                                ].map(preset => (
+                                    <button 
+                                        key={preset.label}
+                                        onClick={() => updateLight({ color: preset.color })}
+                                        className={`flex-1 py-1 text-[9px] font-bold rounded border transition-all ${light.color === preset.color ? 'bg-slate-700 border-amber-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-500'}`}
+                                    >
+                                        {preset.label}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                );
+            })()}
 
             {/* --- RIGHT SIDEBAR (Token Manager) --- */}
             {showTokens && (
@@ -1220,8 +1454,11 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                         updateCombatant={updateCombatant}
                         onRemove={removeCombatant}
                         onClearRolls={onClearRolls}
-                        // START CHANGE: Pass it down
                         onAutoRoll={onAutoRoll}
+                        // START CHANGE: Pass data through to tracker
+                        addManualCombatant={addManualCombatant}
+                        players={players}
+                        npcs={npcs}
                         // END CHANGE
                     />
                 </div>
@@ -1266,7 +1503,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                     >
                         <img 
                             ref={mapImageRef}
-                            src={mapUrl}
+                            src={assembledMapUrl}
                             onLoad={handleMapLoad}
                             decoding="async" // Off-thread image decoding
                             className="block pointer-events-none select-none max-w-none h-auto"
@@ -1319,7 +1556,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
                         {/* Phase 3 Wall/Door SVG Layer */}
                         <svg 
-                            className={`absolute top-0 left-0 w-full h-full z-[8] ${(['wall', 'door', 'delete'].includes(activeTool) || activeMeasurement) ? 'pointer-events-auto' : 'pointer-events-none'}`} 
+                            className={`absolute top-0 left-0 w-full h-full z-[8] ${(['wall', 'door', 'delete', 'light'].includes(activeTool) || activeMeasurement) ? 'pointer-events-auto' : 'pointer-events-none'}`} 
                             style={{ viewBox: `0 0 ${mapImageRef.current?.naturalWidth} ${mapImageRef.current?.naturalHeight}` }}
                             onClick={handleMapClick}
                             onContextMenu={handleMapRightClick}
@@ -1410,6 +1647,27 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                                     pointerEvents="none"
                                 />
                             )}
+                            
+                            {/* 4. Render Grid Calibration Square */}
+                            {gridCalStart && activeTool === 'grid_cal' && (
+                                <rect 
+                                    x={gridCalStart.x} 
+                                    y={gridCalStart.y} 
+                                    width={Math.max(0, cursorPos.x - gridCalStart.x)} 
+                                    height={Math.max(0, cursorPos.x - gridCalStart.x)} 
+                                    fill="rgba(99, 102, 241, 0.2)" 
+                                    stroke="#6366f1" 
+                                    strokeWidth={2} 
+                                    strokeDasharray="5,5"
+                                />
+                            )}
+                        {/* 5. Render Light Anchors (DM Only) */}
+                            {role === 'dm' && (activeTool === 'light' || activeTool === 'delete') && lights.map(l => (
+                                <g key={l.id} transform={`translate(${(l.x/100)*mapImageRef.current.naturalWidth}, ${(l.y/100)*mapImageRef.current.naturalHeight})`}>
+                                    <circle r={10} fill="rgba(255, 170, 0, 0.4)" stroke="#ffaa00" strokeWidth={2} />
+                                    <path d="M-4,-4 L4,4 M-4,4 L4,-4" stroke="#ffaa00" strokeWidth={2} />
+                                </g>
+                            ))}
                         </svg>
                         
                         {/* START CHANGE: Render The Ghost/Dummy Token */}
@@ -1435,7 +1693,63 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                         {/* END CHANGE */}
 
                         {/* Render Tokens */}
-                        {tokens.map(token => {
+                        {tokens.filter(token => {
+                            // DM sees everything (except strict 'isHidden' logic handled in map, but DM sees ghosts)
+                            if (role === 'dm') return true;
+
+                            // 1. If token is strictly hidden by DM, players never see it
+                            if (token.isHidden) return false;
+
+                            // 2. Identify the Active Player's Token
+                            const myCharId = data.assignments?.[user?.uid];
+                            
+                            // If I own this token, I always see it
+                            if (token.characterId === myCharId) return true;
+
+                            // 3. Vision Logic: If Vision is active, check LOS
+                            const img = mapImageRef.current;
+                            if (visionActive && myCharId && img && img.naturalWidth) {
+                                // Find my token to calculate MY viewpoint
+                                const myToken = tokens.find(t => t.characterId === myCharId);
+                                
+                                if (myToken) {
+                                    // A. Calculate My Origin
+                                    const origin = {
+                                        x: (myToken.x / 100) * img.naturalWidth,
+                                        y: (myToken.y / 100) * img.naturalHeight
+                                    };
+
+                                    // B. Calculate My Vision Settings
+                                    // We re-calc this here (per frame) to ensure sync. 
+                                    // Optimization: Could be memoized, but map geometry changes frequently.
+                                    const gridSize = mapGrid.size || 50;
+                                    const settings = getCharacterVisionSettings(
+                                        data.players?.find(p => p.id === myCharId), 
+                                        gridSize
+                                    );
+
+                                    // C. Calculate My Visibility Polygon
+                                    const blockingSegments = walls.filter(w => !(w.type === 'door' && w.isOpen));
+                                    const myPoly = calculateVisibilityPolygon(origin, blockingSegments, { 
+                                        width: img.naturalWidth, 
+                                        height: img.naturalHeight 
+                                    }, settings.radius);
+
+                                    // D. Check if Target Token is inside My Polygon
+                                    const targetCenter = {
+                                        x: (token.x / 100) * img.naturalWidth,
+                                        y: (token.y / 100) * img.naturalHeight
+                                    };
+
+                                    // The final verdict
+                                    return isPointInPolygon(targetCenter, myPoly);
+                                }
+                            }
+
+                            // Fallback: If no vision active or no character assigned, show all non-hidden tokens
+                            return true;
+
+                        }).map(token => {
                             const img = mapImageRef.current;
                             
                             // NEW: Differentiate identical tokens visually during their turn

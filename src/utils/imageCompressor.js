@@ -29,16 +29,9 @@ export const compressImage = (file, maxWidth = 4096, quality = 0.9) => {
                 const ctx = elem.getContext('2d');
                 ctx.drawImage(img, 0, 0, width, height);
 
-                // FIX: Use toBlob to return a Blob directly for Firebase Storage
-                // This avoids the Base64 string that crashes memory.
-                elem.toBlob(
-                    (blob) => {
-                        if (blob) resolve(blob);
-                        else reject(new Error("Canvas to Blob conversion failed."));
-                    },
-                    'image/jpeg',
-                    quality
-                );
+                // Convert to Base64 Data URL for Firestore chunking
+                const dataUrl = elem.toDataURL('image/jpeg', quality);
+                resolve(dataUrl);
             };
             img.onerror = (error) => reject(error);
         };

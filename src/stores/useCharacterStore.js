@@ -221,5 +221,11 @@ export const useCharacterStore = create((set, get) => ({
 
     removeLog: (id) => set((state) => ({
         logs: state.logs.filter(l => l.id !== id)
-    }))
+    })),
+
+    // START CHANGE: Drag & Drop State
+    sidebarDragEntity: null,
+    dragPosition: { x: 0, y: 0 },
+    setSidebarDragEntity: (entity) => set({ sidebarDragEntity: entity }),
+    setDragPosition: (pos) => set({ dragPosition: pos })
 }));

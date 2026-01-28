@@ -1,7 +1,7 @@
 import React from 'react';
 import Icon from '../Icon';
 
-const GridControls = ({ grid, onUpdate, onClose }) => {
+const GridControls = ({ grid, onUpdate, onClose, activeTool, setActiveTool }) => {
     const handleChange = (key, val) => {
         onUpdate({ ...grid, [key]: val });
     };
@@ -21,6 +21,15 @@ const GridControls = ({ grid, onUpdate, onClose }) => {
             </div>
 
             <div className="space-y-4">
+                {/* 0. Calibration Tool */}
+                <button 
+                    onClick={() => setActiveTool(activeTool === 'grid_cal' ? 'move' : 'grid_cal')}
+                    className={`w-full py-2 rounded-lg border flex items-center justify-center gap-2 text-xs font-bold transition-all ${activeTool === 'grid_cal' ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-slate-800 text-slate-300 border-slate-700 hover:border-indigo-500'}`}
+                >
+                    <Icon name="maximize" size={14}/> 
+                    {activeTool === 'grid_cal' ? 'Cancel Calibration' : 'Calibrate by Drawing'}
+                </button>
+
                 {/* 1. Visibility Toggle */}
                 <div className="flex items-center justify-between">
                     <label className="text-xs text-slate-400 font-bold uppercase">Visible</label>

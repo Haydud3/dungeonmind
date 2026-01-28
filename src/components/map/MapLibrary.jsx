@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import Icon from '../Icon';
-import { uploadImage } from '../../utils/storageUtils';
+import { storeChunkedMap } from '../../utils/storageUtils';
 import { compressImage } from '../../utils/imageCompressor';
 
 const GOOGLE_SEARCH_CX = "c38cb56920a4f45df"; 
@@ -60,28 +60,12 @@ const MapLibrary = ({ savedMaps, onSelect, onClose, onDelete }) => {
         if (!file) return;
         
         setIsUploading(true);
-        // START CHANGE: Add Debugging
-        console.log(`[DEBUG] Starting upload for: ${file.name}. Initial size: ${file.size} bytes.`);
-        // END CHANGE
         try {
-            // START CHANGE: Resize the map image to a safe max dimension (4096px)
-            const resizedBlob = await compressImage(file, 4096, 0.9);
+            // Resize map image and return Base64 string for Firestore Chunking
+            const base64 = await compressImage(file, 4096, 0.85);
             
-            // START CHANGE: Debug Resized Blob size
-            console.log(`[DEBUG] Resizing complete. Blob type: ${resizedBlob.type}, size: ${resizedBlob.size} bytes.`);
-            // END CHANGE
-
-            const path = `maps/${Date.now()}_${file.name.replace(/\s+/g, '_')}.jpg`;
-            // Upload the resulting Blob to Firebase Storage
-            
-            // START CHANGE: Debug Upload Start
-            console.log(`[DEBUG] Starting Firebase upload to path: ${path}`);
-            // END CHANGE
-            const url = await uploadImage(resizedBlob, path);
-            
-            // START CHANGE: Debug Upload Success
-            console.log(`[DEBUG] Upload SUCCESS. URL received: ${url.substring(0, 50)}...`);
-            // END CHANGE
+            // Store chunks in Firestore to bypass CORS and 1MB limit
+            const url = await storeChunkedMap(base64, file.name);
             
             // Standardized payload with isNew flag
             onSelect({ 

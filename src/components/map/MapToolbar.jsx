@@ -10,8 +10,9 @@ const MapToolbar = ({ activeTool, setTool, visionActive, onToggleVision }) => {
         { id: 'sphere', icon: 'circle-dot', label: 'Sphere AoE' },
         { id: 'wall', icon: 'brick-wall', label: 'Wall' },
         { id: 'door', icon: 'door-closed', label: 'Door' },
-        // START CHANGE: Add Delete Tool
-        { id: 'delete', icon: 'trash-2', label: 'Delete Wall' },
+        // START CHANGE: Add Light and Delete Tools
+        { id: 'light', icon: 'lamp', label: 'Light' },
+        { id: 'delete', icon: 'trash-2', label: 'Delete' },
         // END CHANGE
         { id: 'grid', icon: 'grid', label: 'Grid' },
     ];

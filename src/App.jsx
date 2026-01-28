@@ -38,7 +38,7 @@ const DB_INIT_DATA = {
     config: { edition: '2014', strictMode: true }, 
     campaign: { 
         genesis: { tone: 'Heroic', conflict: 'Dragon vs Kingdom', campaignName: 'New Campaign' }, 
-        activeMap: { url: null, revealPaths: [], tokens: [] }, 
+        activeMap: { url: null, revealPaths: [], tokens: [], walls: [], lights: [], grid: { size: 50, offsetX: 0, offsetY: 0, visible: true, snap: true } }, 
         savedMaps: [],
         activeHandout: null, 
         location: "Start",
@@ -124,6 +124,10 @@ function DungeonMindApp() {
   // END CHANGE
   const [openAiModel, setOpenAiModel] = useState(() => localStorage.getItem('dm_openai_model') || 'gpt-4o');
   const [puterModel, setPuterModel] = useState(() => localStorage.getItem('dm_puter_model') || 'mistral-large-latest');
+
+  // START CHANGE: Move Ghost Token hooks to top level to follow Rules of Hooks
+  const sidebarDragEntity = useCharacterStore(state => state.sidebarDragEntity);
+  const dragPosition = useCharacterStore(state => state.dragPosition);
 
   useEffect(() => { localStorage.setItem('dm_api_key', apiKey); }, [apiKey]);
   useEffect(() => { localStorage.setItem('dm_ai_provider', aiProvider); }, [aiProvider]);
@@ -469,7 +473,7 @@ function DungeonMindApp() {
 
   const autoRollNPCs = () => {
       const tokens = data.campaign?.activeMap?.tokens || [];
-      const npcs = tokens.filter(t => t.type !== 'pc');
+      const npcs = tokens.filter(t => t.type !== 'pc' && !t.isHidden);
       
       // Get current combatants or start fresh
       const c = data.campaign?.combat;
@@ -505,25 +509,50 @@ function DungeonMindApp() {
       toast(`Rolled initiative for ${npcs.length} monsters!`, "info");
   };
 
+  const addManualCombatant = (entity) => {
+      const c = data.campaign?.combat || { active: true, round: 1, turn: 0, combatants: [] };
+      const combatants = [...(c.combatants || [])];
+      
+      if (combatants.find(x => x.id === entity.id)) {
+          toast(`${entity.name} is already in combat!`, "warning");
+          return;
+      }
+
+      const entry = {
+          id: entity.id,
+          characterId: entity.id,
+          name: entity.name,
+          init: null,
+          type: data.players?.find(p => p.id === entity.id) ? 'pc' : 'npc',
+          image: entity.image || entity.img
+      };
+
+      updateCloud({ ...data, campaign: { ...data.campaign, combat: { ...c, active: true, combatants: [...combatants, entry] } } }, true);
+      toast(`Added ${entity.name} to tracker.`, "success");
+  };
+
   const updateCombatant = (id, changes) => {
       const c = data.campaign?.combat;
       if (!c) return;
       let combatants = [...c.combatants];
-      const idx = combatants.findIndex(x => x.id === id);
-      if (idx > -1) {
-          combatants[idx] = { ...combatants[idx], ...changes };
-          
-          // Re-sort if init changed
-          if (changes.init !== undefined) {
-              combatants.sort((a,b) => {
-                  if (a.init === null) return 1;
-                  if (b.init === null) return -1;
-                  return b.init - a.init;
-              });
+
+      if (id === 'reorder') {
+          // Special action for manual list re-sorting on blur
+          combatants = changes; 
+      } else {
+          const idx = combatants.findIndex(x => x.id === id);
+          if (idx > -1) {
+              combatants[idx] = { ...combatants[idx], ...changes };
+              
+              // Only auto-sort if init changed, but keep it stable for typing
+              if (changes.init !== undefined && changes.init !== null) {
+                  // We don't sort here immediately to prevent the input from jumping 
+                  // while the DM is typing. The Tracker calls 'reorder' onBlur.
+              }
           }
-          
-          updateCloud({ ...data, campaign: { ...data.campaign, combat: { ...c, combatants } } });
       }
+      
+      updateCloud({ ...data, campaign: { ...data.campaign, combat: { ...c, combatants } } });
   };
   // END CHANGE
 
@@ -637,24 +666,25 @@ function DungeonMindApp() {
       }
       return <Lobby fb={fb} user={user} onJoin={(c, r, u) => { localStorage.setItem('dm_last_code', c); joinCampaign(c, r, u, false); }} onOffline={() => joinCampaign('LOCAL', 'dm', 'admin', true)} />;
   }
-  // END CHANGE
+
 
   return (
     <div className="fixed inset-0 w-full h-full flex flex-col md:flex-row bg-slate-900 text-slate-200 font-sans overflow-hidden">
        <Sidebar view={currentView} setView={setCurrentView} onExit={() => { localStorage.removeItem('dm_last_code'); leaveCampaign(); }} />
        <main className="flex-1 flex flex-col overflow-hidden relative w-full h-full">
-           <div className="shrink-0 bg-slate-900/95 backdrop-blur border-b border-slate-800 pt-safe z-50">
-               <div className="h-14 flex items-center justify-between px-4">
-                   <div className="flex gap-2 items-center">
-                       <div className={`w-2 h-2 rounded-full shadow-[0_0_10px_rgba(34,197,94,0.5)] ${gameParams?.isOffline ? 'bg-slate-500' : 'bg-green-500'}`}></div>
-                       <span className="text-sm font-bold text-amber-500 truncate fantasy-font tracking-wide">{gameParams?.code} • {possessedNpcId ? "POSSESSING NPC" : data?.campaign?.location}</span>
-                   </div>
-                   <div className="flex gap-2">
-                       {effectiveRole === 'dm' && <button onClick={() => setShowHandoutCreator(true)} className="text-xs bg-amber-900/50 hover:bg-amber-800 px-3 py-1 rounded border border-amber-800 text-amber-200 flex items-center gap-2"><Icon name="scroll" size={14}/> <span>Handout</span></button>}
-                       <button onClick={() => {}} className="text-xs bg-slate-800 hover:bg-slate-700 border border-slate-600 px-3 py-1 rounded flex items-center gap-2 text-slate-300 hover:text-white"><Icon name="save" size={14}/> Log</button>
+           {currentView !== 'map' && (
+               <div className="shrink-0 bg-slate-900/95 backdrop-blur border-b border-slate-800 pt-safe z-50">
+                   <div className="h-14 flex items-center justify-between px-4">
+                       <div className="flex gap-2 items-center">
+                           <div className={`w-2 h-2 rounded-full shadow-[0_0_10px_rgba(34,197,94,0.5)] ${gameParams?.isOffline ? 'bg-slate-500' : 'bg-green-500'}`}></div>
+                           <span className="text-sm font-bold text-amber-500 truncate fantasy-font tracking-wide">{gameParams?.code} • {possessedNpcId ? "POSSESSING NPC" : data?.campaign?.location}</span>
+                       </div>
+                       <div className="flex gap-2">
+                           {effectiveRole === 'dm' && <button onClick={() => setShowHandoutCreator(true)} className="text-xs bg-amber-900/50 hover:bg-amber-800 px-3 py-1 rounded border border-amber-800 text-amber-200 flex items-center gap-2"><Icon name="scroll" size={14}/> <span>Handout</span></button>}
+                       </div>
                    </div>
                </div>
-           </div>
+           )}
 
            {/* UPDATED: Changed compact padding from 50px to 52px to match the new MobileNav height exactly */}
            <div className={`flex-1 overflow-hidden relative p-0 md:pb-0 ${data.config?.mobileCompact ? 'pb-[52px]' : 'pb-[70px]'}`}>
@@ -700,17 +730,20 @@ function DungeonMindApp() {
                   activeTemplate={activeTemplate} 
                   onClearTemplate={() => setActiveTemplate(null)} 
                   onInitiative={handleInitiative}
-                  updateCombatant={updateCombatant} // Pass new function
-                  // START CHANGE: Pass the clear function down
+                  updateCombatant={updateCombatant} 
                   onClearRolls={handleClearRolls}
-                  // END CHANGE
-                  removeCombatant={(id) => { // Pass inline delete function
+                  removeCombatant={(id) => { 
                       const c = data.campaign?.combat;
-                      const newCombatants = c.combatants.filter(x => x.id !== id);
+                      const newCombatants = (c.combatants || []).filter(x => x.id !== id);
                       updateCloud({ ...data, campaign: { ...data.campaign, combat: { ...c, combatants: newCombatants } } });
                   }}
-                  // START CHANGE: Pass the Auto-Roll function
                   onAutoRoll={autoRollNPCs}
+                  setShowHandoutCreator={setShowHandoutCreator}
+                  code={gameParams.code}
+                  // START CHANGE: Pass manual combatant helpers
+                  addManualCombatant={addManualCombatant}
+                  players={data.players}
+                  npcs={data.npcs}
                   // END CHANGE
               />}
               {currentView === 'atlas' && <WorldCreator data={data} setData={setData} role={effectiveRole} updateCloud={updateCloud} updateMapState={updateMapState} aiHelper={queryAiService} apiKey={apiKey} />}
@@ -752,6 +785,24 @@ function DungeonMindApp() {
        {showHandoutCreator && <HandoutEditor savedHandouts={data.handouts || []} onSave={handleHandoutSave} onCancel={() => setShowHandoutCreator(false)} />}
        {showHandout && data.campaign?.activeHandout && <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setShowHandout(false)}><div className="p-8 max-w-2xl w-full bg-white text-black rounded relative" onClick={e=>e.stopPropagation()}><div dangerouslySetInnerHTML={{__html: data.campaign.activeHandout.content}} /></div></div>}
        <div className="fixed inset-0 pointer-events-none z-[99999]">{rollingDice && <DiceOverlay roll={rollingDice} />}</div>
+       
+       {sidebarDragEntity && (
+           <div 
+               className="fixed z-[999999] pointer-events-none w-16 h-16 rounded-full border-2 border-amber-500 bg-slate-900 shadow-2xl overflow-hidden flex items-center justify-center animate-in zoom-in-50 duration-200"
+               style={{ 
+                   left: dragPosition.x, 
+                   top: dragPosition.y - 40, 
+                   transform: 'translate(-50%, -50%)' 
+               }}
+           >
+               {sidebarDragEntity.image ? (
+                   <img src={sidebarDragEntity.image} className="w-full h-full object-cover" />
+               ) : (
+                   <span className="text-white font-bold">{sidebarDragEntity.name[0]}</span>
+               )}
+           </div>
+       )}
+
        {/* UPDATED: Pass compact prop */}
        <MobileNav view={currentView} setView={setCurrentView} compact={data.config?.mobileCompact} />
        {effectiveRole === 'dm' && !data.onboardingComplete && <OnboardingWizard onComplete={() => updateCloud({...data, onboardingComplete:true})} aiHelper={queryAiService} />}
