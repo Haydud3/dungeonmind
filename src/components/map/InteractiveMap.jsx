@@ -1,6 +1,6 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import Icon from '../Icon';
-import Token from '../Token'; 
+import Token from '../Token';
 // START CHANGE: Import isPointInPolygon
 import { calculateVisibilityPolygon, getCharacterVisionSettings, isPointInPolygon } from '../../utils/visionMath';
 // END CHANGE
@@ -15,6 +15,13 @@ import { useCharacterStore } from '../../stores/useCharacterStore';
 
 // START CHANGE: Add user to destructured props
 const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, activeTemplate, sidebarIsOpen, updateCombatant, removeCombatant, onClearRolls, onAutoRoll, setShowHandoutCreator, code, addManualCombatant, players, npcs, user }) => {
+    // START CHANGE: Defensive ID Matcher (Fixes String vs Number bugs)
+    const idsMatch = (id1, id2) => {
+        if (id1 === null || id1 === undefined || id2 === null || id2 === undefined) return false;
+        return String(id1) === String(id2);
+    };
+    // END CHANGE
+
     // 1. ALL STATE HOOKS
     const [view, setView] = useState({ x: 0, y: 0, scale: 1 });
     const [activeTool, setActiveTool] = useState('move');
@@ -42,12 +49,69 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     const [activeLightId, setActiveLightId] = useState(null);
     const [assembledMapUrl, setAssembledMapUrl] = useState(null);
 
-    // 2. DATA SHORTCUTS (Must be after state)
+    // 2. DATA SHORTCUTS (Must be before Refs that use them)
     const mapData = data.campaign?.activeMap || {};
     const tokens = mapData.tokens || [];
     const walls = mapData.walls || [];
     const lights = mapData.lights || [];
     const mapUrl = mapData.url;
+    const visionActive = mapData.visionActive !== false; 
+    const mapGrid = mapData.grid || { size: 50, offsetX: 0, offsetY: 0, visible: true, snap: true };
+
+    // 3. ALL REFS (Must be before Vision Logic)
+    const containerRef = useRef(null);
+    const visionCanvasRef = useRef(null);
+    const mapImageRef = useRef(null);
+    // START CHANGE: View Ref to fix Desktop Zoom Stutter/Lock
+    const viewRef = useRef(view);
+    // END CHANGE
+    const lastSnappedCell = useRef({ x: -1, y: -1 });
+    const touchStartPos = useRef({ x: 0, y: 0 });
+    const longPressTimer = useRef(null);
+    const lastMousePosRef = useRef({ x: 0, y: 0 });
+    const pointerCache = useRef([]); 
+    const pinchStartDist = useRef(0); 
+    const pinchStartScale = useRef(1); 
+    const latestDataRef = useRef(data);
+    const latestTokensRef = useRef(tokens);
+    const latestMeasurementRef = useRef(activeMeasurement);
+
+    // 4. VISION ENGINE LOGIC (Memoized to prevent render loops)
+    const img = mapImageRef.current;
+    const myCharId = data.assignments?.[user?.uid];
+    const currentGridSize = mapGrid.size || 50;
+
+    // START CHANGE: Memoized Player Far Polygon (ID Safe)
+    const myCharFarPoly = useMemo(() => {
+        if (role === 'dm' || !visionActive || !img || !img.naturalWidth) {
+            return null; 
+        }
+
+        // 1. Find the "Viewer" Token (Using Safe ID Match)
+        const myToken = tokens.find(t => idsMatch(t.characterId, myCharId)) || 
+                        tokens.find(t => idsMatch(t.ownerId, user?.uid)) ||
+                        tokens.find(t => t.type === 'pc' && idsMatch(t.characterId, myCharId)); 
+
+        if (!myToken) return null; 
+
+        const origin = {
+            x: (myToken.x / 100) * img.naturalWidth,
+            y: (myToken.y / 100) * img.naturalHeight
+        };
+        const maxMapDim = Math.max(img.naturalWidth, img.naturalHeight) * 1.5;
+        const blockingSegments = walls.filter(w => !(w.type === 'door' && w.isOpen));
+
+        return calculateVisibilityPolygon(origin, blockingSegments, { 
+            width: img.naturalWidth, 
+            height: img.naturalHeight 
+        }, maxMapDim);
+
+    }, [role, visionActive, myCharId, user?.uid, tokens, walls, img?.naturalWidth, img?.naturalHeight, img?.complete]); 
+    // END CHANGE
+
+    // REMOVED: Old memoized vision calculation (approx lines 95-160).
+    // The previous implementation was overly complex and caused state desync.
+    // We will now calculate polygons inside renderVision for clarity and reliability.
 
     // Phase 2: Handle Chunked Map Loading from Firestore
     useEffect(() => {
@@ -60,10 +124,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         }
     }, [mapUrl]);
 
-    const visionActive = mapData.visionActive !== false; 
-    const mapGrid = mapData.grid || { size: 50, offsetX: 0, offsetY: 0, visible: true, snap: true };
-
-    // 3. HANDLERS
+    // 5. HANDLERS
     const handleGridUpdate = (newGrid) => {
         updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...data.campaign.activeMap, grid: newGrid } } });
     };
@@ -102,25 +163,8 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         else if (style === 'ping') window.navigator.vibrate(100);
     };
 
-    // 4. ALL REFS
-    const containerRef = useRef(null);
-    const visionCanvasRef = useRef(null);
-    const mapImageRef = useRef(null);
-    // START CHANGE: View Ref to fix Desktop Zoom Stutter/Lock
-    // We store the view in a ref so the wheel event listener can read it 
-    // without needing to be removed/re-added on every frame.
-    const viewRef = useRef(view);
-    // END CHANGE
-    const lastSnappedCell = useRef({ x: -1, y: -1 });
-    const touchStartPos = useRef({ x: 0, y: 0 });
-    const longPressTimer = useRef(null);
-    const lastMousePosRef = useRef({ x: 0, y: 0 });
-    const pointerCache = useRef([]); // Track multiple fingers
-    const pinchStartDist = useRef(0); // Initial distance between fingers
-    const pinchStartScale = useRef(1); // Initial scale when pinch began
-    const latestDataRef = useRef(data);
-    const latestTokensRef = useRef(tokens);
-    const latestMeasurementRef = useRef(activeMeasurement);
+    // 4. ALL REFS -> MOVED TO TOP
+    // (Ensure the refs code block here is deleted)
 
     // 5. EFFECTS & SYNCING
     useEffect(() => {
@@ -190,13 +234,12 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
     // --- 1. RENDERERS (Vision Logic) ---
     
-    // START CHANGE: The Unified Vision Engine (Replaces Fog)
+    // START CHANGE: The Unified Vision Engine (ID Safe)
     const renderVision = () => {
         const canvas = visionCanvasRef.current;
         const img = mapImageRef.current;
         if (!canvas || !img || !img.complete) return;
 
-        // 1. Sync Size
         if (canvas.width !== img.naturalWidth) {
             canvas.width = img.naturalWidth;
             canvas.height = img.naturalHeight;
@@ -205,93 +248,84 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         const ctx = canvas.getContext('2d');
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        // ===== UNIFIED VISION PASS (FIX FOR DOUBLE-PUNCH EFFECT) =====
-        // Instead of per-token rendering with overlapping destination-out operations,
-        // collect all token vision polygons FIRST, then apply a single unified shadow pass.
-        // This ensures the raycasting layer is the final authority without conflicts.
-        // NOTE: Even when visionActive is OFF, walls still block vision (infinite range mode)
-
-        // 2. COLLECT PHASE: Build token vision data WITHOUT rendering yet
-        const tokenVisionData = [];
-        const pcVisionPolygons = []; // Master Clip
+        const allEmitters = [];
         
         tokens.forEach(token => {
-            // Only PCs emit vision (NPCs don't reveal fog)
-            if (token.type !== 'pc') return;
+            if (token.isHidden && role !== 'dm') return;
 
-            // Vision Origin (center of token)
             const origin = {
                 x: (token.x / 100) * img.naturalWidth,
                 y: (token.y / 100) * img.naturalHeight
             };
-
-            // Calculate vision settings using centralized 5e logic
-            // Use current grid size for pixel conversion (default 50)
             const gridSize = mapGrid.size || 50;
-            let visionRadius = visionActive ? (200 / 50) * gridSize : 99999; // Fallback default
-            let visionColor = '#000000';
-
-            // Find character data
-            // Check both players array and npcs array for the character ID
-            const character = data.players?.find(p => p.id === token.characterId) || 
-                              data.npcs?.find(n => n.id === token.characterId);
+            let visionRadius = visionActive ? (200 / 50) * gridSize : 99999;
+            
+            // Safe Match for Character Lookup
+            const character = data.players?.find(p => idsMatch(p.id, token.characterId)) || 
+                              data.npcs?.find(n => idsMatch(n.id, token.characterId));
 
             if (character && visionActive) {
                 const settings = getCharacterVisionSettings(character, gridSize);
                 visionRadius = settings.radius;
-                visionColor = settings.color;
             }
 
-            // Wall & Door Blocking Logic
-            const blockingSegments = walls.filter(w => {
-                if (w.type === 'door' && w.isOpen) return false;
-                return true;
-            });
+            const blockingSegments = walls.filter(w => !(w.type === 'door' && w.isOpen));
+            const maxMapDim = Math.max(canvas.width, canvas.height) * 1.5;
 
-            // Raycasting to calculate visibility polygon
-            const polygon = calculateVisibilityPolygon(origin, blockingSegments, { 
-                width: canvas.width, 
-                height: canvas.height
-            }, visionRadius);
+            const nearPoly = calculateVisibilityPolygon(origin, blockingSegments, { width: canvas.width, height: canvas.height }, visionRadius);
+            const farPoly = calculateVisibilityPolygon(origin, blockingSegments, { width: canvas.width, height: canvas.height }, maxMapDim);
 
-            if (token.type === 'pc') {
-                pcVisionPolygons.push(polygon);
-            }
-
-            tokenVisionData.push({
-                origin,
-                visionRadius,
-                polygon,
-                token,
-                color: visionColor // Store color for rendering warmth (optional future use)
-            });
+            allEmitters.push({ origin, visionRadius, polygon: nearPoly, farPolygon: farPoly, token });
         });
 
-        // 3. RENDER PHASE: Apply unified shadow pass
-        // Step A: Initial Fill (The "Fog")
+        let emittersToDraw = [];
+        let clippingPolygons = []; 
+
+        if (role === 'dm') {
+            emittersToDraw = allEmitters.filter(e => e.token.type === 'pc');
+            clippingPolygons = emittersToDraw.map(e => e.farPolygon); 
+        } else {
+            // Safe Match for Viewer Lookup
+            const myEmitter = allEmitters.find(e => 
+                idsMatch(e.token.characterId, myCharId) || 
+                idsMatch(e.token.ownerId, user?.uid)
+            );
+
+            if (myEmitter) {
+                emittersToDraw = [myEmitter];
+                clippingPolygons = [myEmitter.farPolygon];
+            }
+        }
+
+        // RENDER PHASE
         if (visionActive) {
             ctx.fillStyle = '#000000';
-            ctx.globalAlpha = role === 'dm' ? 0.5 : 1.0; // DM sees through the fog
+            ctx.globalAlpha = role === 'dm' ? 0.5 : 1.0; 
             ctx.fillRect(0, 0, canvas.width, canvas.height);
         }
 
         // Step B: Carve out visible areas based on LOS + Range
         ctx.globalCompositeOperation = 'destination-out';
-        ctx.globalAlpha = 1.0;
+        ctx.globalAlpha = 1.0; 
 
-        tokenVisionData.forEach(({ origin, visionRadius, polygon }) => {
+        emittersToDraw.forEach(({ origin, visionRadius, polygon }) => {
             ctx.save();
             
-            if (polygon.length > 0) {
-                ctx.beginPath();
-                ctx.moveTo(polygon[0].x, polygon[0].y);
-                for (let i = 1; i < polygon.length; i++) {
-                    ctx.lineTo(polygon[i].x, polygon[i].y);
+            // START CHANGE: Render simple arc if no polygon is returned (Circular Vision Fix)
+            if (polygon) {
+                // If polygon exists, clip to the polygon path
+                if (polygon.length > 0) {
+                    ctx.beginPath();
+                    ctx.moveTo(polygon[0].x, polygon[0].y);
+                    for (let i = 1; i < polygon.length; i++) {
+                        ctx.lineTo(polygon[i].x, polygon[i].y);
+                    }
+                    ctx.closePath();
+                    ctx.clip(); 
                 }
-                ctx.closePath();
-                ctx.clip();
             }
-
+            // END CHANGE
+            
             const grad = ctx.createRadialGradient(origin.x, origin.y, 0, origin.x, origin.y, visionRadius);
             grad.addColorStop(0, 'rgba(255, 255, 255, 1)');
             grad.addColorStop(0.8, 'rgba(255, 255, 255, 1)');
@@ -301,17 +335,16 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             ctx.beginPath();
             ctx.arc(origin.x, origin.y, visionRadius, 0, Math.PI * 2);
             ctx.fill();
-            
             ctx.restore();
         });
 
-        // Step B2: Process Static Light Sources (Ambient Intersect Engine)
-        if (lights.length > 0 && pcVisionPolygons.length > 0) {
+        const lights = mapData.lights || [];
+        const hasClippingPolygons = clippingPolygons.some(p => p.length > 0);
+
+        if (lights.length > 0 && clippingPolygons.length > 0 && hasClippingPolygons) {
             ctx.save();
-            
-            // Create Master Clip from all PC vision
             ctx.beginPath();
-            pcVisionPolygons.forEach(poly => {
+            clippingPolygons.forEach(poly => {
                 if (poly.length === 0) return;
                 ctx.moveTo(poly[0].x, poly[0].y);
                 for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i].x, poly[i].y);
@@ -319,14 +352,10 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             });
             ctx.clip();
 
-            // Draw Lights
             lights.forEach(light => {
-                const origin = {
-                    x: (light.x / 100) * img.naturalWidth,
-                    y: (light.y / 100) * img.naturalHeight
-                };
+                const origin = { x: (light.x / 100) * img.naturalWidth, y: (light.y / 100) * img.naturalHeight };
                 const radiusPx = (light.radius / 5) * (mapGrid.size || 50);
-
+                
                 const blockingSegments = walls.filter(w => !(w.type === 'door' && w.isOpen));
                 const poly = calculateVisibilityPolygon(origin, blockingSegments, { width: canvas.width, height: canvas.height }, radiusPx);
 
@@ -344,38 +373,22 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                 grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
                 
                 ctx.fillStyle = grad;
-                ctx.fillRect(origin.x - radiusPx, origin.y - radiusPx, radiusPx * 2, radiusPx * 2);
+                ctx.globalCompositeOperation = 'destination-out'; 
+                ctx.beginPath();
+                ctx.arc(origin.x, origin.y, radiusPx, 0, Math.PI * 2);
+                ctx.fill();
                 ctx.restore();
             });
             ctx.restore();
         }
 
-        // Step C: Draw LOS Blocking Shadows (used when Lights are On or to deepen shadows)
-        if (!visionActive) {
-            ctx.globalCompositeOperation = 'source-over';
-            ctx.fillStyle = '#000000';
-            ctx.globalAlpha = role === 'dm' ? 0.4 : 1.0; // DM sees through wall shadows too
-
-            tokenVisionData.forEach(({ polygon }) => {
-                ctx.beginPath();
-                ctx.rect(0, 0, canvas.width, canvas.height);
-                if (polygon.length > 0) {
-                    ctx.moveTo(polygon[0].x, polygon[0].y);
-                    for (let i = 1; i < polygon.length; i++) {
-                        ctx.lineTo(polygon[i].x, polygon[i].y);
-                    }
-                }
-                ctx.fill('evenodd'); // Fills everything OUTSIDE the visibility polygon
-            });
-        }
-
-        // Reset context state for next render
         ctx.globalCompositeOperation = 'source-over';
         ctx.globalAlpha = 1.0;
         ctx.shadowBlur = 0;
     };
+    // END CHANGE
 
-    // Re-render when relevant state changes
+    // Re-render when relevant state changes (Removed activePlayerVisionData dependency)
     useEffect(() => { renderVision(); }, [tokens, walls, lights, visionActive, role, mapUrl, data.campaign?.characters]);
 
     // --- 1.5 GLOBAL INTERACTION ESCAPE ---
@@ -650,13 +663,26 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         // Hierarchy: Token click stops map panning immediately
         setIsPanning(false);
 
+        const token = latestTokensRef.current.find(t => t.id === tokenId);
+        if (!token) return;
+
+        // START CHANGE: Token Ownership/Control Check
+        const isDM = role === 'dm';
+        const isOwner = idsMatch(token.characterId, myCharId);
+        const isControlled = token.controlledBy?.includes(user?.uid);
+
+        if (!isDM && !isOwner && !isControlled) {
+            setShakingTokenId(tokenId);
+            setTimeout(() => setShakingTokenId(null), 300);
+            triggerHaptic('heavy');
+            return;
+        }
+        // END CHANGE
+
         // Track start position for Radial HUD (Click vs Drag)
         e.currentTarget.setPointerCapture(e.pointerId);
         touchStartPos.current = { x: e.clientX, y: e.clientY };
         lastMousePosRef.current = { x: e.clientX, y: e.clientY };
-
-        const token = latestTokensRef.current.find(t => t.id === tokenId);
-        if (!token) return;
 
         const img = mapImageRef.current;
         if (!img) return;
@@ -1065,6 +1091,9 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         }
     }, [mapUrl]);
     // END CHANGE
+
+    // REMOVED: Old "Per-Player Visibility Filter Logic" block. 
+    // It has been moved to the top of the component and wrapped in useMemo.
 
     // START CHANGE: Wall Drawing Handlers
     const handleMapClick = (e) => {
@@ -1694,61 +1723,27 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
                         {/* Render Tokens */}
                         {tokens.filter(token => {
-                            // DM sees everything (except strict 'isHidden' logic handled in map, but DM sees ghosts)
+                            // 1. DM Role: See everything
                             if (role === 'dm') return true;
 
-                            // 1. If token is strictly hidden by DM, players never see it
+                            // 2. Hidden Flag: Strictly remove from DOM for players
                             if (token.isHidden) return false;
 
-                            // 2. Identify the Active Player's Token
-                            const myCharId = data.assignments?.[user?.uid];
-                            
-                            // If I own this token, I always see it
-                            if (token.characterId === myCharId) return true;
+                            // 3. Ownership: Always see my own token (Using Safe Match)
+                            if (idsMatch(token.characterId, myCharId)) return true;
 
-                            // 3. Vision Logic: If Vision is active, check LOS
+                            // 4. Line of Sight Filter
                             const img = mapImageRef.current;
                             if (visionActive && myCharId && img && img.naturalWidth) {
-                                // Find my token to calculate MY viewpoint
-                                const myToken = tokens.find(t => t.characterId === myCharId);
-                                
-                                if (myToken) {
-                                    // A. Calculate My Origin
-                                    const origin = {
-                                        x: (myToken.x / 100) * img.naturalWidth,
-                                        y: (myToken.y / 100) * img.naturalHeight
-                                    };
-
-                                    // B. Calculate My Vision Settings
-                                    // We re-calc this here (per frame) to ensure sync. 
-                                    // Optimization: Could be memoized, but map geometry changes frequently.
-                                    const gridSize = mapGrid.size || 50;
-                                    const settings = getCharacterVisionSettings(
-                                        data.players?.find(p => p.id === myCharId), 
-                                        gridSize
-                                    );
-
-                                    // C. Calculate My Visibility Polygon
-                                    const blockingSegments = walls.filter(w => !(w.type === 'door' && w.isOpen));
-                                    const myPoly = calculateVisibilityPolygon(origin, blockingSegments, { 
-                                        width: img.naturalWidth, 
-                                        height: img.naturalHeight 
-                                    }, settings.radius);
-
-                                    // D. Check if Target Token is inside My Polygon
-                                    const targetCenter = {
-                                        x: (token.x / 100) * img.naturalWidth,
-                                        y: (token.y / 100) * img.naturalHeight
-                                    };
-
-                                    // The final verdict
-                                    return isPointInPolygon(targetCenter, myPoly);
+                                // Use memoized Far Poly for fast security check
+                                if (myCharFarPoly && myCharFarPoly.length > 0) {
+                                    const tokenCenter = { x: (token.x / 100) * img.naturalWidth, y: (token.y / 100) * img.naturalHeight };
+                                    return isPointInPolygon(tokenCenter, myCharFarPoly);
                                 }
                             }
 
-                            // Fallback: If no vision active or no character assigned, show all non-hidden tokens
-                            return true;
-
+                            // If no LOS polygon, assume blind
+                            return !visionActive;
                         }).map(token => {
                             const img = mapImageRef.current;
                             
@@ -1905,6 +1900,13 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                             onDelete={() => handleDeleteToken(token.id)}
                             onOpenSheet={() => handleOpenSheet(token.id)}
                             onClose={() => setSelectedTokenId(null)}
+                            // START CHANGE: Pass control/role data to HUD
+                            role={role}
+                            user={user}
+                            players={players}
+                            npcs={npcs}
+                            activeUsers={data.activeUsers}
+                            // END CHANGE
                         />
                     </div>
                 );

@@ -74,6 +74,7 @@ const Token = ({ token, isOwner, cellPx, isDragging, isSelected, isTurn, onMouse
                 ${animClass}
             `}
             style={{ 
+                // Position handled by parent
                 width: `${dimension}px`,
                 height: `${dimension}px`,
                 transition: isDragging ? 'none' : 'all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275)',

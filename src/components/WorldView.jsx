@@ -37,7 +37,6 @@ const WorldView = ({ data, role, updateCloud, updateMapState, user, apiKey, onDi
             // Token remains selected on the map for movement/interaction
             // END CHANGE
         } else if (action === 'update_token') {
-            // START CHANGE: Handle token updates from SheetContainer onSave
             const tokens = data.campaign?.activeMap?.tokens || [];
             const updatedTokens = tokens.map(t => 
                 t.id === payload.id 
@@ -45,20 +44,19 @@ const WorldView = ({ data, role, updateCloud, updateMapState, user, apiKey, onDi
                     : t
             );
             updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...data.campaign.activeMap, tokens: updatedTokens } } });
-            // END CHANGE
         } else {
-            // Pass map-specific actions (fog, tokens) to the parent updater
             updateMapState(action, payload);
         }
     };
 
-    return (
+     return (
         <div className="absolute inset-0 w-full h-full bg-slate-900 overflow-hidden flex">
             {/* The Main Map Area */}
             <div className="flex-1 relative h-full">
                 <InteractiveMap 
                     data={data} 
                     role={role} 
+                    user={user} // CRITICAL FIX: Pass user prop for LOS calculations
                     updateCloud={updateCloud} 
                     updateMapState={handleMapAction}
                     sidebarIsOpen={activeSheetId !== null}
@@ -68,7 +66,6 @@ const WorldView = ({ data, role, updateCloud, updateMapState, user, apiKey, onDi
                     onAutoRoll={onAutoRoll}
                     setShowHandoutCreator={setShowHandoutCreator}
                     code={code}
-                    // START CHANGE: Drill down manual combatant props
                     addManualCombatant={addManualCombatant}
                     players={players}
                     npcs={npcs}
@@ -79,7 +76,6 @@ const WorldView = ({ data, role, updateCloud, updateMapState, user, apiKey, onDi
             {/* The Sidebar Character Sheet */}
             {activeSheetId && (
                 <div className="absolute top-0 right-0 bottom-0 w-full sm:w-96 bg-slate-950 border-l border-slate-700 shadow-2xl z-[80] animate-in slide-in-from-right duration-300 flex flex-col">
-                    {/* START CHANGE: Hot-Swap - Remove key to allow data swap without re-render */}
                     <SheetContainer 
                         data={data}
                         role={role}
@@ -94,15 +90,13 @@ const WorldView = ({ data, role, updateCloud, updateMapState, user, apiKey, onDi
                         onPossess={(npcId) => {}}
                         onSave={(char) => {
                             if (char.isInstance) {
-                                // Token instance - update using tokenId, not id
                                 updateMapState('update_token', { 
-                                    id: char.tokenId || char.id,  // Use tokenId if available
+                                    id: char.tokenId || char.id, 
                                     hp: char.hp, 
                                     statuses: char.statuses || [],
                                     name: char.name
                                 });
                             } else {
-                                // Regular character - save to bestiary
                                 savePlayer(char);
                             }
                         }}
