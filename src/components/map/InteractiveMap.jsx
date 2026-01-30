@@ -1468,8 +1468,8 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         >
             {/* --- TOP RIGHT CONTROLS (Library, Tokens, Combat, Zoom) --- */}
             <div 
-                className={`absolute z-50 flex gap-2 pointer-events-none transition-all duration-300 ${sidebarIsOpen ? 'sm:right-[400px] right-4' : 'right-4'}`}
-                style={{ top: 'calc(1rem + env(safe-area-inset-top))', right: 'calc(1rem + env(safe-area-inset-right))' }}
+                className={`absolute z-50 flex gap-2 pointer-events-none transition-all duration-300 ${sidebarIsOpen ? 'right-[400px]' : 'right-4'}`}
+                style={{ top: 'calc(1rem + env(safe-area-inset-top))' }}
             >
                 <div 
                     className="bg-slate-900/90 border border-slate-700 rounded-lg p-1 flex gap-1 shadow-xl pointer-events-auto"
