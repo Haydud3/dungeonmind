@@ -137,12 +137,27 @@ export const CampaignProvider = ({ children, user }) => {
         setData(INITIAL_APP_STATE);
     };
 
+    // START CHANGE: Global Ping Helper
+    const sendPing = (coords) => {
+        if (!gameParams?.code || gameParams.isOffline) return;
+        const ref = collection(doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code), 'chat');
+        setDoc(doc(ref), {
+            type: 'ping',
+            x: coords.x,
+            y: coords.y,
+            senderId: user?.uid,
+            timestamp: Date.now()
+        });
+    };
+    // END CHANGE
+
     // --- MEMOIZED VALUE (Prevents Infinite Renders & "1, M" Errors) ---
     const value = useMemo(() => ({
         data, setData, gameParams, 
         joinCampaign, leaveCampaign, 
         updateCloud, savePlayer, deletePlayer, 
-        loreChunks, setLoreChunks 
+        loreChunks, setLoreChunks,
+        sendPing // Add to exports
     }), [data, gameParams, loreChunks]);
 
     return (

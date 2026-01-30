@@ -1,8 +1,11 @@
 import React, { useState } from 'react';
 import Icon from '../Icon';
 
-const RadialHUD = ({ token, position, onUpdateToken, onDelete, onOpenSheet, onClose, role, user, players, npcs, activeUsers }) => {
-const [isStatusExpanded, setIsStatusExpanded] = useState(false);
+const RadialHUD = ({ 
+    token, position, onUpdateToken, onDelete, onOpenSheet, onClose, 
+    role, user, players, npcs, activeUsers, assignments 
+}) => {
+    const [isStatusExpanded, setIsStatusExpanded] = useState(false);
 // START CHANGE: Add state for control delegation panel
 const [isControlExpanded, setIsControlExpanded] = useState(false);
 // END CHANGE
@@ -195,15 +198,18 @@ return (
         
         {/* START CHANGE: Control Delegation Menu (DM Only) */}
         {isDM && isControlExpanded && (() => {
-            // START CHANGE: Convert activeUsers object/map into an array before filtering
-            const rawUsers = activeUsers && typeof activeUsers === 'object' && !Array.isArray(activeUsers)
-                ? Object.values(activeUsers)
-                : activeUsers || [];
-            
-            const users = rawUsers.filter(u => u.uid !== user?.uid);
-            // END CHANGE
-            const initialAngle = -170; // Start almost horizontal left
-            const angleIncrement = users.length > 0 ? 300 / users.length : 0; // Spread over 300 degrees
+            const users = Object.entries(activeUsers || {})
+                .map(([uid, emailOrName]) => {
+                    const charId = assignments?.[uid];
+                    const char = players?.find(p => String(p.id) === String(charId));
+                    // Resolve name: Assigned Char -> Email Alias -> UID Slice
+                    const displayName = char ? char.name : (emailOrName?.includes('@') ? emailOrName.split('@')[0] : (uid?.slice(0, 5) || 'UNK'));
+                    return { uid, displayName };
+                })
+                .filter(u => u.uid !== user?.uid);
+
+            const initialAngle = -170; 
+            const angleIncrement = users.length > 0 ? 300 / users.length : 0;
 
             return users.map((u, i) => {
                 const angle = initialAngle + (i * angleIncrement);
@@ -212,20 +218,17 @@ return (
                 const targetY = Math.sin(rad) * CONTROL_RADIUS;
                 const isControlled = (token.controlledBy || []).includes(u.uid);
                 
-                // START CHANGE: Robust name derivation for display and title
-                const rawDisplayName = u.displayName?.split('@')[0];
-                // Fallback now uses UID slice if displayName is missing/null, instead of relying on identifier.slice(0, 3) which failed previously
-                const identifier = rawDisplayName || u.uid?.slice(0, 3).toUpperCase() || 'UNK'; 
-                const titleName = rawDisplayName || (u.uid ? `User ID ${u.uid.slice(0, 5)}...` : 'Unknown Player');
-                // END CHANGE
+                const identifier = u.displayName.length > 8 
+                    ? u.displayName.slice(0, 7) + '..' 
+                    : u.displayName;
 
                 return (
                     <button
-                        key={u.uid} // Key is already stable here (u.uid)
+                        key={u.uid}
                         onPointerDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
                         onClick={(e) => { e.stopPropagation(); toggleControl(u.uid); }}
                         className={`absolute pointer-events-auto w-12 h-12 -ml-6 -mt-6 rounded-full flex items-center justify-center border shadow-lg backdrop-blur-md transition-all duration-200 hover:scale-110 active:scale-95 text-[10px] font-bold overflow-hidden ${isControlled ? 'bg-indigo-600 border-indigo-400 text-white' : 'bg-slate-900/80 border-slate-800 text-slate-400 hover:bg-slate-700'}`}
-                        title={isControlled ? `Revoke control from ${titleName}` : `Grant control to ${titleName}`}
+                        title={isControlled ? `Revoke control from ${u.displayName}` : `Grant control to ${u.displayName}`}
                         style={{ 
                             '--target-transform': `translate(${targetX}px, ${targetY}px)`,
                             transform: `translate(${targetX}px, ${targetY}px)`,
@@ -233,7 +236,7 @@ return (
                             animationDelay: `${i * 20}ms`
                         }}
                     >
-                        {identifier} 
+                        {identifier}
                     </button>
                 );
             });

@@ -1,0 +1,7 @@
+[
+  {
+    "origin": ["https://haydud3.github.io", "http://localhost:5173"],
+    "method": ["GET", "PUT", "POST", "DELETE", "HEAD"],
+    "maxAgeSeconds": 3600
+  }
+]
