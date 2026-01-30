@@ -306,24 +306,30 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
     // --- 1. RENDERERS (Vision Logic) ---
     
-    // START CHANGE: Low Performance Logic in Vision Engine
     const renderVision = () => {
         const canvas = visionCanvasRef.current;
         const img = mapImageRef.current;
-        if (!canvas || !img || !img.complete) return;
+        // Performance Gate: Skip calculations during movement to prevent CPU spikes and crashes
+        if (!canvas || !img || !img.complete || isPanning || isDraggingToken) return;
 
         const lowPerf = localStorage.getItem('vtt_low_performance') === 'true';
 
-        if (canvas.width !== img.naturalWidth) {
-            canvas.width = lowPerf ? img.naturalWidth / 2 : img.naturalWidth;
-            canvas.height = lowPerf ? img.naturalHeight / 2 : img.naturalHeight;
+        const targetWidth = lowPerf ? Math.floor(img.naturalWidth / 2) : img.naturalWidth;
+        const targetHeight = lowPerf ? Math.floor(img.naturalHeight / 2) : img.naturalHeight;
+
+        if (canvas.width !== targetWidth) {
+            canvas.width = targetWidth;
+            canvas.height = targetHeight;
         }
 
         const ctx = canvas.getContext('2d', { alpha: true });
+        ctx.setTransform(1, 0, 0, 1, 0, 0); 
+        if (lowPerf) ctx.scale(0.5, 0.5);
+        
         // Disable smoothing for performance if low perf
         if (lowPerf) ctx.imageSmoothingEnabled = false;
         
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.clearRect(0, 0, img.naturalWidth, img.naturalHeight);
 
         const allEmitters = [];
         
@@ -413,11 +419,10 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                 ctx.beginPath();
                 ctx.arc(origin.x, origin.y, visionRadius, 0, Math.PI * 2);
                 ctx.fill();
-            } else {
+            } else if (activePoly && activePoly.length > 0) {
                 // Sunlight Mode: Solid carve-out of the LOS area
                 ctx.fillStyle = '#ffffff';
                 ctx.beginPath();
-                // Since we clipped to farPolygon, we can just fill a massive rect or the poly itself
                 ctx.moveTo(activePoly[0].x, activePoly[0].y);
                 for (let i = 1; i < activePoly.length; i++) ctx.lineTo(activePoly[i].x, activePoly[i].y);
                 ctx.closePath();
@@ -428,13 +433,14 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         // END CHANGE
 
         const lights = mapData.lights || [];
-        const hasClippingPolygons = clippingPolygons.some(p => p.length > 0);
+        const hasClippingPolygons = clippingPolygons.some(p => p && p.length > 0);
 
         if (lights.length > 0 && clippingPolygons.length > 0 && hasClippingPolygons) {
             ctx.save();
             ctx.beginPath();
             clippingPolygons.forEach(poly => {
-                if (poly.length === 0) return;
+                // Safety Guard: Handle null polygons returned from vision math
+                if (!poly || poly.length === 0) return;
                 ctx.moveTo(poly[0].x, poly[0].y);
                 for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i].x, poly[i].y);
                 ctx.closePath();
@@ -446,10 +452,10 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                 const radiusPx = (light.radius / 5) * (mapGrid.size || 50);
                 
                 const blockingSegments = walls.filter(w => !(w.type === 'door' && w.isOpen));
-                const poly = calculateVisibilityPolygon(origin, blockingSegments, { width: canvas.width, height: canvas.height }, radiusPx);
+                const poly = calculateVisibilityPolygon(origin, blockingSegments, { width: img.naturalWidth, height: img.naturalHeight }, radiusPx);
 
                 ctx.save();
-                if (poly.length > 0) {
+                if (poly && poly.length > 0) {
                     ctx.beginPath();
                     ctx.moveTo(poly[0].x, poly[0].y);
                     for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i].x, poly[i].y);
@@ -1671,7 +1677,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                     transformOrigin: '0 0',
                     transition: isPanning ? 'none' : 'transform 0.1s ease-out'
                 }}
-                className="absolute top-0 left-0 w-full h-full will-change-transform"
+                className="absolute top-0 left-0 w-full h-full"
             >
                 {mapUrl ? (
                     <div 
@@ -1695,7 +1701,8 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                     {/* Fog Canvas is gone. Vision Canvas handles everything. */}
                     <canvas 
                         ref={visionCanvasRef}
-                        className="absolute top-0 left-0 w-full h-full pointer-events-none z-[6]"
+                        className="absolute top-0 left-0 pointer-events-none z-[6]"
+                        style={{ width: '100%', height: '100%', display: 'block' }}
                     />
 
                     {pings.map(ping => (
