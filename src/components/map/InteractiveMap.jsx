@@ -23,12 +23,19 @@ const idsMatch = (id1, id2) => {
 
 const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, activeTemplate, sidebarIsOpen, updateCombatant, removeCombatant, onClearRolls, onAutoRoll, setShowHandoutCreator, code, addManualCombatant, players, npcs, user }) => {
     const { sendPing } = useCampaign();
-    // END CHANGE
-    
-    // 1. ALL STATE HOOKS
+
+    // 1. DATA SHORTCUTS (Moved up to fix ReferenceError in State Initializer)
+    const mapData = data.campaign?.activeMap || {};
+    const tokens = mapData.tokens || [];
+    const walls = mapData.walls || [];
+    const lights = mapData.lights || [];
+    const mapUrl = mapData.url;
+    const visionActive = mapData.visionActive !== false; 
+    const mapGrid = mapData.grid || { size: 50, offsetX: 0, offsetY: 0, visible: true, snap: true };
+
+    // 2. ALL STATE HOOKS
     const [view, setView] = useState(() => {
-        // Initialize from localStorage using campaign code
-        const saved = localStorage.getItem(`vtt_view_${code}`);
+        const saved = localStorage.getItem(`vtt_view_${mapData.id || code}`);
         return saved ? JSON.parse(saved) : { x: 0, y: 0, scale: 1 };
     });
     const [activeTool, setActiveTool] = useState('move');
@@ -55,15 +62,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     const [gridCalStart, setGridCalStart] = useState(null);
     const [activeLightId, setActiveLightId] = useState(null);
     const [assembledMapUrl, setAssembledMapUrl] = useState(null);
-
-    // 2. DATA SHORTCUTS (Must be before Refs that use them)
-    const mapData = data.campaign?.activeMap || {};
-    const tokens = mapData.tokens || [];
-    const walls = mapData.walls || [];
-    const lights = mapData.lights || [];
-    const mapUrl = mapData.url;
-    const visionActive = mapData.visionActive !== false; 
-    const mapGrid = mapData.grid || { size: 50, offsetX: 0, offsetY: 0, visible: true, snap: true };
+    const hasAutoCentered = useRef(false);
 
     // 3. ALL REFS (Must be before Vision Logic)
     const containerRef = useRef(null);
@@ -235,8 +234,26 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         else if (style === 'ping') window.navigator.vibrate(100);
     };
 
-    // 4. ALL REFS -> MOVED TO TOP
-    // (Ensure the refs code block here is deleted)
+    // Auto-Centering Logic: Wait for map load, then position viewport
+    useEffect(() => {
+        if (!assembledMapUrl || hasAutoCentered.current) return;
+
+        const timer = setTimeout(() => {
+            const saved = localStorage.getItem(`vtt_view_${code}`);
+            if (saved) {
+                hasAutoCentered.current = true;
+                return; // LocalStorage handled it in state init
+            }
+
+            const img = mapImageRef.current;
+            if (img && img.complete && img.naturalWidth > 0) {
+                centerOnTarget();
+                hasAutoCentered.current = true;
+            }
+        }, 1500); // 800ms delay to allow tokens to "land" from top-left
+
+        return () => clearTimeout(timer);
+    }, [assembledMapUrl, tokens.length, code]); 
 
     // 5. EFFECTS & SYNCING
     useEffect(() => {
@@ -252,11 +269,15 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
     useEffect(() => {
         if (mapData.view) {
-            setView(prev => ({
-                x: mapData.view.pan?.x ?? prev.x,
-                y: mapData.view.pan?.y ?? prev.y,
-                scale: mapData.view.zoom ?? prev.scale
-            }));
+            // Only override if we don't have a local save for this specific map ID
+            const hasLocalSave = localStorage.getItem(`vtt_view_${mapData.id}`);
+            if (!hasLocalSave) {
+                setView(prev => ({
+                    x: mapData.view.pan?.x ?? prev.x,
+                    y: mapData.view.pan?.y ?? prev.y,
+                    scale: mapData.view.zoom ?? prev.scale
+                }));
+            }
         }
     }, [mapData.id]);
 
@@ -694,8 +715,9 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             setIsDraggingToken(false);
             setActiveMeasurement(null);
             
-            // PERSISTENCE: Save latest view state
-            localStorage.setItem(`vtt_view_${code}`, JSON.stringify(viewRef.current));
+            // PERSISTENCE: Save latest view state from Ref to localStorage
+            // Keying by Map ID ensures you don't use a forest zoom level on a tavern map
+            localStorage.setItem(`vtt_view_${mapData.id || code}`, JSON.stringify(viewRef.current));
             
             // Release the pointer lock from the browser
             if (e.target && e.target.releasePointerCapture) {
@@ -1442,8 +1464,10 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             const newX = mouseX - (worldX * newScale);
             const newY = mouseY - (worldY * newScale);
 
-            // 5. Update State
-            setView({ x: newX, y: newY, scale: newScale });
+            // 5. Update State & Persistence
+            const nextView = { x: newX, y: newY, scale: newScale };
+            setView(nextView);
+            localStorage.setItem(`vtt_view_${mapData.id || code}`, JSON.stringify(nextView));
         };
 
         // { passive: false } is REQUIRED to allow e.preventDefault()
@@ -1472,31 +1496,32 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                 style={{ top: 'calc(1rem + env(safe-area-inset-top))' }}
             >
                 <div 
-                    className="bg-slate-900/90 border border-slate-700 rounded-lg p-1 flex gap-1 shadow-xl pointer-events-auto"
+                    className="bg-slate-900/90 border border-slate-700 rounded-xl p-1.5 flex gap-1.5 shadow-xl pointer-events-auto"
                     onPointerDown={(e) => e.stopPropagation()} 
                 >
                     {role === 'dm' && (
                         <>
-                            <button onClick={() => setShowLibrary(true)} className="p-2 text-slate-300 hover:text-white hover:bg-slate-800 rounded" title="Maps">
+                            <button onClick={() => setShowLibrary(true)} className="p-3 md:p-2 text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg min-w-[44px] min-h-[44px] flex items-center justify-center" title="Maps">
                                 <Icon name="map" size={20}/>
                             </button>
-                            <button onClick={() => setShowHandoutCreator(true)} className="p-2 text-slate-300 hover:text-white hover:bg-slate-800 rounded" title="Send Handout">
+                            <button onClick={() => setShowHandoutCreator(true)} className="p-3 md:p-2 text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg min-w-[44px] min-h-[44px] flex items-center justify-center" title="Send Handout">
                                 <Icon name="scroll" size={20}/>
                             </button>
-                            <button onClick={() => setShowTokens(!showTokens)} className={`p-2 rounded transition-colors ${showTokens ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:text-white hover:bg-slate-800'}`} title="Tokens">
+                            <button onClick={() => setShowTokens(!showTokens)} className={`p-3 md:p-2 rounded-lg transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center ${showTokens ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:text-white hover:bg-slate-800'}`} title="Tokens">
                                 <Icon name="users" size={20}/>
                             </button>
-                            <button onClick={() => showCombat ? setShowCombat(false) : handleStartCombat()} className={`p-2 rounded transition-colors ${showCombat || data.campaign?.combat?.active ? 'bg-red-600 text-white animate-pulse' : 'text-slate-300 hover:text-white hover:bg-slate-800'}`} title="Combat Tracker">
+                            <button onClick={() => showCombat ? setShowCombat(false) : handleStartCombat()} className={`p-3 md:p-2 rounded-lg transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center ${showCombat || data.campaign?.combat?.active ? 'bg-red-600 text-white animate-pulse' : 'text-slate-300 hover:text-white hover:bg-slate-800'}`} title="Combat Tracker">
                                 <Icon name="swords" size={20}/>
                             </button>
-                            <div className="w-px h-6 bg-slate-700 my-auto"></div>
+                            <div className="w-px h-8 bg-slate-700 my-auto"></div>
                         </>
                     )}
-                    <button onClick={centerOnTarget} className="p-2 text-amber-500 hover:bg-slate-800 rounded" title={role === 'dm' ? "Center Map" : "Center on My Character"}>
+                    
+                    <button onClick={() => setView(v => ({...v, scale: v.scale / 1.2}))} className="p-3 md:p-2 text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg min-w-[44px] min-h-[44px] flex items-center justify-center"><Icon name="minus" size={20}/></button>
+                    <button onClick={centerOnTarget} className="p-3 md:p-2 text-amber-500 hover:bg-slate-800 rounded-lg min-w-[44px] min-h-[44px] flex items-center justify-center" title={role === 'dm' ? "Center Map" : "Center on My Character"}>
                         <Icon name="crosshair" size={20}/>
                     </button>
-                    <button onClick={() => setView(v => ({...v, scale: v.scale / 1.2}))} className="p-2 text-slate-300 hover:text-white hover:bg-slate-800 rounded"><Icon name="minus" size={20}/></button>
-                    <button onClick={() => setView(v => ({...v, scale: v.scale * 1.2}))} className="p-2 text-slate-300 hover:text-white hover:bg-slate-800 rounded"><Icon name="plus" size={20}/></button>
+                    <button onClick={() => setView(v => ({...v, scale: v.scale * 1.2}))} className="p-2 md:p-2 text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg min-w-[44px] min-h-[44px] flex items-center justify-center"><Icon name="plus" size={20}/></button>
                 </div>
             </div>
 
