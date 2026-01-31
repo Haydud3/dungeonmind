@@ -23,9 +23,14 @@ const SettingsView = ({
 
     // --- PLAYER MANAGEMENT LOGIC ---
     const handleAssignCharacter = (uid, charId) => {
-        // START CHANGE: Set to empty string instead of deleting to force DB overwrite
-        const newAssignments = { ...data.assignments, [uid]: charId };
-        // (Removed the 'delete' line so the empty value actually saves to the cloud)
+        // START CHANGE: Set to null to explicitly remove assignment if charId is empty
+        const newAssignments = { ...data.assignments };
+        if (charId) {
+            newAssignments[uid] = charId;
+        } else {
+            // Delete key if setting to empty string/none
+            delete newAssignments[uid]; 
+        }
         
         setData(prev => ({ ...prev, assignments: newAssignments }));
         updateCloud({ ...data, assignments: newAssignments }, true);
@@ -302,16 +307,20 @@ const SettingsView = ({
                             <h3 className="text-lg font-bold text-red-400 mb-4 flex items-center gap-2"><Icon name="shield" size={20}/> Player Management</h3>
                             
                             <div className="space-y-4">
-                                {Object.entries(data.activeUsers || {}).map(([uid, name]) => {
+                                {/* START CHANGE: Iterate over all unique UIDs in assignments AND activeUsers */}
+                                {Object.keys({ ...data.activeUsers, ...data.assignments })
+                                    .filter(uid => uid !== user.uid) // Filter out current user (handled below)
+                                    .map(uid => {
+                                    const name = data.activeUsers?.[uid] || uid.slice(0, 6) + '... (Offline)';
                                     const isDm = data.dmIds?.includes(uid);
-                                    const isMe = uid === user.uid;
+                                    const isOnline = !!data.activeUsers?.[uid];
                                     const assignedCharId = data.assignments?.[uid] || "";
 
                                     return (
                                         <div key={uid} className="flex flex-col bg-slate-900 p-4 rounded border border-slate-700 gap-3">
                                             <div className="flex items-center justify-between">
                                                 <div className="flex items-center gap-3">
-                                                    <div className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_#22c55e]"></div>
+                                                    <div className={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-500 shadow-[0_0_8px_#22c55e]' : 'bg-slate-500'}`}></div>
                                                     <div className="flex flex-col">
                                                         <span className="text-white font-bold text-sm">{name}</span>
                                                         <span className="text-xs text-slate-500 font-mono">{uid.slice(0,6)}...</span>
@@ -320,15 +329,13 @@ const SettingsView = ({
                                                 </div>
                                                 
                                                 <div className="flex gap-2">
-                                                    {isMe ? (
-                                                        isDm && (
-                                                            <button onClick={() => toggleDmStatus(uid)} className="text-xs bg-slate-800 hover:bg-red-900/50 text-slate-400 hover:text-red-400 border border-slate-600 px-3 py-1 rounded">
-                                                                Renounce DM
-                                                            </button>
-                                                        )
+                                                    {isDm ? (
+                                                        <button onClick={() => toggleDmStatus(uid)} className="text-xs bg-red-900/50 hover:bg-red-800 text-red-400 border border-red-700 px-3 py-1 rounded">
+                                                            Revoke DM
+                                                        </button>
                                                     ) : (
                                                         <>
-                                                            {!isDm && <button onClick={() => toggleDmStatus(uid)} className="text-xs bg-indigo-900/40 hover:bg-indigo-700 text-indigo-300 border border-indigo-700 px-3 py-1 rounded">Promote</button>}
+                                                            <button onClick={() => toggleDmStatus(uid)} className="text-xs bg-indigo-900/40 hover:bg-indigo-700 text-indigo-300 border border-indigo-700 px-3 py-1 rounded">Promote</button>
                                                             <button onClick={() => kickPlayer(uid)} className="text-xs bg-slate-700 hover:bg-slate-600 text-white px-3 py-1 rounded">Kick</button>
                                                             <button onClick={() => banPlayer(uid)} className="text-xs bg-red-900 hover:bg-red-800 text-white px-3 py-1 rounded">Ban</button>
                                                         </>
@@ -353,6 +360,40 @@ const SettingsView = ({
                                         </div>
                                     );
                                 })}
+
+                                {/* Current User (Me) Entry - Always last and fixed */}
+                                <div key={user.uid} className="flex flex-col bg-slate-900 p-4 rounded border border-slate-500/50 gap-3 opacity-80">
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_#22c55e]"></div>
+                                            <div className="flex flex-col">
+                                                <span className="text-white font-bold text-sm">{data.activeUsers?.[user.uid]} (Me)</span>
+                                                <span className="text-xs text-slate-500 font-mono">{user.uid.slice(0,6)}...</span>
+                                            </div>
+                                            {data.dmIds?.includes(user.uid) && <span className="text-[10px] font-bold bg-amber-600/20 text-amber-500 px-2 py-0.5 rounded border border-amber-600/50 uppercase">Dungeon Master</span>}
+                                        </div>
+                                        
+                                        {data.dmIds?.includes(user.uid) && (
+                                            <button onClick={() => toggleDmStatus(user.uid)} className="text-xs bg-slate-800 hover:bg-red-900/50 text-slate-400 hover:text-red-400 border border-slate-600 px-3 py-1 rounded">
+                                                Renounce DM
+                                            </button>
+                                        )}
+                                    </div>
+                                    <div className="flex items-center gap-2 pt-2 border-t border-slate-800">
+                                        <label className="text-xs text-slate-500 font-bold uppercase">Assign:</label>
+                                        <select 
+                                            value={data.assignments?.[user.uid] || ""} 
+                                            onChange={(e) => handleAssignCharacter(user.uid, e.target.value)}
+                                            className="flex-1 bg-slate-800 border border-slate-600 rounded px-2 py-1 text-xs text-white outline-none focus:border-indigo-500"
+                                        >
+                                            <option value="">(Observer / None)</option>
+                                            {data.players?.map(p => (
+                                                <option key={p.id} value={p.id}>{p.name} ({p.race} {p.class})</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                </div>
+                                {/* END CHANGE */}
                             </div>
 
                             {data.bannedUsers?.length > 0 && (
