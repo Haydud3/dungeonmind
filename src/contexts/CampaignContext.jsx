@@ -16,6 +16,7 @@ const DB_INIT_DATA = {
     hostId: null, dmIds: [], locations: [], npcs: [], handouts: [],
     activeUsers: {}, bannedUsers: [], assignments: {}, onboardingComplete: false, 
     config: { edition: '2014', strictMode: true }, 
+    campaignMembers: [], // START CHANGE: New persistent member roster
     campaign: { 
         genesis: { tone: 'Heroic', conflict: 'Dragon vs Kingdom', campaignName: 'New Campaign' }, 
         activeMap: { url: null, revealPaths: [], tokens: [] }, 
@@ -86,14 +87,28 @@ export const CampaignProvider = ({ children, user }) => {
     }, [gameParams, user]);
 
      // --- 2. ACTIONS ---
+    
+    // START CHANGE: Persistent Member Management
+    const addCampaignMember = (member) => {
+        if (data.campaignMembers?.some(m => m.uid === member.uid)) return;
+
+        const newMembers = [...(data.campaignMembers || []), { 
+            uid: member.uid, 
+            email: member.email || "Anonymous", 
+            role: member.role,
+            joined: Date.now()
+        }];
+
+        updateCloud({ ...data, campaignMembers: newMembers }, true);
+    };
+
     const updateCloud = (newData, immediate = false) => {
 // ---------------------------------------------------------
-        // NEW: Sanitizer function to strip 'undefined' which Firebase hates
         const sanitize = (obj) => {
-            return JSON.parse(JSON.stringify(obj, (key, value) =>
-                value === undefined ? null : value
-            ));
-        };
+    return JSON.parse(JSON.stringify(obj, (key, value) =>
+        value === undefined ? null : value
+    ));
+};
 
         const sanitizedData = sanitize(newData);
         const { players, chatLog, journal_pages, ...rootData } = sanitizedData;
@@ -108,6 +123,7 @@ export const CampaignProvider = ({ children, user }) => {
         }
         
         const doSave = () => {
+            if (!gameParams || gameParams.isOffline) return;
             const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code);
             setDoc(ref, rootData, { merge: true });
         };
@@ -130,6 +146,11 @@ export const CampaignProvider = ({ children, user }) => {
 
     const joinCampaign = (code, role, uid, isOffline) => {
         setGameParams({ code, role, uid, isOffline });
+
+        // CRITICAL: Immediately add user to the persistent roster if online
+        if (!isOffline && fb.auth.currentUser) {
+            addCampaignMember({ uid, email: fb.auth.currentUser.email, role });
+        }
     };
 
     const leaveCampaign = () => {
@@ -157,7 +178,8 @@ export const CampaignProvider = ({ children, user }) => {
         joinCampaign, leaveCampaign, 
         updateCloud, savePlayer, deletePlayer, 
         loreChunks, setLoreChunks,
-        sendPing // Add to exports
+        sendPing,
+        addCampaignMember // Add to exports for initial join
     }), [data, gameParams, loreChunks]);
 
     return (

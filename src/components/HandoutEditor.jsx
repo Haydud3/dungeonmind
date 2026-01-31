@@ -98,9 +98,12 @@ const HandoutEditor = ({ onSave, onCancel, savedHandouts = [], onDelete, campaig
             imageUrl,
             content,
             timestamp: Date.now(),
-            revealed: reveal
+            // START CHANGE: Implement isDraft status
+            isDraft: !reveal,
+            revealed: reveal // New flag to trigger auto-open for players
+            // END CHANGE
         });
-        toast(reveal ? "Saved & Revealed to Players!" : "Handout Saved", "success");
+        toast(reveal ? "Saved & Revealed to Players!" : "Handout Saved (Draft)", "success");
     };
 
     const loadHandout = (h) => {

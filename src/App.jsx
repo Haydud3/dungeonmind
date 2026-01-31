@@ -177,10 +177,13 @@ function DungeonMindApp() {
               setActiveHandoutImageUrl(resolvedHeader);
               setActiveHandoutBlocks(blocks);
 
-              // 4. Reveal Check
+              // 4. Reveal Check (Must not be a draft and must be recently revealed)
               const isNew = (Date.now() - h.timestamp) < 10000;
-              if (h.revealed && isNew) {
+              
+              // CRITICAL FIX: Add isDraft check
+              if (h.revealed && !h.isDraft && isNew) {
                   setShowHandout(true);
+                  toast(`New Handout: ${h.title}`, "info"); // Re-integrated player toast
               }
           } catch (e) {
               console.error("[HANDOUT] Stream Parsing Error:", e);

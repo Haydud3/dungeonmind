@@ -307,13 +307,14 @@ const SettingsView = ({
                             <h3 className="text-lg font-bold text-red-400 mb-4 flex items-center gap-2"><Icon name="shield" size={20}/> Player Management</h3>
                             
                             <div className="space-y-4">
-                                {/* START CHANGE: Iterate over all unique UIDs in assignments AND activeUsers */}
-                                {Object.keys({ ...data.activeUsers, ...data.assignments })
-                                    .filter(uid => uid !== user.uid) // Filter out current user (handled below)
-                                    .map(uid => {
-                                    const name = data.activeUsers?.[uid] || uid.slice(0, 6) + '... (Offline)';
+                                {/* START CHANGE: Iterate over persistent campaignMembers */}
+                                {data.campaignMembers
+                                    .filter(member => member.uid !== user.uid) // Filter out current user
+                                    .map(member => {
+                                    const uid = member.uid;
                                     const isDm = data.dmIds?.includes(uid);
                                     const isOnline = !!data.activeUsers?.[uid];
+                                    const name = member.email || "Anonymous";
                                     const assignedCharId = data.assignments?.[uid] || "";
 
                                     return (
