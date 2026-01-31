@@ -16,6 +16,14 @@ const InventoryTab = ({ onDiceRoll, onLogAction, isOwner }) => {
     const [searchTerm, setSearchTerm] = useState("");
     const [srdResults, setSrdResults] = useState([]);
     const [isSearching, setIsSearching] = useState(false);
+    
+    // START CHANGE: Calculate Encumbrance
+    const strScore = character.stats?.str || 10;
+    const carryCapacity = strScore * 15;
+    const totalWeight = (character.inventory || []).reduce((acc, item) => acc + (parseFloat(item.weight || 0) * (item.qty || 1)), 0);
+    const encumbrancePct = Math.min((totalWeight / carryCapacity) * 100, 100);
+    const isEncumbered = totalWeight > (strScore * 5); // 5x STR Variant Rule or just > Capacity? Adhering to visual meter for now.
+    // END CHANGE
 
     const handleAddItem = (e) => {
         e.preventDefault();
@@ -79,11 +87,27 @@ const InventoryTab = ({ onDiceRoll, onLogAction, isOwner }) => {
                 </div>
             </div>
 
+            {/* START CHANGE: Encumbrance Meter */}
+            <div className="bg-slate-800/50 rounded-lg p-3 border border-slate-700/50">
+                <div className="flex justify-between text-[10px] uppercase font-bold text-slate-500 mb-1">
+                    <span>Encumbrance</span>
+                    <span>{totalWeight.toFixed(1)} / {carryCapacity} lb</span>
+                </div>
+                <div className="h-2 bg-slate-700 rounded-full overflow-hidden relative">
+                    <div 
+                        className={`absolute top-0 left-0 h-full transition-all duration-500 ${totalWeight > carryCapacity ? 'bg-red-500' : isEncumbered ? 'bg-amber-500' : 'bg-green-500'}`} 
+                        style={{ width: `${encumbrancePct}%` }} 
+                    />
+                </div>
+                {totalWeight > carryCapacity && <div className="text-[10px] text-red-400 font-bold mt-1 text-center">Over Encumbered (Speed -10)</div>}
+            </div>
+            {/* END CHANGE */}
+
             {/* START CHANGE: Enrichment Toolbar */}
             {isOwner && (
                 <div className="flex justify-end mb-2">
                     <button 
-                        onClick={handleEnrich} 
+                        onClick={handleEnrich}
                         disabled={isSearching}
                         className="text-xs flex items-center gap-1 text-indigo-400 hover:text-indigo-300 transition-colors"
                     >

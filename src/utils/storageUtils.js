@@ -13,14 +13,9 @@ export const uploadImage = async (blob, path) => {
 // Convert an <img> element (from Puter.js) to a Blob for uploading
 export const imageElementToBlob = async (imgElement) => {
     return new Promise((resolve, reject) => {
-        // If it's already a blob URL (Puter often returns these), fetch it
         if (imgElement.src.startsWith('blob:')) {
-            fetch(imgElement.src)
-                .then(r => r.blob())
-                .then(resolve)
-                .catch(reject);
+            fetch(imgElement.src).then(r => r.blob()).then(resolve).catch(reject);
         } else {
-            // Fallback: Draw to canvas to sanitize/convert
             const canvas = document.createElement('canvas');
             canvas.width = imgElement.naturalWidth || 2048;
             canvas.height = imgElement.naturalHeight || 2048; 
@@ -31,7 +26,7 @@ export const imageElementToBlob = async (imgElement) => {
     });
 };
 
-// Phase 1: Store Base64 in chunks to bypass document size limits
+// Phase 1: Store Base64 in chunks to bypass Firestore document size limits
 export const storeChunkedMap = async (base64, name) => {
     const CHUNK_SIZE = 900000;
     const totalChunks = Math.ceil(base64.length / CHUNK_SIZE);
@@ -55,7 +50,8 @@ export const storeChunkedMap = async (base64, name) => {
 
 // Phase 2: Retrieve and assemble chunks into a single Base64 string
 export const retrieveChunkedMap = async (chunkedId) => {
-    const docId = chunkedId.replace('chunked:', '');
+    if (!chunkedId) return "";
+    const docId = chunkedId.replace('chunked:', '').trim().replace(/['"]/g, '');
     const chunksRef = collection(db, "map_metadata", docId, "chunks");
     const q = query(chunksRef, orderBy("index", "asc"));
     const snapshot = await getDocs(q);
@@ -65,4 +61,59 @@ export const retrieveChunkedMap = async (chunkedId) => {
         fullBase64 += doc.data().data;
     });
     return fullBase64;
+};
+
+// Phase 3: Resolve all chunked references in an HTML string with Diagnostics
+export const resolveChunkedHtml = async (html) => {
+    if (!html || !html.trim()) return html || "";
+    console.group("Handout Resolution Diagnostic");
+    try {
+        const regex = /chunked:[a-zA-Z0-9_-]+/g;
+        const matches = html.match(regex);
+        
+        if (!matches || matches.length === 0) {
+            console.groupEnd();
+            return html;
+        }
+
+        const uniqueIds = [...new Set(matches)];
+        const resolutions = await Promise.all(uniqueIds.map(async (id) => {
+            try {
+                const fullBase64 = await retrieveChunkedMap(id);
+                return { id, fullBase64 };
+            } catch (e) {
+                console.error(`FAILED to reassemble ${id}:`, e);
+                return { id, fullBase64: "" };
+            }
+        }));
+
+        let resolvedHtml = html;
+        resolutions.forEach(({ id, fullBase64 }) => {
+            if (fullBase64) {
+                resolvedHtml = resolvedHtml.split(id).join(fullBase64);
+            }
+        });
+        console.groupEnd();
+        return resolvedHtml;
+    } catch (err) {
+        console.error("Critical error in resolveChunkedHtml:", err);
+        console.groupEnd();
+        return html;
+    }
+};
+
+// Phase 4: Parse HTML into blocks for stream rendering
+export const parseHandoutBody = (html) => {
+    if (!html) return [];
+    // Identify <img> tags containing chunked references
+    const regex = /(<img[^>]*src=["']chunked:[^"']*["'][^>]*>)/g;
+    const parts = html.split(regex);
+    
+    return parts.map(part => {
+        const match = part.match(/src=["'](chunked:[a-zA-Z0-9_-]+)["']/);
+        if (match) {
+            return { type: 'image', id: match[1] };
+        }
+        return { type: 'text', content: part };
+    }).filter(part => part.type === 'image' || (part.type === 'text' && part.content.trim()));
 };

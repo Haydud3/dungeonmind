@@ -16,10 +16,12 @@ import WorldView from './components/WorldView';
 import WorldCreator from './components/WorldCreator'; 
 import NpcView from './components/NpcView';
 import DiceOverlay from './components/DiceOverlay';
+import ResolvedImage from './components/ResolvedImage';
 import HandoutEditor from './components/HandoutEditor';
 import LoreView from './components/LoreView';
 import { useCharacterStore } from './stores/useCharacterStore'; 
 import { retrieveContext, buildPrompt, buildCastList } from './utils/loreEngine';
+import { retrieveChunkedMap, resolveChunkedHtml, parseHandoutBody } from './utils/storageUtils';
 
 // START CHANGE: Import SheetContainer
 import SheetContainer from './components/character-sheet/SheetContainer';
@@ -105,6 +107,8 @@ function DungeonMindApp() {
   const [diceLog, setDiceLog] = useState([]);
   const [possessedNpcId, setPossessedNpcId] = useState(null);
   const [showHandout, setShowHandout] = useState(false);
+  const [activeHandoutImageUrl, setActiveHandoutImageUrl] = useState('');
+  const [activeHandoutBlocks, setActiveHandoutBlocks] = useState([]);
   const [showHandoutCreator, setShowHandoutCreator] = useState(false);
   const [rollingDice, setRollingDice] = useState(null);
   const [activeTemplate, setActiveTemplate] = useState(null); // NEW: Track active spell template
@@ -147,19 +151,42 @@ function DungeonMindApp() {
     return () => unsub();
   }, [gameParams]); 
 
-  // START CHANGE: Listen for "Reveal" events to auto-open handouts
+  // START CHANGE: Sequential Handout Reveal Logic with Stream Parsing
   useEffect(() => {
-      if (!data?.campaign?.activeHandout) return;
-      
-      const h = data.campaign.activeHandout;
-      // Only pop up if marked 'revealed' and the timestamp is recent (< 10 seconds)
-      // This prevents it from popping up every time you refresh the page
-      const isNew = (Date.now() - h.timestamp) < 10000;
-      
-      if (h.revealed && isNew) {
-          setShowHandout(true);
-          toast(`New Handout: ${h.title}`, "info");
+      const h = data.campaign?.activeHandout;
+      if (!h) {
+          setActiveHandoutImageUrl('');
+          setActiveHandoutBlocks([]);
+          return;
       }
+      
+      const resolveAndShow = async () => {
+          try {
+              // 1. Resolve Header Image
+              let resolvedHeader = '';
+              if (h.imageUrl?.startsWith('chunked:')) {
+                  resolvedHeader = await retrieveChunkedMap(h.imageUrl);
+              } else {
+                  resolvedHeader = h.imageUrl || '';
+              }
+
+              // 2. Parse Body into manageable blocks
+              const blocks = parseHandoutBody(h.content);
+
+              // 3. Update states atomically
+              setActiveHandoutImageUrl(resolvedHeader);
+              setActiveHandoutBlocks(blocks);
+
+              // 4. Reveal Check
+              const isNew = (Date.now() - h.timestamp) < 10000;
+              if (h.revealed && isNew) {
+                  setShowHandout(true);
+              }
+          } catch (e) {
+              console.error("[HANDOUT] Stream Parsing Error:", e);
+          }
+      };
+      resolveAndShow();
   }, [data.campaign?.activeHandout]);
   // END CHANGE
 
@@ -348,7 +375,17 @@ function DungeonMindApp() {
             setShowTools(false); 
             setTimeout(() => {
                 setDiceLog(prev => [{id: Date.now(), die: `d${d}`, result}, ...prev]);
-                if (!silent) addLogEntry({ message: `<div class="font-bold text-white">Manual Roll</div><div class="text-xl text-amber-500 font-bold">d${d} -> ${result}</div>`, id: Date.now() });
+                
+                // START CHANGE: Send global chat message instead of local log
+                // The silent flag can be used for things like backend rolls if needed
+                if (!silent) {
+                    sendChatMessage(
+                        `rolled a d${d} and got <span class="text-amber-500 font-bold text-lg">${result}</span>`,
+                        'roll-public'
+                    );
+                }
+                // END CHANGE
+
                 resolve(result); 
             }, 1000);
             setTimeout(() => { setRollingDice(null); }, 4000); 
@@ -390,6 +427,13 @@ function DungeonMindApp() {
       ${systemPrompt}
       
       TASK: Output valid JSON matching this schema: ${isPc ? pcSchema : npcSchema}
+      
+      CRITICAL NPC INSTRUCTION: The content in the [BOOK] and [PLAYER NOTES] sections is a STAT BLOCK OVERRIDE. 
+      - Use the provided AC, HP, Skill Mods, Spell Save DC, and Action/Spell usages (e.g., 1/day) LITERALLY. 
+      - DO NOT invent derived stats (like full Wizard spell slots) unless the source is completely silent and a required field is missing.
+      - For actions, prefer the customActions array for stat block entries.
+      - Preserve the flavor text exactly as given in the context.
+
       ADDITIONAL USER INSTRUCTIONS: ${instructions}
       JSON ONLY. NO MARKDOWN WRAPPERS.
       `;
@@ -432,14 +476,47 @@ function DungeonMindApp() {
   // END CHANGE
 
   const handleHandoutSave = (h) => {
-      const newH = [...(data.handouts||[])]; h.id ? newH[newH.findIndex(x=>x.id===h.id)] = h : newH.unshift({...h, id: Date.now()});
-      updateCloud({...data, handouts:newH, campaign:{...data.campaign, activeHandout:h}}); setShowHandoutCreator(false);
+      const currentHandouts = data.handouts || [];
+      const isExisting = h.id && currentHandouts.some(x => x.id === h.id);
+      
+      const updatedHandouts = isExisting 
+          ? currentHandouts.map(x => x.id === h.id ? { ...h, timestamp: Date.now() } : x)
+          : [{ ...h, id: h.id || Date.now(), timestamp: Date.now() }, ...currentHandouts];
+
+      updateCloud({ 
+          ...data, 
+          handouts: updatedHandouts, 
+          campaign: { ...data.campaign, activeHandout: h } 
+      });
+      setShowHandoutCreator(false);
+  };
+
+  const handleHandoutDelete = (id) => {
+      const updatedHandouts = (data.handouts || []).filter(h => h.id !== id);
+      const updatedCampaign = { ...data.campaign };
+      if (updatedCampaign.activeHandout?.id === id) updatedCampaign.activeHandout = null;
+      updateCloud({ ...data, handouts: updatedHandouts, campaign: updatedCampaign });
   };
 
   const handlePlaceTemplate = (spell) => { setActiveTemplate(spell); setCurrentView('map'); };
 
   // START CHANGE: Token-aware Initiative Handler
   const handleInitiative = (charOrToken, roll = null) => {
+      // 1. If no manual roll provided, perform the roll automatically
+      if (roll === null) {
+          handleDiceRoll(20).then(result => {
+              // Calculate initiative using the character's stored modifier
+              const dex = charOrToken.stats?.dex || 10;
+              const dexMod = Math.floor((dex - 10) / 2);
+              const total = result + dexMod;
+              
+              // Recursive call with the final result
+              handleInitiative(charOrToken, total);
+          });
+          return;
+      }
+
+      // 2. Proceed with updating the combat tracker
       const c = data.campaign?.combat;
       const combatState = (c && c.active) ? c : { active: true, round: 1, turn: 0, combatants: [] };
       
@@ -447,6 +524,11 @@ function DungeonMindApp() {
       
       const uniqueId = charOrToken.tokenId || charOrToken.id;
       const idx = combatants.findIndex(x => x.id === uniqueId);
+
+      // Check for re-roll attempt by player (if they already have initiative)
+      if (effectiveRole === 'player' && idx > -1 && combatants[idx].init !== null && combatants[idx].init !== undefined) {
+          if (!confirm(`New roll of ${roll} detected. Replace existing score of ${combatants[idx].init}?`)) return;
+      }
       
       // FIX: Check if this ID belongs to a Player if type is not explicit
       const isPlayer = data.players?.some(p => p.id === (charOrToken.characterId || charOrToken.id));
@@ -469,6 +551,9 @@ function DungeonMindApp() {
       
       combatants.sort((a,b) => (b.init || 0) - (a.init || 0));
       updateCloud({ ...data, campaign: { ...data.campaign, combat: { ...combatState, combatants } } }, true);
+      
+      // Announce Initiative to Chat
+      sendChatMessage(`rolled Initiative: <span class="text-amber-500 font-bold">${roll}</span>`, 'roll-public');
   };
 
   const autoRollNPCs = () => {
@@ -782,8 +867,42 @@ function DungeonMindApp() {
             </div>
        </main>
        
-       {showHandoutCreator && <HandoutEditor savedHandouts={data.handouts || []} onSave={handleHandoutSave} onCancel={() => setShowHandoutCreator(false)} />}
-       {showHandout && data.campaign?.activeHandout && <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setShowHandout(false)}><div className="p-8 max-w-2xl w-full bg-white text-black rounded relative" onClick={e=>e.stopPropagation()}><div dangerouslySetInnerHTML={{__html: data.campaign.activeHandout.content}} /></div></div>}
+       {showHandoutCreator && <HandoutEditor campaignCode={gameParams?.code} savedHandouts={data.handouts || []} onSave={handleHandoutSave} onDelete={handleHandoutDelete} onCancel={() => setShowHandoutCreator(false)} />}
+       {showHandout && data.campaign?.activeHandout && (
+           <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm overflow-hidden" onClick={() => setShowHandout(false)}>
+               <div 
+                   className={`max-w-2xl w-full rounded-xl shadow-2xl relative flex flex-col max-h-[90vh] overflow-hidden ${
+                       data.campaign.activeHandout.theme === 'parchment' ? 'bg-[#f5e6c8] text-amber-900 border-4 border-amber-800' :
+                       data.campaign.activeHandout.theme === 'stone' ? 'bg-[#1c1917] text-slate-300 border-4 border-slate-700' :
+                       'bg-white text-black border-4 border-slate-200'
+                   }`} 
+                   onClick={e=>e.stopPropagation()}
+               >
+                   {activeHandoutImageUrl && (
+                       <div className="w-full h-48 overflow-hidden border-b border-black/10 shrink-0">
+                           <img src={activeHandoutImageUrl} className="w-full h-full object-cover opacity-40" alt=""/>
+                       </div>
+                   )}
+                   <div className="flex-1 overflow-y-auto custom-scroll p-8">
+                       <h2 className="fantasy-font text-3xl mb-6 border-b border-current/20 pb-2">{data.campaign.activeHandout.title}</h2>
+                       {activeHandoutBlocks.length === 0 ? (
+                           <div className="py-20 text-center animate-pulse italic opacity-50 font-bold">DECIPHERING SCRIPT...</div>
+                       ) : (
+                           <div className="handout-content-stream">
+                               {activeHandoutBlocks.map((block, idx) => (
+                                   block.type === 'image' ? (
+                                       <ResolvedImage key={idx} id={block.id} />
+                                   ) : (
+                                       <div key={idx} className="mb-4 text-lg leading-relaxed" dangerouslySetInnerHTML={{__html: block.content}} />
+                                   )
+                               ))}
+                           </div>
+                       )}
+                   </div>
+                   <button onClick={() => setShowHandout(false)} className="absolute top-4 right-4 z-20 bg-black/20 hover:bg-black/40 text-white rounded-full p-1"><Icon name="x" size={24}/></button>
+               </div>
+           </div>
+       )}
        <div className="fixed inset-0 pointer-events-none z-[99999]">{rollingDice && <DiceOverlay roll={rollingDice} />}</div>
        
        {sidebarDragEntity && (

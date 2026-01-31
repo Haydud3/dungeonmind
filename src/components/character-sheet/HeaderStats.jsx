@@ -19,6 +19,9 @@ const HeaderStats = ({ onDiceRoll, onLogAction, onBack, onPossess, isNpc, combat
   const intMod = calcMod(character.stats?.int);
   const prof = character.profBonus || 2;
   const ac = character.ac || 10 + dexMod; 
+  // START CHANGE: Get AC Formula
+  const acFormula = character.acFormula || "10 + DEX";
+  // END CHANGE
   const init = character.init ? parseInt(character.init) : dexMod;
 
   // --- PASSIVE SENSES ---
@@ -47,26 +50,11 @@ const HeaderStats = ({ onDiceRoll, onLogAction, onBack, onPossess, isNpc, combat
 
   // --- HANDLERS ---
   const handleInitRoll = async () => { 
-      if(onDiceRoll) { 
-          const r = await onDiceRoll(20); 
-          const total = r + init;
-          
-          if (onInitiative) {
-              // This now triggers the improved handleInitiative in App.jsx
-              // It will update the existing entry or add a new one
-              onInitiative(character, total);
-              
-              if(onLogAction) {
-                  onLogAction(`
-                    <div class="flex justify-between items-center">
-                        <span class="font-bold text-slate-300">Initiative</span>
-                        <span class="text-amber-500 font-bold text-xl">${total}</span>
-                    </div>
-                    <div class="text-xs text-slate-500 text-right">Rolled ${r} + ${init}</div>
-                  `);
-              }
-          }
-      } 
+      // onInitiative now handles the rolling logic internally via App.jsx
+      // We pass null as the second argument to trigger the auto-roll behavior
+      if (onInitiative) {
+          onInitiative(character, null);
+      }
   };
   const handleLongRest = () => { recoverSlots(); updateHP('current', maxHP); setIsExpanded(false); };
   const handleShortRest = () => { const h = prompt("Heal amount:"); if(h) shortRest(parseInt(h)); setIsExpanded(false); };
@@ -157,10 +145,15 @@ const HeaderStats = ({ onDiceRoll, onLogAction, onBack, onPossess, isNpc, combat
             </div>
 
             <div className="flex gap-2 shrink-0">
-                <div className="flex flex-col items-center justify-center w-10 bg-slate-800 rounded border border-slate-700 p-1">
+                {/* START CHANGE: AC Block with Formula Tooltip */}
+                <div className="flex flex-col items-center justify-center w-10 bg-slate-800 rounded border border-slate-700 p-1 group relative">
                     <span className="text-[9px] text-slate-500 font-bold uppercase">AC</span>
                     <span className="text-lg font-bold text-white">{ac}</span>
+                    <div className="absolute top-full mt-2 right-0 w-32 bg-black/90 text-white text-[10px] p-2 rounded shadow-xl border border-slate-700 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 whitespace-normal text-center">
+                        {acFormula}
+                    </div>
                 </div>
+                {/* END CHANGE */}
                 <div onClick={handleInitRoll} className="flex flex-col items-center justify-center w-10 bg-slate-800 rounded border border-slate-700 p-1 cursor-pointer hover:border-amber-500">
                     <span className="text-[9px] text-slate-500 font-bold uppercase">INIT</span>
                     <span className="text-lg font-bold text-white">{init >= 0 ? `+${init}` : init}</span>
@@ -259,9 +252,12 @@ const HeaderStats = ({ onDiceRoll, onLogAction, onBack, onPossess, isNpc, combat
                     </div>
                     <div className="bg-slate-800 p-1 rounded border border-slate-700 group relative">
                         <div className="text-[9px] text-slate-500">Vision</div>
-                        <div className={`text-sm font-bold ${darkvision > 0 ? 'text-cyan-400' : 'text-slate-500'}`}>
-                            {darkvision > 0 ? `${darkvision}ft` : '-'}
-                        </div>
+                        <input
+                            type="number"
+                            className={`w-full bg-transparent text-center text-sm font-bold outline-none p-0 ${darkvision > 0 ? 'text-cyan-400' : 'text-slate-500'}`}
+                            value={darkvision}
+                            onChange={(e) => updateInfo('senses', { ...character.senses, darkvision: parseInt(e.target.value) || 0 })}
+                        />
                     </div>
                 </div>
             </div>

@@ -2,6 +2,19 @@ import React, { useState } from 'react';
 import { useCharacterStore } from '../../../stores/useCharacterStore';
 import Icon from '../../Icon';
 
+// START CHANGE: Core Combat Actions Constant
+const CORE_COMBAT_ACTIONS = [
+    { name: "Dash", desc: "Gain extra movement for the current turn. The increase equals your speed, after applying any modifiers." },
+    { name: "Disengage", desc: "Your movement doesn't provoke opportunity attacks for the rest of the turn." },
+    { name: "Dodge", desc: "Until the start of your next turn, any attack roll made against you has disadvantage if you can see the attacker, and you make Dexterity saving throws with advantage." },
+    { name: "Help", desc: "You can lend your aid to another creature in the completion of a task. The creature you aid gains advantage on the next ability check it makes to perform the task." },
+    { name: "Hide", desc: "Make a Dexterity (Stealth) check in an attempt to hide, following the rules for hiding." },
+    { name: "Ready", desc: "Wait for a specific circumstance before you act, which lets you act using your reaction before the start of your next turn." },
+    { name: "Search", desc: "Devote your attention to finding something. Depending on the nature of your search, the DM might have you make a Wisdom (Perception) check or an Intelligence (Investigation) check." },
+    { name: "Use an Object", desc: "Interact with an object, such as drawing a sword, drinking a potion, or pulling a lever." }
+];
+// END CHANGE
+
 // UPDATE: Added isOwner
 const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
     const { character, updateInfo } = useCharacterStore();
@@ -197,9 +210,10 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
     const ActionRow = ({ action }) => {
         const hasText = action.desc || action.notes;
         const [isExpanded, setIsExpanded] = useState(false);
+        const isCore = action.isCore; // Detect core actions
 
         return (
-            <div className="bg-slate-800 border border-slate-700 rounded-lg overflow-hidden transition-colors group relative mb-2">
+            <div className={`bg-slate-800 border ${isCore ? 'border-slate-700/50' : 'border-slate-700'} rounded-lg overflow-hidden transition-colors group relative mb-2`}>
                 
                 {/* Normal View */}
                 {editingId !== action.id && (
@@ -207,7 +221,7 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
                         
                         {/* LEFT: Info */}
                         <div className="overflow-hidden flex-1 cursor-pointer" onClick={() => hasText && setIsExpanded(!isExpanded)}>
-                            <div className="font-bold text-slate-200 truncate flex items-center gap-2">
+                            <div className={`font-bold ${isCore ? 'text-slate-400' : 'text-slate-200'} truncate flex items-center gap-2`}>
                                 {action.name}
                                 {action.isItem && <Icon name="backpack" size={12} className="text-slate-500"/>}
                                 {action.source === 'spell' && <Icon name="sparkles" size={12} className="text-purple-400"/>}
@@ -346,7 +360,12 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
             {/* --- SECTIONS --- */}
             {attacks.length > 0 && (
                 <div>
-                    <h4 className="text-[10px] font-bold text-slate-500 uppercase mb-2 tracking-widest pl-1">Attacks</h4>
+                    {/* START CHANGE: Attacks per Action Label */}
+                    <div className="flex justify-between items-baseline mb-2 pl-1 border-b border-slate-800 pb-1">
+                        <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Attacks</h4>
+                        <span className="text-[10px] font-bold text-slate-400">Attacks per Action: <span className="text-white">{character.attacksPerAction || 1}</span></span>
+                    </div>
+                    {/* END CHANGE */}
                     {attacks.map((a) => <ActionRow key={a.id} action={a} />)}
                 </div>
             )}
@@ -371,6 +390,18 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
                     {otherFeatures.map((a) => <ActionRow key={a.id} action={a} />)}
                 </div>
             )}
+
+            {/* START CHANGE: Render Core Combat Actions */}
+            <div className="mt-8 pt-4 border-t border-slate-800/50">
+                <h4 className="text-[10px] font-bold text-slate-600 uppercase mb-2 tracking-widest pl-1">Core Combat Actions</h4>
+                {CORE_COMBAT_ACTIONS.map((action, i) => (
+                    <ActionRow 
+                        key={`core-${i}`} 
+                        action={{ ...action, id: `core-${i}`, type: 'Action', isCore: true }} 
+                    />
+                ))}
+            </div>
+            {/* END CHANGE */}
 
             {allActions.length === 0 && (
                 <div className="text-center text-slate-500 py-12 italic border-2 border-dashed border-slate-800 rounded-xl">

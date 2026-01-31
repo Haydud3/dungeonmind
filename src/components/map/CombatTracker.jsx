@@ -80,14 +80,11 @@ const CombatTracker = ({ combat, onNextTurn, onEndCombat, onClearRolls, role, up
                             {/* Initiative Input */}
                             <div className="flex items-center gap-1">
                                 <input 
-                                    type="number" 
-                                    inputMode="numeric"
-                                    value={c.init !== null ? c.init : ''} 
-                                    placeholder="-"
-                                    onBlur={handleSort}
-                                    onChange={(e) => updateCombatant && updateCombatant(c.id, { init: e.target.value === '' ? null : parseInt(e.target.value) })}
-                                    className="w-8 bg-transparent text-center font-mono text-lg font-bold text-slate-400 outline-none border-b border-transparent focus:border-amber-500 focus:text-white"
-                                />
+                                      type="number" 
+                                      value={c.init || 0} 
+                                      onChange={(e) => updateCombatant(c.id, { init: parseInt(e.target.value) })}
+                                      className="w-8 bg-transparent text-right font-bold text-amber-500 outline-none border-b border-transparent focus:border-amber-500 p-0 text-sm opacity-80 focus:opacity-100 transition-opacity"
+                                  />
                                 {c.init === null && role === 'dm' && (
                                     <button onClick={() => rollIndividual(c)} className="text-indigo-400 hover:text-white animate-pulse">
                                         <Icon name="dice-d20" size={14} />

@@ -180,6 +180,7 @@ const fetchApiData = async (category, name) => {
 
 export const enrichCharacter = async (charData) => {
     const newChar = JSON.parse(JSON.stringify(charData));
+    newChar.customActions = newChar.customActions || [];
 
     const strMod = getMod(newChar.stats?.str);
     const dexMod = getMod(newChar.stats?.dex);
@@ -211,6 +212,15 @@ export const enrichCharacter = async (charData) => {
                         dmg: `${dmgDice}${mod >= 0 ? '+'+mod : mod} ${dmgType}`,
                         notes: apiItem.properties?.map(p => p.name).join(', ') || ""
                     };
+
+                    // START CHANGE: Filter redundant custom actions and Auto-Equip
+                    // 1. Remove static action if it matches this inventory weapon to enforce Source of Truth
+                    if (newChar.customActions && newChar.customActions.length > 0) {
+                        newChar.customActions = newChar.customActions.filter(
+                            a => normalize(a.name) !== normalize(item.name)
+                        );
+                    }
+                    // END CHANGE
                 }
 
                 let desc = apiItem.desc ? apiItem.desc.join('\n') : "";
@@ -222,7 +232,8 @@ export const enrichCharacter = async (charData) => {
                     desc: desc || item.desc || "",
                     cost: apiItem.cost ? `${apiItem.cost.quantity} ${apiItem.cost.unit}` : (item.cost || ""),
                     combat: combatStats,
-                    equipped: item.equipped || false
+                    // Auto-equip weapons found in inventory so they appear in Actions tab immediately
+                    equipped: item.equipped !== undefined ? item.equipped : !!combatStats
                 };
             }
             return item;

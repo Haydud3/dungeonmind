@@ -1,16 +1,33 @@
-import React, { useState, useEffect, useRef } from 'react';
-import ReactQuill from 'react-quill-new'; 
-import 'react-quill-new/dist/quill.snow.css'; 
-import Icon from './Icon';
-
 const JournalPageEditor = ({ page, onSave, onDelete, onBack, aiHelper }) => {
     const [content, setContent] = useState(page.content || "");
+    const [resolvedContent, setResolvedContent] = useState("");
     const [saveStatus, setSaveStatus] = useState("saved");
     const [aiWorking, setAiWorking] = useState(false);
     const quillRef = useRef(null);
     const saveTimerRef = useRef(null);
+    const toast = useToast();
 
-    useEffect(() => { setContent(page.content || ""); }, [page.id]);
+    // START CHANGE: Resolve images on load/edit
+    useEffect(() => { 
+        const resolve = async () => {
+            if (page.content) {
+                // We resolve the content before pasting it to Quill
+                const html = await resolveChunkedHtml(page.content);
+                setResolvedContent(html);
+            } else {
+                setResolvedContent("");
+            }
+        };
+        resolve();
+    }, [page.id, page.content]);
+
+    useEffect(() => { 
+        // Sync the Quill value with the resolved content for editing
+        if (quillRef.current && resolvedContent && !quillRef.current.getEditor().getText().trim()) {
+            quillRef.current.getEditor().clipboard.dangerouslyPasteHTML(0, resolvedContent);
+        }
+    }, [resolvedContent]);
+    // END CHANGE
 
     const handleChange = (value) => {
         setContent(value);
@@ -26,7 +43,34 @@ const JournalPageEditor = ({ page, onSave, onDelete, onBack, aiHelper }) => {
         onSave(page.id, { ...page, isPublic: !page.isPublic }); 
     };
 
-    // --- TABLE MANAGEMENT ---
+    // --- CUSTOM HANDLERS FOR QUILL TOOLBAR ---
+
+    const handleImageUpload = () => {
+        const input = document.createElement('input');
+        input.setAttribute('type', 'file');
+        input.setAttribute('accept', 'image/*');
+        input.click();
+
+        input.onchange = async () => {
+            const file = input.files[0];
+            if (!file) return;
+            
+            try {
+                toast("Processing image...", "info");
+                const compressedBase64 = await compressImage(file, 800);
+                const chunkedId = await storeChunkedMap(compressedBase64, `journal_img_${file.name}`);
+                
+                const editor = quillRef.current.getEditor();
+                const range = editor.getSelection(true);
+                editor.insertEmbed(range.index, 'chunkedImage', chunkedId, 'user');
+                editor.setSelection(range.index + 1, 'silent');
+            } catch (err) {
+                console.error(err);
+                toast("Image insertion failed", "error");
+            }
+        };
+    };
+
     const insertDynamicTable = () => {
         const rows = prompt("How many rows?", "3");
         const cols = prompt("How many columns?", "3");
@@ -63,7 +107,7 @@ const JournalPageEditor = ({ page, onSave, onDelete, onBack, aiHelper }) => {
             current.remove();
             handleChange(quill.root.innerHTML); // Force save
         } else {
-            alert("Cursor must be inside a table row to delete it.");
+            toast("Cursor must be inside a table row to delete it.", "warning");
         }
     };
 
@@ -91,11 +135,10 @@ const JournalPageEditor = ({ page, onSave, onDelete, onBack, aiHelper }) => {
             });
             handleChange(quill.root.innerHTML);
         } else {
-            alert("Cursor must be inside a table cell to delete the column.");
+            toast("Cursor must be inside a table cell to delete the column.", "warning");
         }
     };
 
-    // --- IMAGE RESIZING ---
     const resizeImage = () => {
         const quill = quillRef.current.getEditor();
         const range = quill.getSelection(true);
@@ -119,7 +162,7 @@ const JournalPageEditor = ({ page, onSave, onDelete, onBack, aiHelper }) => {
                 handleChange(quill.root.innerHTML);
             }
         } else {
-            alert("Please select (highlight) an image or place your cursor immediately after it.");
+            toast("Please select an image to resize.", "warning");
         }
     };
 
@@ -142,21 +185,31 @@ const JournalPageEditor = ({ page, onSave, onDelete, onBack, aiHelper }) => {
     const modules = {
         toolbar: {
             container: [
-                [{ 'header': [1, 2, false] }], 
+                [{ 'header': [1, 2, 3, 4, 5, 6, false] }],
                 [{ 'size': ['small', false, 'large', 'huge'] }], 
                 ['bold', 'italic', 'underline', 'strike'],
                 [{ 'color': [] }, { 'background': [] }],
                 [{ 'list': 'ordered'}, { 'list': 'bullet' }],
                 [{ 'align': [] }],
-                ['link', 'image'],
+                ['link', 'image', 'tableInsert', 'tableRowDelete', 'tableColDelete', 'imageResize', 'aiSpark'],
                 ['clean']
             ],
+            handlers: {
+                // Image handling is overridden to use chunking
+                'image': handleImageUpload,
+                // Custom handlers for consolidation
+                'tableInsert': insertDynamicTable,
+                'tableRowDelete': deleteRow,
+                'tableColDelete': deleteCol,
+                'imageResize': resizeImage,
+                'aiSpark': handleAiSpark
+            }
         }
     };
 
     return (
         <div className="flex flex-col h-full bg-slate-900/50">
-            <div className="p-2 md:p-4 border-b border-slate-700 flex flex-col md:flex-row justify-between items-start md:items-center bg-slate-800/80 shrink-0 gap-2">
+            <div className="p-2 md:p-4 border-b border-slate-700 flex flex-col md:flex-row justify-between items-start md:items-center bg-slate-800/80 shrink-0 gap-2 z-20">
                 <div className="flex items-center gap-2 overflow-hidden w-full md:w-auto">
                     <button onClick={onBack} className="md:hidden text-slate-400 hover:text-white p-2 -ml-2"><Icon name="arrow-left" size={24} /></button>
                     <h3 className="font-bold text-base md:text-lg text-slate-200 truncate max-w-[120px] md:max-w-xs">{page.title}</h3>
@@ -168,26 +221,12 @@ const JournalPageEditor = ({ page, onSave, onDelete, onBack, aiHelper }) => {
                     <span className={`text-[10px] px-2 py-0.5 rounded ${saveStatus === 'saved' ? 'text-green-500 bg-green-900/10' : 'text-yellow-500 bg-yellow-900/10'}`}>{saveStatus === 'saved' ? 'Saved' : 'Saving...'}</span>
                 </div>
                 
-                {/* EDITOR TOOLS */}
-                <div className="flex gap-1 md:gap-2 overflow-x-auto w-full md:w-auto pb-1 md:pb-0 no-scrollbar">
-                    {/* Table Group */}
-                    <div className="flex bg-slate-700/50 rounded p-1 gap-1 border border-slate-600">
-                        <button onClick={insertDynamicTable} title="Insert Table" className="text-slate-300 hover:text-white p-1 hover:bg-slate-600 rounded"><Icon name="table" size={16}/></button>
-                        <button onClick={deleteRow} title="Delete Row" className="text-red-300 hover:text-red-100 p-1 hover:bg-red-900/50 rounded"><Icon name="minus-square" size={16}/></button>
-                        <button onClick={deleteCol} title="Delete Column" className="text-red-300 hover:text-red-100 p-1 hover:bg-red-900/50 rounded"><Icon name="columns" size={16}/></button>
-                    </div>
-
-                    {/* Image Group */}
-                    <div className="flex bg-slate-700/50 rounded p-1 gap-1 border border-slate-600">
-                        <button onClick={resizeImage} title="Resize Image" className="text-blue-300 hover:text-blue-100 p-1 hover:bg-blue-900/50 rounded flex items-center gap-1"><Icon name="image" size={16}/><span className="text-[10px] font-bold">SIZE</span></button>
-                    </div>
-
-                    <button onClick={handleAiSpark} disabled={aiWorking} className={`flex items-center gap-1 px-3 py-1 text-xs font-bold rounded ${aiWorking ? 'bg-slate-700 text-slate-500' : 'bg-indigo-600 text-white'}`}><Icon name="sparkles" size={14}/> AI</button>
-                    <div className="w-px h-6 bg-slate-700 mx-1 self-center"></div>
+                {/* DELETED: External EDITOR TOOLS BLOCK - All tools are now in Quill Toolbar */}
+                <div className="flex gap-1 md:gap-2 overflow-x-auto w-full md:w-auto pb-1 md:pb-0 no-scrollbar justify-end">
                     <button onClick={() => onDelete(page.id)} className="text-slate-500 hover:text-red-500 p-2"><Icon name="trash-2" size={20}/></button>
                 </div>
             </div>
-            <div className="flex-1 overflow-hidden flex flex-col">
+            <div className="flex-1 overflow-hidden flex flex-col z-10">
                 <ReactQuill ref={quillRef} theme="snow" value={content} onChange={handleChange} modules={modules} className="flex-1 overflow-hidden flex flex-col" />
             </div>
         </div>

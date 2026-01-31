@@ -1,8 +1,8 @@
 import { create } from 'zustand';
 
 // START CHANGE: Add 5e AC Calculation Helper
-const calcAC = (char) => {
-    if (!char || !char.stats) return 10;
+export const calcAC = (char) => {
+    if (!char || !char.stats) return { value: 10, formula: "10 + DEX" };
     const dex = Math.floor(((char.stats.dex || 10) - 10) / 2);
     const con = Math.floor(((char.stats.con || 10) - 10) / 2);
     const wis = Math.floor(((char.stats.wis || 10) - 10) / 2);
@@ -12,35 +12,47 @@ const calcAC = (char) => {
     const equippedShield = char.inventory?.find(i => i.equipped && (i.name.toLowerCase().includes('shield') || i.type === 'Shield'));
     
     let baseAC = 10 + dex; 
+    let formula = "Unarmored (10 + DEX)";
 
     // Unarmored Defense (Barbarian/Monk)
     if (!equippedArmor) {
-        if (char.class?.toLowerCase().includes('barbarian')) baseAC = 10 + dex + con;
-        else if (char.class?.toLowerCase().includes('monk')) baseAC = 10 + dex + wis;
+        if (char.class?.toLowerCase().includes('barbarian')) {
+            baseAC = 10 + dex + con;
+            formula = "Unarmored (10 + DEX + CON)";
+        } else if (char.class?.toLowerCase().includes('monk')) {
+            baseAC = 10 + dex + wis;
+            formula = "Unarmored (10 + DEX + WIS)";
+        }
     } else {
         // Armored Logic
         let armorBase = 11; 
         let maxDex = 100; 
         const name = equippedArmor.name.toLowerCase();
         
-        if (name.includes('leather') || name.includes('padded')) { armorBase = 11; }
-        if (name.includes('studded')) { armorBase = 12; }
+        if (name.includes('leather') || name.includes('padded')) { armorBase = 11; formula = "Light Armor"; }
+        if (name.includes('studded')) { armorBase = 12; formula = "Light Armor"; }
         
         if (name.includes('hide') || name.includes('chain shirt') || name.includes('scale') || name.includes('breastplate') || name.includes('half plate')) {
             armorBase = name.includes('hide') ? 12 : name.includes('half plate') ? 15 : 13;
             maxDex = 2;
+            formula = "Medium Armor (Max DEX +2)";
         }
         
         if (name.includes('ring') || name.includes('chain mail') || name.includes('splint') || name.includes('plate')) {
             armorBase = name.includes('plate') ? 18 : 14;
             maxDex = 0;
+            formula = "Heavy Armor";
         }
         const dexBonus = Math.min(dex, maxDex);
         baseAC = armorBase + dexBonus;
     }
 
-    if (equippedShield) baseAC += 2;
-    return baseAC;
+    if (equippedShield) {
+        baseAC += 2;
+        formula += " + Shield";
+    }
+
+    return { value: baseAC, formula };
 };
 // END CHANGE
 
@@ -135,7 +147,9 @@ export const useCharacterStore = create((set, get) => ({
         
         // START CHANGE: Ensure AC recalc handles Master Templates correctly
         if (['dex', 'con', 'wis'].includes(stat)) {
-            char.ac = calcAC(char);
+            const acData = calcAC(char);
+            char.ac = acData.value;
+            char.acFormula = acData.formula;
         }
         // END CHANGE
 
@@ -191,7 +205,11 @@ export const useCharacterStore = create((set, get) => ({
         const newInv = [...char.inventory];
         newInv.splice(index, 1);
         char.inventory = newInv;
-        char.ac = calcAC(char); // Recalc on remove
+        // START CHANGE: Update AC on Remove
+        const acData = calcAC(char);
+        char.ac = acData.value;
+        char.acFormula = acData.formula;
+        // END CHANGE
         return { character: char, isDirty: true };
     }),
 
@@ -202,8 +220,11 @@ export const useCharacterStore = create((set, get) => ({
         item.equipped = !item.equipped;
         
         const tempChar = { ...state.character, inventory: newInv };
-        const newAC = calcAC(tempChar);
-        tempChar.ac = newAC;
+        // START CHANGE: Update AC on Equip
+        const acData = calcAC(tempChar);
+        tempChar.ac = acData.value;
+        tempChar.acFormula = acData.formula;
+        // END CHANGE
 
         return { character: tempChar, isDirty: true };
     }),

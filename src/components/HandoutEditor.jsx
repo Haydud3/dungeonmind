@@ -1,11 +1,35 @@
-import React, { useState, useRef } from 'react';
-import ReactQuill from 'react-quill-new';
+import React, { useState, useEffect, useRef } from 'react';
+import ReactQuill, { Quill } from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
 import Icon from './Icon';
 import { useToast } from './ToastProvider';
-import { uploadImage } from '../utils/storageUtils';
+import { storeChunkedMap, retrieveChunkedMap, resolveChunkedHtml } from '../utils/storageUtils';
+import { compressImage } from '../utils/imageCompressor';
 
-const HandoutEditor = ({ onSave, onCancel, savedHandouts = [], onDelete }) => {
+// Define and Register Custom Blot globally to ensure registration happens once
+const ImageBlot = Quill.import('formats/image');
+class ChunkedImage extends ImageBlot {
+    static create(value) {
+        let node = super.create(value);
+        if (typeof value === 'string' && value.startsWith('chunked:')) {
+            node.setAttribute('data-chunked-src', value);
+            // Transparent 1x1 GIF placeholder
+            node.setAttribute('src', 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'); 
+            retrieveChunkedMap(value).then(base64 => {
+                if (node) node.setAttribute('src', base64);
+            });
+        }
+        return node;
+    }
+    static value(node) {
+        return node.getAttribute('data-chunked-src') || node.getAttribute('src');
+    }
+}
+ChunkedImage.blotName = 'chunkedImage';
+ChunkedImage.tagName = 'img';
+Quill.register(ChunkedImage, true); // true to overwrite default if necessary
+
+const HandoutEditor = ({ onSave, onCancel, savedHandouts = [], onDelete, campaignCode }) => {
     const [activeTab, setActiveTab] = useState('compose');
     const toast = useToast();
     
@@ -14,10 +38,55 @@ const HandoutEditor = ({ onSave, onCancel, savedHandouts = [], onDelete }) => {
     const [title, setTitle] = useState('');
     const [theme, setTheme] = useState('parchment');
     const [imageUrl, setImageUrl] = useState('');
+    const [resolvedImageUrl, setResolvedImageUrl] = useState('');
+    const [resolvedContent, setResolvedContent] = useState('');
     const [content, setContent] = useState('');
     const [isUploading, setIsUploading] = useState(false);
 
+    const quillRef = useRef(null);
     const fileInputRef = useRef(null);
+
+    // Resolve chunked images and HTML body for preview
+    useEffect(() => {
+        const resolve = async () => {
+            if (imageUrl?.startsWith('chunked:')) {
+                const img = await retrieveChunkedMap(imageUrl);
+                setResolvedImageUrl(img);
+            } else {
+                setResolvedImageUrl(imageUrl);
+            }
+            
+            const html = await resolveChunkedHtml(content);
+            setResolvedContent(html);
+        };
+        resolve();
+    }, [imageUrl, content]);
+
+    const imageHandler = () => {
+        const input = document.createElement('input');
+        input.setAttribute('type', 'file');
+        input.setAttribute('accept', 'image/*');
+        input.click();
+
+        input.onchange = async () => {
+            const file = input.files[0];
+            if (!file) return;
+            
+            try {
+                toast("Processing image...", "info");
+                const compressedBase64 = await compressImage(file, 800);
+                const chunkedId = await storeChunkedMap(compressedBase64, `body_img_${file.name}`);
+                
+                const editor = quillRef.current.getEditor();
+                const range = editor.getSelection(true);
+                editor.insertEmbed(range.index, 'chunkedImage', chunkedId, 'user');
+                editor.setSelection(range.index + 1, 'silent');
+            } catch (err) {
+                console.error(err);
+                toast("Image insertion failed", "error");
+            }
+        };
+    };
 
     const handleSubmit = (reveal = false) => {
         if (!title.trim()) return toast("Please title this document.", "error");
@@ -29,7 +98,7 @@ const HandoutEditor = ({ onSave, onCancel, savedHandouts = [], onDelete }) => {
             imageUrl,
             content,
             timestamp: Date.now(),
-            revealed: reveal // New flag to trigger auto-open for players
+            revealed: reveal
         });
         toast(reveal ? "Saved & Revealed to Players!" : "Handout Saved", "success");
     };
@@ -43,32 +112,37 @@ const HandoutEditor = ({ onSave, onCancel, savedHandouts = [], onDelete }) => {
         setActiveTab('compose');
     };
 
-    // --- FIX: Use Firebase Storage ---
     const handleFileUpload = async (e) => {
         const file = e.target.files[0];
         if (!file) return;
 
         setIsUploading(true);
         try {
-            const path = `handouts/${Date.now()}_${file.name}`;
-            const url = await uploadImage(file, path);
-            setImageUrl(url);
-            toast("Image uploaded successfully", "success");
+            const compressedBase64 = await compressImage(file, 1200);
+            const chunkedId = await storeChunkedMap(compressedBase64, `handout_${file.name}`);
+            setImageUrl(chunkedId);
+            toast("Image processed and stored", "success");
         } catch (err) {
             console.error(err);
-            toast("Upload failed", "error");
+            toast("Processing failed", "error");
         }
         setIsUploading(false);
     };
 
     const modules = {
-        toolbar: [
-            [{ 'header': [1, 2, false] }],
-            ['bold', 'italic', 'underline'],
-            [{ 'align': [] }],
-            [{ 'list': 'ordered'}, { 'list': 'bullet' }],
-            ['clean']
-        ]
+        toolbar: {
+            container: [
+                [{ 'header': [1, 2, false] }],
+                ['bold', 'italic', 'underline'],
+                [{ 'align': [] }],
+                [{ 'list': 'ordered'}, { 'list': 'bullet' }],
+                ['image', 'clean']
+            ],
+            handlers: {
+                image: imageHandler
+            }
+        },
+        clipboard: { matchVisual: false }
     };
 
     return (
@@ -128,9 +202,10 @@ const HandoutEditor = ({ onSave, onCancel, savedHandouts = [], onDelete }) => {
 
                                 {/* Preview of Theme */}
                                 <div className={`h-32 rounded border p-4 shadow-inner overflow-hidden relative ${theme === 'parchment' ? 'bg-[#f5e6c8] text-amber-900 border-amber-800' : theme === 'stone' ? 'bg-[#1c1917] text-slate-300 border-slate-600' : 'bg-white text-black border-slate-200'}`}>
-                                    <div className="font-bold text-lg mb-1">{title || "Title Preview"}</div>
-                                    <div className="text-xs opacity-80">This is how the document will look to your players...</div>
-                                    <div className="absolute bottom-2 right-2 text-[10px] uppercase font-bold opacity-50">Theme Preview</div>
+                                    {resolvedImageUrl && <img src={resolvedImageUrl} className="absolute inset-0 w-full h-full object-cover opacity-20 pointer-events-none" alt=""/>}
+                                    <div className="font-bold text-lg mb-1 relative z-10">{title || "Title Preview"}</div>
+                                    <div className="text-xs opacity-80 relative z-10">This is how the document will look to your players...</div>
+                                    <div className="absolute bottom-2 right-2 text-[10px] uppercase font-bold opacity-50 z-10">Theme Preview</div>
                                 </div>
                             </div>
 
@@ -138,7 +213,7 @@ const HandoutEditor = ({ onSave, onCancel, savedHandouts = [], onDelete }) => {
                             <div className="flex-1 flex flex-col h-[500px] lg:h-auto">
                                 <label className="text-xs uppercase font-bold text-slate-500 mb-1 block">Body Content</label>
                                 <div className={`flex-1 flex flex-col rounded border overflow-hidden handout-editor-wrapper ${theme === 'stone' ? 'border-slate-600' : 'border-slate-300'}`}>
-                                    <ReactQuill theme="snow" value={content} onChange={setContent} modules={modules} className="flex-1 bg-white text-black flex flex-col h-full"/>
+                                    <ReactQuill ref={quillRef} theme="snow" value={content} onChange={setContent} modules={modules} className="flex-1 bg-white text-black flex flex-col h-full"/>
                                 </div>
                             </div>
                         </div>
