@@ -43,7 +43,7 @@ export const googleProvider = new GoogleAuthProvider();
 
 export { 
   signInWithPopup, 
-  signInAnonymously, // <--- Add this
+  signInAnonymously, // START CHANGE: Export this so Lobby.jsx can use it
   signOut, 
   onAuthStateChanged, 
   doc, 
