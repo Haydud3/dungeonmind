@@ -1,7 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useMemo } from 'react';
 import * as fb from '../firebase';
-// 1. ADD onAuthStateChanged to imports
-import { doc, onSnapshot, collection, query, orderBy, limit, setDoc, deleteDoc, updateDoc, arrayUnion, onAuthStateChanged } from '../firebase';
+import { doc, onSnapshot, collection, query, orderBy, limit, setDoc, deleteDoc, updateDoc, deleteField, arrayUnion, arrayRemove } from '../firebase';
 
 const CampaignContext = createContext(null);
 
@@ -17,7 +16,6 @@ const DB_INIT_DATA = {
     hostId: null, dmIds: [], locations: [], npcs: [], handouts: [],
     activeUsers: {}, bannedUsers: [], assignments: {}, onboardingComplete: false, 
     config: { edition: '2014', strictMode: true }, 
-    campaignMembers: [], 
     campaign: { 
         genesis: { tone: 'Heroic', conflict: 'Dragon vs Kingdom', campaignName: 'New Campaign' }, 
         activeMap: { url: null, revealPaths: [], tokens: [] }, 
@@ -28,21 +26,31 @@ const DB_INIT_DATA = {
 
 const INITIAL_APP_STATE = { ...DB_INIT_DATA, players: [], journal_pages: {}, chatLog: [] };
 
-// 2. REMOVE 'user' from props, we will manage it internally
 export const CampaignProvider = ({ children }) => {
-    const [user, setUser] = useState(null); // <--- Add this state
     const [gameParams, setGameParams] = useState(null); 
+// --- CHANGES: Internal Auth State & Presence Trigger ---
+    const [user, setUser] = useState(null);
     const [data, setData] = useState(INITIAL_APP_STATE);
+
+    // 0. Internal Auth Listener
+    useEffect(() => {
+        return fb.onAuthStateChanged(fb.auth, (u) => setUser(u));
+    }, []);
+
+    // 1. Presence System (The "I am here" announcer)
+    useEffect(() => {
+        if (!gameParams || gameParams.isOffline || !user) return;
+
+        const rootRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code);
+        const myName = user.displayName || user.email?.split('@')[0] || "Anonymous";
+        
+        updateDoc(rootRef, { 
+            [`activeUsers.${user.uid}`]: myName 
+        }).catch(e => console.error("Presence Error:", e));
+    }, [gameParams?.code, user]);
+// --- 2 lines after changes ---
     const [loreChunks, setLoreChunks] = useState([]);
     const saveTimer = useRef(null);
-
-    // 3. ADD THIS EFFECT AT THE TOP OF THE PROVIDER
-    useEffect(() => {
-        const unsub = onAuthStateChanged(fb.auth, (u) => {
-            setUser(u);
-        });
-        return () => unsub();
-    }, []);
 
     // --- 1. SYNC ENGINE ---
     useEffect(() => {
@@ -61,12 +69,28 @@ export const CampaignProvider = ({ children }) => {
         const unsubRoot = onSnapshot(rootRef, (snap) => {
             if (snap.exists()) {
                 const d = snap.data();
-                if (d.bannedUsers?.includes(uid)) {
-                    localStorage.removeItem('dm_last_code'); setGameParams(null); return;
+                
+                // START CHANGE: Ban Enforcement & Auto-Join Registration
+                if (user && d.bannedUsers?.includes(user.uid)) {
+                    localStorage.removeItem('dm_last_code'); 
+                    setGameParams(null); 
+                    alert("You have been banished from this realm.");
+                    return;
                 }
+
+                if (user && !d.activeUsers?.[uid]) {
+                    updateDoc(rootRef, { [`activeUsers.${uid}`]: user.email || "Anonymous" }).catch(() => {});
+                }
+                // END CHANGE
+
                 setData(prev => ({ ...prev, ...d })); 
             } else if (gameParams.role === 'dm') {
-                setDoc(rootRef, { ...DB_INIT_DATA, hostId: uid, dmIds: [uid] });
+                setDoc(rootRef, { 
+                    ...DB_INIT_DATA, 
+                    hostId: uid, 
+                    dmIds: [uid],
+                    activeUsers: { [uid]: user?.email || "Dungeon Master" }
+                });
             } else {
                 setGameParams(null); // Invalid code
             }
@@ -91,73 +115,16 @@ export const CampaignProvider = ({ children }) => {
             setLoreChunks(allChunks);
         });
 
+        // Presence
+        if (user && !isOffline) updateDoc(rootRef, { [`activeUsers.${user.uid}`]: user.email || "Anonymous" }).catch(console.error);
+
         return () => { unsubRoot(); unsubPlayers(); unsubJournal(); unsubChat(); unsubLore(); };
     }, [gameParams, user]);
 
-    // --- 2. ROBUST SESSION HANDSHAKE (Current User) ---
-    useEffect(() => {
-        if (!user || !gameParams?.code || gameParams.isOffline) return;
-
-        const rootRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code);
-        
-        // Force write presence AND roster history immediately
-        setDoc(rootRef, {
-            [`activeUsers.${user.uid}`]: user.email || "Anonymous",
-            campaignMembers: arrayUnion({
-                uid: user.uid,
-                email: user.email || "Anonymous",
-                role: gameParams.role,
-                joined: Date.now()
-            })
-        }, { merge: true }).catch(err => console.error("[HANDSHAKE ERROR]", err));
-    }, [user?.uid, gameParams?.code, gameParams?.isOffline, gameParams?.role]);
-
-    // --- 3. HOST SCAVENGER (Backfill missing members) ---
-    // This runs ONLY on the DM's computer to fix the database for other players
-    useEffect(() => {
-        if (!data || !user || !gameParams?.code || gameParams.isOffline) return;
-        
-        // Only the Host runs this cleanup
-        if (data.hostId === user.uid) {
-            const currentMembers = data.campaignMembers || [];
-            const memberIds = new Set(currentMembers.map(m => m.uid));
-            const updates = [];
-
-            // A. Scavenge from Active Users (Online right now but missing from Roster)
-            Object.entries(data.activeUsers || {}).forEach(([uid, email]) => {
-                if (!memberIds.has(uid)) {
-                    updates.push({ uid, email, role: 'player', joined: Date.now() });
-                    memberIds.add(uid); // Add to set to prevent duplicates
-                }
-            });
-
-            // B. Scavenge from Character Sheets (Offline but have history)
-            (data.players || []).forEach(p => {
-                if (p.ownerId && p.ownerId !== 'anon' && !memberIds.has(p.ownerId)) {
-                    // Use a placeholder name if we don't have their email in activeUsers
-                    const email = data.activeUsers?.[p.ownerId] || "Offline Hero (Recovered)";
-                    updates.push({ uid: p.ownerId, email: email, role: 'player', joined: Date.now() });
-                    memberIds.add(p.ownerId);
-                }
-            });
-
-            // C. Batch Update if missing members found
-            if (updates.length > 0) {
-                console.log("[HOST] Recovering missing members:", updates);
-                const rootRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code);
-                
-                // We use loop + arrayUnion because arrayUnion takes varargs, not an array of objects
-                updates.forEach(m => {
-                    updateDoc(rootRef, {
-                        campaignMembers: arrayUnion(m)
-                    }).catch(console.error);
-                });
-            }
-        }
-    }, [data.activeUsers, data.players, data.hostId, user?.uid, data.campaignMembers]);
-
-     // --- 4. DATA ACTIONS ---
+     // --- 2. ACTIONS ---
     const updateCloud = (newData, immediate = false) => {
+// ---------------------------------------------------------
+        // NEW: Sanitizer function to strip 'undefined' which Firebase hates
         const sanitize = (obj) => {
             return JSON.parse(JSON.stringify(obj, (key, value) =>
                 value === undefined ? null : value
@@ -167,15 +134,16 @@ export const CampaignProvider = ({ children }) => {
         const sanitizedData = sanitize(newData);
         const { players, chatLog, journal_pages, ...rootData } = sanitizedData;
         
-        setData(prev => ({ ...prev, ...sanitizedData })); 
+        setData(prev => ({ ...prev, ...sanitizedData })); // Optimistic UI
+// ---------------------------------------------------------
 
         if (gameParams?.isOffline) {
+// context: line 88 (updated to use sanitizedData)
             localStorage.setItem('dm_local_data', JSON.stringify(sanitizedData));
             return;
         }
         
         const doSave = () => {
-            if (!gameParams || gameParams.isOffline) return;
             const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code);
             setDoc(ref, rootData, { merge: true });
         };
@@ -205,6 +173,28 @@ export const CampaignProvider = ({ children }) => {
         setData(INITIAL_APP_STATE);
     };
 
+    const kickPlayer = async (targetUid) => {
+        if (!gameParams?.code || gameParams.isOffline) return;
+        const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code);
+        await updateDoc(ref, { [`activeUsers.${targetUid}`]: fb.deleteField() });
+    };
+
+    const banPlayer = async (targetUid) => {
+        if (!gameParams?.code || gameParams.isOffline) return;
+        const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code);
+        await updateDoc(ref, { 
+            [`activeUsers.${targetUid}`]: fb.deleteField(),
+            bannedUsers: fb.arrayUnion(targetUid)
+        });
+    };
+
+    const unbanPlayer = async (targetUid) => {
+        if (!gameParams?.code || gameParams.isOffline) return;
+        const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code);
+        await updateDoc(ref, { bannedUsers: fb.arrayRemove(targetUid) });
+    };
+
+    // START CHANGE: Global Ping Helper
     const sendPing = (coords) => {
         if (!gameParams?.code || gameParams.isOffline) return;
         const ref = collection(doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code), 'chat');
@@ -216,13 +206,19 @@ export const CampaignProvider = ({ children }) => {
             timestamp: Date.now()
         });
     };
+    // END CHANGE
 
+    // --- MEMOIZED VALUE (Prevents Infinite Renders & "1, M" Errors) ---
     const value = useMemo(() => ({
         data, setData, gameParams, 
+// --- CHANGES: Add user to exports ---
+        user, 
         joinCampaign, leaveCampaign, 
+// --- 2 lines after changes ---
         updateCloud, savePlayer, deletePlayer, 
         loreChunks, setLoreChunks,
-        sendPing
+        sendPing,
+        kickPlayer, banPlayer, unbanPlayer
     }), [data, gameParams, loreChunks]);
 
     return (

@@ -1,7 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import Icon from './Icon';
-// 1. Import signInAnonymously
-import { signInAnonymously } from '../firebase'; 
 
 const Lobby = ({ fb, user, onJoin, onOffline }) => {
     const [joinCode, setJoinCode] = useState("");
@@ -36,28 +34,10 @@ const Lobby = ({ fb, user, onJoin, onOffline }) => {
         onJoin(newCode, 'dm', user ? user.uid : 'anon');
     };
 
-    const joinExisting = async () => {
+    const joinExisting = () => {
         if(!joinCode) return;
-        
-        setIsLoggingIn(true); // Show visual feedback
-
-        try {
-            // Ensure we have a valid Firebase User (Google or Anon)
-            let activeUid = user ? user.uid : null;
-            
-            if (!activeUid) {
-                const result = await signInAnonymously(fb.auth);
-                activeUid = result.user.uid;
-            }
-
-            addToRecents(joinCode.toUpperCase(), 'player');
-            // Pass the REAL uid, not 'anon'
-            onJoin(joinCode.toUpperCase(), 'player', activeUid); 
-        } catch (e) {
-            console.error(e);
-            alert("Could not join: " + e.message);
-            setIsLoggingIn(false);
-        }
+        addToRecents(joinCode.toUpperCase(), 'player');
+        onJoin(joinCode.toUpperCase(), 'player', user ? user.uid : 'anon');
     };
 
     const deleteCampaign = async (e, item) => {

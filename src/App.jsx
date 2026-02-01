@@ -54,8 +54,14 @@ function DungeonMindApp() {
   const [user, setUser] = useState(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
 
-  // START CHANGE: Use Contexts
-  const { data, setData, gameParams, joinCampaign, leaveCampaign, updateCloud, savePlayer, deletePlayer, loreChunks, setLoreChunks } = useCampaign();
+  const { 
+    data, setData, gameParams, joinCampaign, leaveCampaign, 
+    updateCloud, savePlayer, deletePlayer, loreChunks, setLoreChunks,
+    kickPlayer, banPlayer, unbanPlayer 
+  } = useCampaign();
+  useEffect(() => {
+    if (user !== undefined) setIsAuthReady(true);
+  }, [user]);
   const toast = useToast(); 
 
   // START CHANGE: Deep Linking Router Logic
@@ -866,7 +872,19 @@ function DungeonMindApp() {
               {currentView === 'lore' && <LoreView data={data} aiHelper={queryAiService} pdfChunks={loreChunks} setPdfChunks={setLoreChunks} onUploadLore={uploadLore} />}
               
               {/* 7. SETTINGS */}
-              {currentView === 'settings' && <SettingsView data={data} setData={setData} apiKey={apiKey} setApiKey={setApiKey} role={effectiveRole} updateCloud={updateCloud} code={gameParams.code} user={user} onExit={() => { setGameParams(null); }} aiProvider={aiProvider} setAiProvider={setAiProvider} openAiModel={openAiModel} setOpenAiModel={setOpenAiModel} puterModel={puterModel} setPuterModel={setPuterModel} banPlayer={()=>{}} kickPlayer={()=>{}} unbanPlayer={()=>{}} />}
+              {currentView === 'settings' && <SettingsView 
+// --- CHANGES: Ensure correct props are passed ---
+                  data={data} setData={setData} 
+                  apiKey={apiKey} setApiKey={setApiKey} 
+                  role={effectiveRole} updateCloud={updateCloud} 
+                  code={gameParams.code} user={user} 
+                  onExit={() => { localStorage.removeItem('dm_last_code'); leaveCampaign(); }} 
+                  aiProvider={aiProvider} setAiProvider={setAiProvider} 
+                  openAiModel={openAiModel} setOpenAiModel={setOpenAiModel} 
+                  puterModel={puterModel} setPuterModel={setPuterModel} 
+                  banPlayer={banPlayer} kickPlayer={kickPlayer} unbanPlayer={unbanPlayer} 
+// --- 2 lines after changes ---
+              />}
             </div>
        </main>
        

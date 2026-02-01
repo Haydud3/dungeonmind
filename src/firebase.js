@@ -1,5 +1,5 @@
 import { initializeApp } from "firebase/app";
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, signInAnonymously } from "firebase/auth";
+import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "firebase/auth";
 import { 
   getFirestore, 
   doc, 
@@ -36,19 +36,15 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
-// START CHANGE: Export appId for CampaignContext
-export const appId = firebaseConfig.appId;
-// END CHANGE
+// START CHANGE: Ensure Storage is exported
 export const storage = getStorage(app);
+// END CHANGE
 export const googleProvider = new GoogleAuthProvider();
 
 export { 
   signInWithPopup, 
-// START CHANGE: Export anonymous auth for Lobby
-  signInAnonymously,
-// END CHANGE
   signOut, 
-  onAuthStateChanged,
+  onAuthStateChanged, 
   doc, 
   setDoc, 
   getDoc, 
