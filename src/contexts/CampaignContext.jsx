@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useMemo } from 'react';
 import * as fb from '../firebase';
-import { doc, onSnapshot, collection, query, orderBy, limit, setDoc, deleteDoc, updateDoc, arrayUnion } from '../firebase';
+// 1. ADD onAuthStateChanged to imports
+import { doc, onSnapshot, collection, query, orderBy, limit, setDoc, deleteDoc, updateDoc, arrayUnion, onAuthStateChanged } from '../firebase';
 
 const CampaignContext = createContext(null);
 
@@ -27,11 +28,21 @@ const DB_INIT_DATA = {
 
 const INITIAL_APP_STATE = { ...DB_INIT_DATA, players: [], journal_pages: {}, chatLog: [] };
 
-export const CampaignProvider = ({ children, user }) => {
+// 2. REMOVE 'user' from props, we will manage it internally
+export const CampaignProvider = ({ children }) => {
+    const [user, setUser] = useState(null); // <--- Add this state
     const [gameParams, setGameParams] = useState(null); 
     const [data, setData] = useState(INITIAL_APP_STATE);
     const [loreChunks, setLoreChunks] = useState([]);
     const saveTimer = useRef(null);
+
+    // 3. ADD THIS EFFECT AT THE TOP OF THE PROVIDER
+    useEffect(() => {
+        const unsub = onAuthStateChanged(fb.auth, (u) => {
+            setUser(u);
+        });
+        return () => unsub();
+    }, []);
 
     // --- 1. SYNC ENGINE ---
     useEffect(() => {

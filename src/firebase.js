@@ -43,6 +43,7 @@ export const googleProvider = new GoogleAuthProvider();
 
 export { 
   signInWithPopup, 
+  signInAnonymously, // <--- Add this
   signOut, 
   onAuthStateChanged, 
   doc, 
