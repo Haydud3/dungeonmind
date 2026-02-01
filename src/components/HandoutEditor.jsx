@@ -27,10 +27,10 @@ class ChunkedImage extends ImageBlot {
 }
 ChunkedImage.blotName = 'chunkedImage';
 ChunkedImage.tagName = 'img';
-Quill.register(ChunkedImage, true); // true to overwrite default if necessary
+Quill.register(ChunkedImage, true);
 
-const HandoutEditor = ({ onSave, onCancel, savedHandouts = [], onDelete, campaignCode }) => {
-    const [activeTab, setActiveTab] = useState('compose');
+const HandoutEditor = ({ onSave, onCancel, savedHandouts = [], onDelete, campaignCode, role }) => {
+    const [activeTab, setActiveTab] = useState(role === 'dm' ? 'compose' : 'history');
     const toast = useToast();
     
     // Editor State
@@ -157,11 +157,13 @@ const HandoutEditor = ({ onSave, onCancel, savedHandouts = [], onDelete, campaig
                     <div className="flex items-center gap-4">
                         <h3 className="fantasy-font text-amber-500 text-xl flex items-center gap-2"><Icon name="scroll" size={20}/> Handout Manager</h3>
                         <div className="flex bg-slate-900 rounded p-1 border border-slate-700">
-                            <button onClick={() => setActiveTab('compose')} className={`px-3 py-1 text-xs font-bold rounded flex items-center gap-2 ${activeTab === 'compose' ? 'bg-amber-600 text-white' : 'text-slate-400 hover:text-white'}`}>
-                                <Icon name="pen-tool" size={14}/> Compose
-                            </button>
+                            {role === 'dm' && (
+                                <button onClick={() => setActiveTab('compose')} className={`px-3 py-1 text-xs font-bold rounded flex items-center gap-2 ${activeTab === 'compose' ? 'bg-amber-600 text-white' : 'text-slate-400 hover:text-white'}`}>
+                                    <Icon name="pen-tool" size={14}/> Compose
+                                </button>
+                            )}
                             <button onClick={() => setActiveTab('history')} className={`px-3 py-1 text-xs font-bold rounded flex items-center gap-2 ${activeTab === 'history' ? 'bg-amber-600 text-white' : 'text-slate-400 hover:text-white'}`}>
-                                <Icon name="history" size={14}/> Saved ({savedHandouts.length})
+                                <Icon name="history" size={14}/> {role === 'dm' ? `Saved (${savedHandouts.length})` : 'Archives'}
                             </button>
                         </div>
                     </div>
@@ -225,11 +227,13 @@ const HandoutEditor = ({ onSave, onCancel, savedHandouts = [], onDelete, campaig
                     {/* HISTORY TAB */}
                     {activeTab === 'history' && (
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                            {savedHandouts.map((h) => (
+                            {savedHandouts
+                                .filter(h => role === 'dm' || h.revealed)
+                                .map((h) => (
                                 <div key={h.id} className="bg-slate-900 border border-slate-700 p-4 rounded-xl hover:border-amber-500 transition-all cursor-pointer group" onClick={() => loadHandout(h)}>
                                     <div className="flex justify-between items-start mb-2">
                                         <h4 className="font-bold text-white truncate">{h.title}</h4>
-                                        <button onClick={(e) => { e.stopPropagation(); onDelete(h.id); }} className="text-slate-600 hover:text-red-500 opacity-0 group-hover:opacity-100"><Icon name="trash-2" size={16}/></button>
+                                        {role === 'dm' && <button onClick={(e) => { e.stopPropagation(); onDelete(h.id); }} className="text-slate-600 hover:text-red-500 opacity-0 group-hover:opacity-100"><Icon name="trash-2" size={16}/></button>}
                                     </div>
                                     <p className="text-xs text-slate-500 mb-3">{new Date(h.timestamp).toLocaleDateString()}</p>
                                     <div className={`h-24 rounded p-2 text-[10px] overflow-hidden opacity-80 ${h.theme === 'parchment' ? 'bg-[#f5e6c8] text-amber-900' : h.theme === 'stone' ? 'bg-[#1c1917] text-slate-400' : 'bg-white text-black'}`}>

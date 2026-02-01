@@ -23,51 +23,65 @@ const SettingsView = ({
 
     // --- PLAYER MANAGEMENT LOGIC ---
     const handleAssignCharacter = (uid, charId) => {
-        // START CHANGE: Set to null to explicitly remove assignment if charId is empty
         const newAssignments = { ...data.assignments };
         if (charId) {
             newAssignments[uid] = charId;
         } else {
-            // Delete key if setting to empty string/none
             delete newAssignments[uid]; 
         }
         
         setData(prev => ({ ...prev, assignments: newAssignments }));
         updateCloud({ ...data, assignments: newAssignments }, true);
-        // END CHANGE
     };
 
     const toggleDmStatus = (uid) => {
         let newDmIds = [...(data.dmIds || [])];
-        
-        // If already DM, remove (Renounce)
         if (newDmIds.includes(uid)) {
             if (newDmIds.length <= 1) {
                 alert("Cannot renounce: You are the only DM left!");
                 return;
             }
-            if (!confirm("Are you sure you want to renounce your Dungeon Master status? You will lose access to DM tools immediately.")) return;
+            if (!confirm("Renounce Dungeon Master status?")) return;
             newDmIds = newDmIds.filter(id => id !== uid);
-        } 
-        // If not DM, add (Promote)
-        else {
-            if (!confirm("Promote this user to Dungeon Master? They will have full control over the map and settings.")) return;
+        } else {
+            if (!confirm("Promote user to Dungeon Master?")) return;
             newDmIds.push(uid);
         }
-
         updateCloud({ ...data, dmIds: newDmIds });
     };
 
-    // START CHANGE: Safe Exit Handler to prevent Auto-Join loop
     const handleSafeExit = () => {
         if (window.confirm("Disconnect from session?")) {
-            localStorage.removeItem('dm_last_code'); // Kill the auto-save code
-            if (onExit) onExit(); // Now exit the view
+            localStorage.removeItem('dm_last_code'); 
+            if (onExit) onExit(); 
         }
     };
-    // END CHANGE
 
-    // [DELETED handleRetroactiveFix FUNCTION]
+    // --- CRITICAL FIX: CONSOLIDATE MEMBERS LIST ---
+    // Merge History (campaignMembers) with Live Presence (activeUsers)
+    // This ensures that if a player is online but the history save failed, they still show up.
+    const getAllMembers = () => {
+        const membersMap = new Map();
+
+        // 1. Add everyone from History
+        (data.campaignMembers || []).forEach(m => {
+            membersMap.set(m.uid, { ...m, source: 'history' });
+        });
+
+        // 2. Add everyone currently Online (ActiveUsers)
+        // If they exist in history, this just updates their online status logic later.
+        // If they DO NOT exist in history, this adds them so they are visible.
+        Object.entries(data.activeUsers || {}).forEach(([uid, email]) => {
+            if (!membersMap.has(uid)) {
+                membersMap.set(uid, { uid, email, role: 'player', source: 'live' });
+            }
+        });
+
+        // Convert back to array
+        return Array.from(membersMap.values());
+    };
+
+    const consolidatedMembers = getAllMembers();
 
     return (
         <div className="h-full bg-slate-900 p-4 md:p-8 overflow-y-auto custom-scroll">
@@ -126,8 +140,6 @@ const SettingsView = ({
                                         <div className="text-xs text-slate-500">Prevent players from editing their stats manually during sessions.</div>
                                     </div>
                                 </div>
-
-                                {/* NEW: Compact UI Toggle */}
                                 <div className="flex items-center gap-3 p-3 bg-slate-900/50 rounded border border-slate-700">
                                     <input 
                                         type="checkbox" 
@@ -140,15 +152,13 @@ const SettingsView = ({
                                         <div className="text-xs text-slate-500">Lowers the map toolbar to maximize screen space on phones.</div>
                                     </div>
                                 </div>
-
-                                {/* START CHANGE: Performance Toggle */}
                                 <div className="flex items-center gap-3 p-3 bg-slate-900/50 rounded border border-slate-700">
                                     <input 
                                         type="checkbox" 
                                         checked={localStorage.getItem('vtt_low_performance') === 'true'} 
                                         onChange={(e) => {
                                             localStorage.setItem('vtt_low_performance', e.target.checked);
-                                            window.location.reload(); // Force reload to re-init canvas quality
+                                            window.location.reload();
                                         }}
                                         className="w-5 h-5 accent-purple-500"
                                     />
@@ -157,17 +167,11 @@ const SettingsView = ({
                                         <div className="text-xs text-slate-500">Reduces vision quality and shadow effects for older devices.</div>
                                     </div>
                                 </div>
-                                {/* END CHANGE */}
                         </div>
                     </div>
-
-                    {/* [DELETED DANGER ZONE BUTTON BLOCK] */}
-
-                    {/* START CHANGE: Use handleSafeExit instead of onExit */}
                     <button onClick={handleSafeExit} className="w-full py-4 rounded-xl border-2 border-red-900/50 text-red-400 hover:bg-red-900/20 hover:border-red-500 hover:text-white transition-all font-bold flex items-center justify-center gap-2">
                         <Icon name="log-out" size={20}/> Leave Campaign
                     </button>
-                    {/* END CHANGE */}
                     </div>
                 )}
 
@@ -177,42 +181,20 @@ const SettingsView = ({
                         <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-lg">
                             <h3 className="text-lg font-bold text-amber-500 mb-1 flex items-center gap-2"><Icon name="book-open" size={20}/> Campaign Bible</h3>
                             <p className="text-sm text-slate-400 mb-6">Core truths and themes of your world.</p>
-
                             <div className="space-y-4">
                                 <div>
                                     <label className="block text-xs uppercase font-bold text-slate-500 mb-1">Campaign Name</label>
-                                    <input 
-                                        value={bibleData.campaignName} 
-                                        onChange={(e) => setBibleData({ ...bibleData, campaignName: e.target.value })}
-                                        disabled={role !== 'dm'}
-                                        className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white font-bold text-lg"
-                                    />
+                                    <input value={bibleData.campaignName} onChange={(e) => setBibleData({ ...bibleData, campaignName: e.target.value })} disabled={role !== 'dm'} className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white font-bold text-lg"/>
                                 </div>
                                 <div>
                                     <label className="block text-xs uppercase font-bold text-slate-500 mb-1">Tone & Theme</label>
-                                    <input 
-                                        value={bibleData.tone} 
-                                        onChange={(e) => setBibleData({ ...bibleData, tone: e.target.value })}
-                                        disabled={role !== 'dm'}
-                                        placeholder="e.g. Dark Fantasy, High Magic, Gritty Realism"
-                                        className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white"
-                                    />
+                                    <input value={bibleData.tone} onChange={(e) => setBibleData({ ...bibleData, tone: e.target.value })} disabled={role !== 'dm'} placeholder="e.g. Dark Fantasy..." className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white"/>
                                 </div>
                                 <div>
                                     <label className="block text-xs uppercase font-bold text-slate-500 mb-1">Central Conflict</label>
-                                    <textarea 
-                                        value={bibleData.conflict} 
-                                        onChange={(e) => setBibleData({ ...bibleData, conflict: e.target.value })}
-                                        disabled={role !== 'dm'}
-                                        placeholder="e.g. The Kingdom is crumbling under the weight of a dragon's curse..."
-                                        className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white h-32 resize-none"
-                                    />
+                                    <textarea value={bibleData.conflict} onChange={(e) => setBibleData({ ...bibleData, conflict: e.target.value })} disabled={role !== 'dm'} placeholder="e.g. The Kingdom is crumbling..." className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white h-32 resize-none"/>
                                 </div>
-                                {role === 'dm' && (
-                                    <button onClick={handleBibleSave} className="bg-amber-600 hover:bg-amber-500 text-white px-6 py-2 rounded font-bold self-end">
-                                        Save Changes
-                                    </button>
-                                )}
+                                {role === 'dm' && <button onClick={handleBibleSave} className="bg-amber-600 hover:bg-amber-500 text-white px-6 py-2 rounded font-bold self-end">Save Changes</button>}
                             </div>
                         </div>
                     </div>
@@ -223,79 +205,42 @@ const SettingsView = ({
                     <div className="space-y-6 animate-in fade-in">
                         <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-lg">
                             <h3 className="text-lg font-bold text-purple-400 mb-4 flex items-center gap-2"><Icon name="sparkles" size={20}/> Intelligence Engine</h3>
-                            
                             <div className="space-y-6">
                                 <div>
                                     <label className="block text-xs uppercase font-bold text-slate-500 mb-2">AI Provider</label>
                                     <div className="grid grid-cols-3 gap-2">
                                         {['puter', 'openai', 'gemini'].map(p => (
-                                            <button 
-                                                key={p} 
-                                                onClick={() => setAiProvider(p)} 
-                                                className={`py-2 px-3 rounded border capitalize ${aiProvider === p ? 'bg-purple-900/50 border-purple-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-400 hover:bg-slate-800'}`}
-                                            >
-                                                {p === 'puter' ? 'Puter.js (Free)' : p}
-                                            </button>
+                                            <button key={p} onClick={() => setAiProvider(p)} className={`py-2 px-3 rounded border capitalize ${aiProvider === p ? 'bg-purple-900/50 border-purple-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-400 hover:bg-slate-800'}`}>{p === 'puter' ? 'Puter.js (Free)' : p}</button>
                                         ))}
                                     </div>
                                 </div>
-
                                 {aiProvider === 'openai' && (
                                     <>
-                                        <div>
-                                            <label className="block text-xs uppercase font-bold text-slate-500 mb-1">OpenAI API Key</label>
-                                            <input 
-                                                type="password" 
-                                                value={apiKey} 
-                                                onChange={(e) => setApiKey(e.target.value)} 
-                                                placeholder="sk-..."
-                                                className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white font-mono"
-                                            />
-                                        </div>
-                                        <div>
-                                            <label className="block text-xs uppercase font-bold text-slate-500 mb-1">Model</label>
-                                            <select value={openAiModel} onChange={e => setOpenAiModel(e.target.value)} className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white">
-                                                <option value="gpt-4o">GPT-4o (Fast & Smart)</option>
-                                                <option value="gpt-4-turbo">GPT-4 Turbo</option>
-                                                <option value="gpt-3.5-turbo">GPT-3.5 Turbo (Cheap)</option>
-                                            </select>
-                                        </div>
+                                        <div><label className="block text-xs uppercase font-bold text-slate-500 mb-1">OpenAI API Key</label><input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-..." className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white font-mono"/></div>
+                                        <div><label className="block text-xs uppercase font-bold text-slate-500 mb-1">Model</label><select value={openAiModel} onChange={e => setOpenAiModel(e.target.value)} className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white"><option value="gpt-4o">GPT-4o</option><option value="gpt-4-turbo">GPT-4 Turbo</option><option value="gpt-3.5-turbo">GPT-3.5 Turbo</option></select></div>
                                     </>
                                 )}
-
                                 {aiProvider === 'gemini' && (
                                     <>
-                                        <div>
-                                            <label className="block text-xs uppercase font-bold text-slate-500 mb-1">Google Gemini API Key</label>
-                                            <input 
-                                                type="password" 
-                                                value={apiKey} 
-                                                onChange={(e) => setApiKey(e.target.value)} 
-                                                placeholder="AIza..."
-                                                className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white font-mono"
-                                            />
-                                        </div>
+                                        <div><label className="block text-xs uppercase font-bold text-slate-500 mb-1">Google Gemini API Key</label><input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="AIza..." className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white font-mono"/></div>
                                         <div className="text-xs text-slate-500">Using model: <span className="font-mono text-purple-400">gemini-1.5-flash</span></div>
                                     </>
                                 )}
-
                                 {aiProvider === 'puter' && (
                                     <div>
                                         <label className="block text-xs uppercase font-bold text-slate-500 mb-1">Model</label>
                                         <select value={puterModel} onChange={e => setPuterModel(e.target.value)} className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white">
                                             <option value="mistral-large-latest">Mistral Large (Smart)</option>
-                                            <option value="gpt-4o-mini">GPT-4o Mini (Balanced)</option>
-                                    <option value="claude-3-5-sonnet">Claude 3.5 Sonnet (Creative)</option>
-                                </select>
-                                {/* START CHANGE: Restore Manual Auth Controls */}
-                                <div className="flex gap-2 mt-2">
-                                    <button onClick={() => window.puter?.auth?.signIn()} className="flex-1 bg-indigo-900/30 border border-indigo-500 text-indigo-200 hover:bg-indigo-800 text-xs font-bold py-2 rounded transition-colors">Sign In</button>
-                                    <button onClick={() => window.location.reload()} className="flex-1 bg-slate-800 border border-slate-600 text-slate-300 hover:bg-slate-700 text-xs font-bold py-2 rounded transition-colors">Reload App</button>
-                                </div>
-                                {/* END CHANGE */}
+                                            <option value="gpt-4o-mini">GPT-4o Mini</option>
+                                            <option value="claude-3-5-sonnet">Claude 3.5 Sonnet</option>
+                                        </select>
+                                        <div className="flex gap-2 mt-2">
+                                            <button onClick={() => window.puter?.auth?.signIn()} className="flex-1 bg-indigo-900/30 border border-indigo-500 text-indigo-200 hover:bg-indigo-800 text-xs font-bold py-2 rounded transition-colors">Sign In</button>
+                                            <button onClick={() => window.location.reload()} className="flex-1 bg-slate-800 border border-slate-600 text-slate-300 hover:bg-slate-700 text-xs font-bold py-2 rounded transition-colors">Reload App</button>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
-                        )}
-                    </div>
                         </div>
                     </div>
                 )}
@@ -307,23 +252,28 @@ const SettingsView = ({
                             <h3 className="text-lg font-bold text-red-400 mb-4 flex items-center gap-2"><Icon name="shield" size={20}/> Player Management</h3>
                             
                             <div className="space-y-4">
-                                {/* START CHANGE: Iterate over persistent campaignMembers */}
-                                {data.campaignMembers
-                                    .filter(member => member.uid !== user.uid) // Filter out current user
+                                {consolidatedMembers
+                                    .filter(member => member.uid !== user.uid)
                                     .map(member => {
                                     const uid = member.uid;
                                     const isDm = data.dmIds?.includes(uid);
+                                    // Check if they are actually online (in activeUsers)
                                     const isOnline = !!data.activeUsers?.[uid];
+                                    // If source is 'live' but not in 'history', show they are new
+                                    const isNew = member.source === 'live';
                                     const name = member.email || "Anonymous";
                                     const assignedCharId = data.assignments?.[uid] || "";
 
                                     return (
-                                        <div key={uid} className="flex flex-col bg-slate-900 p-4 rounded border border-slate-700 gap-3">
+                                        <div key={uid} className={`flex flex-col bg-slate-900 p-4 rounded border gap-3 ${isNew ? 'border-amber-500/50' : 'border-slate-700'}`}>
                                             <div className="flex items-center justify-between">
                                                 <div className="flex items-center gap-3">
-                                                    <div className={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-500 shadow-[0_0_8px_#22c55e]' : 'bg-slate-500'}`}></div>
+                                                    <div className={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-500 shadow-[0_0_8px_#22c55e]' : 'bg-slate-600'}`}></div>
                                                     <div className="flex flex-col">
-                                                        <span className="text-white font-bold text-sm">{name}</span>
+                                                        <span className="text-white font-bold text-sm">
+                                                            {name}
+                                                            {isNew && <span className="ml-2 text-[10px] bg-amber-900 text-amber-200 px-1 rounded">NEW</span>}
+                                                        </span>
                                                         <span className="text-xs text-slate-500 font-mono">{uid.slice(0,6)}...</span>
                                                     </div>
                                                     {isDm && <span className="text-[10px] font-bold bg-amber-600/20 text-amber-500 px-2 py-0.5 rounded border border-amber-600/50 uppercase">Dungeon Master</span>}
@@ -331,9 +281,7 @@ const SettingsView = ({
                                                 
                                                 <div className="flex gap-2">
                                                     {isDm ? (
-                                                        <button onClick={() => toggleDmStatus(uid)} className="text-xs bg-red-900/50 hover:bg-red-800 text-red-400 border border-red-700 px-3 py-1 rounded">
-                                                            Revoke DM
-                                                        </button>
+                                                        <button onClick={() => toggleDmStatus(uid)} className="text-xs bg-red-900/50 hover:bg-red-800 text-red-400 border border-red-700 px-3 py-1 rounded">Revoke DM</button>
                                                     ) : (
                                                         <>
                                                             <button onClick={() => toggleDmStatus(uid)} className="text-xs bg-indigo-900/40 hover:bg-indigo-700 text-indigo-300 border border-indigo-700 px-3 py-1 rounded">Promote</button>
@@ -344,57 +292,40 @@ const SettingsView = ({
                                                 </div>
                                             </div>
 
-                                            {/* Character Assignment Dropdown */}
                                             <div className="flex items-center gap-2 mt-2 pt-2 border-t border-slate-800">
                                                 <label className="text-xs text-slate-500 font-bold uppercase">Assign:</label>
-                                                <select 
-                                                    value={assignedCharId} 
-                                                    onChange={(e) => handleAssignCharacter(uid, e.target.value)}
-                                                    className="flex-1 bg-slate-800 border border-slate-600 rounded px-2 py-1 text-xs text-white outline-none focus:border-indigo-500"
-                                                >
+                                                <select value={assignedCharId} onChange={(e) => handleAssignCharacter(uid, e.target.value)} className="flex-1 bg-slate-800 border border-slate-600 rounded px-2 py-1 text-xs text-white outline-none focus:border-indigo-500">
                                                     <option value="">(Observer / None)</option>
-                                                    {data.players?.map(p => (
-                                                        <option key={p.id} value={p.id}>{p.name} ({p.race} {p.class})</option>
-                                                    ))}
+                                                    {data.players?.map(p => (<option key={p.id} value={p.id}>{p.name} ({p.race} {p.class})</option>))}
                                                 </select>
                                             </div>
                                         </div>
                                     );
                                 })}
 
-                                {/* Current User (Me) Entry - Always last and fixed */}
+                                {/* Current User (Me) */}
                                 <div key={user.uid} className="flex flex-col bg-slate-900 p-4 rounded border border-slate-500/50 gap-3 opacity-80">
                                     <div className="flex items-center justify-between">
                                         <div className="flex items-center gap-3">
                                             <div className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_#22c55e]"></div>
                                             <div className="flex flex-col">
-                                                <span className="text-white font-bold text-sm">{data.activeUsers?.[user.uid]} (Me)</span>
+                                                <span className="text-white font-bold text-sm">{user.email} (Me)</span>
                                                 <span className="text-xs text-slate-500 font-mono">{user.uid.slice(0,6)}...</span>
                                             </div>
                                             {data.dmIds?.includes(user.uid) && <span className="text-[10px] font-bold bg-amber-600/20 text-amber-500 px-2 py-0.5 rounded border border-amber-600/50 uppercase">Dungeon Master</span>}
                                         </div>
-                                        
                                         {data.dmIds?.includes(user.uid) && (
-                                            <button onClick={() => toggleDmStatus(user.uid)} className="text-xs bg-slate-800 hover:bg-red-900/50 text-slate-400 hover:text-red-400 border border-slate-600 px-3 py-1 rounded">
-                                                Renounce DM
-                                            </button>
+                                            <button onClick={() => toggleDmStatus(user.uid)} className="text-xs bg-slate-800 hover:bg-red-900/50 text-slate-400 hover:text-red-400 border border-slate-600 px-3 py-1 rounded">Renounce DM</button>
                                         )}
                                     </div>
                                     <div className="flex items-center gap-2 pt-2 border-t border-slate-800">
                                         <label className="text-xs text-slate-500 font-bold uppercase">Assign:</label>
-                                        <select 
-                                            value={data.assignments?.[user.uid] || ""} 
-                                            onChange={(e) => handleAssignCharacter(user.uid, e.target.value)}
-                                            className="flex-1 bg-slate-800 border border-slate-600 rounded px-2 py-1 text-xs text-white outline-none focus:border-indigo-500"
-                                        >
+                                        <select value={data.assignments?.[user.uid] || ""} onChange={(e) => handleAssignCharacter(user.uid, e.target.value)} className="flex-1 bg-slate-800 border border-slate-600 rounded px-2 py-1 text-xs text-white outline-none focus:border-indigo-500">
                                             <option value="">(Observer / None)</option>
-                                            {data.players?.map(p => (
-                                                <option key={p.id} value={p.id}>{p.name} ({p.race} {p.class})</option>
-                                            ))}
+                                            {data.players?.map(p => (<option key={p.id} value={p.id}>{p.name} ({p.race} {p.class})</option>))}
                                         </select>
                                     </div>
                                 </div>
-                                {/* END CHANGE */}
                             </div>
 
                             {data.bannedUsers?.length > 0 && (

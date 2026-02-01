@@ -1499,13 +1499,13 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                     className="bg-slate-900/90 border border-slate-700 rounded-xl p-1.5 flex gap-1.5 shadow-xl pointer-events-auto"
                     onPointerDown={(e) => e.stopPropagation()} 
                 >
+                    <button onClick={() => setShowHandoutCreator(true)} className="p-3 md:p-2 text-amber-500 hover:bg-slate-800 rounded-lg min-w-[44px] min-h-[44px] flex items-center justify-center" title="Handouts">
+                        <Icon name="scroll" size={20}/>
+                    </button>
                     {role === 'dm' && (
                         <>
                             <button onClick={() => setShowLibrary(true)} className="p-3 md:p-2 text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg min-w-[44px] min-h-[44px] flex items-center justify-center" title="Maps">
                                 <Icon name="map" size={20}/>
-                            </button>
-                            <button onClick={() => setShowHandoutCreator(true)} className="p-3 md:p-2 text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg min-w-[44px] min-h-[44px] flex items-center justify-center" title="Send Handout">
-                                <Icon name="scroll" size={20}/>
                             </button>
                             <button onClick={() => setShowTokens(!showTokens)} className={`p-3 md:p-2 rounded-lg transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center ${showTokens ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:text-white hover:bg-slate-800'}`} title="Tokens">
                                 <Icon name="users" size={20}/>

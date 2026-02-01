@@ -105,7 +105,7 @@ export const retrieveContext = (query, pdfChunks, journalPages, players, userRol
 export const packLore = (chunks) => {
     const volumes = [];
     let currentVolume = [];
-    let cufrrentSize = 0;
+    let currentSize = 0;
     
     chunks.forEach(chunk => {
         const size = chunk.content.length + 50; 
