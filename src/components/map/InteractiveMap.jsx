@@ -330,133 +330,119 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     const renderVision = () => {
         const canvas = visionCanvasRef.current;
         const img = mapImageRef.current;
-        // Performance Gate: Skip calculations during movement to prevent CPU spikes and crashes
-        if (!canvas || !img || !img.complete || isPanning || isDraggingToken) return;
+        if (!canvas || !img || !img.complete || isPanning) return;
 
+        const MAX_CANVAS_DIM = 2048;
+        const maxDim = Math.max(img.naturalWidth, img.naturalHeight);
+        const scaleRatio = maxDim > MAX_CANVAS_DIM ? (MAX_CANVAS_DIM / maxDim) : 1;
         const lowPerf = localStorage.getItem('vtt_low_performance') === 'true';
+        const finalRatio = lowPerf ? scaleRatio * 0.5 : scaleRatio;
 
-        const targetWidth = lowPerf ? Math.floor(img.naturalWidth / 2) : img.naturalWidth;
-        const targetHeight = lowPerf ? Math.floor(img.naturalHeight / 2) : img.naturalHeight;
+        const finalW = Math.floor(img.naturalWidth * finalRatio);
+        const finalH = Math.floor(img.naturalHeight * finalRatio);
 
-        if (canvas.width !== targetWidth) {
-            canvas.width = targetWidth;
-            canvas.height = targetHeight;
+        if (canvas.width !== finalW || canvas.height !== finalH) {
+            canvas.width = finalW;
+            canvas.height = finalH;
         }
 
         const ctx = canvas.getContext('2d', { alpha: true });
-        ctx.setTransform(1, 0, 0, 1, 0, 0); 
-        if (lowPerf) ctx.scale(0.5, 0.5);
-        
-        // Disable smoothing for performance if low perf
-        if (lowPerf) ctx.imageSmoothingEnabled = false;
-        
+        ctx.imageSmoothingEnabled = !lowPerf;
+        ctx.setTransform(finalRatio, 0, 0, finalRatio, 0, 0);
         ctx.clearRect(0, 0, img.naturalWidth, img.naturalHeight);
 
-        const allEmitters = [];
-        
-        tokens.forEach(token => {
-            if (token.isHidden && role !== 'dm') return;
+        // --- 1. PRE-PROCESS ASSETS ---
+        const blockingSegments = walls.filter(w => !(w.type === 'door' && w.isOpen));
+        const hasWalls = blockingSegments.length > 0;
+        const gridSize = mapGrid.size || 50;
+        const maxMapDim = Math.max(img.naturalWidth, img.naturalHeight) * 2;
 
-            const origin = {
-                x: (token.x / 100) * img.naturalWidth,
-                y: (token.y / 100) * img.naturalHeight
-            };
-            const gridSize = mapGrid.size || 50;
-            
-            // GEOMETRIC TRUTH: Even if lights are "on", walls still block LOS
-            // Infinite radius (99999) simulates sunlight/full lighting while respecting walls
-            let visionRadius = visionActive ? (200 / 50) * gridSize : 99999;
-            
+        // --- 2. DEFINE VIEWERS ---
+        const allEmitters = tokens.map(token => {
+            const origin = { x: (token.x / 100) * img.naturalWidth, y: (token.y / 100) * img.naturalHeight };
             const character = data.players?.find(p => idsMatch(p.id, token.characterId)) || 
                               data.npcs?.find(n => idsMatch(n.id, token.characterId));
+            
+            const settings = getCharacterVisionSettings(character, gridSize);
 
-            if (character && visionActive) {
-                const settings = getCharacterVisionSettings(character, gridSize);
-                visionRadius = settings.radius;
-            }
-
-            const blockingSegments = walls.filter(w => !(w.type === 'door' && w.isOpen));
-            const maxMapDim = Math.max(canvas.width, canvas.height) * 1.5;
-
-            const nearPoly = calculateVisibilityPolygon(origin, blockingSegments, { width: canvas.width, height: canvas.height }, visionRadius);
-            const farPoly = calculateVisibilityPolygon(origin, blockingSegments, { width: canvas.width, height: canvas.height }, maxMapDim);
-
-            allEmitters.push({ origin, visionRadius, polygon: nearPoly, farPolygon: farPoly, token });
+            return {
+                token,
+                origin,
+                visionRadius: settings.radius,
+                nearPoly: calculateVisibilityPolygon(origin, blockingSegments, { width: img.naturalWidth, height: img.naturalHeight }, settings.radius),
+                farPoly: calculateVisibilityPolygon(origin, blockingSegments, { width: img.naturalWidth, height: img.naturalHeight }, maxMapDim)
+            };
         });
 
         let emittersToDraw = [];
-        let clippingPolygons = []; 
-
         if (role === 'dm') {
             emittersToDraw = allEmitters.filter(e => e.token.type === 'pc');
-            clippingPolygons = emittersToDraw.map(e => e.farPolygon); 
         } else {
-            // Safe Match for Viewer Lookup
-            const myEmitter = allEmitters.find(e => 
+            emittersToDraw = allEmitters.filter(e => 
                 idsMatch(e.token.characterId, myCharId) || 
-                idsMatch(e.token.ownerId, user?.uid)
+                idsMatch(e.token.ownerId, user?.uid) ||
+                (e.token.controlledBy || []).includes(user?.uid)
             );
+        }
 
-            if (myEmitter) {
-                emittersToDraw = [myEmitter];
-                clippingPolygons = [myEmitter.farPolygon];
+        // --- 3. RENDER FOG PASS ---
+        if (visionActive) {
+            // DARKNESS MODE: Start Black, Carve Vision
+            ctx.fillStyle = '#000000';
+            ctx.globalAlpha = role === 'dm' ? 0.5 : 1.0; 
+            ctx.fillRect(0, 0, img.naturalWidth, img.naturalHeight);
+            
+            ctx.globalCompositeOperation = 'destination-out';
+            emittersToDraw.forEach(({ origin, visionRadius, nearPoly }) => {
+                // If a player is in total darkness with NO walls, they should see their radius
+                if (!nearPoly || nearPoly.length === 0) {
+                    ctx.beginPath();
+                    ctx.arc(origin.x, origin.y, visionRadius, 0, Math.PI * 2);
+                    ctx.fill();
+                    return;
+                }
+                
+                ctx.save();
+                ctx.beginPath();
+                ctx.moveTo(nearPoly[0].x, nearPoly[0].y);
+                for (let i = 1; i < nearPoly.length; i++) ctx.lineTo(nearPoly[i].x, nearPoly[i].y);
+                ctx.closePath();
+                ctx.clip();
+                
+                const grad = ctx.createRadialGradient(origin.x, origin.y, 0, origin.x, origin.y, visionRadius);
+                grad.addColorStop(0, '#ffffff');
+                grad.addColorStop(0.8, '#ffffff');
+                grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+                ctx.fillStyle = grad;
+                ctx.fill();
+                ctx.restore();
+            });
+        } else {
+            // SUNLIGHT MODE: If there are walls, cover map in black and carve LOS
+            const validPolys = emittersToDraw.filter(e => e.farPoly && e.farPoly.length > 0);
+            
+            if (hasWalls && validPolys.length > 0 && role !== 'dm') {
+                ctx.fillStyle = '#000000';
+                ctx.globalAlpha = 1.0;
+                ctx.fillRect(0, 0, img.naturalWidth, img.naturalHeight);
+                
+                ctx.globalCompositeOperation = 'destination-out';
+                validPolys.forEach(({ farPoly }) => {
+                    ctx.beginPath();
+                    ctx.moveTo(farPoly[0].x, farPoly[0].y);
+                    for (let i = 1; i < farPoly.length; i++) ctx.lineTo(farPoly[i].x, farPoly[i].y);
+                    ctx.closePath();
+                    ctx.fill();
+                });
             }
         }
 
-        // RENDER PHASE
-        // START CHANGE: Always fill black to ensure walls block the map visually in both modes
-        ctx.fillStyle = '#000000';
-        ctx.globalAlpha = role === 'dm' ? 0.5 : 1.0; 
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-        // Step B: Carve out visible areas based on LOS + Range
-        ctx.globalCompositeOperation = 'destination-out';
-        ctx.globalAlpha = 1.0; 
-
-        emittersToDraw.forEach(({ origin, visionRadius, polygon, farPolygon }) => {
-            ctx.save();
-            
-            // Sunlight Mode (visionActive false) uses the infinite farPolygon
-            // Darkness Mode (visionActive true) uses the range-limited near polygon
-            const activePoly = visionActive ? polygon : farPolygon;
-
-            if (activePoly && activePoly.length > 0) {
-                ctx.beginPath();
-                ctx.moveTo(activePoly[0].x, activePoly[0].y);
-                for (let i = 1; i < activePoly.length; i++) {
-                    ctx.lineTo(activePoly[i].x, activePoly[i].y);
-                }
-                ctx.closePath();
-                ctx.clip(); 
-            }
-            
-            if (visionActive) {
-                // Darkness Mode: Radial gradient for vision falloff
-                const grad = ctx.createRadialGradient(origin.x, origin.y, 0, origin.x, origin.y, visionRadius);
-                grad.addColorStop(0, 'rgba(255, 255, 255, 1)');
-                grad.addColorStop(0.8, 'rgba(255, 255, 255, 1)');
-                grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
-                ctx.fillStyle = grad;
-                ctx.beginPath();
-                ctx.arc(origin.x, origin.y, visionRadius, 0, Math.PI * 2);
-                ctx.fill();
-            } else if (activePoly && activePoly.length > 0) {
-                // Sunlight Mode: Solid carve-out of the LOS area
-                ctx.fillStyle = '#ffffff';
-                ctx.beginPath();
-                ctx.moveTo(activePoly[0].x, activePoly[0].y);
-                for (let i = 1; i < activePoly.length; i++) ctx.lineTo(activePoly[i].x, activePoly[i].y);
-                ctx.closePath();
-                ctx.fill();
-            }
-            ctx.restore();
-        });
-        // END CHANGE
-
+        // --- 4. LIGHT SOURCES ---
         const lights = mapData.lights || [];
-        const hasClippingPolygons = clippingPolygons.some(p => p && p.length > 0);
+        const clippingPolygons = emittersToDraw.map(e => e.farPoly).filter(p => p && p.length > 0);
+        const hasClippingPolygons = clippingPolygons.length > 0;
 
-        if (lights.length > 0 && clippingPolygons.length > 0 && hasClippingPolygons) {
+        if (lights.length > 0 && hasClippingPolygons) {
             ctx.save();
             ctx.beginPath();
             clippingPolygons.forEach(poly => {
@@ -473,6 +459,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                 const radiusPx = (light.radius / 5) * (mapGrid.size || 50);
                 
                 const blockingSegments = walls.filter(w => !(w.type === 'door' && w.isOpen));
+                // FIX: Bounds must match natural pixel coordinate space
                 const poly = calculateVisibilityPolygon(origin, blockingSegments, { width: img.naturalWidth, height: img.naturalHeight }, radiusPx);
 
                 ctx.save();
