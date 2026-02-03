@@ -121,7 +121,8 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
         } 
         else if (type === 'dmg') {
             const regex = /(\d+)d(\d+)(?:\s*([+-])\s*(\d+))?/;
-            const match = action.dmg.match(regex);
+            // FIX: Added safety check for action.dmg
+            const match = action.dmg ? action.dmg.match(regex) : null;
             
             if (match) {
                 const [fullStr, count, die, sign, modVal] = match;

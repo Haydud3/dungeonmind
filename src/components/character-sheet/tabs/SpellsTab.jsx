@@ -84,7 +84,8 @@ const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate, isOwner }) => {
         } 
         else if (type === 'dmg') {
             const regex = /(\d+)d(\d+)(?:\s*([+-])\s*(\d+))?/;
-            const match = spell.dmg.match(regex);
+            // FIX: Added safety check for spell.dmg
+            const match = spell.dmg ? spell.dmg.match(regex) : null;
             
             if (match) {
                 const [fullStr, count, die, sign, modVal] = match;

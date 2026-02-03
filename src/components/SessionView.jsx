@@ -316,7 +316,8 @@ const SessionView = ({
                                                 const html = formatMessage(msg.content);
                                                 // Check for "Rolled 15" or similar patterns from DiceTray
                                                 // Regex matches: "Rolled [Result] (Formula)" or just numbers
-                                                const damageMatch = msg.content.match(/Rolled\s+(\d+)/i);
+                                                // FIX: Added safety check (msg.content && ...)
+                                                const damageMatch = msg.content && msg.content.match(/Rolled\s+(\d+)/i);
                                                 
                                                 if (role === 'dm' && damageMatch) {
                                                     const dmg = parseInt(damageMatch[1]);
