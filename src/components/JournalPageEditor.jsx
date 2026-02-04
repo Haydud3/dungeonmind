@@ -109,9 +109,18 @@ const JournalPageEditor = ({
             try {
                 const editor = quillRef.current.getEditor();
                 if (editor) {
-                    // Silence the 'text-change' event during this load
+                    // --- CHANGES: Fix Duplication and Prevent Mobile Keyboard Pop ---
+                    // 1. Clear existing content first. This prevents the new content from being 
+                    //    appended to the old content (which caused the "duplicate at bottom" bug).
+                    editor.setText(''); 
+                    
+                    // 2. Paste the resolved HTML
                     editor.clipboard.dangerouslyPasteHTML(0, resolvedContent, 'silent');
-                    editor.setSelection(editor.getLength(), 0, 'silent');
+
+                    // 3. REMOVED: editor.setSelection(...)
+                    // We removed the setSelection call. This ensures the keyboard does NOT 
+                    // open automatically. The user must now tap the text to start typing.
+                    // --- END OF CHANGES ---
                     
                     // --- CHANGES: FIX CTRL+Z UNDO BUG ---
                     // We must clear the history stack immediately after loading the page content.
