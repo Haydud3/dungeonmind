@@ -51,6 +51,7 @@ export const CampaignProvider = ({ children }) => {
 // --- 2 lines after changes ---
     const [loreChunks, setLoreChunks] = useState([]);
     const saveTimer = useRef(null);
+    const isPendingSave = useRef(false); 
 
     // --- 1. SYNC ENGINE ---
     useEffect(() => {
@@ -66,8 +67,9 @@ export const CampaignProvider = ({ children }) => {
         const rootRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', code);
         
         // Listeners
-        const unsubRoot = onSnapshot(rootRef, (snap) => {
+        const unsubRoot = onSnapshot(rootRef, { includeMetadataChanges: true }, (snap) => {
             if (snap.exists()) {
+                // --- CHANGES: Remove pending save gate to allow fluid real-time updates from other users ---
                 const d = snap.data();
                 
                 // START CHANGE: Ban Enforcement & Auto-Join Registration
@@ -122,7 +124,53 @@ export const CampaignProvider = ({ children }) => {
     }, [gameParams, user]);
 
      // --- 2. ACTIONS ---
+    const updateMapState = (action, payload) => {
+        const currentMap = data.campaign?.activeMap || {};
+        let updatedMap = { ...currentMap };
+
+        switch (action) {
+            case 'move_token':
+                updatedMap.tokens = (currentMap.tokens || []).map(t => 
+                    String(t.id) === String(payload.tokenId) ? { ...t, x: payload.x, y: payload.y } : t
+                );
+                break;
+            case 'update_token':
+                updatedMap.tokens = (currentMap.tokens || []).map(t => 
+                    String(t.id) === String(payload.id) ? { ...t, ...payload } : t
+                );
+                break;
+            case 'delete_token':
+                updatedMap.tokens = (currentMap.tokens || []).filter(t => String(t.id) !== String(payload));
+                break;
+            case 'add_token':
+                updatedMap.tokens = [...(currentMap.tokens || []), payload];
+                break;
+            case 'load_map':
+                updatedMap = { ...payload, id: payload.id || Date.now() };
+                break;
+            case 'rename_map':
+                const renamedMaps = (data.campaign?.savedMaps || []).map(m => 
+                    m.id === payload.id ? { ...m, name: payload.newName } : m
+                );
+                updateCloud({ ...data, campaign: { ...data.campaign, savedMaps: renamedMaps } });
+                return;
+            case 'delete_map':
+                const filteredMaps = (data.campaign?.savedMaps || []).filter(m => m.id !== payload);
+                updateCloud({ ...data, campaign: { ...data.campaign, savedMaps: filteredMaps } });
+                return;
+            case 'open_sheet':
+                setData(prev => ({ ...prev, activeSheet: payload }));
+                return;
+        }
+
+        updateCloud({
+            ...data,
+            campaign: { ...data.campaign, activeMap: updatedMap }
+        }, action === 'move_token');
+    };
+
     const updateCloud = (newData, immediate = false) => {
+        isPendingSave.current = true; 
 // ---------------------------------------------------------
         // NEW: Sanitizer function to strip 'undefined' which Firebase hates
         const sanitize = (obj) => {
@@ -145,7 +193,9 @@ export const CampaignProvider = ({ children }) => {
         
         const doSave = () => {
             const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code);
-            setDoc(ref, rootData, { merge: true });
+            setDoc(ref, rootData, { merge: true }).then(() => {
+                isPendingSave.current = false; 
+            });
         };
         
         if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -215,11 +265,11 @@ export const CampaignProvider = ({ children }) => {
         user, 
         joinCampaign, leaveCampaign, 
 // --- 2 lines after changes ---
-        updateCloud, savePlayer, deletePlayer, 
+        updateCloud, updateMapState, savePlayer, deletePlayer, 
         loreChunks, setLoreChunks,
         sendPing,
         kickPlayer, banPlayer, unbanPlayer
-    }), [data, gameParams, loreChunks]);
+    }), [data, gameParams, loreChunks, user]);
 
     return (
         <CampaignContext.Provider value={value}>

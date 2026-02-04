@@ -29,7 +29,7 @@ ChunkedImage.blotName = 'chunkedImage';
 ChunkedImage.tagName = 'img';
 Quill.register(ChunkedImage, true);
 
-const HandoutEditor = ({ onSave, onCancel, savedHandouts = [], onDelete, campaignCode, role }) => {
+const HandoutEditor = ({ onSave, onCancel, savedHandouts = [], onDelete, campaignCode, role, onLocalReveal }) => {
     const [activeTab, setActiveTab] = useState(role === 'dm' ? 'compose' : 'history');
     const toast = useToast();
     
@@ -226,21 +226,62 @@ const HandoutEditor = ({ onSave, onCancel, savedHandouts = [], onDelete, campaig
 
                     {/* HISTORY TAB */}
                     {activeTab === 'history' && (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                            {savedHandouts
-                                .filter(h => role === 'dm' || h.revealed)
-                                .map((h) => (
-                                <div key={h.id} className="bg-slate-900 border border-slate-700 p-4 rounded-xl hover:border-amber-500 transition-all cursor-pointer group" onClick={() => loadHandout(h)}>
-                                    <div className="flex justify-between items-start mb-2">
-                                        <h4 className="font-bold text-white truncate">{h.title}</h4>
-                                        {role === 'dm' && <button onClick={(e) => { e.stopPropagation(); onDelete(h.id); }} className="text-slate-600 hover:text-red-500 opacity-0 group-hover:opacity-100"><Icon name="trash-2" size={16}/></button>}
-                                    </div>
-                                    <p className="text-xs text-slate-500 mb-3">{new Date(h.timestamp).toLocaleDateString()}</p>
-                                    <div className={`h-24 rounded p-2 text-[10px] overflow-hidden opacity-80 ${h.theme === 'parchment' ? 'bg-[#f5e6c8] text-amber-900' : h.theme === 'stone' ? 'bg-[#1c1917] text-slate-400' : 'bg-white text-black'}`}>
-                                        <div dangerouslySetInnerHTML={{__html: h.content || "No content"}} />
+                        <div className="space-y-8">
+                            {/* DRAFTS SECTION (DM ONLY) */}
+                            {role === 'dm' && savedHandouts.filter(h => h.isDraft).length > 0 && (
+                                <div>
+                                    <h4 className="text-xs uppercase font-bold text-amber-500/50 mb-3 tracking-widest flex items-center gap-2">
+                                        <div className="h-px flex-1 bg-amber-500/20"></div>
+                                        Drafts (Private)
+                                        <div className="h-px flex-1 bg-amber-500/20"></div>
+                                    </h4>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                                        {savedHandouts.filter(h => h.isDraft).map((h) => (
+                                            <div key={h.id} className="bg-slate-900 border border-slate-700 p-4 rounded-xl hover:border-amber-500 transition-all cursor-pointer group" onClick={() => loadHandout(h)}>
+                                                <div className="flex justify-between items-start mb-2">
+                                                    <h4 className="font-bold text-white truncate">{h.title}</h4>
+                                                    <button onClick={(e) => { e.stopPropagation(); onDelete(h.id); }} className="text-slate-600 hover:text-red-500 opacity-0 group-hover:opacity-100"><Icon name="trash-2" size={16}/></button>
+                                                </div>
+                                                <p className="text-xs text-slate-500 mb-3">{new Date(h.timestamp).toLocaleDateString()}</p>
+                                                <div className={`h-24 rounded p-2 text-[10px] overflow-hidden opacity-80 ${h.theme === 'parchment' ? 'bg-[#f5e6c8] text-amber-900' : h.theme === 'stone' ? 'bg-[#1c1917] text-slate-400' : 'bg-white text-black'}`}>
+                                                    <div dangerouslySetInnerHTML={{__html: h.content || "No content"}} />
+                                                </div>
+                                            </div>
+                                        ))}
                                     </div>
                                 </div>
-                            ))}
+                            )}
+
+                            {/* REVEALED SECTION */}
+                            <div>
+                                {role === 'dm' && (
+                                    <h4 className="text-xs uppercase font-bold text-slate-500 mb-3 tracking-widest flex items-center gap-2">
+                                        <div className="h-px flex-1 bg-slate-800"></div>
+                                        The Archive (Revealed)
+                                        <div className="h-px flex-1 bg-slate-800"></div>
+                                    </h4>
+                                )}
+                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                                    {savedHandouts
+                                        .filter(h => !h.isDraft || (role === 'player' && h.revealed))
+                                        .map((h) => (
+                                        <div key={h.id} className="bg-slate-900 border border-slate-800 p-4 rounded-xl hover:border-blue-500 transition-all cursor-pointer group" onClick={() => onLocalReveal(h)}>
+                                            <div className="flex justify-between items-start mb-2">
+                                                <h4 className="font-bold text-slate-200 truncate flex items-center gap-2">
+                                                    {h.title}
+                                                    <Icon name="eye" size={12} className="text-blue-400 opacity-50"/>
+                                                </h4>
+                                                {role === 'dm' && <button onClick={(e) => { e.stopPropagation(); onDelete(h.id); }} className="text-slate-600 hover:text-red-500 opacity-0 group-hover:opacity-100"><Icon name="trash-2" size={16}/></button>}
+                                            </div>
+                                            <p className="text-xs text-slate-500 mb-3">{new Date(h.timestamp).toLocaleDateString()}</p>
+                                            <div className={`h-24 rounded p-2 text-[10px] overflow-hidden opacity-60 grayscale-[0.5] ${h.theme === 'parchment' ? 'bg-[#f5e6c8] text-amber-900' : h.theme === 'stone' ? 'bg-[#1c1917] text-slate-400' : 'bg-white text-black'}`}>
+                                                <div dangerouslySetInnerHTML={{__html: h.content || "No content"}} />
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
                             {savedHandouts.length === 0 && <div className="col-span-full text-center text-slate-500 py-20 italic">No saved handouts.</div>}
                         </div>
                     )}

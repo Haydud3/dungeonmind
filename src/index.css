@@ -137,12 +137,16 @@ h1, h2, h3, .fantasy-font { font-family: 'Cinzel', serif; }
 }
 
 /* Image styling inside handouts (Nuclear Options) */
-.handout-content-display {
+.handout-content-display,
+.handout-content-stream {
     width: 100%;
     color: inherit;
     font-size: 1.1rem;
     line-height: 1.6;
     min-height: 100px;
+    word-wrap: break-word;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
 }
 
 .handout-content-display img {
@@ -160,4 +164,224 @@ h1, h2, h3, .fantasy-font { font-family: 'Cinzel', serif; }
 
 .handout-content-display p {
     margin-bottom: 1rem;
+}
+
+/* --- CHANGES: JOURNAL 3.0 - "The Infinite Desk" & "Google Docs" Layout --- */
+
+/* --- CHANGES: Styles for the Detached Toolbar in HUD --- */
+/* 1. Fix Toolbar Dropdowns being covered/unclickable */
+#journal-toolbar-container {
+    display: flex !important;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0 1rem;
+    height: 100%;
+    width: 100%;
+    /* REMOVED overflow-x: auto; This was clipping the dropdown menus */
+    overflow: visible !important; 
+    white-space: nowrap;
+    flex-wrap: wrap; /* Allow wrapping on small screens instead of scroll to preserve dropdowns */
+}
+
+/* Ensure picker options (dropdowns) appear ABOVE everything else */
+.ql-snow .ql-picker-options {
+    z-index: 9999 !important;
+    position: absolute !important; 
+}
+
+/* 2. Fix Page "Limit" - Allow indefinite vertical growth */
+.journal-sheet {
+    background-color: #1e293b;
+    /* ... (colors) */
+    width: 100%;
+    max-width: 816px; 
+    min-height: 1056px; 
+    /* CHANGED: height to auto/fit-content so it stretches with text */
+    height: fit-content !important; 
+    margin-top: 2rem;
+    margin-bottom: 2rem;
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.4), 0 0 0 1px #334155;
+    position: relative;
+    border-radius: 16px;
+    /* REMOVED overflow: hidden; This stops content from pushing the box open */
+    overflow: visible !important; 
+    padding-bottom: 2rem; /* Add padding at bottom so text doesn't hit edge */
+}
+
+/* Force the Editor to grow dynamically (Auto-Expand) */
+.ql-editor {
+    padding: 1rem 4rem 4rem 4rem !important;
+    font-family: 'Lato', sans-serif;
+    font-size: 1.05rem;
+    line-height: 1.6;
+    min-height: 100%;
+    /* CHANGED: height auto allows div to expand to fit text content */
+    height: auto !important; 
+    /* CHANGED: visible overflow prevents internal scrollbar */
+    overflow-y: visible !important; 
+}
+
+/* Ensure container wrapper doesn't trap the height */
+.ql-container.ql-snow {
+    border: none !important;
+    height: auto !important;
+    overflow: visible !important;
+}
+
+/* Override Quill button colors for the dark HUD */
+#journal-toolbar-container .ql-stroke { stroke: #cbd5e1 !important; } /* slate-300 */
+#journal-toolbar-container .ql-fill { fill: #cbd5e1 !important; }
+#journal-toolbar-container .ql-picker { color: #cbd5e1 !important; }
+#journal-toolbar-container button:hover .ql-stroke { stroke: #fbbf24 !important; } /* amber-400 */
+
+/* The Background (The Desk) */
+.infinite-desk {
+    background-color: #0f172a; 
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden; 
+    position: relative;
+}
+
+/* The Scrollable Viewport */
+.desk-viewport {
+    flex: 1;
+    overflow-y: auto;
+    padding-bottom: 5rem; 
+    display: flex;
+    justify-content: center;
+    scrollbar-width: thin;
+    scrollbar-color: #475569 #0f172a;
+}
+
+/* The Paper (The Sheet) */
+.journal-sheet {
+    background-color: #1e293b; /* slate-800 */
+    color: #e2e8f0;
+    width: 100%;
+    max-width: 816px; 
+    min-height: 1056px; 
+    margin-top: 2rem;
+    margin-bottom: 2rem;
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.4), 0 0 0 1px #334155;
+    position: relative;
+    border-radius: 16px; /* Added Rounding */
+    overflow: hidden; /* Ensures content/toolbar respects the rounded corners */
+}
+
+/* Sticky Toolbar Override */
+.ql-toolbar.ql-snow {
+    background-color: #1e293b !important;
+    border-color: #334155 !important;
+    display: none; /* Hide default attached toolbars */
+}
+
+/* 2. The Document Title (On the Paper) */
+.journal-title-input {
+    width: 100%;
+    background: transparent;
+    border: none;
+    outline: none;
+    
+    /* Typography to match the 'Session 1' image */
+    font-family: 'Cinzel', serif;
+    font-size: 3rem; /* Huge header */
+    font-weight: 700;
+    color: #f8fafc; /* slate-50 */
+    
+    padding: 3rem 4rem 1rem 4rem; /* Top padding matches editor side padding */
+    border-bottom: 2px solid #334155; /* Separator line */
+    margin-bottom: 1rem;
+}
+
+.journal-title-input::placeholder {
+    color: #475569;
+    opacity: 0.5;
+}
+
+/* Typography polish for the "Docs" feel */
+.ql-editor {
+    padding: 1rem 4rem 4rem 4rem !important; /* Reduced top padding as Title handles it */
+    font-family: 'Lato', sans-serif;
+    font-size: 1.05rem;
+    line-height: 1.6;
+    height: auto !important;
+    overflow-y: visible !important; /* Disable internal scrollbar so viewport handles it */
+}
+
+.ql-container {
+    height: auto !important;
+    overflow: visible !important;
+}
+/* --- 2 lines after changes --- */
+.ql-editor h1 {
+    font-family: 'Cinzel', serif;
+    font-size: 2.5rem;
+    border-bottom: 1px solid #334155;
+    margin-top: 0;
+    padding-bottom: 0.5rem;
+    color: #f8fafc;
+}
+
+/* Mobile Responsiveness: Collapse margins */
+@media (max-width: 850px) {
+    .journal-sheet {
+        margin-top: 0;
+        margin-bottom: 0;
+        max-width: 100%;
+        min-height: 100%;
+        box-shadow: none;
+        border: none;
+    }
+    .journal-title-input {
+        font-size: 2rem;
+        padding: 1.5rem 1rem 0.5rem 1rem;
+    }
+    .ql-editor {
+        padding: 1.5rem 1rem !important;
+    }
+}
+/* --- END OF CHANGES --- */
+
+/* Smart Chips (@ Mentions) */
+.mention {
+    background-color: #334155 !important;
+    color: #f8fafc !important;
+    padding: 2px 8px !important;
+    border-radius: 9999px !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    text-decoration: none !important;
+    display: inline-flex !important;
+    align-items: center;
+    gap: 4px;
+    font-weight: 600;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+    cursor: pointer;
+    transition: all 0.1s ease;
+}
+
+.mention:hover {
+    background-color: #475569 !important;
+    border-color: #fbbf24 !important;
+}
+
+/* Quill Mention List Styling */
+.ql-mention-list-container {
+    background-color: #1e293b !important;
+    border: 1px solid #334155 !important;
+    border-radius: 0.5rem !important;
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5) !important;
+    z-index: 1000 !important;
+    backdrop-filter: blur(8px);
+}
+
+.ql-mention-list-item {
+    color: #94a3b8 !important;
+    padding: 8px 12px !important;
+}
+
+.ql-mention-list-item.selected {
+    background-color: #334155 !important;
+    color: #fbbf24 !important;
 }

@@ -42,6 +42,9 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     const [showLibrary, setShowLibrary] = useState(false);
     const [showTokens, setShowTokens] = useState(false);
     const [hoveredWallId, setHoveredWallId] = useState(null);
+    // --- CHANGES: Reactive Map Dimensions for Token Positioning & Vision ---
+    const [mapDimensions, setMapDimensions] = useState({ width: 0, height: 0 });
+    // --- END CHANGES ---
     const [showCombat, setShowCombat] = useState(false);
     const [isDrawingFog, setIsDrawingFog] = useState(false);
     const [currentPath, setCurrentPath] = useState([]);
@@ -62,6 +65,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     const [gridCalStart, setGridCalStart] = useState(null);
     const [activeLightId, setActiveLightId] = useState(null);
     const [assembledMapUrl, setAssembledMapUrl] = useState(null);
+    const [mapReady, setMapReady] = useState(false); 
     const hasAutoCentered = useRef(false);
 
     // 3. ALL REFS (Must be before Vision Logic)
@@ -91,7 +95,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     const myCharFarPoly = useMemo(() => {
         // FIX: Removed "!visionActive" check. 
         // We MUST calculate wall geometry even if lights are on, so we can hide tokens behind walls.
-        if (role === 'dm' || !img || !img.naturalWidth) {
+        if (role === 'dm' || !img || !mapDimensions.width || !mapReady) { // --- CHANGES: Use reactive width ---
             return null; 
         }
 
@@ -103,24 +107,24 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         if (!myToken) return null; 
 
         const origin = {
-            x: (myToken.x / 100) * img.naturalWidth,
-            y: (myToken.y / 100) * img.naturalHeight
+            x: (myToken.x / 100) * mapDimensions.width, // --- CHANGES: Use reactive width ---
+            y: (myToken.y / 100) * mapDimensions.height // --- CHANGES: Use reactive height ---
         };
         
         // Create a bounding box slightly larger than the map to ensure "infinite" vision reaches corners
-        const maxMapDim = Math.max(img.naturalWidth, img.naturalHeight) * 1.5;
+        const maxMapDim = Math.max(mapDimensions.width, mapDimensions.height) * 1.5; // --- CHANGES: Use reactive dims ---
         const blockingSegments = walls.filter(w => !(w.type === 'door' && w.isOpen));
 
         return calculateVisibilityPolygon(origin, blockingSegments, { 
-            width: img.naturalWidth, 
-            height: img.naturalHeight 
+            width: mapDimensions.width, // --- CHANGES: Use reactive width ---
+            height: mapDimensions.height // --- CHANGES: Use reactive height ---
         }, maxMapDim);
 
-    }, [role, myCharId, user?.uid, tokens, walls, img?.naturalWidth, img?.naturalHeight, img?.complete]); 
+    }, [role, myCharId, user?.uid, tokens, walls, mapDimensions, mapReady]); // --- CHANGES: Depend on mapDimensions ---
 
     // START CHANGE: Memoized Personal Vision Polygon (Darkvision/Light Range)
     const myCharNearPoly = useMemo(() => {
-        if (role === 'dm' || !visionActive || !img || !img.naturalWidth) {
+        if (role === 'dm' || !visionActive || !img || !mapDimensions.width || !mapReady) { // --- CHANGES: Use reactive width ---
             return null; 
         }
 
@@ -131,8 +135,8 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         if (!myToken) return null; 
 
         const origin = {
-            x: (myToken.x / 100) * img.naturalWidth,
-            y: (myToken.y / 100) * img.naturalHeight
+            x: (myToken.x / 100) * mapDimensions.width, // --- CHANGES: Use reactive width ---
+            y: (myToken.y / 100) * mapDimensions.height // --- CHANGES: Use reactive height ---
         };
         const gridSize = mapGrid.size || 50;
         const character = data.players?.find(p => idsMatch(p.id, myToken.characterId)) || 
@@ -142,11 +146,11 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         const blockingSegments = walls.filter(w => !(w.type === 'door' && w.isOpen));
 
         return calculateVisibilityPolygon(origin, blockingSegments, { 
-            width: img.naturalWidth, 
-            height: img.naturalHeight 
+            width: mapDimensions.width, // --- CHANGES: Use reactive width ---
+            height: mapDimensions.height // --- CHANGES: Use reactive height ---
         }, settings.radius);
 
-    }, [role, visionActive, myCharId, user?.uid, tokens, walls, img?.naturalWidth, img?.naturalHeight, img?.complete, mapGrid.size]);
+    }, [role, visionActive, myCharId, user?.uid, tokens, walls, mapDimensions, mapGrid.size, mapReady]); // ---
     // END CHANGE
 
     // Phase 2: Handle Chunked Map Loading from Firestore
@@ -330,7 +334,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     const renderVision = () => {
         const canvas = visionCanvasRef.current;
         const img = mapImageRef.current;
-        if (!canvas || !img || !img.complete || isPanning) return;
+        if (!canvas || !img || !img.complete || isPanning || !mapReady) return; // --- CHANGES: Added mapReady check ---
 
         const MAX_CANVAS_DIM = 2048;
         const maxDim = Math.max(img.naturalWidth, img.naturalHeight);
@@ -492,7 +496,12 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     // END CHANGE
 
     // Re-render when relevant state changes (Removed activePlayerVisionData dependency)
-    useEffect(() => { renderVision(); }, [tokens, walls, lights, visionActive, role, mapUrl, data.campaign?.characters]);
+    // --- CHANGES: Reactive Loop - Use requestAnimationFrame for smoother vision updates on remote token moves ---
+    useEffect(() => { 
+        const frame = requestAnimationFrame(renderVision); 
+        return () => cancelAnimationFrame(frame);
+    }, [tokens, walls, lights, visionActive, role, mapUrl, data.campaign?.characters, mapReady]);
+    // --- CHANGES: End ---
 
     // START CHANGE: Multi-User Ping Listener
     useEffect(() => {
@@ -1226,9 +1235,13 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         const canvas = visionCanvasRef.current;
         
         if (img && canvas) {
+            // --- CHANGES: Set Reactive Dimensions to trigger token/vision updates ---
+            setMapDimensions({ width: img.naturalWidth, height: img.naturalHeight });
+            // --- END CHANGES ---
             // 1. Init Vision Canvas
             canvas.width = img.naturalWidth;
             canvas.height = img.naturalHeight;
+            setMapReady(true); // --- CHANGES: Trigger re-render so DOM tokens and Memos update with naturalWidth ---
             renderVision();
             
             // REMOVED: snapAllTokens(); (Fixes ReferenceError)
@@ -1989,13 +2002,15 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                                 const sizeMap = { tiny: 0.5, small: 1, medium: 1, large: 2, huge: 3, gargantuan: 4 };
                                 const sMult = typeof token.size === 'number' ? token.size : (sizeMap[token.size] || 1);
                                 
-                                const snapped = snapToGrid(movingTokenPos.x, movingTokenPos.y, img.naturalWidth, img.naturalHeight, sMult);
-                                px = (snapped.x / 100) * img.naturalWidth;
-                                py = (snapped.y / 100) * img.naturalHeight;
+                                const snapped = snapToGrid(movingTokenPos.x, movingTokenPos.y, mapDimensions.width, mapDimensions.height, sMult); // --- CHANGES: Use reactive dims ---
+                                px = (snapped.x / 100) * mapDimensions.width; // --- CHANGES: Use reactive dims ---
+                                py = (snapped.y / 100) * mapDimensions.height; // --- CHANGES: Use reactive dims ---
                                 // END CHANGE
                             } else if (img) {
-                                px = (token.x / 100) * img.naturalWidth;
-                                py = (token.y / 100) * img.naturalHeight;
+                                // --- CHANGES: Use Reactive Dimensions instead of Ref properties ---
+                                px = (token.x / 100) * mapDimensions.width;
+                                py = (token.y / 100) * mapDimensions.height;
+                                // --- END CHANGES ---
                             }
                             
                             // Determine actual grid size

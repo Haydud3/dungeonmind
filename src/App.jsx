@@ -109,6 +109,7 @@ function DungeonMindApp() {
 
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [localHandout, setLocalHandout] = useState(null); 
   const [showTools, setShowTools] = useState(false);
   const [diceLog, setDiceLog] = useState([]);
   const [possessedNpcId, setPossessedNpcId] = useState(null);
@@ -159,7 +160,7 @@ function DungeonMindApp() {
 
   // START CHANGE: Sequential Handout Reveal Logic with Stream Parsing
   useEffect(() => {
-      const h = data.campaign?.activeHandout;
+      const h = localHandout || data.campaign?.activeHandout; // --- CHANGES: Resolve either global or local handout ---
       if (!h) {
           setActiveHandoutImageUrl('');
           setActiveHandoutBlocks([]);
@@ -183,20 +184,24 @@ function DungeonMindApp() {
               setActiveHandoutImageUrl(resolvedHeader);
               setActiveHandoutBlocks(blocks);
 
-              // 4. Reveal Check (Must not be a draft and must be recently revealed)
-              const isNew = (Date.now() - h.timestamp) < 10000;
-              
-              // CRITICAL FIX: Add isDraft check
-              if (h.revealed && !h.isDraft && isNew) {
+              // 4. Reveal Check
+              if (localHandout) {
+                  // --- CHANGES: If selected locally from archive, show immediately ---
                   setShowHandout(true);
-                  toast(`New Handout: ${h.title}`, "info"); // Re-integrated player toast
+              } else {
+                  // Global Reveal Logic (Must not be a draft and must be recently revealed)
+                  const isNew = (Date.now() - h.timestamp) < 10000;
+                  if (h.revealed && !h.isDraft && isNew) {
+                      setShowHandout(true);
+                      toast(`New Handout: ${h.title}`, "info");
+                  }
               }
           } catch (e) {
               console.error("[HANDOUT] Stream Parsing Error:", e);
           }
       };
       resolveAndShow();
-  }, [data.campaign?.activeHandout]);
+  }, [data.campaign?.activeHandout, localHandout]); // --- CHANGES: Add localHandout to dependency array ---
   // END CHANGE
 
   const effectiveRole = (data && user && data.dmIds?.includes(user.uid)) ? 'dm' : 'player';
@@ -883,18 +888,17 @@ function DungeonMindApp() {
                   openAiModel={openAiModel} setOpenAiModel={setOpenAiModel} 
                   puterModel={puterModel} setPuterModel={setPuterModel} 
                   banPlayer={banPlayer} kickPlayer={kickPlayer} unbanPlayer={unbanPlayer} 
-// --- 2 lines after changes ---
               />}
             </div>
        </main>
        
-       {showHandoutCreator && <HandoutEditor role={effectiveRole} campaignCode={gameParams?.code} savedHandouts={data.handouts || []} onSave={handleHandoutSave} onDelete={handleHandoutDelete} onCancel={() => setShowHandoutCreator(false)} />}
-       {showHandout && data.campaign?.activeHandout && (
-           <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm overflow-hidden" onClick={() => setShowHandout(false)}>
+       {showHandoutCreator && <HandoutEditor role={effectiveRole} campaignCode={gameParams?.code} savedHandouts={data.handouts || []} onSave={handleHandoutSave} onDelete={handleHandoutDelete} onCancel={() => setShowHandoutCreator(false)} onLocalReveal={(h) => { setLocalHandout(h); setShowHandoutCreator(false); }} />}
+       {showHandout && (localHandout || data.campaign?.activeHandout) && (
+           <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm overflow-hidden" onClick={() => { setShowHandout(false); setLocalHandout(null); }}>
                <div 
                    className={`max-w-2xl w-full rounded-xl shadow-2xl relative flex flex-col max-h-[90vh] overflow-hidden ${
-                       data.campaign.activeHandout.theme === 'parchment' ? 'bg-[#f5e6c8] text-amber-900 border-4 border-amber-800' :
-                       data.campaign.activeHandout.theme === 'stone' ? 'bg-[#1c1917] text-slate-300 border-4 border-slate-700' :
+                       (localHandout || data.campaign.activeHandout).theme === 'parchment' ? 'bg-[#f5e6c8] text-amber-900 border-4 border-amber-800' :
+                       (localHandout || data.campaign.activeHandout).theme === 'stone' ? 'bg-[#1c1917] text-slate-300 border-4 border-slate-700' :
                        'bg-white text-black border-4 border-slate-200'
                    }`} 
                    onClick={e=>e.stopPropagation()}
@@ -905,7 +909,7 @@ function DungeonMindApp() {
                        </div>
                    )}
                    <div className="flex-1 overflow-y-auto custom-scroll p-8">
-                       <h2 className="fantasy-font text-3xl mb-6 border-b border-current/20 pb-2">{data.campaign.activeHandout.title}</h2>
+                       <h2 className="fantasy-font text-3xl mb-6 border-b border-current/20 pb-2">{(localHandout || data.campaign.activeHandout).title}</h2>
                        {activeHandoutBlocks.length === 0 ? (
                            <div className="py-20 text-center animate-pulse italic opacity-50 font-bold">DECIPHERING SCRIPT...</div>
                        ) : (
@@ -920,7 +924,7 @@ function DungeonMindApp() {
                            </div>
                        )}
                    </div>
-                   <button onClick={() => setShowHandout(false)} className="absolute top-4 right-4 z-20 bg-black/20 hover:bg-black/40 text-white rounded-full p-1"><Icon name="x" size={24}/></button>
+                   <button onClick={() => { setShowHandout(false); setLocalHandout(null); }} className="absolute top-4 right-4 z-20 bg-black/20 hover:bg-black/40 text-white rounded-full p-1"><Icon name="x" size={24}/></button>
                </div>
            </div>
        )}

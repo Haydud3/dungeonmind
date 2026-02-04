@@ -27,12 +27,13 @@ const Token = ({ token, isOwner, cellPx, isDragging, isSelected, isTurn, onMouse
     const isPc = token.type === 'pc';
     const borderColor = isPc ? '#22c55e' : '#ef4444';
     
+    // --- CHANGES: Refine scaling and docking logic to prevent nameplate from covering the token ---
     const shadowBlur = dimension * 0.08;
     const borderThickness = Math.max(1, dimension * 0.05);
-    const fontSize = Math.max(10, dimension * 0.22);
-    const paddingY = dimension * 0.02;
-    const paddingX = dimension * 0.12;
-    const bottomOffset = -(fontSize + paddingY * 2 + 5); 
+    const fontSize = Math.min(Math.max(8, dimension * 0.1), 18); // Tightened max size
+    const paddingY = fontSize * 0.15; // Reduced padding
+    const paddingX = fontSize * 0.6;  // Reduced padding
+    // --- END OF CHANGES ---
 
     const statuses = token.statuses || [];
     const isDead = statuses.includes('dead');
@@ -117,14 +118,15 @@ const Token = ({ token, isOwner, cellPx, isDragging, isSelected, isTurn, onMouse
                 )}
             </div>
 
-            <div className="absolute -top-1 -right-1 flex flex-col gap-0.5 pointer-events-none">
+            {/* --- CHANGES: Relocate Status Icons to top-left to avoid nameplate collision --- */}
+            <div className="absolute -top-2 -left-2 flex flex-col gap-1 pointer-events-none z-40">
                 {statuses.map(s => {
                     if (s === 'dead') return null;
                     const def = STATUS_ICONS[s] || { icon: 'circle', color: 'text-white', bg: 'bg-slate-500' };
-                    const iconSize = dimension * 0.25; 
+                    const iconSize = Math.max(16, dimension * 0.25); 
                     return (
                         <div key={s} 
-                             className={`rounded-full ${def.bg} border border-white/20 flex items-center justify-center shadow-sm`}
+                             className={`rounded-full ${def.bg} border border-white/20 flex items-center justify-center shadow-md`}
                              style={{ width: iconSize, height: iconSize }}
                         >
                             <Icon name={def.icon} size={iconSize * 0.6} className={def.color}/>
@@ -134,15 +136,17 @@ const Token = ({ token, isOwner, cellPx, isDragging, isSelected, isTurn, onMouse
             </div>
 
             <div 
-                className="absolute left-1/2 bg-black/85 text-white rounded-sm pointer-events-none select-none z-20 shadow-sm border border-white/10"
+                className={`absolute left-1/2 bg-slate-950/80 backdrop-blur-sm text-white rounded-full pointer-events-none select-none z-30 shadow-lg border ${isPc ? 'border-amber-500/30' : 'border-red-500/30'} border-opacity-50`}
                 style={{ 
                     fontSize: `${fontSize}px`,
-                    lineHeight: '1', 
-                    bottom: `${bottomOffset}px`,
+                    lineHeight: '1.2', 
+                    // --- CHANGES: Use "Tuck" positioning (bottom: 0 + translate-y) to anchor to the base ---
+                    bottom: '0',
                     padding: `${paddingY}px ${paddingX}px`,
-                    transform: 'translate3d(-50%, 0, 0)',
+                    transform: 'translate(-50%, 70%)', // Shifts 70% of its height below the token
                     width: 'max-content',
-                    maxWidth: `${dimension * 3}px`, 
+                    maxWidth: `${dimension * 3.5}px`, // Allows long names but keeps them proportional
+                    // --- END OF CHANGES ---
                     textAlign: 'center',
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
@@ -151,6 +155,7 @@ const Token = ({ token, isOwner, cellPx, isDragging, isSelected, isTurn, onMouse
             >
                 {token.name || "Unknown"}
             </div>
+            {/* --- END OF CHANGES --- */}
         </div>
     );
 };

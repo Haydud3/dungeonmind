@@ -291,17 +291,20 @@ const NpcView = ({ data, setData, role, updateCloud, setChatInput, setView, onPo
                     
                     {/* HEADER */}
                 <div className="flex flex-col md:flex-row justify-between items-center gap-4 border-b border-slate-700 pb-4">
-                    <div>
-                        <h2 className="text-3xl fantasy-font text-amber-500">NPCs & Monsters</h2>
-                        <p className="text-slate-400 text-sm">Manage the world's inhabitants and enemies.</p>
-                    </div>
-                    
-                    <div className="flex flex-wrap gap-2 justify-center">
-                        <button onClick={() => setShowCreationMenu(true)} className="bg-gradient-to-r from-red-700 to-orange-700 hover:from-red-600 hover:to-orange-600 text-white px-6 py-2 rounded-lg font-bold shadow-lg flex items-center gap-2 transform transition-all hover:scale-105">
-                            <Icon name="plus-circle" size={20}/> <span>Summon Entity</span>
-                        </button>
-                    </div>
-                </div>
+    <div>
+        <h2 className="text-3xl fantasy-font text-amber-500">NPCs & Monsters</h2>
+        <p className="text-slate-400 text-sm">Manage the world's inhabitants and enemies.</p>
+    </div>
+    
+    {/* RESTRICTION APPLIED HERE */}
+    {role === 'dm' && (
+        <div className="flex flex-wrap gap-2 justify-center">
+            <button onClick={() => setShowCreationMenu(true)} className="...">
+                <Icon name="plus-circle" size={20}/> <span>Summon Entity</span>
+            </button>
+        </div>
+    )}
+</div>
 
                 {/* GRID LAYOUT */}
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
