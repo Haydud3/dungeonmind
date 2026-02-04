@@ -174,22 +174,97 @@ h1, h2, h3, .fantasy-font { font-family: 'Cinzel', serif; }
     display: flex !important;
     align-items: center;
     gap: 0.5rem;
-    padding: 0 1rem;
+    padding: 0 0.5rem;
     height: 100%;
     width: 100%;
-    /* REMOVED overflow-x: auto; This was clipping the dropdown menus */
-    overflow: visible !important; 
+    
+    /* --- CHANGES: Strict Overflow Control --- */
+    /* DEFAULT (Mobile): Scroll enabled, Dropdowns clipped (Standard behavior) */
+    overflow-x: auto; 
+    overflow-y: hidden;
+    
+    /* DESKTOP (Tablet+): No Scroll, Dropdowns VISIBLE (Pop out) */
+    @media (min-width: 768px) {
+        overflow: visible !important; 
+        flex-wrap: wrap; /* Wrap buttons if needed */
+    }
+    /* --- END OF CHANGES --- */
+
     white-space: nowrap;
-    flex-wrap: wrap; /* Allow wrapping on small screens instead of scroll to preserve dropdowns */
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none; 
 }
 
 /* Ensure picker options (dropdowns) appear ABOVE everything else */
 .ql-snow .ql-picker-options {
-    z-index: 9999 !important;
+    z-index: 10000 !important; /* Extremely high z-index */
     position: absolute !important; 
+    background-color: #1e293b !important; /* Ensure background is opaque */
+    border: 1px solid #334155 !important;
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5) !important;
+    
+    /* --- CHANGES: Prevent Page "Bleed Through" --- */
+    /* Ensure the dropdowns are fully opaque and not affected by the page's transform */
+    transform: translateZ(0); 
 }
 
-/* 2. Fix Page "Limit" - Allow indefinite vertical growth */
+/* Ensure the Sheet stays BELOW the header dropdowns */
+.journal-sheet {
+    background-color: #1e293b; 
+    /* ... (other styles) ... */
+    position: relative;
+    border-radius: 16px;
+    overflow: visible !important; 
+    padding-bottom: 2rem; 
+    
+    /* --- CHANGES: Force Stacking Order --- */
+    /* The Header is z-index 50. The Sheet must be lower. */
+    z-index: 1; 
+}
+
+/* 1. The HUD Header Container */
+/* This needs a very high Z-Index so its children (dropdowns) sit ON TOP of the scrollable viewport */
+.infinite-desk > div:first-child {
+    z-index: 50 !important;
+    position: relative;
+}
+
+/* 2. The Toolbar Container */
+#journal-toolbar-container {
+    display: flex !important;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0 0.5rem;
+    height: 100%;
+    width: 100%;
+    
+    /* MOBILE DEFAULT: Scroll enabled, Dropdowns clipped (Trade-off for small screens) */
+    overflow-x: auto; 
+    overflow-y: hidden;
+    
+    /* DESKTOP (Tablet+): Allow Overflow so Dropdowns Pop Out */
+    @media (min-width: 768px) {
+        overflow: visible !important; 
+        flex-wrap: wrap; 
+    }
+
+    white-space: nowrap;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none; 
+}
+
+/* 3. The Dropdown Menus (Picker Options) */
+/* Force them to break out of the stacking context and sit on top of everything */
+.ql-snow .ql-picker-options {
+    z-index: 10000 !important;
+    position: absolute !important;
+    background-color: #1e293b !important;
+    border: 1px solid #334155 !important;
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5) !important;
+}
+
+/* 4. The Page Sheet */
+/* Must have a LOWER Z-Index than the Header */
 .journal-sheet {
     background-color: #1e293b;
     /* ... (colors) */
@@ -206,6 +281,7 @@ h1, h2, h3, .fantasy-font { font-family: 'Cinzel', serif; }
     /* REMOVED overflow: hidden; This stops content from pushing the box open */
     overflow: visible !important; 
     padding-bottom: 2rem; /* Add padding at bottom so text doesn't hit edge */
+    z-index: 10; /* Lower than the toolbar dropdowns */
 }
 
 /* Force the Editor to grow dynamically (Auto-Expand) */

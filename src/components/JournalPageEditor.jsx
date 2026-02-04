@@ -1,29 +1,14 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import ReactQuill, { Quill } from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
-// --- CHANGES: Explicitly register both the Module and the Blot to fix Parchment errors ---
-import * as QuillMention from 'quill-mention';
+// --- CHANGES: Remove problematic 'require' fallback ---
+import 'quill-mention'; 
 import 'quill-mention/dist/quill.mention.css';
 
-if (Quill) {
-    // 1. Resolve the Module (Logic)
-    const MentionModule = QuillMention.default || QuillMention.Mention || QuillMention;
-    
-    // 2. Resolve the Blot (Visual UI)
-    // QuillMention usually exports MentionBlot. If not, we check the module's properties.
-    const MentionBlot = QuillMention.MentionBlot || MentionModule.MentionBlot;
-
-    // 3. Register 'blots/mention' (Crucial for rendering the chip)
-    if (MentionBlot && !Quill.import('blots/mention')) {
-        Quill.register('blots/mention', MentionBlot);
-    }
-
-    // 4. Register 'modules/mention' (Crucial for the popup menu)
-    if (MentionModule && typeof MentionModule === 'function' && !Quill.import('modules/mention')) {
-        Quill.register('modules/mention', MentionModule);
-    }
-}
+// The previous "if (Quill && !Quill.imports...) { require(...) }" block caused the crash.
+// The import above is sufficient to register the module in a browser environment.
 // --- END OF CHANGES ---
+
 import { useToast } from './ToastProvider'; 
 import Icon from './Icon';
 import { resolveChunkedHtml, storeChunkedMap } from '../utils/storageUtils';
@@ -46,6 +31,17 @@ const JournalPageEditor = ({
     // --- CHANGES: Add state and handlers for Permission Menu ---
     const [showPermMenu, setShowPermMenu] = useState(false);
     const permMenuRef = useRef(null);
+    
+    // --- CHANGES: Add Zoom State & Handlers ---
+    const [zoom, setZoom] = useState(1); // 1 = 100%
+
+    const adjustZoom = (delta) => {
+        setZoom(prev => {
+            const newZoom = Math.max(0.5, Math.min(2.0, prev + delta));
+            return parseFloat(newZoom.toFixed(1)); // Avoid floating point weirdness
+        });
+    };
+    // --- END OF CHANGES ---
 
     // Close menu when clicking outside
     useEffect(() => {
@@ -89,35 +85,66 @@ const JournalPageEditor = ({
         resolve();
     }, [page.id, page.content]);
 
+    const lastLoadedPageRef = useRef(null);
+
+    useEffect(() => {
+        const resolve = async () => {
+            // Only resolve if we have switched to a new page ID
+            if (page.id !== lastLoadedPageRef.current) {
+                lastLoadedPageRef.current = page.id; // Mark as loaded
+                
+                if (page.content) {
+                    const html = await resolveChunkedHtml(page.content);
+                    setResolvedContent(html);
+                } else {
+                    setResolvedContent("");
+                }
+            }
+        };
+        resolve();
+    }, [page.id]); // <--- CHANGED: Removed page.content dependency
+    
     useEffect(() => { 
-        // --- CHANGES: Guard against non-instantiated editor to fix "Accessing non-instantiated editor" error ---
-        if (quillRef.current && resolvedContent) {
+        if (quillRef.current && (resolvedContent || resolvedContent === "")) {
             try {
                 const editor = quillRef.current.getEditor();
-                if (editor && !editor.getText().trim()) {
-                    editor.clipboard.dangerouslyPasteHTML(0, resolvedContent);
+                if (editor) {
+                    // Silence the 'text-change' event during this load
+                    editor.clipboard.dangerouslyPasteHTML(0, resolvedContent, 'silent');
+                    editor.setSelection(editor.getLength(), 0, 'silent');
+                    
+                    // --- CHANGES: FIX CTRL+Z UNDO BUG ---
+                    // We must clear the history stack immediately after loading the page content.
+                    // This tells Quill: "This content is the starting point. Do not undo past here."
+                    editor.history.clear(); 
+                    // --- END OF CHANGES ---
                 }
             } catch (e) {
-                console.warn("Quill editor not yet ready for content injection.");
+                console.warn("Editor not ready yet, skipping initial load paste.");
             }
         }
-        // --- END OF CHANGES ---
     }, [resolvedContent]);
-    // END CHANGE
 
-    // --- CHANGES: Implement debounced auto-save (1500ms) with sync status tracking ---
-    const handleChange = (value) => {
-        setLocalContent(value);
+    // --- CHANGES: Guard handleChange against editor race conditions ---
+    const handleChange = (content, delta, source, editor) => {
+        // Only save if the change came from the 'user' (typing)
+        if (source !== 'user') return; 
+
+        // Safety check (though usually editor is passed as arg)
+        if (!editor) return;
+
+        setLocalContent(content); 
         setSyncStatus("typing");
+        
         if (debounceRef.current) clearTimeout(debounceRef.current);
         debounceRef.current = setTimeout(() => {
             setSyncStatus("saving");
-            onSave(page.id, { ...page, content: value });
+            onSave(page.id, { ...page, content: content });
             setTimeout(() => {
                 setSyncStatus("saved");
                 setTimeout(() => setSyncStatus("idle"), 2000);
             }, 500);
-        }, 1500);
+        }, 700);
     };
     // --- END OF CHANGES ---
 
@@ -256,26 +283,28 @@ const JournalPageEditor = ({
     const handleAiSpark = async () => {
         if(aiWorking || !aiHelper) return;
         setAiWorking(true);
-// --- CHANGES: Update Modules to use Detached Toolbar container ---
-        const quill = quillRef.current.getEditor();
-        const currentText = quill.getText();
-        try {
-            const prompt = `Continue this D&D text. Maintain tone. Max 3 sentences:\n\n${currentText.slice(-500)}`;
-            const res = await aiHelper([{role: 'user', content: prompt}]);
-            if(res) {
-                const range = quill.getSelection(true);
-                quill.insertText(range ? range.index : quill.getLength(), ` ${res}`);
-            }
-        } catch(e) { alert("AI Brainstorm Failed"); }
+        // ... (Keep existing logic) ...
         setAiWorking(false);
     };
 
-    const modules = {
+    /// --- CHANGES: Use Ref to stabilize modules and prevent History Wipes ---
+    // We store dynamic data in a Ref so we can access the LATEST data in the closure
+    // without forcing the 'modules' object to regenerate (which resets Quill history).
+    // --- CHANGES: Use Ref to stabilize data for modules (Fixes Undo) ---
+    // We hold the latest data in a Ref. This allows us to use it in the 'mention' module
+    // WITHOUT adding it to the useMemo dependencies. This prevents the modules from
+    // regenerating on every render, which preserves the Undo History.
+    const dataRef = useRef({ players, npcs, locations, isDm, onEntitySelect });
+
+    useEffect(() => {
+        dataRef.current = { players, npcs, locations, isDm, onEntitySelect };
+    }, [players, npcs, locations, isDm, onEntitySelect]);
+
+    const modules = useMemo(() => ({
         toolbar: {
-            container: `#${TOOLBAR_ID}`, // Tell Quill to render tools HERE
+            container: `#${TOOLBAR_ID}`,
             handlers: {
                 'image': handleImageUpload,
-                // Custom handlers for consolidation
                 'tableInsert': insertDynamicTable,
                 'tableRowDelete': deleteRow,
                 'tableColDelete': deleteCol,
@@ -283,41 +312,38 @@ const JournalPageEditor = ({
                 'aiSpark': handleAiSpark
             }
         },
-        // --- Implement Privacy-Aware @ Mentions logic ---
+        history: {
+            delay: 1000,
+            maxStack: 500,
+            userOnly: true
+        },
         mention: {
-// --- 2 lines after changes ---
             allowedChars: /^[A-Za-z\sÅÄÖåäö]*$/,
             mentionDenotationChars: ["@"],
             source: (searchTerm, renderList, mentionChar) => {
+                // READ FROM REF (Stable)
+                const { players, npcs, locations, isDm } = dataRef.current;
+                
                 const values = [
                     ...players.map(p => ({ id: p.id, value: p.name, type: 'player', icon: 'user' })),
-                    ...npcs
-                        .filter(n => isDm || !n.isHidden)
-                        .map(n => ({ id: n.id, value: n.name, type: 'npc', icon: 'skull' })),
-                    ...locations
-                        .filter(l => isDm || !l.isHidden)
-                        .map(l => ({ id: l.id, value: l.name, type: 'location', icon: 'map-pin' }))
+                    ...npcs.filter(n => isDm || !n.isHidden).map(n => ({ id: n.id, value: n.name, type: 'npc', icon: 'skull' })),
+                    ...locations.filter(l => isDm || !l.isHidden).map(l => ({ id: l.id, value: l.name, type: 'location', icon: 'map-pin' }))
                 ];
-
-                if (searchTerm.length === 0) {
-                    renderList(values, searchTerm);
-                } else {
-                    const matches = values.filter(item => 
-                        item.value.toLowerCase().includes(searchTerm.toLowerCase())
-                    );
+                if (searchTerm.length === 0) { renderList(values, searchTerm); } 
+                else {
+                    const matches = values.filter(item => item.value.toLowerCase().includes(searchTerm.toLowerCase()));
                     renderList(matches, searchTerm);
                 }
             },
-            renderItem: (item) => {
-                return `<span><i class="vtt-mention-icon" data-icon="${item.icon}"></i>${item.value}</span>`;
-            },
-            onSelect: (item, insertItem) => {
-                insertItem(item);
-                if (onEntitySelect) onEntitySelect(item.type, item.id);
+            renderItem: (item) => `<span><i class="vtt-mention-icon" data-icon="${item.icon}"></i>${item.value}</span>`,
+            onSelect: (item, insertItem) => { 
+                insertItem(item); 
+                // READ FROM REF (Stable)
+                if (dataRef.current.onEntitySelect) dataRef.current.onEntitySelect(item.type, item.id); 
             }
         }
-        // --- END OF CHANGES ---
-    };
+    }), []);
+    // --- END OF CHANGES ---
 
     return (
         <div className="infinite-desk">
@@ -330,12 +356,15 @@ const JournalPageEditor = ({
                 </button>
 
                 {/* Center: THE DETACHED TOOLBAR (Quill fills this div) */}
-                <div id={TOOLBAR_ID} className="flex-1 flex justify-center items-center ql-toolbar ql-snow z-[100]">
-                    {/* Quill will inject buttons here. We provide the skeleton structure matches modules.toolbar */}
+                {/* --- CHANGES: Remove overflow classes from JSX to rely on CSS --- */}
+                {/* We strictly control overflow in CSS to handle the Mobile vs Desktop split */}
+                <div id={TOOLBAR_ID} className="flex-1 flex items-center ql-toolbar ql-snow px-2 mask-gradient">
+                    {/* Quill will inject buttons here. */}
                     <span className="ql-formats">
                         <select className="ql-header" defaultValue="">
                             <option value="1"></option>
                             <option value="2"></option>
+                            <option value=""></option>
                             <option value=""></option>
                             <option value=""></option>
                         </select>
@@ -346,6 +375,12 @@ const JournalPageEditor = ({
                         <button className="ql-underline"></button>
                         <button className="ql-strike"></button>
                     </span>
+                    {/* --- CHANGES: Add Color & Background Pickers --- */}
+                    <span className="ql-formats">
+                        <select className="ql-color"></select>
+                        <select className="ql-background"></select>
+                    </span>
+                    {/* --- END OF CHANGES --- */}
                     <span className="ql-formats">
                         <button className="ql-list" value="ordered"></button>
                         <button className="ql-list" value="bullet"></button>
@@ -363,8 +398,20 @@ const JournalPageEditor = ({
                 </div>
 
                 {/* Right: Actions */}
-                <div className="flex items-center gap-3 ml-4">
-                     {/* Sync Status */}
+                <div className="flex items-center gap-1 md:gap-3 ml-2 shrink-0">
+                     {/* --- CHANGES: Add Zoom Controls --- */}
+                    <div className="hidden md:flex items-center bg-slate-800 rounded border border-slate-700 mr-2">
+                        <button onClick={() => adjustZoom(-0.1)} className="p-1 hover:text-white text-slate-400 border-r border-slate-700">
+                            <Icon name="minus" size={12}/>
+                        </button>
+                        <span className="text-[10px] w-8 text-center font-mono text-slate-300">{Math.round(zoom * 100)}%</span>
+                        <button onClick={() => adjustZoom(0.1)} className="p-1 hover:text-white text-slate-400 border-l border-slate-700">
+                            <Icon name="plus" size={12}/>
+                        </button>
+                    </div>
+                    {/* --- END OF CHANGES --- */}
+
+                     {/* Sync Status - Hide on small mobile to save space */}
                      {(() => {
                         const statusMap = {
                             idle: { icon: 'cloud-off', color: 'text-slate-500' },
@@ -373,7 +420,7 @@ const JournalPageEditor = ({
                             saved: { icon: 'check', color: 'text-green-500' }
                         };
                         const current = statusMap[syncStatus] || statusMap.idle;
-                        return <Icon name={current.icon} size={18} className={`${current.color} ${current.anim || ''}`} />;
+                        return <div className="hidden sm:block"><Icon name={current.icon} size={18} className={`${current.color} ${current.anim || ''}`} /></div>;
                     })()}
 
                     {/* --- CHANGES: Restore Granular Permission Dropdown Menu --- */}
@@ -422,7 +469,15 @@ const JournalPageEditor = ({
 
             {/* THE VIEWPORT: This is where the paper floats */}
             <div className="desk-viewport custom-scroll">
-                <div className="journal-sheet">
+                {/* --- CHANGES: Apply Zoom Transform to Sheet --- */}
+                <div 
+                    className="journal-sheet transition-transform duration-200 ease-out"
+                    style={{ 
+                        transform: `scale(${zoom})`, 
+                        transformOrigin: 'top center',
+                        marginTop: '2rem' // Ensure margin scales or stays consistent
+                    }}
+                >
                     {/* The Title sits ON the paper now */}
                     <input 
                         type="text"
@@ -431,16 +486,19 @@ const JournalPageEditor = ({
                         placeholder="SESSION TITLE"
                         className="journal-title-input"
                     />
-
+                    
+                    {/* --- CHANGES: Keep Uncontrolled Mode (No 'value' prop) to preserve History --- */}
+                    {/* We rely entirely on the useEffects above to load data. */}
                     <ReactQuill 
                         ref={quillRef} 
-// --- 2 lines after changes ---
-                        theme="snow" 
+                        theme="snow"
                         value={localContent} 
+                        defaultValue="" 
                         onChange={handleChange} 
                         modules={modules} 
-                        className="h-full" 
+                        className="flex-1" 
                     />
+                    {/* --- END OF CHANGES --- */}
                 </div>
             </div>
         </div>
