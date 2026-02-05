@@ -13,8 +13,10 @@ const SettingsView = ({
 }) => {
     const [activeTab, setActiveTab] = useState('general');
     
-    const myCharId = data.assignments?.[user.uid];
-    const myChar = data.players?.find(p => p.id === myCharId);
+    // START CHANGE: Robust character detection (handles string/number mismatches)
+    const myCharId = data.assignments?.[user?.uid];
+    const myChar = data.players?.find(p => String(p.id) === String(myCharId));
+    // END CHANGE
 
     // Campaign Bible State (Local edit before save)
     const [bibleData, setBibleData] = useState(data.campaign?.genesis || { tone: '', conflict: '', campaignName: '' });
