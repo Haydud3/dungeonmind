@@ -9,6 +9,7 @@ import BioTab from './tabs/BioTab';
 import FeaturesTab from './tabs/FeaturesTab';
 import DmNotesTab from './tabs/DmNotesTab';
 // END CHANGE
+import ExternalSheetBridge from './ExternalSheetBridge';
 import RollToast from './widgets/RollToast';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import Icon from '../Icon';
@@ -94,6 +95,18 @@ const SheetContainer = ({ characterId, tokenId, data, onSave, onDiceRoll, onLogA
     }, [isDirty, character, onSave, markSaved]);
 
     if (!character) return <div className="text-slate-500 p-10 text-center animate-pulse">Loading Character...</div>;
+
+    // START CHANGE: Route to External D&D Beyond Sheet if enabled and user is the owner (Player)
+    // DMs always see the VTT version to maintain standard control over NPCs and Shared sheets.
+    if (character.useExternalSheet && character.externalSheetUrl && isOwner && role !== 'dm') {
+        return (
+            <ExternalSheetBridge 
+                url={character.externalSheetUrl} 
+                onClose={handleBack} 
+            />
+        );
+    }
+    // END CHANGE
 
     return (
         <div className="h-[100dvh] flex flex-col bg-slate-950 font-sans relative overflow-hidden pt-[env(safe-area-inset-top)]">

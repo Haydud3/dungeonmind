@@ -71,7 +71,9 @@ export const useCharacterStore = create((set, get) => ({
             spells: char.spells || [],
             inventory: char.inventory || [],
             features: char.features || [],
-            classes: char.classes || []
+            classes: char.classes || [],
+            externalSheetUrl: char.externalSheetUrl || "",
+            useExternalSheet: char.useExternalSheet || false
         })) : null, 
         isDirty: false,
         logs: [] 

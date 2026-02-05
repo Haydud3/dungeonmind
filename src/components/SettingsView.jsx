@@ -13,6 +13,9 @@ const SettingsView = ({
 }) => {
     const [activeTab, setActiveTab] = useState('general');
     
+    const myCharId = data.assignments?.[user.uid];
+    const myChar = data.players?.find(p => p.id === myCharId);
+
     // Campaign Bible State (Local edit before save)
     const [bibleData, setBibleData] = useState(data.campaign?.genesis || { tone: '', conflict: '', campaignName: '' });
 
@@ -84,6 +87,7 @@ const SettingsView = ({
                 {/* Tabs */}
                 <div className="flex gap-1 bg-slate-800/50 p-1 rounded-lg overflow-x-auto">
                     <button onClick={() => setActiveTab('general')} className={`flex-1 py-2 px-4 rounded-md text-sm font-bold transition-all whitespace-nowrap ${activeTab === 'general' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}>General</button>
+                    {myChar && <button onClick={() => setActiveTab('character')} className={`flex-1 py-2 px-4 rounded-md text-sm font-bold transition-all whitespace-nowrap ${activeTab === 'character' ? 'bg-slate-700 text-indigo-400 shadow' : 'text-slate-400 hover:text-slate-200'}`}>My Character</button>}
                     <button onClick={() => setActiveTab('bible')} className={`flex-1 py-2 px-4 rounded-md text-sm font-bold transition-all whitespace-nowrap ${activeTab === 'bible' ? 'bg-slate-700 text-amber-500 shadow' : 'text-slate-400 hover:text-slate-200'}`}>Campaign Bible</button>
                     <button onClick={() => setActiveTab('ai')} className={`flex-1 py-2 px-4 rounded-md text-sm font-bold transition-all whitespace-nowrap ${activeTab === 'ai' ? 'bg-slate-700 text-purple-400 shadow' : 'text-slate-400 hover:text-slate-200'}`}>AI Config</button>
                     {role === 'dm' && <button onClick={() => setActiveTab('players')} className={`flex-1 py-2 px-4 rounded-md text-sm font-bold transition-all whitespace-nowrap ${activeTab === 'players' ? 'bg-slate-700 text-red-400 shadow' : 'text-slate-400 hover:text-slate-200'}`}>Players</button>}
@@ -163,6 +167,51 @@ const SettingsView = ({
                         <Icon name="log-out" size={20}/> Leave Campaign
                     </button>
                     {/* END CHANGE */}
+                    </div>
+                )}
+
+                {/* --- MY CHARACTER SETTINGS --- */}
+                {activeTab === 'character' && myChar && (
+                    <div className="space-y-6 animate-in fade-in">
+                        <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-lg">
+                            <h3 className="text-lg font-bold text-indigo-400 mb-1 flex items-center gap-2">
+                                <Icon name="user" size={20}/> {myChar.name}
+                            </h3>
+                            <p className="text-sm text-slate-400 mb-6">Configure your external character sheet integration.</p>
+
+                            <div className="space-y-6">
+                                <div>
+                                    <label className="block text-xs uppercase font-bold text-slate-500 mb-2">D&D Beyond Character URL</label>
+                                    <input 
+                                        type="text"
+                                        value={myChar.externalSheetUrl || ""}
+                                        onChange={(e) => {
+                                            const updatedPlayers = data.players.map(p => p.id === myCharId ? { ...p, externalSheetUrl: e.target.value } : p);
+                                            updateCloud({ ...data, players: updatedPlayers });
+                                        }}
+                                        placeholder="https://www.dndbeyond.com/characters/..."
+                                        className="w-full bg-slate-900 border border-slate-600 rounded p-3 text-white focus:border-indigo-500 outline-none font-mono text-sm"
+                                    />
+                                    <p className="text-[10px] text-slate-500 mt-2 italic">Requires the DungeonMind Helper browser extension to bypass security headers.</p>
+                                </div>
+
+                                <div className="flex items-center gap-3 p-4 bg-slate-900/50 rounded-lg border border-slate-700">
+                                    <input 
+                                        type="checkbox" 
+                                        checked={myChar.useExternalSheet || false} 
+                                        onChange={(e) => {
+                                            const updatedPlayers = data.players.map(p => p.id === myCharId ? { ...p, useExternalSheet: e.target.checked } : p);
+                                            updateCloud({ ...data, players: updatedPlayers });
+                                        }}
+                                        className="w-6 h-6 accent-indigo-500"
+                                    />
+                                    <div>
+                                        <div className="font-bold text-slate-200 text-sm">Enable External Sheet</div>
+                                        <div className="text-xs text-slate-500">When you click your token, the D&D Beyond sheet will load in the sidebar instead of the standard UI.</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 )}
 
