@@ -21,6 +21,22 @@ const SettingsView = ({
     // Campaign Bible State (Local edit before save)
     const [bibleData, setBibleData] = useState(data.campaign?.genesis || { tone: '', conflict: '', campaignName: '' });
 
+    // START CHANGE: Local state for Character Integration to prevent input locking
+    const [localCharUrl, setLocalCharUrl] = useState(myChar?.externalSheetUrl || "");
+    const [localUseExternal, setLocalUseExternal] = useState(myChar?.useExternalSheet || false);
+
+    const handleCharSave = () => {
+        if (!myCharId) return;
+        const updatedPlayers = data.players.map(p => 
+            String(p.id) === String(myCharId) 
+            ? { ...p, externalSheetUrl: localCharUrl, useExternalSheet: localUseExternal } 
+            : p
+        );
+        updateCloud({ ...data, players: updatedPlayers });
+        alert("Character Integration Updated!");
+    };
+    // END CHANGE
+
     const handleBibleSave = () => {
         updateCloud({ ...data, campaign: { ...data.campaign, genesis: bibleData } });
         alert("Campaign Bible Updated!");
@@ -186,11 +202,8 @@ const SettingsView = ({
                                     <label className="block text-xs uppercase font-bold text-slate-500 mb-2">D&D Beyond Character URL</label>
                                     <input 
                                         type="text"
-                                        value={myChar.externalSheetUrl || ""}
-                                        onChange={(e) => {
-                                            const updatedPlayers = data.players.map(p => p.id === myCharId ? { ...p, externalSheetUrl: e.target.value } : p);
-                                            updateCloud({ ...data, players: updatedPlayers });
-                                        }}
+                                        value={localCharUrl}
+                                        onChange={(e) => setLocalCharUrl(e.target.value)}
                                         placeholder="https://www.dndbeyond.com/characters/..."
                                         className="w-full bg-slate-900 border border-slate-600 rounded p-3 text-white focus:border-indigo-500 outline-none font-mono text-sm"
                                     />
@@ -200,11 +213,8 @@ const SettingsView = ({
                                 <div className="flex items-center gap-3 p-4 bg-slate-900/50 rounded-lg border border-slate-700">
                                     <input 
                                         type="checkbox" 
-                                        checked={myChar.useExternalSheet || false} 
-                                        onChange={(e) => {
-                                            const updatedPlayers = data.players.map(p => p.id === myCharId ? { ...p, useExternalSheet: e.target.checked } : p);
-                                            updateCloud({ ...data, players: updatedPlayers });
-                                        }}
+                                        checked={localUseExternal} 
+                                        onChange={(e) => setLocalUseExternal(e.target.checked)}
                                         className="w-6 h-6 accent-indigo-500"
                                     />
                                     <div>
@@ -212,6 +222,13 @@ const SettingsView = ({
                                         <div className="text-xs text-slate-500">When you click your token, the D&D Beyond sheet will load in the sidebar instead of the standard UI.</div>
                                     </div>
                                 </div>
+
+                                <button 
+                                    onClick={handleCharSave} 
+                                    className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-lg transition-all shadow-lg flex items-center justify-center gap-2"
+                                >
+                                    <Icon name="save" size={18}/> Save Character Link
+                                </button>
                             </div>
                         </div>
                     </div>
