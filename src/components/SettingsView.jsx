@@ -25,6 +25,14 @@ const SettingsView = ({
     const [localCharUrl, setLocalCharUrl] = useState(myChar?.externalSheetUrl || "");
     const [localUseExternal, setLocalUseExternal] = useState(myChar?.useExternalSheet || false);
 
+    // Sync local state if props change (e.g. on initial load)
+    React.useEffect(() => {
+        if (myChar) {
+            setLocalCharUrl(myChar.externalSheetUrl || "");
+            setLocalUseExternal(myChar.useExternalSheet || false);
+        }
+    }, [myCharId, data.players]);
+
     const handleCharSave = () => {
         if (!myCharId) return;
         const updatedPlayers = data.players.map(p => 
@@ -32,7 +40,11 @@ const SettingsView = ({
             ? { ...p, externalSheetUrl: localCharUrl, useExternalSheet: localUseExternal } 
             : p
         );
-        updateCloud({ ...data, players: updatedPlayers });
+        
+        // Update local state AND cloud to ensure UI consistency
+        const newData = { ...data, players: updatedPlayers };
+        setData(newData);
+        updateCloud(newData);
         alert("Character Integration Updated!");
     };
     // END CHANGE

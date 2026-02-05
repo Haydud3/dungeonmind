@@ -1,10 +1,12 @@
-import React from 'react';
+import React, { useState } from 'react';
 import Icon from '../Icon';
 
 const ExternalSheetBridge = ({ url, onClose }) => {
-    // If user provided a character URL without the builder suffix, we often use builder 
-    // for a cleaner iframe experience, but standard sheet works too.
-    const iframeUrl = url;
+    // START CHANGE: Force Refresh Logic
+    const [refreshKey, setRefreshKey] = useState(0);
+    const handleRefresh = () => setRefreshKey(prev => prev + 1);
+    const handleLinkAccount = () => window.open('https://www.dndbeyond.com/login', '_blank');
+    // END CHANGE
 
     return (
         <div className="flex flex-col h-full bg-slate-900 border-l border-slate-700 shadow-2xl animate-in slide-in-from-right duration-300">
@@ -12,11 +14,27 @@ const ExternalSheetBridge = ({ url, onClose }) => {
             <div className="flex items-center justify-between p-3 bg-slate-800 border-b border-slate-700">
                 <div className="flex items-center gap-2">
                     <div className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse"></div>
-                    <span className="text-xs font-bold text-slate-300 uppercase tracking-wider font-sans">D&D Beyond Link</span>
+                    <span className="text-xs font-bold text-slate-300 uppercase tracking-wider font-sans">Character Sheet</span>
                 </div>
                 <div className="flex items-center gap-1">
+                    {/* START CHANGE: New Header Controls for Session Management */}
+                    <button 
+                        onClick={handleLinkAccount}
+                        className="flex items-center gap-1.5 px-2 py-1 text-[10px] font-bold bg-indigo-600 hover:bg-indigo-500 text-white rounded transition-colors"
+                        title="Sign in to D&D Beyond in a new tab"
+                    >
+                        <Icon name="user" size={14} /> Link Account
+                    </button>
+                    <button 
+                        onClick={handleRefresh}
+                        className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-md transition-colors"
+                        title="Refresh Iframe"
+                    >
+                        <Icon name="refresh-cw" size={18} />
+                    </button>
+                    {/* END CHANGE */}
                     <a 
-                        href={url} 
+                        href={url}  
                         target="_blank" 
                         rel="noopener noreferrer"
                         className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-md transition-colors"
@@ -37,14 +55,16 @@ const ExternalSheetBridge = ({ url, onClose }) => {
             {/* Bypass Warning Banner */}
             <div className="bg-indigo-950/40 border-b border-indigo-500/30 p-2 text-center">
                 <p className="text-[10px] text-indigo-200/70 leading-tight">
-                    If sheet is blank, ensure <span className="text-indigo-400 font-bold underline cursor-help" onClick={() => alert("1. Create a folder\n2. Save manifest.json and rules.json\n3. Load into chrome://extensions")}>DungeonMind Helper Extension</span> is installed.
+                    Login failed? Click <span className="text-indigo-400 font-bold underline cursor-pointer" onClick={handleLinkAccount}>Link Account</span>, sign in, then <span className="text-indigo-400 font-bold underline cursor-pointer" onClick={handleRefresh}>Refresh</span>. 
+                    <span className="opacity-50 ml-1">(Extension still required)</span>
                 </p>
             </div>
 
             {/* Iframe Container */}
             <div className="flex-1 relative overflow-hidden bg-slate-950">
                 <iframe 
-                    src={iframeUrl}
+                    key={refreshKey}
+                    src={url}
                     className="w-full h-full border-none bg-white"
                     title="Character Sheet"
                     // Allow same-origin is required for the extension to interact and for DDB to load styles
