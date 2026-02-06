@@ -11,6 +11,18 @@ const WorldView = ({ data, role, updateCloud, updateMapState, user, apiKey, onDi
     const [activeSheetId, setActiveSheetId] = useState(null);
     const [sheetContext, setSheetContext] = useState(null); // NEW STATE FOR SHEET CONTEXT
 
+    // START CHANGE: Escape Key Drawing Cancellation
+    useEffect(() => {
+        const handleKeyDown = (e) => {
+            if (e.key === 'Escape') {
+                handleMapAction('clear_active_path');
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, []);
+    // END CHANGE
+
     // --- HOT SWAP LOGIC ---
     useEffect(() => {
         if (activeSheetId) {

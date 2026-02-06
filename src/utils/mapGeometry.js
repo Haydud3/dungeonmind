@@ -46,9 +46,10 @@ export const computeVisibilityPolygon = (origin, maxDist, wallSegments, mapW, ma
     });
 
     const angles = Array.from(uniqueAngles).sort((a, b) => a - b);
-
+// Exactly 2 lines before change
     angles.forEach(angle => {
         const r_dx = Math.cos(angle);
+// COMPLETE NEW or MODIFIED code block
         const r_dy = Math.sin(angle);
         let closestDist = maxDist; 
         let hitPoint = { x: origin.x + r_dx * maxDist, y: origin.y + r_dy * maxDist };
@@ -63,4 +64,25 @@ export const computeVisibilityPolygon = (origin, maxDist, wallSegments, mapW, ma
         points.push(hitPoint);
     });
     return points;
+};
+
+/**
+ * Normalizes screen coordinates to world (map) coordinates.
+ */
+export const normalizeToWorld = (clientX, clientY, containerRect, view) => {
+    return {
+        x: (clientX - containerRect.left - view.x) / view.scale,
+        y: (clientY - containerRect.top - view.y) / view.scale
+    };
+};
+
+/**
+ * Snaps world coordinates to the nearest grid intersection.
+ */
+export const snapWorldToGrid = (worldPos, grid) => {
+    if (!grid.snap) return worldPos;
+    return {
+        x: Math.round((worldPos.x - grid.offsetX) / grid.size) * grid.size + grid.offsetX,
+        y: Math.round((worldPos.y - grid.offsetY) / grid.size) * grid.size + grid.offsetY
+    };
 };

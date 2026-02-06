@@ -83,6 +83,7 @@ const CombatTracker = ({ combat, onNextTurn, onEndCombat, onClearRolls, role, up
                                       type="number" 
                                       value={c.init || 0} 
                                       onChange={(e) => updateCombatant(c.id, { init: parseInt(e.target.value) })}
+                                      onBlur={handleSort}
                                       className="w-8 bg-transparent text-right font-bold text-amber-500 outline-none border-b border-transparent focus:border-amber-500 p-0 text-sm opacity-80 focus:opacity-100 transition-opacity"
                                   />
                                 {c.init === null && role === 'dm' && (

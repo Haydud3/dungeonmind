@@ -634,24 +634,23 @@ function DungeonMindApp() {
       const c = data.campaign?.combat;
       if (!c) return;
       let combatants = [...c.combatants];
+      let newTurn = c.turn;
 
       if (id === 'reorder') {
-          // Special action for manual list re-sorting on blur
-          combatants = changes; 
+          // Identify who is currently taking their turn to prevent jumping
+          const activeCombatantId = combatants[c.turn]?.id;
+          combatants = changes;
+          
+          const newIdx = combatants.findIndex(x => x.id === activeCombatantId);
+          if (newIdx > -1) newTurn = newIdx;
       } else {
           const idx = combatants.findIndex(x => x.id === id);
           if (idx > -1) {
               combatants[idx] = { ...combatants[idx], ...changes };
-              
-              // Only auto-sort if init changed, but keep it stable for typing
-              if (changes.init !== undefined && changes.init !== null) {
-                  // We don't sort here immediately to prevent the input from jumping 
-                  // while the DM is typing. The Tracker calls 'reorder' onBlur.
-              }
           }
       }
       
-      updateCloud({ ...data, campaign: { ...data.campaign, combat: { ...c, combatants } } });
+      updateCloud({ ...data, campaign: { ...data.campaign, combat: { ...c, combatants, turn: newTurn } } });
   };
   // END CHANGE
 

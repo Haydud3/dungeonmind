@@ -567,7 +567,8 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             }
 
             // B. NORMAL MOVE LOGIC (1 Finger/Mouse)
-            if (!movingTokenId && !isPanning && !activeMeasurement && !gridCalStart) return;
+            const isDrawing = ['wall', 'door', 'delete'].includes(activeTool);
+            if (!movingTokenId && !isPanning && !activeMeasurement && !gridCalStart && !isDrawing) return;
             
             const coords = getMapCoords(e);
 
@@ -580,6 +581,15 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                 }
             } else if (gridCalStart) {
                 setCursorPos(coords);
+            } else if (isDrawing) {
+                let snapped = coords;
+                if (mapGrid.snap && (activeTool === 'wall' || activeTool === 'door')) {
+                    snapped = {
+                        x: Math.round((coords.x - mapGrid.offsetX) / mapGrid.size) * mapGrid.size + mapGrid.offsetX,
+                        y: Math.round((coords.y - mapGrid.offsetY) / mapGrid.size) * mapGrid.size + mapGrid.offsetY
+                    };
+                }
+                setCursorPos(snapped);
             } else if (movingTokenId) {
                 setMovingTokenPos(coords);
             } else if (isPanning) {
@@ -1276,8 +1286,14 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         const mouseY = e.clientY - rect.top;
         
         // Convert to world space
-        const worldX = (mouseX - view.x) / view.scale;
-        const worldY = (mouseY - view.y) / view.scale;
+        let worldX = (mouseX - view.x) / view.scale;
+        let worldY = (mouseY - view.y) / view.scale;
+
+        // Apply Snap to grid for wall/door anchor points
+        if (mapGrid.snap && (activeTool === 'wall' || activeTool === 'door')) {
+            worldX = Math.round((worldX - mapGrid.offsetX) / mapGrid.size) * mapGrid.size + mapGrid.offsetX;
+            worldY = Math.round((worldY - mapGrid.offsetY) / mapGrid.size) * mapGrid.size + mapGrid.offsetY;
+        }
         
         // Convert to pixel coordinates
         const percentX = (worldX / img.naturalWidth) * 100;
