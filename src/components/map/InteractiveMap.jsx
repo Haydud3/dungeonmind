@@ -63,6 +63,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     const [lastMousePos, setLastMousePos] = useState({ x: 0, y: 0 });
     const [spawningToken, setSpawningToken] = useState(null);
     const [gridCalStart, setGridCalStart] = useState(null);
+    const gridCalStartRef = useRef(null); // NEW: Reference for global listeners
     const [activeLightId, setActiveLightId] = useState(null);
     const [assembledMapUrl, setAssembledMapUrl] = useState(null);
     const [mapReady, setMapReady] = useState(false); 
@@ -288,6 +289,13 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     useEffect(() => {
         if (data.campaign?.combat?.active) setShowCombat(true);
     }, [data.campaign?.combat?.active]);
+
+    useEffect(() => {
+        if (activeTool !== 'grid_cal') {
+            setGridCalStart(null);
+            gridCalStartRef.current = null;
+        }
+    }, [activeTool]);
 
     useEffect(() => {
         if (sidebarIsOpen && selectedTokenId) {
@@ -568,7 +576,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
             // B. NORMAL MOVE LOGIC (1 Finger/Mouse)
             const isDrawing = ['wall', 'door', 'delete'].includes(activeTool);
-            if (!movingTokenId && !isPanning && !activeMeasurement && !gridCalStart && !isDrawing) return;
+            if (!movingTokenId && !isPanning && !activeMeasurement && !gridCalStartRef.current && !isDrawing) return;
             
             const coords = getMapCoords(e);
 
@@ -579,17 +587,16 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                     clearTimeout(longPressTimer.current);
                     longPressTimer.current = null;
                 }
-            } else if (gridCalStart) {
-                setCursorPos(coords);
-            } else if (isDrawing) {
-                let snapped = coords;
-                if (mapGrid.snap && (activeTool === 'wall' || activeTool === 'door')) {
-                    snapped = {
-                        x: Math.round((coords.x - mapGrid.offsetX) / mapGrid.size) * mapGrid.size + mapGrid.offsetX,
-                        y: Math.round((coords.y - mapGrid.offsetY) / mapGrid.size) * mapGrid.size + mapGrid.offsetY
-                    };
-                }
-                setCursorPos(snapped);
+            } else if (gridCalStartRef.current) {
+                const gStart = gridCalStartRef.current;
+                const dx = coords.x - gStart.x;
+                const dy = coords.y - gStart.y;
+                const side = Math.max(Math.abs(dx), Math.abs(dy));
+                
+                setCursorPos({
+                    x: gStart.x + (dx >= 0 ? side : -side),
+                    y: gStart.y + (dy >= 0 ? side : -side)
+                });
             } else if (movingTokenId) {
                 setMovingTokenPos(coords);
             } else if (isPanning) {
@@ -650,7 +657,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
             const mTokenId = movingTokenId;
             const mPos = movingTokenPos;
-            const gStart = gridCalStart;
+            const gStart = gridCalStartRef.current; 
             const mData = latestDataRef.current;
             const currentTokens = latestTokensRef.current;
 
@@ -658,22 +665,34 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
             // Grid Calibration Math
             if (activeTool === 'grid_cal' && gStart) {
-                const cellSize = coords.x - gStart.x;
-                if (cellSize > 5) {
-                    const newGrid = {
-                        ...mData.campaign.activeMap.grid,
-                        size: Math.round(cellSize),
-                        offsetX: Math.round(gStart.x % cellSize),
-                        offsetY: Math.round(gStart.y % cellSize)
-                    };
-                    handleGridUpdate(newGrid);
+                // Use fresh coords from the event for the final calculation, not stale state
+                const dx = coords.x - gStart.x;
+                const dy = coords.y - gStart.y;
+                const side = Math.max(Math.abs(dx), Math.abs(dy));
+                
+                if (side >= 5) {
+                    const topLeftX = Math.min(gStart.x, gStart.x + (dx >= 0 ? side : -side));
+                    const topLeftY = Math.min(gStart.y, gStart.y + (dy >= 0 ? side : -side));
+                    
+                    const finalSize = Math.round(side);
+                    handleGridUpdate({ 
+                        ...mapGrid, 
+                        size: finalSize, 
+                        offsetX: Math.round(topLeftX % finalSize), 
+                        offsetY: Math.round(topLeftY % finalSize), 
+                        visible: true 
+                    });
                     triggerHaptic('medium');
                 }
+                
                 setGridCalStart(null);
+                gridCalStartRef.current = null;
+                setCursorPos({ x: 0, y: 0 });
                 setActiveTool('move');
+                
+                if (e.stopPropagation) e.stopPropagation();
                 return;
             }
-
             // 1. CLICK LOGIC: Open Radial HUD (Check distance from touchStartPos)
             const dist = Math.hypot(e.clientX - touchStartPos.current.x, e.clientY - touchStartPos.current.y);
             const isClick = dist < 5;
@@ -748,7 +767,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             window.removeEventListener('pointerup', handleGlobalUp);
             // REMOVED: window.removeEventListener('touchmove', handleGlobalMove);
         };
-    }, [movingTokenId, isPanning, activeMeasurement, movingTokenPos, tokens, view.scale]);
+    }, [movingTokenId, isPanning, activeMeasurement, movingTokenPos, tokens, view.scale, activeTool, mapGrid]);
 
     // --- 2. MATH HELPERS ---
     
@@ -812,13 +831,13 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
     const getMapCoords = (e) => {
         const rect = containerRef.current.getBoundingClientRect();
+        const currentView = viewRef.current;
         return {
-            x: (e.clientX - rect.left - view.x) / view.scale,
-            y: (e.clientY - rect.top - view.y) / view.scale
+            x: (e.clientX - rect.left - currentView.x) / currentView.scale,
+            y: (e.clientY - rect.top - currentView.y) / currentView.scale
         };
     };
 
-    // --- 3. MOUSE HANDLERS (UNIFIED) ---
     const handleTokenPointerDown = (e, tokenId) => {
         if (activeTool !== 'move') return;
         e.stopPropagation(); 
@@ -856,28 +875,13 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
     const handlePointerDown = (e) => {
         if (e.button !== 0 && e.button !== 2 && e.pointerType !== 'touch') return; 
-// ---------------------------------------------------------
         
-        // NEW: Do NOT capture pointer if using drawing tools.
-        // This allows the SVG layer and specific click handlers to receive the event.
-        const isDrawingTool = ['wall', 'door', 'delete', 'light'].includes(activeTool);
-        if (!isDrawingTool) {
-            e.currentTarget.setPointerCapture(e.pointerId);
-        }
-
-        // Add to pointer cache for multi-touch support
-        pointerCache.current.push({ id: e.pointerId, x: e.clientX, y: e.clientY });
-
-        if (movingTokenId) return; 
-
-        // CRITICAL: Tells the browser to stick to this element for dragging
-        e.currentTarget.setPointerCapture(e.pointerId);
-
+        // Use unified World Space coordinates
         const coords = getMapCoords(e);
         touchStartPos.current = { x: e.clientX, y: e.clientY };
         lastMousePosRef.current = { x: e.clientX, y: e.clientY };
 
-        // 0. Pinch Detection: If two fingers are down, start pinch logic
+        // 0. Multi-Touch Pinch Detection
         if (pointerCache.current.length === 2) {
             clearTimeout(longPressTimer.current);
             longPressTimer.current = null;
@@ -885,59 +889,65 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             const p1 = pointerCache.current[0];
             const p2 = pointerCache.current[1];
             pinchStartDist.current = Math.hypot(p1.x - p2.x, p1.y - p2.y);
-            pinchStartScale.current = view.scale;
-            setIsPanning(false); // Stop panning to focus on zoom
+            pinchStartScale.current = viewRef.current.scale;
+            setIsPanning(false); 
             return;
         }
 
-        // 1. Measurement Priority
-        if (activeTool === 'ruler' || activeTool === 'sphere' || activeTool === 'sphere_stamp') {
-            const img = mapImageRef.current;
-            let startX = coords.x;
-            let startY = coords.y;
-
-            if (mapGrid.snap && img) {
-                const isSphere = activeTool === 'sphere';
-                const snapOffset = isSphere ? 0 : (mapGrid.size / 2);
-                startX = (Math.round((coords.x - mapGrid.offsetX) / mapGrid.size) * mapGrid.size) + mapGrid.offsetX + snapOffset;
-                startY = (Math.round((coords.y - mapGrid.offsetY) / mapGrid.size) * mapGrid.size) + mapGrid.offsetY + snapOffset;
+        // 1. Grid Calibration & Drawing Priority (Phase 1 Reset)
+        const isDrawingTool = ['wall', 'door', 'delete', 'light', 'grid_cal', 'ruler', 'sphere', 'sphere_stamp'].includes(activeTool);
+        
+        if (isDrawingTool) {
+            setIsPanning(false);
+            e.currentTarget.setPointerCapture(e.pointerId); 
+            
+            if (longPressTimer.current) {
+                clearTimeout(longPressTimer.current);
+                longPressTimer.current = null;
+            }
+            
+            // Grid Calibration Start
+            if (activeTool === 'grid_cal') {
+                const startCoords = getMapCoords(e);
+                setGridCalStart(startCoords);
+                gridCalStartRef.current = startCoords;
+                setCursorPos(startCoords);
+                return;
             }
 
-            setIsPanning(false);
-            setActiveMeasurement({ start: { x: startX, y: startY }, end: { x: startX, y: startY }, type: activeTool });
-            return; 
-        }
+            // Measurement Tools
+            if (['ruler', 'sphere', 'sphere_stamp'].includes(activeTool)) {
+                const img = mapImageRef.current;
+                let startX = coords.x;
+                let startY = coords.y;
 
-        if (activeTool === 'grid_cal') {
-            setGridCalStart(coords);
-            setCursorPos(coords);
+                if (mapGrid.snap && img) {
+                    const isSphere = activeTool === 'sphere';
+                    const snapOffset = isSphere ? 0 : (mapGrid.size / 2);
+                    startX = (Math.round((coords.x - mapGrid.offsetX) / mapGrid.size) * mapGrid.size) + mapGrid.offsetX + snapOffset;
+                    startY = (Math.round((coords.y - mapGrid.offsetY) / mapGrid.size) * mapGrid.size) + mapGrid.offsetY + snapOffset;
+                }
+                setActiveMeasurement({ start: { x: startX, y: startY }, end: { x: startX, y: startY }, type: activeTool });
+                return;
+            }
+
+            // Wall/Light/Door Logic (Now using unified World coords)
+            handleMapClick(e);
             return;
         }
 
-        // 2. Map Panning (Move Tool Priority)
-        if (activeTool === 'move') {
-// ---------------------------------------------------------
+        // 2. Map Panning (Default Interaction)
+        if (activeTool === 'move' && !movingTokenId) {
+            e.currentTarget.setPointerCapture(e.pointerId);
             setIsPanning(true);
         }
 
-        // NEW: Explicitly trigger Drawing Logic on Pointer Down for better responsiveness
-        if (['wall', 'door', 'delete', 'light'].includes(activeTool)) {
-            handleMapClick(e);
-        }
-
-        // 3. Wall/Door Tools (Claimed by SVG layer via pointer-events, but safe-guard here)
-        if (['wall', 'door', 'delete'].includes(activeTool)) return;
-
-        // 4. Ping Logic
+        // 3. Long-Press Ping Logic
         longPressTimer.current = setTimeout(() => {
             triggerHaptic('medium');
             const newPing = { id: Date.now(), x: coords.x, y: coords.y };
             setPings(prev => [...prev, newPing]);
-            
-            // START CHANGE: Broadcast Ping to Other Users
             sendPing(coords);
-            // END CHANGE
-            
             setTimeout(() => setPings(prev => prev.filter(p => p.id !== newPing.id)), 2000);
         }, 600);
     };
@@ -1781,8 +1791,8 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
                         {/* Phase 3 Wall/Door SVG Layer */}
                         <svg 
-                            className={`absolute top-0 left-0 w-full h-full z-[8] ${(['wall', 'door', 'delete', 'light'].includes(activeTool) || activeMeasurement) ? 'pointer-events-auto' : 'pointer-events-none'}`} 
-                            style={{ viewBox: `0 0 ${mapImageRef.current?.naturalWidth} ${mapImageRef.current?.naturalHeight}` }}
+                            className={`absolute top-0 left-0 w-full h-full z-[8] ${(['wall', 'door', 'delete', 'light', 'grid_cal'].includes(activeTool) || activeMeasurement) ? 'pointer-events-auto' : 'pointer-events-none'}`} 
+                            viewBox={`0 0 ${mapDimensions.width} ${mapDimensions.height}`}
                             onClick={handleMapClick}
                             onContextMenu={handleMapRightClick}
                         >
@@ -1891,17 +1901,18 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                                 />
                             )}
                             
-                            {/* 4. Render Grid Calibration Square */}
+                            {/* 4. Render Grid Calibration Square (World Space) */}
                             {gridCalStart && activeTool === 'grid_cal' && (
                                 <rect 
-                                    x={gridCalStart.x} 
-                                    y={gridCalStart.y} 
-                                    width={Math.max(0, cursorPos.x - gridCalStart.x)} 
-                                    height={Math.max(0, cursorPos.x - gridCalStart.x)} 
-                                    fill="rgba(99, 102, 241, 0.2)" 
-                                    stroke="#6366f1" 
-                                    strokeWidth={2} 
-                                    strokeDasharray="5,5"
+                                    x={Math.min(gridCalStart.x, cursorPos.x)} 
+                                    y={Math.min(gridCalStart.y, cursorPos.y)} 
+                                    width={Math.abs(cursorPos.x - gridCalStart.x)} 
+                                    height={Math.abs(cursorPos.y - gridCalStart.y)} 
+                                    fill="rgba(34, 211, 238, 0.15)" 
+                                    stroke="#22d3ee" 
+                                    strokeWidth={3 / view.scale} 
+                                    strokeDasharray={`${8 / view.scale},${4 / view.scale}`}
+                                    pointerEvents="none"
                                 />
                             )}
                         {/* 5. Render Light Anchors (DM Only) */}
