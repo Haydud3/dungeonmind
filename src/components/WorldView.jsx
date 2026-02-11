@@ -6,7 +6,7 @@ import SheetContainer from './character-sheet/SheetContainer';
 import { useCharacterStore } from '../stores/useCharacterStore';
 
 // START CHANGE: Add manual combatant props to destructuring
-const WorldView = ({ data, role, updateCloud, updateMapState, user, apiKey, onDiceRoll, savePlayer, onInitiative, updateCombatant, removeCombatant, onClearRolls, onAutoRoll, setShowHandoutCreator, code, addManualCombatant, players, npcs }) => {
+const WorldView = ({ data, role, updateCloud, updateMapState, user, apiKey, onDiceRoll, savePlayer, onInitiative, updateCombatant, removeCombatant, onClearRolls, onAutoRoll, setShowHandoutCreator, code, addManualCombatant, players, npcs, sidebarMode, onLogAction, sidebarIsOpen }) => {
     // State to track which sheet is open
     const [activeSheetId, setActiveSheetId] = useState(null);
     const [sheetContext, setSheetContext] = useState(null); // NEW STATE FOR SHEET CONTEXT
@@ -62,32 +62,35 @@ const WorldView = ({ data, role, updateCloud, updateMapState, user, apiKey, onDi
     };
 
      return (
-        <div className="absolute inset-0 w-full h-full bg-slate-900 overflow-hidden flex">
+        <div className="absolute inset-0 w-full h-full bg-slate-900 overflow-hidden flex flex-row">
             {/* The Main Map Area */}
-            <div className="flex-1 relative h-full">
-                <InteractiveMap 
-                    data={data} 
-                    role={role} 
-                    user={user} // CRITICAL FIX: Pass user prop for LOS calculations
-                    updateCloud={updateCloud} 
-                    updateMapState={handleMapAction}
-                    sidebarIsOpen={activeSheetId !== null}
-                    updateCombatant={updateCombatant} 
-                    removeCombatant={removeCombatant} 
-                    onClearRolls={onClearRolls}
-                    onAutoRoll={onAutoRoll}
-                    setShowHandoutCreator={setShowHandoutCreator}
-                    code={code}
-                    addManualCombatant={addManualCombatant}
-                    players={players}
-                    npcs={npcs}
-                    // END CHANGE
-                />
+            <div className="flex-1 relative h-full min-w-0 flex flex-col">
+                <div className="flex-1 relative w-full h-full overflow-hidden">
+                    <InteractiveMap 
+                        data={data} 
+                        role={role} 
+                        user={user} // CRITICAL FIX: Pass user prop for LOS calculations
+                        updateCloud={updateCloud} 
+                        updateMapState={handleMapAction}
+                        sidebarIsOpen={sidebarIsOpen || activeSheetId !== null}
+                        sidebarMode={activeSheetId ? 'sheet' : sidebarMode}
+                        updateCombatant={updateCombatant} 
+                        removeCombatant={removeCombatant} 
+                        onClearRolls={onClearRolls}
+                        onAutoRoll={onAutoRoll}
+                        setShowHandoutCreator={setShowHandoutCreator}
+                        code={code}
+                        addManualCombatant={addManualCombatant}
+                        players={players}
+                        npcs={npcs}
+                        // END CHANGE
+                    />
+                </div>
             </div>
 
             {/* The Sidebar Character Sheet */}
             {activeSheetId && (
-                <div className="absolute top-0 right-0 bottom-0 w-full sm:w-96 bg-slate-950 border-l border-slate-700 shadow-2xl z-[80] animate-in slide-in-from-right duration-300 flex flex-col">
+                <div className="relative h-full w-full sm:w-96 bg-slate-950 border-l border-slate-700 shadow-2xl z-[80] animate-in slide-in-from-right duration-300 flex flex-col shrink-0">
                     <SheetContainer 
                         data={data}
                         role={role}
@@ -97,7 +100,7 @@ const WorldView = ({ data, role, updateCloud, updateMapState, user, apiKey, onDi
                         onClose={() => { setActiveSheetId(null); setSheetContext(null); }}
                         onDiceRoll={onDiceRoll}
                         onInitiative={onInitiative}
-                        onLogAction={(msg) => {}}
+                        onLogAction={onLogAction}
                         onPlaceTemplate={(spell) => {}}
                         onPossess={(npcId) => {}}
                         onSave={(char) => {

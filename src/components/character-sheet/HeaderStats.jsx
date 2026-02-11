@@ -232,7 +232,10 @@ const HeaderStats = ({ onDiceRoll, onLogAction, onBack, onPossess, isNpc, combat
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
                     <button onClick={handleShortRest} className="bg-slate-800 border border-slate-600 py-2 rounded text-xs font-bold text-slate-300">Short Rest</button>
                     <button onClick={handleLongRest} className="bg-indigo-900/50 border border-indigo-700 py-2 rounded text-xs font-bold text-indigo-200">Long Rest</button>
-                    {onPossess && <button onClick={onPossess} className="bg-red-900/80 border border-red-600 py-2 rounded flex items-center justify-center gap-2 text-xs font-bold text-white animate-pulse"><Icon name="ghost" size={14}/> Possess</button>}
+                    <div className="bg-slate-800 border border-slate-700 py-2 rounded flex items-center justify-center gap-2 text-xs font-bold">
+                        <span className="text-[10px] text-slate-500 uppercase">Prof</span>
+                        <span className="text-white">+{prof}</span>
+                    </div>
                     <div onClick={() => updateInfo('inspiration', !character.inspiration)} className={`py-2 rounded border flex items-center justify-center gap-2 text-xs font-bold cursor-pointer transition-colors ${character.inspiration ? 'bg-amber-500/20 border-amber-500 text-amber-400' : 'bg-slate-800 border-slate-700 text-slate-500'}`}><Icon name="flame" size={14} className={character.inspiration ? "fill-amber-500" : ""}/> Inspiration</div>
                 </div>
                 

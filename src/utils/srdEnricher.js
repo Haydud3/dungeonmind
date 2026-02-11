@@ -184,7 +184,7 @@ export const enrichCharacter = async (charData) => {
 
     const strMod = getMod(newChar.stats?.str);
     const dexMod = getMod(newChar.stats?.dex);
-    const prof = newChar.profBonus || 2;
+    const prof = newChar.profBonus !== undefined ? newChar.profBonus : 2;
     const castingStat = getCastingStat(newChar.class);
     const spellAttack = getMod(newChar.stats?.[castingStat]) + prof;
 

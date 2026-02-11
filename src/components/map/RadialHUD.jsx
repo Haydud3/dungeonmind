@@ -3,11 +3,12 @@ import Icon from '../Icon';
 
 const RadialHUD = ({ 
     token, position, onUpdateToken, onDelete, onOpenSheet, onClose, 
-    role, user, players, npcs, activeUsers, assignments 
+    role, user, players, npcs, activeUsers, assignments, onStartVfxTargeting 
 }) => {
     const [isStatusExpanded, setIsStatusExpanded] = useState(false);
 // START CHANGE: Add state for control delegation panel
 const [isControlExpanded, setIsControlExpanded] = useState(false);
+const [isVfxExpanded, setIsVfxExpanded] = useState(false);
 // END CHANGE
 
 // Helper: Convert string sizes (medium, large) to numbers (1, 2) for the UI
@@ -50,13 +51,24 @@ const toggleControl = (uid) => {
     onUpdateToken({ ...token, controlledBy: newControlledBy });
 };
 
+const [selectedBehavior, setSelectedBehavior] = useState('breath');
+const behaviors = ['breath', 'beam', 'rocket'];
+const flavors = [
+    { id: 'fire', icon: 'flame', color: 'text-orange-500' },
+    { id: 'frost', icon: 'snowflake', color: 'text-cyan-400' },
+    { id: 'acid', icon: 'test-tube-2', color: 'text-green-400' },
+    { id: 'death', icon: 'skull', color: 'text-purple-600' },
+    { id: 'magic', icon: 'sparkles', color: 'text-pink-400' }
+];
+
 // Conditional Utility Actions and Angle Recalculation (Phase 3 Update)
 const isDM = role === 'dm';
 
 let baseActions = [
     { id: 'delete', icon: 'trash-2', action: onDelete, title: "Delete Token", color: 'text-red-500', bg: 'hover:bg-red-900/50' },
     { id: 'sheet', icon: 'scroll', action: onOpenSheet, title: "Open Sheet", color: 'text-amber-400', bg: 'hover:bg-amber-900/50' },
-    { id: 'status-trigger', icon: 'shield-plus', action: () => { setIsStatusExpanded(!isStatusExpanded); setIsControlExpanded(false); }, title: "Conditions", color: 'text-slate-200', bg: 'hover:bg-slate-700' },
+    { id: 'status-trigger', icon: 'shield-plus', action: () => { setIsStatusExpanded(!isStatusExpanded); setIsControlExpanded(false); setIsVfxExpanded(false); }, title: "Conditions", color: 'text-slate-200', bg: 'hover:bg-slate-700' },
+    { id: 'vfx-trigger', icon: 'wand-2', action: () => { setIsVfxExpanded(!isVfxExpanded); setIsStatusExpanded(false); setIsControlExpanded(false); }, title: "Magic VFX", color: 'text-pink-400', bg: 'hover:bg-pink-900/30' },
     { id: 'size', icon: 'maximize', action: cycleSize, title: `Size: ${currentSize}x`, color: 'text-blue-400', bg: 'hover:bg-blue-900/30' },
 ];
 
@@ -72,7 +84,7 @@ if (isDM) {
     baseActions.splice(2, 0, { // Insert Control Delegation after Visibility
         id: 'control-trigger',
         icon: 'users',
-        action: () => { setIsControlExpanded(!isControlExpanded); setIsStatusExpanded(false); },
+        action: () => { setIsControlExpanded(!isControlExpanded); setIsStatusExpanded(false); setIsVfxExpanded(false); },
         title: "Delegate Control",
         color: isControlExpanded ? 'text-white' : 'text-indigo-400', 
         bg: isControlExpanded ? 'bg-indigo-600 border-indigo-400' : 'hover:bg-slate-700'
@@ -90,8 +102,8 @@ const utilityActions = baseActions.map((action, i) => {
         ...action,
         angle: angle,
         // Correct colors/bgs for complex buttons here
-        color: (action.id === 'status-trigger' && isStatusExpanded) || (action.id === 'control-trigger' && isControlExpanded) ? 'text-white' : action.color,
-        bg: (action.id === 'status-trigger' && isStatusExpanded) || (action.id === 'control-trigger' && isControlExpanded) ? 'bg-indigo-600 border-indigo-400' : action.bg,
+        color: (action.id === 'status-trigger' && isStatusExpanded) || (action.id === 'control-trigger' && isControlExpanded) || (action.id === 'vfx-trigger' && isVfxExpanded) ? 'text-white' : action.color,
+        bg: (action.id === 'status-trigger' && isStatusExpanded) || (action.id === 'control-trigger' && isControlExpanded) || (action.id === 'vfx-trigger' && isVfxExpanded) ? 'bg-indigo-600 border-indigo-400' : action.bg,
     };
 });
 // END CHANGE
@@ -132,6 +144,7 @@ const conditions = [
 const COND_RADIUS = 130;
 // START CHANGE: Radius for Control Delegation menu
 const CONTROL_RADIUS = 130;
+const VFX_RADIUS = 130;
 // END CHANGE
 
 return (
@@ -242,6 +255,45 @@ return (
             });
         })()}
         {/* END CHANGE: Control Delegation Menu */}
+
+        {/* START CHANGE: VFX Menu */}
+        {isVfxExpanded && (
+            <>
+                <div className="absolute -top-32 left-1/2 -translate-x-1/2 flex gap-1 bg-slate-900/90 p-1 rounded-lg border border-slate-700 pointer-events-auto">
+                    {behaviors.map(b => (
+                        <button key={b} onClick={() => setSelectedBehavior(b)} className={`px-2 py-1 text-[10px] font-bold uppercase rounded transition-colors ${selectedBehavior === b ? 'bg-pink-600 text-white' : 'text-slate-400 hover:bg-slate-800'}`}>
+                            {b}
+                        </button>
+                    ))}
+                </div>
+                {flavors.map((f, i) => {
+                    const angle = 10 + (i * 30);
+                    const rad = (angle * Math.PI) / 180;
+                    const targetX = Math.cos(rad) * VFX_RADIUS;
+                    const targetY = Math.sin(rad) * VFX_RADIUS;
+                    return (
+                        <button
+                            key={f.id}
+                            onPointerDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
+                            onClick={(e) => { 
+                                e.stopPropagation(); 
+                                onStartVfxTargeting({ behavior: selectedBehavior, flavor: f.id });
+                            }}
+                            className={`absolute pointer-events-auto w-10 h-10 -ml-5 -mt-5 rounded-full flex items-center justify-center border shadow-lg backdrop-blur-md transition-all duration-200 hover:scale-110 active:scale-95 bg-slate-900/80 border-slate-800 ${f.color} hover:bg-slate-700`}
+                            style={{ 
+                                '--target-transform': `translate(${targetX}px, ${targetY}px)`,
+                                transform: `translate(${targetX}px, ${targetY}px)`,
+                                animation: `pop-out 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards`,
+                                animationDelay: `${i * 20}ms`
+                            }}
+                        >
+                            <Icon name={f.icon} size={18} />
+                        </button>
+                    );
+                })}
+            </>
+        )}
+        {/* END CHANGE: VFX Menu */}
     </div>
 );
 

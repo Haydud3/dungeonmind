@@ -3,10 +3,11 @@ import { useCharacterStore } from '../../../stores/useCharacterStore';
 import Icon from '../../Icon';
 
 // UPDATE: Added isOwner to destructuring
-const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate, isOwner }) => {
+const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate, isOwner, onUse }) => {
     // FIX: Removed getModifier from store destructuring
     const { character, castSpell, updateInfo } = useCharacterStore();
     const [filterLevel, setFilterLevel] = useState(0);
+    const [filter, setFilter] = useState('All');
     
     // Edit State
     const [editingIndex, setEditingIndex] = useState(-1);
@@ -28,7 +29,12 @@ const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate, isOwner }) => {
 
     // Filter Spells
     const allSpells = character.spells || [];
-    const spells = allSpells.filter(s => (s.level || 0) === filterLevel);
+    const filteredSpells = allSpells.filter(s => {
+        if (filter === 'All') return true;
+        if (filter === 'Conc') return s.concentration;
+        if (filter === 'Ritual') return s.ritual;
+        return (s.level || 0) === parseInt(filter);
+    });
     const slots = character.spellSlots?.[filterLevel] || { current: 0, max: 0 };
 
     // --- HANDLERS ---
@@ -45,12 +51,13 @@ const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate, isOwner }) => {
         }
 
         const msg = `
-            <div class="bg-indigo-950 p-2 rounded border-l-4 border-indigo-500">
-                <div class="font-bold text-white flex justify-between">
-                    <span>${character.name} casts ${spell.name}</span>
+            <div class="flex flex-col gap-1">
+                <div class="font-bold text-amber-500 border-b border-slate-700 pb-1 mb-1 flex justify-between items-center">
+                    <span>${spell.name}</span>
+                    <span class="text-[10px] text-slate-500 uppercase">Spell</span>
                 </div>
-                <div class="text-xs text-slate-400 mt-1">${spell.time || "1 Action"} • ${spell.range || "Range"}</div>
-                <div class="text-xs text-slate-300 mt-2 italic border-t border-indigo-900 pt-1">${spell.desc ? spell.desc.substring(0, 100) + '...' : ''}</div>
+                <div class="text-sm text-slate-300 leading-relaxed max-h-60 overflow-y-auto custom-scroll">${spell.desc || "No description available."}</div>
+                ${spell.concentration ? '<div class="text-xs text-blue-400 font-bold mt-1">Concentration</div>' : ''}
             </div>
         `;
         if (onLogAction) onLogAction(msg);
@@ -199,77 +206,79 @@ const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate, isOwner }) => {
                       (spell.desc && (spell.desc.includes('radius') || spell.desc.includes('cone') || spell.desc.includes('cube')));
 
         return (
-            <div className={`bg-slate-800 border border-slate-700 rounded-xl mb-2 transition-all hover:border-indigo-500/50 shadow-sm group ${expanded ? 'ring-1 ring-indigo-500/50' : ''}`}>
+            <div className={`bg-slate-900 border border-slate-700 rounded-xl mb-2 transition-all hover:border-indigo-500/50 shadow-sm group ${expanded ? 'ring-1 ring-indigo-500/50' : ''}`}>
                 
                 {/* Main Row */}
                 {editingIndex !== index && (
-                    <div className="p-3 flex justify-between items-center gap-3">
+                    <div className="p-3 flex flex-col gap-2">
+                        <div className="flex justify-between items-start">
                         
                         {/* Left: Info */}
                         <div className="flex-1 min-w-0 cursor-pointer" onClick={() => hasText && setExpanded(!expanded)}>
                             <div className="font-bold text-slate-200 truncate flex items-center gap-2">
                                 {spell.name}
-                                {spell.ritual && <Icon name="book" size={12} className="text-slate-500"/>}
-                                {spell.concentration && <Icon name="brain" size={12} className="text-slate-500"/>}
+                                {spell.concentration && <span className="text-[9px] bg-blue-900/50 text-blue-400 px-1 rounded border border-blue-800" title="Concentration">C</span>}
+                                {spell.ritual && <span className="text-[9px] bg-green-900/50 text-green-400 px-1 rounded border border-green-800" title="Ritual">R</span>}
                             </div>
-                            <div className="text-xs text-slate-500 truncate flex items-center gap-1">
-                                {spell.school} • {spell.range}
+                            <div className="text-[10px] text-slate-500 italic">
+                                {spell.level === 0 ? 'Cantrip' : `Level ${spell.level}`} • {spell.school} • {spell.meta?.range || spell.range}
                             </div>
                         </div>
 
                         {/* Right: Buttons */}
                         <div className="flex items-center gap-2 shrink-0">
-                            
-                            {/* UPDATE: Hide Hit Button if not owner */}
-                            {isOwner && spell.hit && (
-                                <button 
-                                    onClick={(e) => handleRoll(spell, 'hit', e)}
-                                    className="bg-slate-700 hover:bg-cyan-900/50 text-cyan-400 border border-slate-600 hover:border-cyan-500/50 px-2 py-1 rounded text-[10px] font-bold font-mono transition-colors uppercase"
-                                >
-                                    {spell.hit.includes('+') ? spell.hit : `+${spell.hit}`}
-                                </button>
-                            )}
+                            <button 
+                                onClick={() => onUse && onUse(spell, 'Spell')} 
+                                className="px-4 py-1 bg-slate-800 hover:bg-indigo-600 text-slate-300 hover:text-white rounded text-xs font-bold transition-colors"
+                            >
+                                Cast
+                            </button>
+                        </div>
+                        </div>
 
-                            {/* UPDATE: Hide Damage Button if not owner */}
-                            {isOwner && spell.dmg && (
-                                <button 
-                                    onClick={(e) => handleRoll(spell, 'dmg', e)}
-                                    className="bg-slate-700 hover:bg-indigo-900/50 text-indigo-300 border border-slate-600 hover:border-indigo-500/50 px-2 py-1 rounded text-[10px] font-bold font-mono transition-colors max-w-[100px] truncate"
-                                >
-                                    {spell.dmg}
-                                </button>
-                            )}
+                        {/* Secondary Row: Roll Buttons */}
+                        <div className="flex items-center gap-2">
+                             {/* UPDATE: Hide Hit Button if not owner */}
+                             {isOwner && spell.hit && (
+                                 <button 
+                                     onClick={(e) => handleRoll(spell, 'hit', e)}
+                                     className="bg-slate-700 hover:bg-cyan-900/50 text-cyan-400 border border-slate-600 hover:border-cyan-500/50 px-2 py-1 rounded text-[10px] font-bold font-mono transition-colors uppercase"
+                                 >
+                                     {spell.hit.includes('+') ? spell.hit : `+${spell.hit}`}
+                                 </button>
+                             )}
 
-                            {/* UPDATE: Hide Cast/Slot Button if not owner */}
-                            {isOwner && (
-                                <button 
-                                    onClick={(e) => handleCast(spell, e)} 
-                                    className="bg-indigo-600 hover:bg-indigo-500 text-white border border-indigo-500 px-3 py-1 rounded text-[10px] font-bold uppercase shadow-lg shadow-indigo-900/20"
-                                >
-                                    {spell.level === 0 ? "CAST" : "SLOT"}
-                                </button>
-                            )}
+                             {/* UPDATE: Hide Damage Button if not owner */}
+                             {isOwner && spell.dmg && (
+                                 <button 
+                                     onClick={(e) => handleRoll(spell, 'dmg', e)}
+                                     className="bg-slate-700 hover:bg-indigo-900/50 text-indigo-300 border border-slate-600 hover:border-indigo-500/50 px-2 py-1 rounded text-[10px] font-bold font-mono transition-colors max-w-[100px] truncate"
+                                 >
+                                     {spell.dmg}
+                                 </button>
+                             )}
 
-                            {/* Template Button (Available to everyone or just owner? Usually just owner) */}
-                            {isAoE && onPlaceTemplate && isOwner && (
-                                <button 
-                                    onClick={(e) => {
-                                        e.stopPropagation(); 
-                                        onPlaceTemplate(spell);
-                                    }} 
-                                    className="bg-orange-600 hover:bg-orange-500 text-white border border-orange-500 px-2 py-1 rounded text-[10px] font-bold shadow-lg flex items-center justify-center" 
-                                    title="Place Template on Map"
-                                >
-                                    <Icon name="crosshair" size={14}/>
-                                </button>
-                            )}
+                             {/* Template Button */}
+                             {isAoE && onPlaceTemplate && isOwner && (
+                                 <button 
+                                     onClick={(e) => {
+                                         e.stopPropagation(); 
+                                         onPlaceTemplate(spell);
+                                     }} 
+                                     className="bg-orange-600 hover:bg-orange-500 text-white border border-orange-500 px-2 py-1 rounded text-[10px] font-bold shadow-lg flex items-center justify-center" 
+                                     title="Place Template on Map"
+                                 >
+                                     <Icon name="crosshair" size={14}/>
+                                 </button>
+                             )}
 
-                            {/* Menu */}
-                            <div className="flex flex-col gap-1 ml-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                {/* UPDATE: Hide Edit button if not owner */}
-                                {isOwner && <button onClick={(e) => startEdit(index, spell, e)} className="text-slate-500 hover:text-white p-0.5"><Icon name="more-vertical" size={14}/></button>}
-                                {hasText && <button onClick={() => setExpanded(!expanded)} className="text-slate-500 hover:text-white p-0.5"><Icon name={expanded ? "chevron-up" : "chevron-down"} size={14}/></button>}
-                            </div>
+                             <div className="flex-1"></div>
+
+                             {/* Menu */}
+                             <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                 {isOwner && <button onClick={(e) => startEdit(index, spell, e)} className="text-slate-500 hover:text-white p-0.5"><Icon name="more-vertical" size={14}/></button>}
+                                 {hasText && <button onClick={() => setExpanded(!expanded)} className="text-slate-500 hover:text-white p-0.5"><Icon name={expanded ? "chevron-up" : "chevron-down"} size={14}/></button>}
+                             </div>
                         </div>
                     </div>
                 )}
@@ -319,15 +328,11 @@ const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate, isOwner }) => {
                 </div>
             </div>
 
-            {/* Level Selector */}
-            <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar items-center">
-                {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(lvl => (
-                    <button
-                        key={lvl}
-                        onClick={() => { setFilterLevel(lvl); setEditingIndex(-1); }}
-                        className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm border transition-all ${filterLevel === lvl ? 'bg-indigo-600 border-indigo-400 text-white shadow-lg' : 'bg-slate-800 border-slate-700 text-slate-500'}`}
-                    >
-                        {lvl === 0 ? 'C' : lvl}
+            {/* Filter Bar */}
+            <div className="flex gap-2 overflow-x-auto pb-2 mb-2 border-b border-slate-700 shrink-0 no-scrollbar">
+                {['All', 'Conc', 'Ritual', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9'].map(f => (
+                    <button key={f} onClick={() => { setFilter(f); if(!isNaN(f)) setFilterLevel(parseInt(f)); }} className={`px-3 py-1 rounded-full text-[10px] font-bold transition-colors whitespace-nowrap ${filter === f ? 'bg-amber-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}>
+                        {f === '0' ? 'Cantrip' : f}
                     </button>
                 ))}
                 
@@ -339,12 +344,12 @@ const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate, isOwner }) => {
 
             {/* Spell List */}
             <div className="space-y-2">
-                {spells.length === 0 ? (
+                {filteredSpells.length === 0 ? (
                     <div className="text-center text-slate-500 py-8 italic border-2 border-dashed border-slate-800 rounded-xl">
                         {filterLevel === 0 ? "No Cantrips known." : `No Level ${filterLevel} spells found.`}
                     </div>
                 ) : (
-                    spells.map((spell, i) => <SpellCard key={i} index={i} spell={spell} />)
+                    filteredSpells.map((spell, i) => <SpellCard key={i} index={i} spell={spell} />)
                 )}
             </div>
 

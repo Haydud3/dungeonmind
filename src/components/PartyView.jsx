@@ -143,11 +143,11 @@ const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView,
         const file = e.target.files[0];
         if (!file) return;
         setIsImporting(true);
-        setImportStatus("Reading Scroll...");
+        setImportStatus("Consulting the Weave (API)...");
         try {
             const rawData = await parsePdf(file); // Parse D&D Beyond PDF
-            setImportStatus("Consulting SRD...");
-            const charData = await enrichCharacter(rawData); // Add Rules/Spells
+            let charData = await enrichCharacter(rawData); // Add Rules/Spells
+            
             handleNewCharacter(charData);
         } catch (err) {
             console.error(err);

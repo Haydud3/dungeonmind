@@ -57,7 +57,7 @@ function DungeonMindApp() {
   const { 
     data, setData, gameParams, joinCampaign, leaveCampaign, 
     updateCloud, savePlayer, deletePlayer, loreChunks, setLoreChunks,
-    kickPlayer, banPlayer, unbanPlayer 
+    kickPlayer, banPlayer, unbanPlayer, triggerVfx 
   } = useCampaign();
   useEffect(() => {
     if (user !== undefined) setIsAuthReady(true);
@@ -120,6 +120,14 @@ function DungeonMindApp() {
   const [rollingDice, setRollingDice] = useState(null);
   const [activeTemplate, setActiveTemplate] = useState(null); // NEW: Track active spell template
   const addLogEntry = useCharacterStore((state) => state.addLogEntry);
+
+  // START CHANGE: Global Right Panel State (Sheet/Chat)
+  const [rightPanel, setRightPanel] = useState({ mode: 'closed', data: null });
+  
+  const handleOpenSheet = (id) => setRightPanel({ mode: 'sheet', data: id });
+  const handleToggleChat = () => setRightPanel(prev => prev.mode === 'chat' ? { mode: 'closed', data: null } : { mode: 'chat', data: null });
+  const handleClosePanel = () => setRightPanel({ mode: 'closed', data: null });
+  // END CHANGE
 
   // START CHANGE: Handler to clear dice history
   const handleClearRolls = () => {
@@ -300,6 +308,13 @@ function DungeonMindApp() {
       // START CHANGE: Add update_token case to Map State engine
       } else if (action === 'update_token') {
           newMap.tokens = newMap.tokens.map(t => t.id === payload.id ? { ...t, ...payload } : t);
+      } else if (action === 'open_sheet') {
+          // Intercept sheet opening to use the new Right Panel
+          handleOpenSheet(payload.tokenId || payload.id || payload);
+          return; // Don't sync UI state to cloud
+      } else if (action === 'toggle_chat') {
+          handleToggleChat();
+          return;
       } else if (action === 'rename_map') {
           // payload: { id, name }
           newSavedMaps = newSavedMaps.map(m => m.id === payload.id ? { ...m, name: payload.name } : m);
@@ -380,27 +395,52 @@ function DungeonMindApp() {
   };
   // END CHANGE
 
-  const handleDiceRoll = (d, silent = false) => {
+  const handleDiceRoll = (sides, modifier = 0, label = "Roll") => {
+    // Legacy support for (d, silent) signature
+    let silent = false;
+    let mod = modifier;
+    let lbl = label;
+
+    if (typeof modifier === 'boolean') {
+        silent = modifier;
+        mod = 0;
+    }
+
     return new Promise((resolve) => {
         setRollingDice(null);
         setTimeout(() => {
-            const result = Math.floor(Math.random() * d) + 1;
-            setRollingDice({ die: d, result, id: Date.now() });
+            const roll = Math.floor(Math.random() * sides) + 1;
+            const total = roll + mod;
+            const isCrit = sides === 20 && roll === 20;
+            const isFail = sides === 20 && roll === 1;
+
+            setRollingDice({ die: sides, result: roll, id: Date.now() });
             setShowTools(false); 
             setTimeout(() => {
-                setDiceLog(prev => [{id: Date.now(), die: `d${d}`, result}, ...prev]);
+                setDiceLog(prev => [{id: Date.now(), die: `d${sides}`, result: roll}, ...prev]);
                 
                 // START CHANGE: Send global chat message instead of local log
                 // The silent flag can be used for things like backend rolls if needed
                 if (!silent) {
-                    sendChatMessage(
-                        `rolled a d${d} and got <span class="text-amber-500 font-bold text-lg">${result}</span>`,
-                        'roll-public'
-                    );
+                    const rollType = effectiveRole === 'dm' ? 'roll-private' : 'roll-public';
+                    const modStr = mod >= 0 ? `+${mod}` : mod;
+                    
+                    const html = `
+                        <div class="flex flex-col text-xs">
+                            <span class="font-bold text-slate-400 uppercase mb-1">${lbl}</span>
+                            <div class="text-base">
+                                <span class="${isCrit ? 'text-green-400 font-bold' : isFail ? 'text-red-400 font-bold' : 'text-white'}">d${sides} (${roll})</span>
+                                ${mod !== 0 ? `<span class="text-slate-500 mx-1">${modStr}</span>` : ''}
+                                ${mod !== 0 ? `<span class="text-slate-500 mr-1">=</span>` : ''}
+                                ${mod !== 0 ? `<span class="text-xl font-bold text-amber-500">${total}</span>` : ''}
+                            </div>
+                        </div>
+                    `;
+                    sendChatMessage(html, rollType);
                 }
                 // END CHANGE
 
-                resolve(result); 
+                resolve(total); 
             }, 1000);
             setTimeout(() => { setRollingDice(null); }, 4000); 
         }, 50);
@@ -815,35 +855,96 @@ function DungeonMindApp() {
               />}
               
               {/* 3. TACTICAL (Map) */}
-              {currentView === 'map' && <WorldView 
-                  data={data} 
-                  setData={setData} 
-                  role={effectiveRole} 
-                  updateCloud={updateCloud} 
-                  updateMapState={updateMapState} 
-                  onDiceRoll={handleDiceRoll} 
-                  user={user} 
-                  apiKey={apiKey} 
-                  savePlayer={savePlayer} 
-                  activeTemplate={activeTemplate} 
-                  onClearTemplate={() => setActiveTemplate(null)} 
-                  onInitiative={handleInitiative}
-                  updateCombatant={updateCombatant} 
-                  onClearRolls={handleClearRolls}
-                  removeCombatant={(id) => { 
-                      const c = data.campaign?.combat;
-                      const newCombatants = (c.combatants || []).filter(x => x.id !== id);
-                      updateCloud({ ...data, campaign: { ...data.campaign, combat: { ...c, combatants: newCombatants } } });
-                  }}
-                  onAutoRoll={autoRollNPCs}
-                  setShowHandoutCreator={setShowHandoutCreator}
-                  code={gameParams.code}
-                  // START CHANGE: Pass manual combatant helpers
-                  addManualCombatant={addManualCombatant}
-                  players={data.players}
-                  npcs={data.npcs}
-                  // END CHANGE
-              />}
+              {currentView === 'map' && (
+                  // FORCE ABSOLUTE POSITIONING to prevent "Push Up" bug
+                  <div className="absolute inset-0 w-full h-full overflow-hidden bg-slate-900">
+                      <WorldView 
+                          data={data} 
+                          setData={setData} 
+                          role={effectiveRole} 
+                          updateCloud={updateCloud} 
+                          updateMapState={updateMapState} 
+                          onDiceRoll={handleDiceRoll} 
+                          user={user} 
+                          apiKey={apiKey} 
+                          savePlayer={savePlayer} 
+                          activeTemplate={activeTemplate} 
+                          onClearTemplate={() => setActiveTemplate(null)} 
+                          onInitiative={handleInitiative}
+                          updateCombatant={updateCombatant} 
+                          onClearRolls={handleClearRolls}
+                          removeCombatant={(id) => { 
+                              const c = data.campaign?.combat;
+                              const newCombatants = (c.combatants || []).filter(x => x.id !== id);
+                              updateCloud({ ...data, campaign: { ...data.campaign, combat: { ...c, combatants: newCombatants } } });
+                          }}
+                          onAutoRoll={autoRollNPCs}
+                          setShowHandoutCreator={setShowHandoutCreator}
+                          code={gameParams.code}
+                          addManualCombatant={addManualCombatant}
+                          players={data.players}
+                          npcs={data.npcs}
+                          sidebarMode={rightPanel.mode}
+                          sidebarIsOpen={rightPanel.mode !== 'closed'}
+                          onLogAction={(msg) => sendChatMessage(msg, 'chat-public')}
+                      />
+                      
+                      {/* SIDEBAR AS OVERLAY - DOES NOT AFFECT MAP GEOMETRY */}
+                      {rightPanel.mode !== 'closed' && (
+                          <div className="absolute top-0 right-0 bottom-0 w-full sm:w-96 bg-slate-950 border-l border-slate-700 shadow-2xl z-[80] animate-in slide-in-from-right duration-300 flex flex-col">
+                              {/* Header */}
+                              <div className="flex justify-between items-center p-3 bg-slate-900 border-b border-slate-800 shrink-0">
+                                  <span className="font-bold text-slate-200 ml-2 flex items-center gap-2">
+                                      <Icon name={rightPanel.mode === 'chat' ? 'message-square' : 'file-text'} size={18}/>
+                                      {rightPanel.mode === 'chat' ? 'Session Chat' : 'Character Sheet'}
+                                  </span>
+                                  <button onClick={handleClosePanel} className="p-1 hover:bg-slate-800 rounded text-slate-400"><Icon name="x" size={20}/></button>
+                              </div>
+
+                              {/* Content */}
+                              <div className="flex-1 overflow-hidden relative">
+                                  {rightPanel.mode === 'sheet' && (
+                                      <SheetContainer 
+                                          characterId={rightPanel.data} 
+                                          onSave={savePlayer} 
+                                          onDiceRoll={handleDiceRoll} 
+                                          role={effectiveRole}
+                                          isOwner={true}
+                                          onLogAction={(html) => sendChatMessage(html, 'chat-public')}
+                                      />
+                                  )}
+                                  {rightPanel.mode === 'chat' && (
+                                      <SessionView 
+                                          data={data} 
+                                          chatLog={data.chatLog} 
+                                          inputText={inputText} 
+                                          setInputText={setInputText} 
+                                          onSendMessage={sendChatMessage} 
+                                          onEditMessage={()=>{}} 
+                                          onDeleteMessage={deleteMessage} 
+                                          clearChat={clearChat}
+                                          isLoading={isLoading} 
+                                          role={effectiveRole} 
+                                          user={user} 
+                                          showTools={showTools} 
+                                          setShowTools={setShowTools} 
+                                          diceLog={diceLog} 
+                                          handleDiceRoll={handleDiceRoll} 
+                                          onSavePage={saveJournalEntry} 
+                                          generateRecap={generateRecap} 
+                                          loreChunks={loreChunks} 
+                                          aiHelper={queryAiService}
+                                          players={data.players}
+                                          castList={buildCastList(data)}
+                                          myCharId={data.assignments?.[user?.uid]}
+                                          compact={true}
+                                      />
+                                  )}
+                              </div>
+                          </div>
+                      )}
+                  </div>
+              )}
               {currentView === 'atlas' && <WorldCreator data={data} setData={setData} role={effectiveRole} updateCloud={updateCloud} updateMapState={updateMapState} aiHelper={queryAiService} apiKey={apiKey} />}
 
               {/* 4. PARTY (PCs) */}

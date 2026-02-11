@@ -69,6 +69,13 @@ export const useCharacterStore = create((set, get) => ({
             stats: char.stats || { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 },
             skills: char.skills || [],
             spells: char.spells || [],
+            // START CHANGE: Initialize spell slots if missing
+            spellSlots: char.spellSlots || { 
+                1: { current: 2, max: 2 }, 
+                2: { current: 0, max: 0 }, 
+                3: { current: 0, max: 0 } 
+            },
+            // END CHANGE
             inventory: char.inventory || [],
             features: char.features || [],
             classes: char.classes || [],
@@ -164,13 +171,44 @@ export const useCharacterStore = create((set, get) => ({
         return { character: char, isDirty: true };
     }),
 
-    recoverSlots: () => set((state) => ({ isDirty: true })),
+    // START CHANGE: Spell Slot Logic
+    useSpellSlot: (level) => set((state) => {
+        const char = { ...state.character };
+        if (!char.spellSlots) char.spellSlots = {};
+        if (!char.spellSlots[level]) char.spellSlots[level] = { current: 0, max: 0 };
+        
+        const current = char.spellSlots[level].current;
+        if (current > 0) {
+            char.spellSlots[level].current = current - 1;
+            return { character: char, isDirty: true };
+        }
+        return {}; // No change if no slots
+    }),
+
+    recoverSlots: () => set((state) => {
+        const char = { ...state.character };
+        if (char.spellSlots) {
+            Object.keys(char.spellSlots).forEach(lvl => {
+                char.spellSlots[lvl].current = char.spellSlots[lvl].max;
+            });
+        }
+        return { character: char, isDirty: true };
+    }),
+    // END CHANGE
 
     shortRest: (healAmount) => set((state) => {
         if (!state.character) return {};
         const char = { ...state.character };
         const max = char.hp.max;
         char.hp.current = Math.min(max, char.hp.current + healAmount);
+        
+        // Warlock Pact Magic (Reset slots on Short Rest if class is Warlock)
+        if (char.class?.toLowerCase().includes('warlock') && char.spellSlots) {
+             Object.keys(char.spellSlots).forEach(lvl => {
+                char.spellSlots[lvl].current = char.spellSlots[lvl].max;
+            });
+        }
+
         return { character: char, isDirty: true };
     }),
 

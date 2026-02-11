@@ -13,6 +13,8 @@ import RadialHUD from './RadialHUD';
 import { enrichCharacter } from '../../utils/srdEnricher';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import { useCampaign } from '../../contexts/CampaignContext';
+import { useVfxStore } from '../../stores/useVfxStore';
+import VfxOverlay from './VfxOverlay';
 
 // START CHANGE: Defensive ID Matcher (Defined globally to fix scoping crash)
 const idsMatch = (id1, id2) => {
@@ -21,8 +23,9 @@ const idsMatch = (id1, id2) => {
 };
 // END CHANGE
 
-const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, activeTemplate, sidebarIsOpen, updateCombatant, removeCombatant, onClearRolls, onAutoRoll, setShowHandoutCreator, code, addManualCombatant, players, npcs, user }) => {
-    const { sendPing } = useCampaign();
+const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, activeTemplate, sidebarIsOpen, sidebarMode, updateCombatant, removeCombatant, onClearRolls, onAutoRoll, setShowHandoutCreator, code, addManualCombatant, players, npcs, user }) => {
+    const { sendPing, triggerVfx } = useCampaign();
+    const { targetingPreview, setTargetingPreview, clearTargetingPreview, addEffect } = useVfxStore();
 
     // 1. DATA SHORTCUTS (Moved up to fix ReferenceError in State Initializer)
     const mapData = data.campaign?.activeMap || {};
@@ -86,6 +89,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     const latestDataRef = useRef(data);
     const latestTokensRef = useRef(tokens);
     const latestMeasurementRef = useRef(activeMeasurement);
+    const playedVfxRef = useRef(new Set());
 
     // 4. VISION ENGINE LOGIC (Memoized to prevent render loops)
     const img = mapImageRef.current;
@@ -526,6 +530,35 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     }, [data.chatLog]);
     // END CHANGE
 
+    // START CHANGE: Multi-User VFX Listener
+    useEffect(() => {
+        if (!data.chatLog || data.chatLog.length === 0) return;
+        const lastMsg = data.chatLog[data.chatLog.length - 1];
+        
+        if (lastMsg.type === 'vfx' && (Date.now() - lastMsg.timestamp < 3000)) {
+            // Skip own messages (handled locally for instant feedback)
+            if (lastMsg.senderId === user?.uid) return;
+
+            if (!playedVfxRef.current.has(lastMsg.id)) {
+                playedVfxRef.current.add(lastMsg.id);
+                let effect = { ...lastMsg.payload };
+                
+                // Recalculate centers to ensure alignment on this client's screen
+                if (effect.originTokenId) {
+                    const center = getTokenCenter(effect.originTokenId);
+                    if (center) effect.origin = center;
+                }
+                if (effect.targetTokenId) {
+                    const center = getTokenCenter(effect.targetTokenId);
+                    if (center) effect.target = center;
+                }
+                
+                addEffect(effect);
+            }
+        }
+    }, [data.chatLog, user?.uid]);
+    // END CHANGE
+
     // --- 1.5 GLOBAL INTERACTION ESCAPE ---
     useEffect(() => {
         const handleGlobalMove = (e) => {
@@ -539,6 +572,8 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             if (e.cancelable && (isPanning || pointerCache.current.length >= 2 || movingTokenId)) {
                 e.preventDefault();
             }
+
+            const coords = getMapCoords(e);
 
             // Update pointer position in cache
             const index = pointerCache.current.findIndex(p => p.id === e.pointerId);
@@ -574,12 +609,16 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                 return;
             }
 
+            // VFX Targeting Logic
+            if (targetingPreview) {
+                setTargetingPreview({ ...targetingPreview, target: coords });
+                return;
+            }
+
             // B. NORMAL MOVE LOGIC (1 Finger/Mouse)
             const isDrawing = ['wall', 'door', 'delete'].includes(activeTool);
             if (!movingTokenId && !isPanning && !activeMeasurement && !gridCalStartRef.current && !isDrawing) return;
             
-            const coords = getMapCoords(e);
-
             if (activeMeasurement) {
                 setActiveMeasurement(prev => ({ ...prev, end: coords }));
                 // Clear ping timer if we are drawing a measurement/stamp
@@ -662,6 +701,21 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             const currentTokens = latestTokensRef.current;
 
             const coords = getMapCoords(e);
+
+            // VFX Confirmation
+            if (targetingPreview) {
+                const uniqueId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+                const finalEffect = { ...targetingPreview, target: coords, id: uniqueId, startTime: Date.now(), duration: 1000 };
+                
+                // 1. Play Locally Immediately (Instant Feedback)
+                addEffect(finalEffect);
+                
+                // 2. Broadcast to others
+                triggerVfx(finalEffect);
+                clearTargetingPreview();
+                if (e.stopPropagation) e.stopPropagation();
+                return;
+            }
 
             // Grid Calibration Math
             if (activeTool === 'grid_cal' && gStart) {
@@ -767,7 +821,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             window.removeEventListener('pointerup', handleGlobalUp);
             // REMOVED: window.removeEventListener('touchmove', handleGlobalMove);
         };
-    }, [movingTokenId, isPanning, activeMeasurement, movingTokenPos, tokens, view.scale, activeTool, mapGrid]);
+    }, [movingTokenId, isPanning, activeMeasurement, movingTokenPos, tokens, view.scale, activeTool, mapGrid, targetingPreview]);
 
     // --- 2. MATH HELPERS ---
     
@@ -829,6 +883,28 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         };
     };
 
+    const getTokenCenter = (id) => {
+        // Use Data Model for stable, deterministic positioning.
+        // DOM-based calculation was causing random offsets due to layout timing.
+        const tokenObj = tokens.find(t => t.id === id);
+        if (!tokenObj || !mapDimensions.width) return null;
+
+        if (movingTokenId === id && movingTokenPos) {
+            const sizeMap = { tiny: 0.5, small: 1, medium: 1, large: 2, huge: 3, gargantuan: 4 };
+            const sMult = typeof tokenObj.size === 'number' ? tokenObj.size : (sizeMap[tokenObj.size] || 1);
+            const snapped = snapToGrid(movingTokenPos.x, movingTokenPos.y, mapDimensions.width, mapDimensions.height, sMult);
+            return {
+                x: (snapped.x / 100) * mapDimensions.width,
+                y: (snapped.y / 100) * mapDimensions.height
+            };
+        }
+
+        return {
+            x: (tokenObj.x / 100) * mapDimensions.width,
+            y: (tokenObj.y / 100) * mapDimensions.height
+        };
+    };
+
     const getMapCoords = (e) => {
         const rect = containerRef.current.getBoundingClientRect();
         const currentView = viewRef.current;
@@ -839,7 +915,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     };
 
     const handleTokenPointerDown = (e, tokenId) => {
-        if (activeTool !== 'move') return;
+        if (activeTool !== 'move' || targetingPreview) return;
         e.stopPropagation(); 
         
         // Hierarchy: Token click stops map panning immediately
@@ -876,6 +952,8 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     const handlePointerDown = (e) => {
         if (e.button !== 0 && e.button !== 2 && e.pointerType !== 'touch') return; 
         
+        if (targetingPreview) return;
+
         // Use unified World Space coordinates
         const coords = getMapCoords(e);
         touchStartPos.current = { x: e.clientX, y: e.clientY };
@@ -1539,9 +1617,12 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                             <button onClick={() => showCombat ? setShowCombat(false) : handleStartCombat()} className={`p-3 md:p-2 rounded-lg transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center ${showCombat || data.campaign?.combat?.active ? 'bg-red-600 text-white animate-pulse' : 'text-slate-300 hover:text-white hover:bg-slate-800'}`} title="Combat Tracker">
                                 <Icon name="swords" size={20}/>
                             </button>
-                            <div className="w-px h-8 bg-slate-700 my-auto"></div>
                         </>
                     )}
+                    <button onClick={() => updateMapState('toggle_chat')} className={`p-3 md:p-2 rounded-lg transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center ${sidebarMode === 'chat' ? 'bg-slate-700 text-white' : 'text-slate-300 hover:text-white hover:bg-slate-800'}`} title={sidebarMode === 'chat' ? "Close Chat" : "Open Chat"}>
+                        <Icon name={sidebarMode === 'chat' ? "x" : "message-square"} size={20}/>
+                    </button>
+                    <div className="w-px h-8 bg-slate-700 my-auto"></div>
                     
                     <button onClick={() => setView(v => ({...v, scale: v.scale / 1.2}))} className="p-3 md:p-2 text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg min-w-[44px] min-h-[44px] flex items-center justify-center"><Icon name="minus" size={20}/></button>
                     <button onClick={centerOnTarget} className="p-3 md:p-2 text-amber-500 hover:bg-slate-800 rounded-lg min-w-[44px] min-h-[44px] flex items-center justify-center" title={role === 'dm' ? "Center Map" : "Center on My Character"}>
@@ -1564,6 +1645,14 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                     className="bg-slate-900/90 backdrop-blur border border-slate-700 px-3 py-2 rounded-lg shadow-xl pointer-events-auto flex items-center gap-3"
                     onPointerDown={(e) => e.stopPropagation()}
                 >
+                    <button 
+                        onClick={() => updateMapState('toggle_chat')} 
+                        className={`p-2 rounded-md transition-colors ${sidebarMode === 'chat' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}
+                        title="Toggle Session Chat"
+                    >
+                        <Icon name="message-square" size={18}/>
+                    </button>
+                    <div className="w-px h-6 bg-slate-700"></div>
                     <div className={`w-3 h-3 rounded-full ${data.activeUsers ? 'bg-green-500 shadow-[0_0_8px_#22c55e]' : 'bg-red-500'}`}></div>
                     <div>
                         <div className="text-xs font-bold text-amber-500 fantasy-font tracking-widest"> {data.campaign?.genesis?.campaignName || "Unknown Realm"}</div>
@@ -1755,6 +1844,9 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                         className="absolute top-0 left-0 pointer-events-none z-[6]"
                         style={{ width: '100%', height: '100%', display: 'block' }}
                     />
+
+                    {/* VFX Layer */}
+                    <VfxOverlay width={mapDimensions.width} height={mapDimensions.height} />
 
                     {pings.map(ping => (
                         <div 
@@ -2059,8 +2151,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                                         position: 'absolute', 
                                         left: px, 
                                         top: py, 
-                                        // REMOVED: transform: 'translate(-50%, -50%)',
-                                        // REMOVED: width: dimension, height: dimension,
+                                        transform: 'translate(-50%, -50%)', // Center the container on the point
                                         zIndex: isMoving ? 100 : 10,
                                         pointerEvents: isMoving ? 'none' : 'auto',
                                         transition: isMoving ? 'none' : 'all 0.2s ease-out'
@@ -2177,6 +2268,13 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                             npcs={npcs}
                             activeUsers={data.activeUsers}
                             assignments={data.assignments}
+                            onStartVfxTargeting={(vfx) => {
+                                const origin = getTokenCenter(token.id);
+                                if (origin) {
+                                    setTargetingPreview({ ...vfx, origin, target: origin, tokenId: token.id, originTokenId: token.id });
+                                    setSelectedTokenId(null);
+                                }
+                            }}
                         />
                     </div>
                 );

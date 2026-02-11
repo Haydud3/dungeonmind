@@ -258,6 +258,28 @@ export const CampaignProvider = ({ children }) => {
     };
     // END CHANGE
 
+    // START CHANGE: Global VFX Helper
+    const triggerVfx = (payload) => {
+        if (!gameParams?.code) return;
+        
+        const msg = {
+            id: `vfx-${Date.now()}-${Math.random()}`,
+            type: 'vfx',
+            payload,
+            senderId: user?.uid,
+            timestamp: Date.now()
+        };
+
+        if (gameParams.isOffline) {
+            setData(prev => ({ ...prev, chatLog: [...prev.chatLog, msg] }));
+            return;
+        }
+
+        const ref = collection(doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code), 'chat');
+        setDoc(doc(ref), msg);
+    };
+    // END CHANGE
+
     // --- MEMOIZED VALUE (Prevents Infinite Renders & "1, M" Errors) ---
     const value = useMemo(() => ({
         data, setData, gameParams, 
@@ -268,6 +290,7 @@ export const CampaignProvider = ({ children }) => {
         updateCloud, updateMapState, savePlayer, deletePlayer, 
         loreChunks, setLoreChunks,
         sendPing,
+        triggerVfx,
         kickPlayer, banPlayer, unbanPlayer
     }), [data, gameParams, loreChunks, user]);
 

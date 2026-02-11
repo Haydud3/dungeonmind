@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useCharacterStore } from '../../../stores/useCharacterStore';
 import Icon from '../../Icon';
 
-const FeaturesTab = () => {
+const FeaturesTab = ({ onUse }) => {
     const { character, updateInfo } = useCharacterStore();
     const [showAdd, setShowAdd] = useState(false);
     const [newFeat, setNewFeat] = useState({ name: "", source: "Class", desc: "" });
@@ -78,7 +78,12 @@ const FeaturesTab = () => {
                                     <div className="font-bold text-white text-lg">{feat.name}</div>
                                     <div className="text-[10px] text-amber-500 uppercase font-bold tracking-wider mb-2">{feat.source}</div>
                                 </div>
-                                <button onClick={() => handleDelete(i)} className="text-slate-600 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity p-1"><Icon name="trash-2" size={16}/></button>
+                                <div className="flex gap-2">
+                                    <button onClick={() => onUse && onUse(feat, 'Feature')} className="px-3 py-1 bg-slate-700 hover:bg-indigo-600 text-slate-300 hover:text-white rounded text-[10px] font-bold transition-colors">
+                                        Use
+                                    </button>
+                                    <button onClick={() => handleDelete(i)} className="text-slate-600 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity p-1"><Icon name="trash-2" size={16}/></button>
+                                </div>
                             </div>
                             <div className="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap">
                                 {feat.desc || "No description."}

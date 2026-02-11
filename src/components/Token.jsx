@@ -67,7 +67,7 @@ const Token = ({ token, isOwner, cellPx, isDragging, isSelected, isTurn, onMouse
                     onClick(e, token.id);
                 }
             }}
-            className={`absolute transform -translate-x-1/2 -translate-y-1/2 cursor-grab active:cursor-grabbing hover:z-50 
+            className={`cursor-grab active:cursor-grabbing hover:z-50 
                 ${isOwner ? 'hover:scale-105' : ''} 
                 ${isTurn ? 'animate-pulse scale-110 z-50' : ''}
                 ${token.isHidden ? 'opacity-40 grayscale border-dashed' : 'opacity-100'}
@@ -75,7 +75,6 @@ const Token = ({ token, isOwner, cellPx, isDragging, isSelected, isTurn, onMouse
                 ${animClass}
             `}
             style={{ 
-                // Position handled by parent
                 width: `${dimension}px`,
                 height: `${dimension}px`,
                 transition: isDragging ? 'none' : 'all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275)',

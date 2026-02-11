@@ -13,7 +13,7 @@ const SessionView = ({
     isLoading, role, user, generateRecap, saveMessageToJournal, 
     showTools, setShowTools, diceLog, handleDiceRoll,
     possessedNpcId, onSavePage, loreChunks, aiHelper,
-    players, castList, myCharId 
+    players, castList, myCharId, compact 
 }) => {
 // END CHANGE
     const [sendMode, setSendMode] = useState('chat-public'); 
@@ -167,6 +167,8 @@ const SessionView = ({
         if (msg.senderId === user?.uid || msg.targetId === user?.uid) return true;
         if (msg.type === 'ai-private' && msg.senderId === user?.uid) return true;
         if (role === 'dm') return true; 
+        if (msg.type === 'roll-public') return true;
+        if (msg.type === 'roll-private' && (role === 'dm' || msg.senderId === user?.uid)) return true;
         return false;
     });
 
@@ -188,7 +190,7 @@ const SessionView = ({
 
     return (
         <div className="flex h-full relative flex-col bg-slate-900">
-            {role === 'dm' && (
+            {role === 'dm' && !compact && (
                 <div className="absolute top-2 right-4 z-20 flex gap-2">
                     <button onClick={clearChat} className="bg-red-900/50 border border-red-700 text-red-200 px-3 py-1 rounded-full text-xs shadow-lg flex items-center gap-1 hover:bg-red-900 hover:text-white transition-colors opacity-50 hover:opacity-100">
                         <Icon name="trash-2" size={14}/> Clear
@@ -358,10 +360,10 @@ const SessionView = ({
                 </div>
                 
                 {/* FIX: Removed 'mb-20 md:mb-0' so it sits flush against the bottom padding defined in App.jsx */}
-                <div className="p-2 bg-slate-900 border-t border-slate-800 flex flex-col gap-2 shrink-0 z-10 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.5)]">
-                    <div className="flex items-center gap-2">
+                <div className="p-2 bg-slate-900 border-t border-slate-800 flex flex-col gap-2 shrink-0 z-20 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.5)]">
+                    <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
                         {/* FIX: sendMode is now flex-1 to share space, instead of w-full */}
-                        <select value={sendMode} onChange={(e) => setSendMode(e.target.value)} className="flex-1 min-w-0 bg-slate-800 text-xs font-bold text-slate-300 border border-slate-600 rounded px-2 py-1.5 outline-none focus:border-amber-500 md:w-36 md:flex-none">
+                        <select value={sendMode} onChange={(e) => setSendMode(e.target.value)} className="flex-1 min-w-[100px] bg-slate-800 text-xs font-bold text-slate-300 border border-slate-600 rounded px-2 py-1.5 outline-none focus:border-amber-500 md:w-36 md:flex-none">
                             <option value="chat-public">📢 Chat</option>
                             <option value="ai-public">🤖 AI (Public)</option>
                             <option value="ai-private">🧠 AI (Private)</option>
