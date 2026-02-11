@@ -119,12 +119,30 @@ const Aura = ({ origin, flavor, isPreview }) => (
     </mesh>
 );
 
+const DebugMarker = ({ position, color = "cyan" }) => (
+    <group position={position}>
+        <mesh>
+            <sphereGeometry args={[4, 8, 8]} />
+            <meshBasicMaterial color={color} transparent opacity={0.8} />
+        </mesh>
+        <mesh rotation={[0, 0, 0]}>
+            <boxGeometry args={[1, 20, 1]} />
+            <meshBasicMaterial color={color} />
+        </mesh>
+        <mesh rotation={[0, 0, Math.PI / 2]}>
+            <boxGeometry args={[1, 20, 1]} />
+            <meshBasicMaterial color={color} />
+        </mesh>
+    </group>
+);
+
 const Effect = (props) => {
+    const isDebug = localStorage.getItem('vtt_debug_vfx') === 'true';
     switch (props.behavior) {
-        case 'breath': return <Breath {...props} />;
-        case 'beam': return <Beam {...props} />;
-        case 'rocket': return <Rocket {...props} />;
-        case 'aura': return <Aura {...props} />;
+        case 'breath': return <><Breath {...props} />{isDebug && <DebugMarker position={[props.origin.x, -props.origin.y, 1]} />}</>;
+        case 'beam': return <><Beam {...props} />{isDebug && <><DebugMarker position={[props.origin.x, -props.origin.y, 1]} /><DebugMarker position={[props.target.x, -props.target.y, 1]} color="magenta" /></>}</>;
+        case 'rocket': return <><Rocket {...props} />{isDebug && <DebugMarker position={[props.origin.x, -props.origin.y, 1]} />}</>;
+        case 'aura': return <><Aura {...props} />{isDebug && <DebugMarker position={[props.origin.x, -props.origin.y, 1]} />}</>;
         default: return null;
     }
 };
@@ -134,7 +152,7 @@ export default function VfxOverlay({ width, height }) {
     const targetingPreview = useVfxStore(state => state.targetingPreview);
     if (!width || !height || width <= 0 || height <= 0) return null;
     return (
-        <div className="absolute top-0 left-0 pointer-events-none z-[15]" style={{ width: `${width}px`, height: `${height}px` }}>
+        <div className="absolute top-0 left-0 pointer-events-none z-[15]" style={{ width: `${width}px`, height: `${height}px`, willChange: 'transform' }}>
             <Canvas
                 key={`${width}-${height}`} // Force re-mount to update camera frustum when map size changes
                 orthographic
@@ -145,7 +163,13 @@ export default function VfxOverlay({ width, height }) {
                     position: [0, 0, 10]
                 }}
                 gl={{ alpha: true }}
-                style={{ width: '100%', height: '100%', pointerEvents: 'none' }}
+                style={{ 
+                    width: '100%', 
+                    height: '100%', 
+                    pointerEvents: 'none',
+                    imageRendering: 'pixelated',
+                    willChange: 'transform'
+                }}
             >
                 {activeEffects.map(effect => <Effect key={effect.id} {...effect} />)}
                 {targetingPreview && <Effect {...targetingPreview} isPreview />}

@@ -31,7 +31,7 @@ const CombatTracker = ({ combat, onNextTurn, onEndCombat, onClearRolls, role, up
     };
 
     return (
-        <div className="absolute top-20 left-4 bottom-auto w-72 bg-slate-900/95 backdrop-blur border border-slate-700 rounded-xl shadow-2xl z-40 p-0 overflow-hidden flex flex-col max-h-[60vh] animate-in slide-in-from-left">
+        <div className="absolute top-20 left-4 bottom-auto w-72 bg-slate-900/95 backdrop-blur border border-slate-700 rounded-xl shadow-2xl z-[100] p-0 overflow-hidden flex flex-col max-h-[60vh] animate-in slide-in-from-left">
             <div className="p-3 bg-slate-800 border-b border-slate-700 flex justify-between items-center">
                 <h3 className="font-bold text-red-500 fantasy-font flex items-center gap-2"><Icon name="swords" size={16}/> Round {currentRound}</h3>
                 <div className="flex gap-1">

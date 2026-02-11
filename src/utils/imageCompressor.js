@@ -1,4 +1,4 @@
-export const compressImage = (file, maxWidth = 4096, quality = 0.9) => {
+export const compressImage = (file, maxWidth = 4096, quality = 0.8) => {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.readAsDataURL(file);
@@ -29,8 +29,8 @@ export const compressImage = (file, maxWidth = 4096, quality = 0.9) => {
                 const ctx = elem.getContext('2d');
                 ctx.drawImage(img, 0, 0, width, height);
 
-                // Convert to Base64 Data URL for Firestore chunking
-                const dataUrl = elem.toDataURL('image/jpeg', quality);
+                // Phase 1: Hardware Ceiling & WebP Format
+                const dataUrl = elem.toDataURL('image/webp', quality);
                 resolve(dataUrl);
             };
             img.onerror = (error) => reject(error);

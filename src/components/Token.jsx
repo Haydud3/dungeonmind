@@ -75,8 +75,8 @@ const Token = ({ token, isOwner, cellPx, isDragging, isSelected, isTurn, onMouse
                 ${animClass}
             `}
             style={{ 
-                width: `${dimension}px`,
-                height: `${dimension}px`,
+                width: '100%',
+                height: '100%',
                 transition: isDragging ? 'none' : 'all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275)',
             }}
             title={token.name || "Unknown"}

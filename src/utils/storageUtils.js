@@ -48,6 +48,21 @@ export const storeChunkedMap = async (base64, name) => {
     return `chunked:${metaRef.id}`;
 };
 
+// Phase 3: Store both Full and LOD assets
+export const storeMapWithThumbnail = async (fullBase64, thumbBase64, name) => {
+    const fullId = await storeChunkedMap(fullBase64, name);
+    const thumbId = await storeChunkedMap(thumbBase64, `${name}_thumb`);
+    
+    // Update metadata of the full image to link to its thumbnail
+    const docId = fullId.replace('chunked:', '');
+    await setDoc(doc(db, "map_metadata", docId), {
+        thumbnailId: thumbId,
+        isMultiTier: true
+    }, { merge: true });
+
+    return { fullId, thumbId };
+};
+
 // Phase 2: Retrieve and assemble chunks into a single Base64 string
 export const retrieveChunkedMap = async (chunkedId) => {
     if (!chunkedId) return "";

@@ -151,7 +151,7 @@ return (
     <div 
         ref={hudRef}
         onClick={(e) => e.stopPropagation()}
-        className="absolute z-[70] pointer-events-none"
+        className="absolute z-[110] pointer-events-none"
         style={{ left: position.x, top: position.y }}
     >
         <style>{`

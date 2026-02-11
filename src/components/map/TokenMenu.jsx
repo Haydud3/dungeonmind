@@ -7,7 +7,7 @@ const TokenMenu = ({ selectedTokenId, openTokenSheet, updateTokenStatus, updateT
     if (!selectedTokenId) return null;
 
     return (
-        <div className="absolute bottom-20 md:bottom-4 left-1/2 -translate-x-1/2 z-50 bg-slate-900 border border-slate-500 rounded-full shadow-2xl p-2 flex gap-2 animate-in slide-in-from-bottom-2 items-center">
+        <div className="absolute bottom-20 md:bottom-4 left-1/2 -translate-x-1/2 z-[100] bg-slate-900 border border-slate-500 rounded-full shadow-2xl p-2 flex gap-2 animate-in slide-in-from-bottom-2 items-center">
             <button onClick={() => openTokenSheet(selectedTokenId)} title="Open Sheet" className="p-2 hover:bg-slate-800 rounded-full text-amber-400 bg-amber-900/20 border border-amber-600/50"><Icon name="scroll-text" size={20}/></button>
             <div className="w-px h-6 bg-slate-700 mx-1"></div>
             <button onClick={() => updateTokenStatus(selectedTokenId, 'dead')} className="p-2 hover:bg-slate-800 rounded-full text-white"><Icon name="skull" size={20}/></button>

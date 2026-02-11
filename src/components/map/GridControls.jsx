@@ -10,7 +10,7 @@ const GridControls = ({ grid, onUpdate, onClose, activeTool, setActiveTool }) =>
 
     return (
         <div 
-            className={`absolute bottom-24 md:bottom-22 left-1/2 -translate-x-1/2 bg-slate-900/95 backdrop-blur border p-4 rounded-xl shadow-2xl w-72 animate-in slide-in-from-bottom-5 z-50 pointer-events-auto transition-all ${
+            className={`absolute bottom-24 md:bottom-22 left-1/2 -translate-x-1/2 bg-slate-900/95 backdrop-blur border p-4 rounded-xl shadow-2xl w-72 animate-in slide-in-from-bottom-5 z-[100] pointer-events-auto transition-all ${
                 isCalibrating ? 'border-cyan-500 ring-4 ring-cyan-500/20 scale-105' : 'border-slate-700'
             }`}
             onPointerDown={(e) => e.stopPropagation()} 

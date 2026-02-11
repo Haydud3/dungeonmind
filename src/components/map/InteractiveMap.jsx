@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import Icon from '../Icon';
 import Token from '../Token';
 // START CHANGE: Import isPointInPolygon
-import { calculateVisibilityPolygon, getCharacterVisionSettings, isPointInPolygon } from '../../utils/visionMath';
+import { calculateVisibilityPolygon, getCharacterVisionSettings, isPointInPolygon, calculateTokenCenter } from '../../utils/visionMath';
 // END CHANGE
 import MapToolbar from './MapToolbar';
 import MapLibrary from './MapLibrary';
@@ -69,6 +69,8 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     const gridCalStartRef = useRef(null); // NEW: Reference for global listeners
     const [activeLightId, setActiveLightId] = useState(null);
     const [assembledMapUrl, setAssembledMapUrl] = useState(null);
+    const [fullTexture, setFullTexture] = useState(null);
+    const [lodTexture, setLodTexture] = useState(null);
     const [mapReady, setMapReady] = useState(false); 
     const hasAutoCentered = useRef(false);
 
@@ -111,10 +113,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
         if (!myToken) return null; 
 
-        const origin = {
-            x: (myToken.x / 100) * mapDimensions.width, // --- CHANGES: Use reactive width ---
-            y: (myToken.y / 100) * mapDimensions.height // --- CHANGES: Use reactive height ---
-        };
+        const origin = calculateTokenCenter(myToken, mapDimensions.width, mapDimensions.height);
         
         // Create a bounding box slightly larger than the map to ensure "infinite" vision reaches corners
         const maxMapDim = Math.max(mapDimensions.width, mapDimensions.height) * 1.5; // --- CHANGES: Use reactive dims ---
@@ -139,10 +138,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
         if (!myToken) return null; 
 
-        const origin = {
-            x: (myToken.x / 100) * mapDimensions.width, // --- CHANGES: Use reactive width ---
-            y: (myToken.y / 100) * mapDimensions.height // --- CHANGES: Use reactive height ---
-        };
+        const origin = calculateTokenCenter(myToken, mapDimensions.width, mapDimensions.height);
         const gridSize = mapGrid.size || 50;
         const character = data.players?.find(p => idsMatch(p.id, myToken.characterId)) || 
                           data.npcs?.find(n => idsMatch(n.id, myToken.characterId));
@@ -160,14 +156,43 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
     // Phase 2: Handle Chunked Map Loading from Firestore
     useEffect(() => {
-        if (mapUrl?.startsWith('chunked:')) {
-            import('../../utils/storageUtils').then(({ retrieveChunkedMap }) => {
-                retrieveChunkedMap(mapUrl).then(setAssembledMapUrl);
-            });
+        const loadMap = async () => {
+            const { retrieveChunkedMap } = await import('../../utils/storageUtils');
+            
+            // 1. Load Thumbnail (LOD)
+            if (mapData.thumbnailUrl?.startsWith('chunked:')) {
+                const thumb = await retrieveChunkedMap(mapData.thumbnailUrl);
+                setLodTexture(thumb);
+            } else {
+                setLodTexture(mapData.thumbnailUrl);
+            }
+
+            // 2. Load Full Texture
+            if (mapUrl?.startsWith('chunked:')) {
+                const full = await retrieveChunkedMap(mapUrl);
+                setFullTexture(full);
+            } else {
+                setFullTexture(mapUrl);
+            }
+        };
+        loadMap();
+    }, [mapUrl, mapData.thumbnailUrl]);
+
+    // Phase 3: LOD Swapping Logic
+    useEffect(() => {
+        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || window.innerWidth <= 768;
+        const useLOD = isMobile && view.scale < 0.25;
+        
+        if (useLOD && lodTexture) {
+            setAssembledMapUrl(lodTexture);
+        } else if (fullTexture) {
+            setAssembledMapUrl(fullTexture);
+        } else if (lodTexture) {
+            setAssembledMapUrl(lodTexture); // Fallback while full loads
         } else {
-            setAssembledMapUrl(mapUrl);
+            setAssembledMapUrl(null);
         }
-    }, [mapUrl]);
+    }, [view.scale, fullTexture, lodTexture]);
 
     // 5. HANDLERS
     const handleGridUpdate = (newGrid) => {
@@ -375,7 +400,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
         // --- 2. DEFINE VIEWERS ---
         const allEmitters = tokens.map(token => {
-            const origin = { x: (token.x / 100) * img.naturalWidth, y: (token.y / 100) * img.naturalHeight };
+            const origin = calculateTokenCenter(token, img.naturalWidth, img.naturalHeight);
             const character = data.players?.find(p => idsMatch(p.id, token.characterId)) || 
                               data.npcs?.find(n => idsMatch(n.id, token.characterId));
             
@@ -471,7 +496,10 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             ctx.clip();
 
             lights.forEach(light => {
-                const origin = { x: (light.x / 100) * img.naturalWidth, y: (light.y / 100) * img.naturalHeight };
+                const origin = { 
+                    x: Math.floor((light.x / 100) * img.naturalWidth), 
+                    y: Math.floor((light.y / 100) * img.naturalHeight) 
+                };
                 const radiusPx = (light.radius / 5) * (mapGrid.size || 50);
                 
                 const blockingSegments = walls.filter(w => !(w.type === 'door' && w.isOpen));
@@ -553,6 +581,13 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                     if (center) effect.target = center;
                 }
                 
+                if (localStorage.getItem('vtt_debug_vfx') === 'true') {
+                    console.group(`[VFX DEBUG] Remote Effect: ${effect.behavior}`);
+                    console.log("Final Payload:", effect);
+                    console.log("Map Dimensions:", mapDimensions);
+                    console.groupEnd();
+                }
+
                 addEffect(effect);
             }
         }
@@ -765,7 +800,10 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                     const sMult = typeof tokenObj?.size === 'number' ? tokenObj.size : (sizeMap[tokenObj?.size] || 1);
                     const { x, y } = snapToGrid(mPos.x, mPos.y, img.naturalWidth, img.naturalHeight, sMult);
                     
-                    const newTokens = currentTokens.map(t => t.id === mTokenId ? { ...t, x, y } : t);
+                    // Calculate and store centerPoint for VFX engine
+                    const centerPx = calculateTokenCenter({ x, y }, img.naturalWidth, img.naturalHeight);
+                    
+                    const newTokens = currentTokens.map(t => t.id === mTokenId ? { ...t, x, y, centerPx } : t);
                     updateCloud({ ...mData, campaign: { ...data.campaign, activeMap: { ...data.campaign.activeMap, tokens: newTokens } } }, true);
                 }
             }
@@ -821,7 +859,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             window.removeEventListener('pointerup', handleGlobalUp);
             // REMOVED: window.removeEventListener('touchmove', handleGlobalMove);
         };
-    }, [movingTokenId, isPanning, activeMeasurement, movingTokenPos, tokens, view.scale, activeTool, mapGrid, targetingPreview]);
+    }, [movingTokenId, isPanning, activeMeasurement, movingTokenPos, tokens, activeTool, mapGrid, targetingPreview]);
 
     // --- 2. MATH HELPERS ---
     
@@ -893,16 +931,13 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             const sizeMap = { tiny: 0.5, small: 1, medium: 1, large: 2, huge: 3, gargantuan: 4 };
             const sMult = typeof tokenObj.size === 'number' ? tokenObj.size : (sizeMap[tokenObj.size] || 1);
             const snapped = snapToGrid(movingTokenPos.x, movingTokenPos.y, mapDimensions.width, mapDimensions.height, sMult);
-            return {
-                x: (snapped.x / 100) * mapDimensions.width,
-                y: (snapped.y / 100) * mapDimensions.height
-            };
+            return calculateTokenCenter({ x: snapped.x, y: snapped.y }, mapDimensions.width, mapDimensions.height);
         }
 
-        return {
-            x: (tokenObj.x / 100) * mapDimensions.width,
-            y: (tokenObj.y / 100) * mapDimensions.height
-        };
+        // Prefer stored centerPx for stability
+        if (tokenObj.centerPx) return tokenObj.centerPx;
+
+        return calculateTokenCenter(tokenObj, mapDimensions.width, mapDimensions.height);
     };
 
     const getMapCoords = (e) => {
@@ -954,13 +989,19 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         
         if (targetingPreview) return;
 
+        // 1. Add pointer to cache for multi-touch tracking
+        if (!pointerCache.current.find(p => p.id === e.pointerId)) {
+            pointerCache.current.push({ id: e.pointerId, x: e.clientX, y: e.clientY });
+        }
+        e.currentTarget.setPointerCapture(e.pointerId);
+
         // Use unified World Space coordinates
         const coords = getMapCoords(e);
         touchStartPos.current = { x: e.clientX, y: e.clientY };
         lastMousePosRef.current = { x: e.clientX, y: e.clientY };
 
         // 0. Multi-Touch Pinch Detection
-        if (pointerCache.current.length === 2) {
+        if (pointerCache.current.length >= 2) {
             clearTimeout(longPressTimer.current);
             longPressTimer.current = null;
             
@@ -969,6 +1010,8 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             pinchStartDist.current = Math.hypot(p1.x - p2.x, p1.y - p2.y);
             pinchStartScale.current = viewRef.current.scale;
             setIsPanning(false); 
+            setMovingTokenId(null);
+            setActiveMeasurement(null);
             return;
         }
 
@@ -1596,11 +1639,11 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         >
             {/* --- TOP RIGHT CONTROLS (Library, Tokens, Combat, Zoom) --- */}
             <div 
-                className={`absolute z-50 flex gap-2 pointer-events-none transition-all duration-300 ${sidebarIsOpen ? 'right-[400px]' : 'right-4'}`}
+                className={`absolute z-[100] flex gap-2 pointer-events-auto transition-all duration-300 ${sidebarIsOpen ? 'right-[400px]' : 'right-4'}`}
                 style={{ top: 'calc(1rem + env(safe-area-inset-top))' }}
             >
                 <div 
-                    className="bg-slate-900/90 border border-slate-700 rounded-xl p-1.5 flex gap-1.5 shadow-xl pointer-events-auto"
+                    className="bg-slate-900/90 border border-slate-700 rounded-xl p-1.5 flex gap-1.5 shadow-xl"
                     onPointerDown={(e) => e.stopPropagation()} 
                 >
                     <button onClick={() => setShowHandoutCreator(true)} className="p-3 md:p-2 text-amber-500 hover:bg-slate-800 rounded-lg min-w-[44px] min-h-[44px] flex items-center justify-center" title="Handouts">
@@ -1634,7 +1677,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
             {/* --- TOP LEFT HUD (Status) --- */}
             <div 
-                className={`absolute z-50 pointer-events-none transition-all duration-300 ${
+                className={`absolute z-[100] pointer-events-auto transition-all duration-300 ${
                     sidebarIsOpen 
                         ? 'max-[1150px]:opacity-0 max-[1150px]:pointer-events-none' 
                         : 'max-[650px]:opacity-0 max-[650px]:pointer-events-none opacity-100'
@@ -1642,17 +1685,9 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                 style={{ top: 'calc(1rem + env(safe-area-inset-top))', left: 'calc(1rem + env(safe-area-inset-left))' }}
             >
                 <div 
-                    className="bg-slate-900/90 backdrop-blur border border-slate-700 px-3 py-2 rounded-lg shadow-xl pointer-events-auto flex items-center gap-3"
+                    className="bg-slate-900/90 backdrop-blur border border-slate-700 px-3 py-2 rounded-lg shadow-xl flex items-center gap-3"
                     onPointerDown={(e) => e.stopPropagation()}
                 >
-                    <button 
-                        onClick={() => updateMapState('toggle_chat')} 
-                        className={`p-2 rounded-md transition-colors ${sidebarMode === 'chat' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}
-                        title="Toggle Session Chat"
-                    >
-                        <Icon name="message-square" size={18}/>
-                    </button>
-                    <div className="w-px h-6 bg-slate-700"></div>
                     <div className={`w-3 h-3 rounded-full ${data.activeUsers ? 'bg-green-500 shadow-[0_0_8px_#22c55e]' : 'bg-red-500'}`}></div>
                     <div>
                         <div className="text-xs font-bold text-amber-500 fantasy-font tracking-widest"> {data.campaign?.genesis?.campaignName || "Unknown Realm"}</div>
@@ -1666,12 +1701,12 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             {/* START CHANGE: Pass Vision Props to Toolbar */}
             {/* --- BOTTOM CENTER TOOLBAR --- */}
             <div 
-                className={`absolute ${data.config?.mobileCompact ? 'bottom-[0px]' : 'bottom-0'} md:bottom-6 left-0 w-full flex justify-center pointer-events-none transition-all duration-300 z-50 ${
+                className={`absolute ${data.config?.mobileCompact ? 'bottom-[0px]' : 'bottom-0'} md:bottom-6 left-0 w-full flex justify-center pointer-events-auto transition-all duration-300 z-[70] ${
                     sidebarIsOpen ? 'md:pr-[384px]' : ''
                 }`}
                 style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
             >
-                <div className="pointer-events-auto" onPointerDown={(e) => e.stopPropagation()}>
+                <div onPointerDown={(e) => e.stopPropagation()}>
                     <MapToolbar 
                         role={role}
                         activeTool={activeTool} 
@@ -1760,7 +1795,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             {showTokens && (
                 <div 
                     onPointerDown={(e) => e.stopPropagation()}
-                    className="absolute top-20 right-4 bottom-24 w-64 bg-slate-900/95 backdrop-blur border border-slate-700 rounded-xl shadow-2xl z-40 p-4 animate-in slide-in-from-right pointer-events-auto"
+                    className="absolute top-20 right-4 bottom-24 w-64 bg-slate-900/95 backdrop-blur border border-slate-700 rounded-xl shadow-2xl z-[100] p-4 animate-in slide-in-from-right pointer-events-auto"
                 >
                     <TokenManager data={data} onDragStart={handleDragStart} />
                 </div>
@@ -1831,8 +1866,9 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                             decoding="async" // Off-thread image decoding
                             className="block pointer-events-none select-none max-w-none h-auto"
                             style={{ 
-                                imageRendering: 'auto', // Changed from 'pixelated' to 'auto' for smooth scaling
-                                transform: 'translateZ(0)' // Force GPU composite layer
+                                imageRendering: view.scale > 0.5 ? 'high-quality' : 'auto',
+                                transform: 'translateZ(0)', // Force GPU composite layer
+                                willChange: 'transform'
                             }}
                             alt="Map Board"
                         />
@@ -1847,6 +1883,22 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
                     {/* VFX Layer */}
                     <VfxOverlay width={mapDimensions.width} height={mapDimensions.height} />
+
+                    {/* VFX Debug Markers (DOM Space) */}
+                    {localStorage.getItem('vtt_debug_vfx') === 'true' && tokens.map(t => {
+                        const center = getTokenCenter(t.id);
+                        if (!center) return null;
+                        return (
+                            <div 
+                                key={`debug-center-${t.id}`}
+                                className="absolute w-3 h-3 border-2 border-red-500 rounded-full z-[200] pointer-events-none flex items-center justify-center"
+                                style={{ left: center.x, top: center.y, transform: 'translate(-50%, -50%)' }}
+                            >
+                                <div className="w-0.5 h-4 bg-red-500 absolute"></div>
+                                <div className="h-0.5 w-4 bg-red-500 absolute"></div>
+                            </div>
+                        );
+                    })}
 
                     {pings.map(ping => (
                         <div 
@@ -2151,6 +2203,8 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                                         position: 'absolute', 
                                         left: px, 
                                         top: py, 
+                                        width: `${dimension}px`,
+                                        height: `${dimension}px`,
                                         transform: 'translate(-50%, -50%)', // Center the container on the point
                                         zIndex: isMoving ? 100 : 10,
                                         pointerEvents: isMoving ? 'none' : 'auto',
@@ -2252,7 +2306,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                     <div 
                         onPointerDown={(e) => e.stopPropagation()} 
                         onMouseDown={(e) => e.stopPropagation()}
-                        className="absolute inset-0 pointer-events-none z-[100]"
+                        className="absolute inset-0 pointer-events-none z-[110]"
                     >
                         <RadialHUD 
                             key={token.id}
@@ -2271,6 +2325,13 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                             onStartVfxTargeting={(vfx) => {
                                 const origin = getTokenCenter(token.id);
                                 if (origin) {
+                                    if (localStorage.getItem('vtt_debug_vfx') === 'true') {
+                                        console.group(`[VFX DEBUG] Local Targeting Start`);
+                                        console.log("Token:", token.name, `(${token.id})`);
+                                        console.log("Grid Pos:", token.x, token.y);
+                                        console.log("Calculated Center:", origin);
+                                        console.groupEnd();
+                                    }
                                     setTargetingPreview({ ...vfx, origin, target: origin, tokenId: token.id, originTokenId: token.id });
                                     setSelectedTokenId(null);
                                 }

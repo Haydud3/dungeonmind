@@ -461,3 +461,21 @@ h1, h2, h3, .fantasy-font { font-family: 'Cinzel', serif; }
     background-color: #334155 !important;
     color: #fbbf24 !important;
 }
+
+/* --- HUD & MOBILE INTERACTION FIXES --- */
+
+/* Ensure all HUD buttons meet the 44x44px touch target requirement on mobile */
+@media (max-width: 768px) {
+    .bg-slate-900\/90 button,
+    .bg-slate-900\/95 button {
+        min-width: 44px !important;
+        min-height: 44px !important;
+        padding: 12px !important; /* Force 44px target via padding */
+    }
+}
+
+/* Task B: Fix the "Horizontal Blue Bar" and landscape layout */
+@media (max-height: 500px) and (orientation: landscape) {
+    .mobile-nav-container { display: none !important; }
+    .chat-sidebar { height: 100vh !important; bottom: 0 !important; }
+}

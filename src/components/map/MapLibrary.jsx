@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import Icon from '../Icon';
-import { storeChunkedMap } from '../../utils/storageUtils';
+import { storeMapWithThumbnail } from '../../utils/storageUtils';
 import { compressImage } from '../../utils/imageCompressor';
 
 const GOOGLE_SEARCH_CX = "c38cb56920a4f45df"; 
@@ -61,17 +61,22 @@ const MapLibrary = ({ savedMaps, onSelect, onClose, onDelete }) => {
         
         setIsUploading(true);
         try {
-            // Resize map image and return Base64 string for Firestore Chunking
-            const base64 = await compressImage(file, 4096, 0.85);
+            // Phase 1: Generate Dual Assets
+            // 1. The "Full" Texture (4K WebP)
+            const fullBase64 = await compressImage(file, 4096, 0.8);
             
-            // Store chunks in Firestore to bypass CORS and 1MB limit
-            const url = await storeChunkedMap(base64, file.name);
+            // 2. The "LOD" Thumbnail (512px WebP)
+            const thumbBase64 = await compressImage(file, 512, 0.5);
+            
+            // Store both in Firestore
+            const { fullId, thumbId } = await storeMapWithThumbnail(fullBase64, thumbBase64, file.name);
             
             // Standardized payload with isNew flag
             onSelect({ 
                 id: Date.now(), 
                 name: file.name, 
-                url: url,
+                url: fullId,
+                thumbnailUrl: thumbId,
                 isNew: true,
                 walls: [],
                 grid: { size: 50, offsetX: 0, offsetY: 0, visible: true, snap: true }

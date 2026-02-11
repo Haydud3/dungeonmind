@@ -22,6 +22,17 @@ export const getCharacterVisionSettings = (character, cellPx = 50) => {
 };
 
 /**
+ * Calculates the precise pixel center of a token for vision and VFX.
+ */
+export const calculateTokenCenter = (token, mapWidth, mapHeight) => {
+    if (!token || !mapWidth || !mapHeight) return { x: 0, y: 0 };
+    return {
+        x: (token.x / 100) * mapWidth,
+        y: (token.y / 100) * mapHeight
+    };
+};
+
+/**
  * Calculates a visibility polygon from a given point (origin).
  * Optimized for 60FPS rendering.
  */
