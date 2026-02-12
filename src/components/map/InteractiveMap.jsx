@@ -35,11 +35,19 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     const mapUrl = mapData.url;
     const visionActive = mapData.visionActive !== false; 
     const mapGrid = mapData.grid || { size: 50, offsetX: 0, offsetY: 0, visible: true, snap: true };
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || window.innerWidth <= 768;
 
     // 2. ALL STATE HOOKS
     const [view, setView] = useState(() => {
-        const saved = localStorage.getItem(`vtt_view_${mapData.id || code}`);
-        return saved ? JSON.parse(saved) : { x: 0, y: 0, scale: 1 };
+        try {
+            const saved = localStorage.getItem(`vtt_view_${mapData.id || code}`);
+            const parsed = saved ? JSON.parse(saved) : null;
+            // Safety Check: Ensure values are finite numbers to prevent "Invisible Map" (NaN)
+            if (parsed && Number.isFinite(parsed.x) && Number.isFinite(parsed.y) && Number.isFinite(parsed.scale)) {
+                return parsed;
+            }
+        } catch (e) { console.warn("Corrupt view state reset"); }
+        return { x: 0, y: 0, scale: 1 };
     });
     const [activeTool, setActiveTool] = useState('move');
     const [showLibrary, setShowLibrary] = useState(false);
@@ -52,7 +60,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     const [isDrawingFog, setIsDrawingFog] = useState(false);
     const [currentPath, setCurrentPath] = useState([]);
     const [movingTokenId, setMovingTokenId] = useState(null);
-    const [movingTokenPos, setMovingTokenPos] = useState(null); 
+    const movingTokenPosRef = useRef(null); // OPTIMIZATION: Use Ref instead of State for drag
     const [wallStart, setWallStart] = useState(null);
     const [cursorPos, setCursorPos] = useState({x:0, y:0}); 
     const [shakingTokenId, setShakingTokenId] = useState(null);
@@ -73,6 +81,16 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     const [lodTexture, setLodTexture] = useState(null);
     const [mapReady, setMapReady] = useState(false); 
     const hasAutoCentered = useRef(false);
+    const [tokenBlobUrls, setTokenBlobUrls] = useState({}); // OPTIMIZATION: Cache for Token Blobs
+    
+    // DEBUG: Diagnostics State
+    const [debugLogs, setDebugLogs] = useState([]);
+    const [disableVision, setDisableVision] = useState(false); // Toggle to isolate crash source
+
+    const addLog = (msg) => {
+        setDebugLogs(prev => [...prev.slice(-14), `[${new Date().toLocaleTimeString().split(' ')[0]}] ${msg}`]);
+        console.log(`[VTT] ${msg}`);
+    };
 
     // 3. ALL REFS (Must be before Vision Logic)
     const containerRef = useRef(null);
@@ -156,31 +174,135 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
     // Phase 2: Handle Chunked Map Loading from Firestore
     useEffect(() => {
+        // START CHANGE: Reset state for loading screen
+        setMapReady(false);
+        setFullTexture(null);
+        setLodTexture(null);
+        setDebugLogs([]); 
+        addLog(`Init: ${mapUrl ? 'URL Found' : 'No URL'}`);
+        // END CHANGE
+        let isMounted = true;
+        const createdUrls = [];
+        const controller = new AbortController();
         const loadMap = async () => {
-            const { retrieveChunkedMap } = await import('../../utils/storageUtils');
-            
-            // 1. Load Thumbnail (LOD)
-            if (mapData.thumbnailUrl?.startsWith('chunked:')) {
-                const thumb = await retrieveChunkedMap(mapData.thumbnailUrl);
-                setLodTexture(thumb);
-            } else {
-                setLodTexture(mapData.thumbnailUrl);
-            }
+            addLog("Starting Load...");
+            try {
+                const { retrieveChunkedMap } = await import('../../utils/storageUtils');
+                
+                // Helper: Handle Blob or URL
+                const processMapAsset = async (asset, label) => {
+                    if (!asset) return null;
+                    // If it's a Blob (from retrieveChunkedMap), create a URL
+                    if (asset instanceof Blob) {
+                        addLog(`Blob: ${label} (${(asset.size / 1024 / 1024).toFixed(2)} MB)`);
+                        const url = URL.createObjectURL(asset);
+                        createdUrls.push(url);
+                        return url;
+                    }
+                    return asset; // It's already a string URL
+                };
 
-            // 2. Load Full Texture
-            if (mapUrl?.startsWith('chunked:')) {
-                const full = await retrieveChunkedMap(mapUrl);
-                setFullTexture(full);
-            } else {
-                setFullTexture(mapUrl);
+                // 1. Load Thumbnail (LOD)
+                if (mapData.thumbnailUrl?.startsWith('chunked:')) {
+                    try {
+                        const thumbBlob = await retrieveChunkedMap(mapData.thumbnailUrl, controller.signal);
+                        if (isMounted) setLodTexture(await processMapAsset(thumbBlob, "Thumbnail"));
+                    } catch (e) {
+                        console.warn("Failed to load thumbnail chunk:", e);
+                    }
+                } else {
+                    setLodTexture(mapData.thumbnailUrl);
+                }
+
+                // 2. Load Full Texture
+                if (mapUrl?.startsWith('chunked:')) {
+                    try {
+                        addLog("Fetching Chunks...");
+                        const fullBlob = await retrieveChunkedMap(mapUrl, controller.signal);
+                        
+                        // START CHANGE: Unified Map Processing (Fixes Desktop Blob Issues)
+                        // We now process ALL maps through createImageBitmap -> toBlob.
+                        // This re-encodes the image (sanitizing any WebP/Blob corruption) and ensures max texture size.
+                        if (fullBlob) {
+                            addLog(`Chunks Done. Size: ${(fullBlob.size/1024/1024).toFixed(2)}MB`);
+                            // OPTIMIZATION: Skip heavy processing on Mobile to prevent OOM Crashes
+                            // Mobile browsers crash when holding Blob + Bitmap + Canvas + NewBlob in memory simultaneously.
+                            // We rely on the raw blob for mobile (which usually works fine) and only re-encode on Desktop.
+                            if (isMobile) {
+                                addLog("Mobile: Using Raw Blob");
+                                if (isMounted) setFullTexture(await processMapAsset(fullBlob, "Full Map"));
+                            } else {
+                                try {
+                                    const bmp = await createImageBitmap(fullBlob);
+                                    const MAX_DIM = 4096; // 4K limit for Desktop
+                                    
+                                    const scale = Math.min(MAX_DIM / bmp.width, MAX_DIM / bmp.height, 1); // Never upscale
+                                    const canvas = document.createElement('canvas');
+                                    canvas.width = Math.floor(bmp.width * scale);
+                                    canvas.height = Math.floor(bmp.height * scale);
+                                    const ctx = canvas.getContext('2d');
+                                    ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
+                                    
+                                    // Convert to clean JPEG Blob (0.9 quality)
+                                    const processedBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.9));
+                                    if (isMounted) setFullTexture(await processMapAsset(processedBlob, "Full Map (Processed)"));
+                                    bmp.close(); // Release bitmap memory
+                                } catch (err) {
+                                    addLog(`Process Fail: ${err.message}`);
+                                    if (isMounted) setFullTexture(await processMapAsset(fullBlob, "Full Map (Raw)"));
+                                }
+                            }
+                        }
+                        // END CHANGE
+                    } catch (e) {
+                        addLog(`Chunk Error: ${e.message}`);
+                    }
+                } else {
+                    setFullTexture(mapUrl);
+                }
+            } catch (e) {
+                addLog(`Init Fail: ${e.message}`);
             }
         };
         loadMap();
-    }, [mapUrl, mapData.thumbnailUrl]);
+
+        return () => {
+            isMounted = false;
+            controller.abort();
+            createdUrls.forEach(url => URL.revokeObjectURL(url));
+        };
+    }, [mapUrl, mapData.thumbnailUrl, isMobile]);
+
+    // OPTIMIZATION: Convert Token Base64 Images to Blobs
+    useEffect(() => {
+        let active = true;
+        const processTokens = async () => {
+            const newBlobs = {};
+            let hasNew = false;
+            
+            for (const t of tokens) {
+                // Only process if it's a Data URI and we haven't cached it yet
+                if (t.image?.startsWith('data:') && !tokenBlobUrls[t.id]) {
+                    try {
+                        const res = await fetch(t.image);
+                        const blob = await res.blob();
+                        newBlobs[t.id] = URL.createObjectURL(blob);
+                        hasNew = true;
+                    } catch (e) {
+                        console.warn("Failed to blobify token:", t.id);
+                    }
+                }
+            }
+            
+            if (hasNew && active) {
+                setTokenBlobUrls(prev => ({ ...prev, ...newBlobs }));
+            }
+        };
+        processTokens();
+    }, [tokens]); // Dependency on tokens ensures we catch new spawns
 
     // Phase 3: LOD Swapping Logic
     useEffect(() => {
-        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || window.innerWidth <= 768;
         const useLOD = isMobile && view.scale < 0.25;
         
         if (useLOD && lodTexture) {
@@ -192,7 +314,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         } else {
             setAssembledMapUrl(null);
         }
-    }, [view.scale, fullTexture, lodTexture]);
+    }, [view.scale, fullTexture, lodTexture, isMobile]);
 
     // 5. HANDLERS
     const handleGridUpdate = (newGrid) => {
@@ -371,9 +493,12 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     const renderVision = () => {
         const canvas = visionCanvasRef.current;
         const img = mapImageRef.current;
-        if (!canvas || !img || !img.complete || isPanning || !mapReady) return; // --- CHANGES: Added mapReady check ---
+        // DIAGNOSTIC: Check disableVision flag
+        if (!canvas || !img || !img.complete || isPanning || !mapReady || disableVision) return; 
 
-        const MAX_CANVAS_DIM = 2048;
+        // START CHANGE: Dynamic Canvas Cap based on Device
+        const MAX_CANVAS_DIM = isMobile ? 2048 : 4096;
+        // END CHANGE
         const maxDim = Math.max(img.naturalWidth, img.naturalHeight);
         const scaleRatio = maxDim > MAX_CANVAS_DIM ? (MAX_CANVAS_DIM / maxDim) : 1;
         const lowPerf = localStorage.getItem('vtt_low_performance') === 'true';
@@ -672,7 +797,28 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                     y: gStart.y + (dy >= 0 ? side : -side)
                 });
             } else if (movingTokenId) {
-                setMovingTokenPos(coords);
+                // OPTIMIZATION: Direct DOM Manipulation for Dragging
+                // This bypasses React State updates (re-renders) for smooth 60fps dragging
+                const img = mapImageRef.current;
+                if (img) {
+                    const tokenObj = latestTokensRef.current.find(t => t.id === movingTokenId);
+                    const sizeMap = { tiny: 0.5, small: 1, medium: 1, large: 2, huge: 3, gargantuan: 4 };
+                    const sMult = typeof tokenObj?.size === 'number' ? tokenObj.size : (sizeMap[tokenObj?.size] || 1);
+                    
+                    // Calculate Snap
+                    const snapped = snapToGrid(coords.x, coords.y, img.naturalWidth, img.naturalHeight, sMult);
+                    movingTokenPosRef.current = snapped;
+
+                    // Move DOM Element directly
+                    const el = document.getElementById(`token-node-${movingTokenId}`);
+                    if (el) {
+                        const px = (snapped.x / 100) * mapDimensions.width;
+                        const py = (snapped.y / 100) * mapDimensions.height;
+                        el.style.left = `${px}px`;
+                        el.style.top = `${py}px`;
+                        el.style.transition = 'none'; // Disable CSS transition during drag
+                    }
+                }
             } else if (isPanning) {
                 // Smooth panning using the MousePos Ref to avoid React state lag
                 const dx = e.clientX - lastMousePosRef.current.x;
@@ -730,7 +876,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             }
 
             const mTokenId = movingTokenId;
-            const mPos = movingTokenPos;
+            const mPos = movingTokenPosRef.current; // Use Ref instead of State
             const gStart = gridCalStartRef.current; 
             const mData = latestDataRef.current;
             const currentTokens = latestTokensRef.current;
@@ -795,11 +941,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             if (mTokenId && mPos && !isClick) {
                 const img = mapImageRef.current;
                 if (img) {
-                    const tokenObj = currentTokens.find(t => t.id === mTokenId);
-                    const sizeMap = { tiny: 0.5, small: 1, medium: 1, large: 2, huge: 3, gargantuan: 4 };
-                    const sMult = typeof tokenObj?.size === 'number' ? tokenObj.size : (sizeMap[tokenObj?.size] || 1);
-                    const { x, y } = snapToGrid(mPos.x, mPos.y, img.naturalWidth, img.naturalHeight, sMult);
-                    
+                    const { x, y } = mPos; // Already snapped in handleGlobalMove
                     // Calculate and store centerPoint for VFX engine
                     const centerPx = calculateTokenCenter({ x, y }, img.naturalWidth, img.naturalHeight);
                     
@@ -827,7 +969,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
             // 4. UNCONDITIONAL RESET (Fixes the "Sticking Token" bug)
             setMovingTokenId(null);
-            setMovingTokenPos(null);
+            movingTokenPosRef.current = null;
             setIsPanning(false);
             setIsDraggingToken(false);
             setActiveMeasurement(null);
@@ -859,7 +1001,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             window.removeEventListener('pointerup', handleGlobalUp);
             // REMOVED: window.removeEventListener('touchmove', handleGlobalMove);
         };
-    }, [movingTokenId, isPanning, activeMeasurement, movingTokenPos, tokens, activeTool, mapGrid, targetingPreview]);
+    }, [movingTokenId, isPanning, activeMeasurement, tokens, activeTool, mapGrid, targetingPreview]);
 
     // --- 2. MATH HELPERS ---
     
@@ -927,12 +1069,9 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         const tokenObj = tokens.find(t => t.id === id);
         if (!tokenObj || !mapDimensions.width) return null;
 
-        if (movingTokenId === id && movingTokenPos) {
-            const sizeMap = { tiny: 0.5, small: 1, medium: 1, large: 2, huge: 3, gargantuan: 4 };
-            const sMult = typeof tokenObj.size === 'number' ? tokenObj.size : (sizeMap[tokenObj.size] || 1);
-            const snapped = snapToGrid(movingTokenPos.x, movingTokenPos.y, mapDimensions.width, mapDimensions.height, sMult);
-            return calculateTokenCenter({ x: snapped.x, y: snapped.y }, mapDimensions.width, mapDimensions.height);
-        }
+        // OPTIMIZATION: During drag, use the original position for Vision/VFX calculations
+        // This prevents the expensive vision engine from re-calculating 60 times a second
+        // while dragging, which is the main cause of lag.
 
         // Prefer stored centerPx for stability
         if (tokenObj.centerPx) return tokenObj.centerPx;
@@ -1068,7 +1207,9 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             triggerHaptic('medium');
             const newPing = { id: Date.now(), x: coords.x, y: coords.y };
             setPings(prev => [...prev, newPing]);
-            sendPing(coords);
+            if (user?.uid) {
+                sendPing(coords);
+            }
             setTimeout(() => setPings(prev => prev.filter(p => p.id !== newPing.id)), 2000);
         }, 600);
     };
@@ -1084,7 +1225,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         }
 
         if (movingTokenId) {
-            setMovingTokenPos(coords);
+            // Handled by handleGlobalMove via Direct DOM
             return; 
         }
         
@@ -1118,10 +1259,10 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         }
 
         // Token Move Logic
-        if (movingTokenId && movingTokenPos && !isClick) {
+        if (movingTokenId && movingTokenPosRef.current && !isClick) {
             const img = mapImageRef.current;
             if (img) {
-                const { x, y } = snapToGrid(movingTokenPos.x, movingTokenPos.y, img.naturalWidth, img.naturalHeight);
+                const { x, y } = movingTokenPosRef.current; // Already snapped
                 const newTokens = tokens.map(t => t.id === movingTokenId ? { ...t, x, y } : t);
                 updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...mapData, tokens: newTokens } } });
             }
@@ -1129,7 +1270,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
         // Global Reset
         setMovingTokenId(null);
-        setMovingTokenPos(null);
+        movingTokenPosRef.current = null;
         setIsPanning(false);
         setActiveMeasurement(null);
         clearTimeout(longPressTimer.current);
@@ -1372,16 +1513,30 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
     // START CHANGE: Combined Load Handler
     const handleMapLoad = () => {
+        addLog("Image onLoad Triggered");
         const img = mapImageRef.current;
         const canvas = visionCanvasRef.current;
         
         if (img && canvas) {
             // --- CHANGES: Set Reactive Dimensions to trigger token/vision updates ---
             setMapDimensions({ width: img.naturalWidth, height: img.naturalHeight });
+
+            // DIAGNOSTIC: Check against Hardware Texture Limits
+            // Mobile devices often have 4096px or 8192px limits. Exceeding this causes massive lag/crashes.
+            const glCanvas = document.createElement('canvas');
+            const gl = glCanvas.getContext('webgl');
+            if (gl) {
+                const maxTexSize = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+                if (img.naturalWidth > maxTexSize || img.naturalHeight > maxTexSize) {
+                    addLog(`WARN: Map > GPU Limit (${maxTexSize}px)`);
+                    triggerHaptic('heavy'); // Warn user physically
+                }
+            }
             // --- END CHANGES ---
             // 1. Init Vision Canvas
             canvas.width = img.naturalWidth;
             canvas.height = img.naturalHeight;
+            addLog(`Canvas Init: ${img.naturalWidth}x${img.naturalHeight}`);
             setMapReady(true); // --- CHANGES: Trigger re-render so DOM tokens and Memos update with naturalWidth ---
             renderVision();
             
@@ -1624,6 +1779,119 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     }, []); // Empty dependency array = Listener attaches ONCE and stays active
     // END CHANGE
 
+    // START CHANGE: Memoize Token List to prevent jitter during mouse movement
+    const renderedTokens = useMemo(() => {
+        return tokens.filter(token => {
+            // 1. DM Role: See everything
+            if (role === 'dm') return true;
+
+            // 2. Hidden Flag: Strictly remove from DOM for players
+            if (token.isHidden) return false;
+
+            // 3. Self-Presence: Always see my own token
+            if (idsMatch(token.characterId, myCharId) || idsMatch(token.ownerId, user?.uid)) return true;
+
+            const img = mapImageRef.current;
+            if (img && img.naturalWidth) {
+                const tokenCenter = { 
+                    x: (token.x / 100) * img.naturalWidth, 
+                    y: (token.y / 100) * img.naturalHeight 
+                };
+
+                // --- CHECK A: GEOMETRIC TRUTH (WALLS) ---
+                if (myCharFarPoly && !isPointInPolygon(tokenCenter, myCharFarPoly)) {
+                    return false;
+                }
+
+                // --- CHECK B: LIGHTING & RANGE ---
+                if (visionActive) {
+                    const myToken = tokens.find(t => idsMatch(t.characterId, myCharId) || idsMatch(t.ownerId, user?.uid));
+                    if (myToken) {
+                        const origin = { x: (myToken.x / 100) * img.naturalWidth, y: (myToken.y / 100) * img.naturalHeight };
+                        const distToToken = Math.hypot(tokenCenter.x - origin.x, tokenCenter.y - origin.y);
+                        
+                        const character = data.players?.find(p => idsMatch(p.id, myToken.characterId));
+                        const currentGridSize = mapGrid.size || 50;
+                        const settings = getCharacterVisionSettings(character, currentGridSize);
+                        
+                        // Rule 1: Personal Vision
+                        if (distToToken <= settings.radius) return true;
+                    }
+
+                    // Rule 2: Shared Illumination
+                    if (lights.length > 0 && myCharFarPoly) {
+                        const blockingSegments = walls.filter(w => !(w.type === 'door' && w.isOpen));
+                        return lights.some(light => {
+                            const lOrigin = { 
+                                x: (light.x / 100) * img.naturalWidth, 
+                                y: (light.y / 100) * img.naturalHeight 
+                            };
+                            if (!isPointInPolygon(lOrigin, myCharFarPoly)) return false;
+                            const lRadiusPx = (light.radius / 5) * (mapGrid.size || 50);
+                            const dist = Math.hypot(tokenCenter.x - lOrigin.x, tokenCenter.y - lOrigin.y);
+                            if (dist > lRadiusPx) return false;
+                            return !blockingSegments.some(wall => linesIntersect(tokenCenter, lOrigin, wall.p1, wall.p2));
+                        });
+                    }
+                    return false; 
+                } else {
+                    return true;
+                }
+            }
+            return false;
+        }).map(token => {
+            const img = mapImageRef.current;
+            const currentCombatant = data.campaign?.combat?.combatants?.[data.campaign.combat.turn];
+            const isMyTurn = data.campaign?.combat?.active && currentCombatant?.id === token.id;
+            const isMoving = movingTokenId === token.id;
+            
+            let px = 0, py = 0;
+            
+            // OPTIMIZATION: Always render at stored position. 
+            // Dragging is handled by Direct DOM manipulation, so we don't need to calculate drag pos here.
+            if (img) {
+                px = (token.x / 100) * mapDimensions.width;
+                py = (token.y / 100) * mapDimensions.height;
+            }
+            
+            const currentGridSize = mapGrid.size || 50;
+            const sizeMap = { tiny: 0.5, small: 1, medium: 1, large: 2, huge: 3, gargantuan: 4 };
+            const sizeMult = typeof token.size === 'number' ? token.size : (sizeMap[token.size] || 1);
+            const dimension = currentGridSize * sizeMult; 
+            const isShaking = shakingTokenId === token.id;
+
+            return (
+                <div 
+                    key={token.id} 
+                    id={`token-node-${token.id}`}
+                    style={{ 
+                        position: 'absolute', 
+                        left: px, 
+                        top: py, 
+                        width: `${dimension}px`,
+                        height: `${dimension}px`,
+                        transform: 'translate(-50%, -50%)',
+                        zIndex: isMoving ? 1000 : 10, // Higher Z-Index when dragging
+                        pointerEvents: isMoving ? 'none' : 'auto',
+                        transition: isMoving ? 'none' : 'all 0.2s ease-out'
+                    }}
+                    className={isShaking ? "animate-bounce bg-red-500/50 rounded-full" : ""}
+                    onPointerDown={(e) => handleTokenPointerDown(e, token.id)}
+                >
+                    <Token 
+                        token={{ ...token, image: tokenBlobUrls[token.id] || token.image }} // Pass Blob URL if available
+                        isOwner={role === 'dm' || token.ownerId === data.user?.uid} 
+                        cellPx={currentGridSize} 
+                        isDragging={isMoving}
+                        isSelected={selectedTokenId === token.id}
+                        isTurn={isMyTurn}
+                    />
+                </div>
+            );
+        });
+    }, [tokens, movingTokenId, mapDimensions, mapGrid, role, myCharId, user?.uid, visionActive, lights, walls, shakingTokenId, selectedTokenId, data.campaign?.combat, tokenBlobUrls]);
+    // END CHANGE
+
     return (
         <div 
             ref={containerRef}
@@ -1637,6 +1905,19 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             onDragLeave={() => setIsDraggingToken(false)}
             onDragEnd={() => setIsDraggingToken(false)}
         >
+            {/* DEBUG OVERLAY */}
+            <div className="absolute top-20 left-4 z-[9999] pointer-events-auto flex flex-col gap-2">
+                <div className="bg-black/80 text-green-400 text-[10px] p-2 font-mono rounded border border-green-900 max-w-[200px] max-h-[200px] overflow-y-auto shadow-xl">
+                    {debugLogs.map((l, i) => <div key={i} className="whitespace-nowrap">{l}</div>)}
+                </div>
+                <button 
+                    onClick={() => setDisableVision(!disableVision)}
+                    className={`px-3 py-2 text-xs font-bold rounded shadow-lg border ${disableVision ? 'bg-red-600 text-white border-red-400' : 'bg-slate-800 text-slate-400 border-slate-600'}`}
+                >
+                    {disableVision ? "VISION DISABLED" : "Disable Vision (Safe Mode)"}
+                </button>
+            </div>
+
             {/* --- TOP RIGHT CONTROLS (Library, Tokens, Combat, Zoom) --- */}
             <div 
                 className={`absolute z-[100] flex gap-2 pointer-events-auto transition-all duration-300 ${sidebarIsOpen ? 'right-[400px]' : 'right-4'}`}
@@ -1863,6 +2144,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                             ref={mapImageRef}
                             src={assembledMapUrl}
                             onLoad={handleMapLoad}
+                            onError={(e) => console.error("Map Image failed to render:", e)}
                             decoding="async" // Off-thread image decoding
                             className="block pointer-events-none select-none max-w-none h-auto"
                             style={{ 
@@ -1882,7 +2164,8 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                     />
 
                     {/* VFX Layer */}
-                    <VfxOverlay width={mapDimensions.width} height={mapDimensions.height} />
+                    {/* OPTIMIZATION: Disable VFX on Mobile to save WebGL Context Memory (approx 60-100MB) */}
+                    {!isMobile && mapDimensions.width > 0 && <VfxOverlay width={mapDimensions.width} height={mapDimensions.height} />}
 
                     {/* VFX Debug Markers (DOM Space) */}
                     {localStorage.getItem('vtt_debug_vfx') === 'true' && tokens.map(t => {
@@ -2091,140 +2374,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                         {/* END CHANGE */}
 
                         {/* Render Tokens */}
-                        {tokens.filter(token => {
-                            // 1. DM Role: See everything
-                            if (role === 'dm') return true;
-
-                            // 2. Hidden Flag: Strictly remove from DOM for players
-                            if (token.isHidden) return false;
-
-                            // 3. Self-Presence: Always see my own token
-                            if (idsMatch(token.characterId, myCharId) || idsMatch(token.ownerId, user?.uid)) return true;
-
-                            const img = mapImageRef.current;
-                            if (img && img.naturalWidth) {
-                                const tokenCenter = { 
-                                    x: (token.x / 100) * img.naturalWidth, 
-                                    y: (token.y / 100) * img.naturalHeight 
-                                };
-
-                                // --- CHECK A: GEOMETRIC TRUTH (WALLS) ---
-                                // myCharFarPoly exists in both Sunlight and Darkness to block LOS
-                                if (myCharFarPoly && !isPointInPolygon(tokenCenter, myCharFarPoly)) {
-                                    return false;
-                                }
-
-                                // --- CHECK B: LIGHTING & RANGE ---
-                                if (visionActive) {
-                                    const myToken = tokens.find(t => idsMatch(t.characterId, myCharId) || idsMatch(t.ownerId, user?.uid));
-                                    if (myToken) {
-                                        const origin = { x: (myToken.x / 100) * img.naturalWidth, y: (myToken.y / 100) * img.naturalHeight };
-                                        const distToToken = Math.hypot(tokenCenter.x - origin.x, tokenCenter.y - origin.y);
-                                        
-                                        const character = data.players?.find(p => idsMatch(p.id, myToken.characterId));
-                                        const currentGridSize = mapGrid.size || 50;
-                                        const settings = getCharacterVisionSettings(character, currentGridSize);
-                                        
-                                        // Rule 1: Personal Vision (Must be in LOS AND within Euclidean Range)
-                                        if (distToToken <= settings.radius) return true;
-                                    }
-
-                                    // Rule 2: Shared Illumination (Torches)
-                                    if (lights.length > 0 && myCharFarPoly) {
-                                        const blockingSegments = walls.filter(w => !(w.type === 'door' && w.isOpen));
-                                        return lights.some(light => {
-                                            const lOrigin = { 
-                                                x: (light.x / 100) * img.naturalWidth, 
-                                                y: (light.y / 100) * img.naturalHeight 
-                                            };
-
-                                            // 2a. Can viewer physically see the light source?
-                                            if (!isPointInPolygon(lOrigin, myCharFarPoly)) return false;
-
-                                            // 2b. Is monster in light radius?
-                                            const lRadiusPx = (light.radius / 5) * (mapGrid.size || 50);
-                                            const dist = Math.hypot(tokenCenter.x - lOrigin.x, tokenCenter.y - lOrigin.y);
-                                            if (dist > lRadiusPx) return false;
-
-                                            // 2c. Is there LOS from Light Source to Monster?
-                                            return !blockingSegments.some(wall => linesIntersect(tokenCenter, lOrigin, wall.p1, wall.p2));
-                                        });
-                                    }
-                                    return false; 
-                                } else {
-                                    // SUNLIGHT MODE: If passed wall check (Check A), it's visible.
-                                    return true;
-                                }
-                            }
-                            return false;
-                        }).map(token => {
-                            const img = mapImageRef.current;
-                            
-                            // NEW: Differentiate identical tokens visually during their turn
-                            const currentCombatant = data.campaign?.combat?.combatants?.[data.campaign.combat.turn];
-                            const isMyTurn = data.campaign?.combat?.active && currentCombatant?.id === token.id;
-
-                            const isMoving = movingTokenId === token.id;
-                            
-                            let px = 0, py = 0;
-                            
-                            if (isMoving && movingTokenPos) {
-                                // START CHANGE: Move this calculation UP so it exists before snapToGrid uses it
-                                const sizeMap = { tiny: 0.5, small: 1, medium: 1, large: 2, huge: 3, gargantuan: 4 };
-                                const sMult = typeof token.size === 'number' ? token.size : (sizeMap[token.size] || 1);
-                                
-                                const snapped = snapToGrid(movingTokenPos.x, movingTokenPos.y, mapDimensions.width, mapDimensions.height, sMult); // --- CHANGES: Use reactive dims ---
-                                px = (snapped.x / 100) * mapDimensions.width; // --- CHANGES: Use reactive dims ---
-                                py = (snapped.y / 100) * mapDimensions.height; // --- CHANGES: Use reactive dims ---
-                                // END CHANGE
-                            } else if (img) {
-                                // --- CHANGES: Use Reactive Dimensions instead of Ref properties ---
-                                px = (token.x / 100) * mapDimensions.width;
-                                py = (token.y / 100) * mapDimensions.height;
-                                // --- END CHANGES ---
-                            }
-                            
-                            // Determine actual grid size
-                            const currentGridSize = mapGrid.size || 50;
-
-                            // START CHANGE: Fix NaN math and define isShaking
-                            const sizeMap = { tiny: 0.5, small: 1, medium: 1, large: 2, huge: 3, gargantuan: 4 };
-                            const sizeMult = typeof token.size === 'number' ? token.size : (sizeMap[token.size] || 1);
-                            const dimension = currentGridSize * sizeMult; 
-                            
-                            const isShaking = shakingTokenId === token.id;
-                            // END CHANGE
-
-                            return (
-                                <div 
-                                    key={token.id} 
-                                    id={`token-node-${token.id}`}
-                                    style={{ 
-                                        position: 'absolute', 
-                                        left: px, 
-                                        top: py, 
-                                        width: `${dimension}px`,
-                                        height: `${dimension}px`,
-                                        transform: 'translate(-50%, -50%)', // Center the container on the point
-                                        zIndex: isMoving ? 100 : 10,
-                                        pointerEvents: isMoving ? 'none' : 'auto',
-                                        transition: isMoving ? 'none' : 'all 0.2s ease-out'
-                                    }}
-                                    className={isShaking ? "animate-bounce bg-red-500/50 rounded-full" : ""}
-                                    onPointerDown={(e) => handleTokenPointerDown(e, token.id)}
-                                >
-                                    <Token 
-                                        token={token} 
-                                        isOwner={role === 'dm' || token.ownerId === data.user?.uid} 
-                                        cellPx={currentGridSize} 
-                                        isDragging={isMoving}
-                                        isSelected={selectedTokenId === token.id}
-                                        isTurn={isMyTurn}
-                                    />
-                                </div>
-                            );
-                            // END CHANGE
-                        })}
+                        {renderedTokens}
                     </div>
                 ) : (
                     <div className="flex items-center justify-center w-[800px] h-[600px] bg-slate-800 border-2 border-dashed border-slate-700 rounded-xl m-20">
@@ -2270,7 +2420,9 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                                 setIsDraggingToken(true);
                                 setDragStartPx({ x: (t.x / 100) * img.naturalWidth, y: (t.y / 100) * img.naturalHeight });
                                 setMovingTokenId(t.id);
-                                setMovingTokenPos(startCoords);
+                                
+                                // OPTIMIZATION: Use Ref for drag start
+                                movingTokenPosRef.current = startCoords;
                                 
                                 // 4. Select and Close Menu
                                 setSelectedTokenId(t.id);
@@ -2340,6 +2492,26 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                     </div>
                 );
             })()}
+            {/* END CHANGE */}
+
+            {/* START CHANGE: Loading Screen Overlay */}
+            {mapUrl && !mapReady && (
+                <div className="absolute inset-0 z-[200] bg-slate-950 flex flex-col items-center justify-center animate-in fade-in duration-300">
+                    <div className="relative mb-6">
+                        <div className="absolute inset-0 bg-amber-500/20 blur-xl rounded-full animate-pulse"></div>
+                        <div className="relative w-20 h-20 border-4 border-slate-800 border-t-amber-500 rounded-full animate-spin shadow-2xl"></div>
+                        <div className="absolute inset-0 flex items-center justify-center">
+                            <Icon name="map" size={32} className="text-amber-500 animate-pulse"/>
+                        </div>
+                    </div>
+                    <h2 className="text-2xl font-bold text-amber-500 fantasy-font tracking-[0.2em] animate-pulse">
+                        ENTERING REGION
+                    </h2>
+                    <div className="mt-2 text-sm text-slate-500 font-mono uppercase tracking-widest">
+                        {mapData.name || "Unknown Location"}
+                    </div>
+                </div>
+            )}
             {/* END CHANGE */}
         </div>
     );

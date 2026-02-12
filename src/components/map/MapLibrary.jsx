@@ -1,10 +1,74 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import Icon from '../Icon';
 import { storeMapWithThumbnail } from '../../utils/storageUtils';
 import { compressImage } from '../../utils/imageCompressor';
 
 const GOOGLE_SEARCH_CX = "c38cb56920a4f45df"; 
 const GOOGLE_SEARCH_KEY = "AIzaSyA6PqsRueHv17l4hvldnAo4dFMgeyqoPCM"; 
+
+// START CHANGE: Sub-component to handle async resolution of chunked map images
+const MapCard = ({ map, onClick, onDelete }) => {
+    const [imgSrc, setImgSrc] = useState(null);
+
+    useEffect(() => {
+        let isMounted = true;
+        const controller = new AbortController();
+
+        const resolveImage = async () => {
+            // Prefer thumbnail, fallback to full url
+            const targetUrl = map.thumbnailUrl || map.url;
+
+            if (targetUrl?.startsWith('chunked:')) {
+                try {
+                    const { retrieveChunkedMap } = await import('../../utils/storageUtils');
+                    const blob = await retrieveChunkedMap(targetUrl, controller.signal);
+                    if (isMounted && blob) {
+                        const url = URL.createObjectURL(blob);
+                        setImgSrc(url);
+                        // Cleanup blob url when component unmounts or url changes
+                        return () => URL.revokeObjectURL(url);
+                    }
+                } catch (e) {
+                    if (e.name !== 'AbortError') {
+                        console.error("Failed to load chunked thumbnail", e);
+                    }
+                }
+            } else {
+                setImgSrc(targetUrl);
+            }
+        };
+        const cleanup = resolveImage();
+        return () => { 
+            isMounted = false; 
+            controller.abort(); // Kill the heavy process immediately
+            if(typeof cleanup === 'function') cleanup(); 
+        };
+    }, [map.url, map.thumbnailUrl]);
+
+    return (
+        <div 
+            className="group relative aspect-video bg-slate-800 rounded-xl overflow-hidden border border-slate-700 hover:border-indigo-500 cursor-pointer transition-all shadow-md pointer-events-auto" 
+            onClick={() => onClick(map)}
+        >
+            {imgSrc ? (
+                <img src={imgSrc} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" alt={map.name} />
+            ) : (
+                <div className="w-full h-full flex items-center justify-center text-slate-600">
+                    <Icon name="loader" className="animate-spin" size={24}/>
+                </div>
+            )}
+            
+            <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-all z-20">
+                <button onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); onDelete({ action: 'rename', id: map.id, name: map.name }); }} className="p-2 bg-slate-800/90 text-white rounded-lg hover:bg-indigo-600 shadow-xl pointer-events-auto" title="Rename map"><Icon name="pencil" size={16}/></button>
+                <button onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); onDelete(map.id); }} className="p-2 bg-red-900/90 text-white rounded-lg hover:bg-red-600 shadow-xl pointer-events-auto"><Icon name="trash-2" size={16}/></button>
+            </div>
+
+            <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-transparent"></div>
+            <div className="absolute bottom-3 left-3 right-3 text-xs font-bold text-white truncate">{map.name}</div>
+        </div>
+    );
+};
+// END CHANGE
 
 const MapLibrary = ({ savedMaps, onSelect, onClose, onDelete }) => {
     const [searchTerm, setSearchTerm] = useState("");
@@ -254,41 +318,19 @@ const MapLibrary = ({ savedMaps, onSelect, onClose, onDelete }) => {
                         ) : (
                             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
                                 {savedMaps.map(map => (
-                                    <div 
+                                    <MapCard 
                                         key={map.id} 
-                                        className="group relative aspect-video bg-slate-800 rounded-xl overflow-hidden border border-slate-700 hover:border-indigo-500 cursor-pointer transition-all shadow-md pointer-events-auto" 
-                                        onClick={() => onSelect(map)}
-                                    >
-                                        <img src={map.url} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" alt={map.name} />
-                                        
-                                        <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-all z-20">
-                                            <button 
-                                                onPointerDown={(e) => e.stopPropagation()}
-                                                onClick={(e) => { 
-                                                    e.stopPropagation(); 
-                                                    const newName = prompt("Enter map name:", map.name);
-                                                    if (newName) onDelete({ action: 'rename', id: map.id, name: newName }); 
-                                                }} 
-                                                className="p-2 bg-slate-800/90 text-white rounded-lg hover:bg-indigo-600 shadow-xl pointer-events-auto"
-                                                title="Rename map"
-                                            >
-                                                <Icon name="pencil" size={16}/>
-                                            </button>
-                                            <button 
-                                                onPointerDown={(e) => e.stopPropagation()}
-                                                onClick={(e) => { 
-                                                    e.stopPropagation(); 
-                                                    if (confirm("Delete this map permanently?")) onDelete(map.id); 
-                                                }} 
-                                                className="p-2 bg-red-900/90 text-white rounded-lg hover:bg-red-600 shadow-xl pointer-events-auto"
-                                            >
-                                                <Icon name="trash-2" size={16}/>
-                                            </button>
-                                        </div>
-
-                                        <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-transparent"></div>
-                                        <div className="absolute bottom-3 left-3 right-3 text-xs font-bold text-white truncate">{map.name}</div>
-                                    </div>
+                                        map={map} 
+                                        onClick={onSelect} 
+                                        onDelete={(idOrObj) => {
+                                            if (typeof idOrObj === 'object' && idOrObj.action === 'rename') {
+                                                const newName = prompt("Enter map name:", idOrObj.name);
+                                                if (newName) onDelete({ ...idOrObj, name: newName });
+                                            } else {
+                                                if (confirm("Delete this map permanently?")) onDelete(idOrObj);
+                                            }
+                                        }}
+                                    />
                                 ))}
                             </div>
                         )}
