@@ -9,10 +9,16 @@ const GOOGLE_SEARCH_KEY = "AIzaSyA6PqsRueHv17l4hvldnAo4dFMgeyqoPCM";
 // START CHANGE: Sub-component to handle async resolution of chunked map images
 const MapCard = ({ map, onClick, onDelete }) => {
     const [imgSrc, setImgSrc] = useState(null);
+    const [isRegenerating, setIsRegenerating] = useState(false);
 
     useEffect(() => {
         let isMounted = true;
+        let blobUrl = null;
         const controller = new AbortController();
+
+        // START CHANGE: Reset image state immediately to prevent stale thumbnails
+        setImgSrc(null);
+        // END CHANGE
 
         const resolveImage = async () => {
             // Prefer thumbnail, fallback to full url
@@ -22,11 +28,11 @@ const MapCard = ({ map, onClick, onDelete }) => {
                 try {
                     const { retrieveChunkedMap } = await import('../../utils/storageUtils');
                     const blob = await retrieveChunkedMap(targetUrl, controller.signal);
-                    if (isMounted && blob) {
-                        const url = URL.createObjectURL(blob);
-                        setImgSrc(url);
-                        // Cleanup blob url when component unmounts or url changes
-                        return () => URL.revokeObjectURL(url);
+                    if (isMounted) {
+                        if (blob) {
+                            blobUrl = URL.createObjectURL(blob);
+                            setImgSrc(blobUrl);
+                        }
                     }
                 } catch (e) {
                     if (e.name !== 'AbortError') {
@@ -34,16 +40,46 @@ const MapCard = ({ map, onClick, onDelete }) => {
                     }
                 }
             } else {
-                setImgSrc(targetUrl);
+                if (isMounted) setImgSrc(targetUrl);
             }
         };
-        const cleanup = resolveImage();
+        
+        resolveImage();
+
         return () => { 
             isMounted = false; 
-            controller.abort(); // Kill the heavy process immediately
-            if(typeof cleanup === 'function') cleanup(); 
+            controller.abort(); 
+            if (blobUrl) URL.revokeObjectURL(blobUrl);
         };
     }, [map.url, map.thumbnailUrl]);
+
+    const handleRegenerate = async (e) => {
+        e.stopPropagation();
+        setIsRegenerating(true);
+        try {
+            const { retrieveChunkedMap, storeChunkedMap } = await import('../../utils/storageUtils');
+            const { compressImage } = await import('../../utils/imageCompressor');
+            
+            let blob;
+            if (map.url?.startsWith('chunked:')) {
+                blob = await retrieveChunkedMap(map.url);
+            } else {
+                const res = await fetch(map.url);
+                blob = await res.blob();
+            }
+
+            if (blob) {
+                const thumbBase64 = await compressImage(blob, 512, 0.5);
+                const thumbId = await storeChunkedMap(thumbBase64, `${map.name}_thumb_${Date.now()}`);
+                onDelete({ action: 'update_map', id: map.id, thumbnailUrl: thumbId });
+                setImgSrc(URL.createObjectURL(await (await fetch(thumbBase64)).blob()));
+            }
+        } catch (err) {
+            console.error("Regeneration failed", err);
+            alert("Failed to regenerate thumbnail.");
+        }
+        setIsRegenerating(false);
+    };
 
     return (
         <div 
@@ -59,6 +95,9 @@ const MapCard = ({ map, onClick, onDelete }) => {
             )}
             
             <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-all z-20">
+                <button onPointerDown={(e) => e.stopPropagation()} onClick={handleRegenerate} className="p-2 bg-slate-800/90 text-amber-500 rounded-lg hover:bg-slate-700 shadow-xl pointer-events-auto" title="Regenerate Thumbnail">
+                    <Icon name={isRegenerating ? "loader" : "refresh-cw"} className={isRegenerating ? "animate-spin" : ""} size={16}/>
+                </button>
                 <button onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); onDelete({ action: 'rename', id: map.id, name: map.name }); }} className="p-2 bg-slate-800/90 text-white rounded-lg hover:bg-indigo-600 shadow-xl pointer-events-auto" title="Rename map"><Icon name="pencil" size={16}/></button>
                 <button onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); onDelete(map.id); }} className="p-2 bg-red-900/90 text-white rounded-lg hover:bg-red-600 shadow-xl pointer-events-auto"><Icon name="trash-2" size={16}/></button>
             </div>
@@ -137,7 +176,7 @@ const MapLibrary = ({ savedMaps, onSelect, onClose, onDelete }) => {
             
             // Standardized payload with isNew flag
             onSelect({ 
-                id: Date.now(), 
+                id: `upload-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`, 
                 name: file.name, 
                 url: fullId,
                 thumbnailUrl: thumbId,
@@ -161,7 +200,7 @@ const MapLibrary = ({ savedMaps, onSelect, onClose, onDelete }) => {
 
         // Standardized payload with isNew flag
         onSelect({ 
-            id: `link-${Date.now()}`, 
+            id: `link-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`, 
             name: "Linked Map (" + new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) + ")", 
             url: linkUrl,
             isNew: true,

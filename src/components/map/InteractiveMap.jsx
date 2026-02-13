@@ -82,6 +82,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     const [mapReady, setMapReady] = useState(false); 
     const hasAutoCentered = useRef(false);
     const [tokenBlobUrls, setTokenBlobUrls] = useState({}); // OPTIMIZATION: Cache for Token Blobs
+    const [fullDimensions, setFullDimensions] = useState(null); // NEW: Store real dimensions for LOD stretching
     
     // DEBUG: Diagnostics State
     const [debugLogs, setDebugLogs] = useState([]);
@@ -178,6 +179,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         setMapReady(false);
         setFullTexture(null);
         setLodTexture(null);
+        setFullDimensions(null);
         setDebugLogs([]); 
         addLog(`Init: ${mapUrl ? 'URL Found' : 'No URL'}`);
         // END CHANGE
@@ -225,6 +227,19 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                         // This re-encodes the image (sanitizing any WebP/Blob corruption) and ensures max texture size.
                         if (fullBlob) {
                             addLog(`Chunks Done. Size: ${(fullBlob.size/1024/1024).toFixed(2)}MB`);
+                            
+                            // START CHANGE: Pre-calculate dimensions for seamless LOD
+                            try {
+                                const probe = await createImageBitmap(fullBlob);
+                                const dims = { width: probe.width, height: probe.height };
+                                if (isMounted) {
+                                    setFullDimensions(dims);
+                                    setMapDimensions(dims); // Ensure logic uses full size immediately
+                                }
+                                probe.close();
+                            } catch (e) { console.warn("Dimension probe failed", e); }
+                            // END CHANGE
+
                             // OPTIMIZATION: Skip heavy processing on Mobile to prevent OOM Crashes
                             // Mobile browsers crash when holding Blob + Bitmap + Canvas + NewBlob in memory simultaneously.
                             // We rely on the raw blob for mobile (which usually works fine) and only re-encode on Desktop.
@@ -259,6 +274,8 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                     }
                 } else {
                     setFullTexture(mapUrl);
+                    // If not chunked, we can't probe blob, so we rely on handleMapLoad
+                    setFullDimensions(null); 
                 }
             } catch (e) {
                 addLog(`Init Fail: ${e.message}`);
@@ -499,13 +516,17 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         // START CHANGE: Dynamic Canvas Cap based on Device
         const MAX_CANVAS_DIM = isMobile ? 2048 : 4096;
         // END CHANGE
-        const maxDim = Math.max(img.naturalWidth, img.naturalHeight);
+        // Use mapDimensions (Logical Size) instead of img.naturalWidth (Texture Size)
+        const logicalW = mapDimensions.width || img.naturalWidth;
+        const logicalH = mapDimensions.height || img.naturalHeight;
+        
+        const maxDim = Math.max(logicalW, logicalH);
         const scaleRatio = maxDim > MAX_CANVAS_DIM ? (MAX_CANVAS_DIM / maxDim) : 1;
         const lowPerf = localStorage.getItem('vtt_low_performance') === 'true';
         const finalRatio = lowPerf ? scaleRatio * 0.5 : scaleRatio;
 
-        const finalW = Math.floor(img.naturalWidth * finalRatio);
-        const finalH = Math.floor(img.naturalHeight * finalRatio);
+        const finalW = Math.floor(logicalW * finalRatio);
+        const finalH = Math.floor(logicalH * finalRatio);
 
         if (canvas.width !== finalW || canvas.height !== finalH) {
             canvas.width = finalW;
@@ -515,17 +536,17 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         const ctx = canvas.getContext('2d', { alpha: true });
         ctx.imageSmoothingEnabled = !lowPerf;
         ctx.setTransform(finalRatio, 0, 0, finalRatio, 0, 0);
-        ctx.clearRect(0, 0, img.naturalWidth, img.naturalHeight);
+        ctx.clearRect(0, 0, logicalW, logicalH);
 
         // --- 1. PRE-PROCESS ASSETS ---
         const blockingSegments = walls.filter(w => !(w.type === 'door' && w.isOpen));
         const hasWalls = blockingSegments.length > 0;
         const gridSize = mapGrid.size || 50;
-        const maxMapDim = Math.max(img.naturalWidth, img.naturalHeight) * 2;
+        const maxMapDim = Math.max(logicalW, logicalH) * 2;
 
         // --- 2. DEFINE VIEWERS ---
         const allEmitters = tokens.map(token => {
-            const origin = calculateTokenCenter(token, img.naturalWidth, img.naturalHeight);
+            const origin = calculateTokenCenter(token, logicalW, logicalH);
             const character = data.players?.find(p => idsMatch(p.id, token.characterId)) || 
                               data.npcs?.find(n => idsMatch(n.id, token.characterId));
             
@@ -535,8 +556,8 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                 token,
                 origin,
                 visionRadius: settings.radius,
-                nearPoly: calculateVisibilityPolygon(origin, blockingSegments, { width: img.naturalWidth, height: img.naturalHeight }, settings.radius),
-                farPoly: calculateVisibilityPolygon(origin, blockingSegments, { width: img.naturalWidth, height: img.naturalHeight }, maxMapDim)
+                nearPoly: calculateVisibilityPolygon(origin, blockingSegments, { width: logicalW, height: logicalH }, settings.radius),
+                farPoly: calculateVisibilityPolygon(origin, blockingSegments, { width: logicalW, height: logicalH }, maxMapDim)
             };
         });
 
@@ -556,7 +577,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             // DARKNESS MODE: Start Black, Carve Vision
             ctx.fillStyle = '#000000';
             ctx.globalAlpha = role === 'dm' ? 0.5 : 1.0; 
-            ctx.fillRect(0, 0, img.naturalWidth, img.naturalHeight);
+            ctx.fillRect(0, 0, logicalW, logicalH);
             
             ctx.globalCompositeOperation = 'destination-out';
             emittersToDraw.forEach(({ origin, visionRadius, nearPoly }) => {
@@ -590,7 +611,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             if (hasWalls && validPolys.length > 0 && role !== 'dm') {
                 ctx.fillStyle = '#000000';
                 ctx.globalAlpha = 1.0;
-                ctx.fillRect(0, 0, img.naturalWidth, img.naturalHeight);
+                ctx.fillRect(0, 0, logicalW, logicalH);
                 
                 ctx.globalCompositeOperation = 'destination-out';
                 validPolys.forEach(({ farPoly }) => {
@@ -622,14 +643,14 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
             lights.forEach(light => {
                 const origin = { 
-                    x: Math.floor((light.x / 100) * img.naturalWidth), 
-                    y: Math.floor((light.y / 100) * img.naturalHeight) 
+                    x: Math.floor((light.x / 100) * logicalW), 
+                    y: Math.floor((light.y / 100) * logicalH) 
                 };
                 const radiusPx = (light.radius / 5) * (mapGrid.size || 50);
                 
                 const blockingSegments = walls.filter(w => !(w.type === 'door' && w.isOpen));
                 // FIX: Bounds must match natural pixel coordinate space
-                const poly = calculateVisibilityPolygon(origin, blockingSegments, { width: img.naturalWidth, height: img.naturalHeight }, radiusPx);
+                const poly = calculateVisibilityPolygon(origin, blockingSegments, { width: logicalW, height: logicalH }, radiusPx);
 
                 ctx.save();
                 if (poly && poly.length > 0) {
@@ -1518,8 +1539,12 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         const canvas = visionCanvasRef.current;
         
         if (img && canvas) {
-            // --- CHANGES: Set Reactive Dimensions to trigger token/vision updates ---
-            setMapDimensions({ width: img.naturalWidth, height: img.naturalHeight });
+            // START CHANGE: Only update dimensions if we don't have them or if this is the full map
+            // This prevents the LOD thumbnail (512px) from overwriting the Full Map dimensions (4000px)
+            if (!fullDimensions || (img.naturalWidth > fullDimensions.width)) {
+                setMapDimensions({ width: img.naturalWidth, height: img.naturalHeight });
+            }
+            // END CHANGE
 
             // DIAGNOSTIC: Check against Hardware Texture Limits
             // Mobile devices often have 4096px or 8192px limits. Exceeding this causes massive lag/crashes.
@@ -1534,9 +1559,9 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             }
             // --- END CHANGES ---
             // 1. Init Vision Canvas
-            canvas.width = img.naturalWidth;
-            canvas.height = img.naturalHeight;
-            addLog(`Canvas Init: ${img.naturalWidth}x${img.naturalHeight}`);
+            canvas.width = fullDimensions ? fullDimensions.width : img.naturalWidth;
+            canvas.height = fullDimensions ? fullDimensions.height : img.naturalHeight;
+            addLog(`Canvas Init: ${canvas.width}x${canvas.height}`);
             setMapReady(true); // --- CHANGES: Trigger re-render so DOM tokens and Memos update with naturalWidth ---
             renderVision();
             
@@ -1905,22 +1930,11 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             onDragLeave={() => setIsDraggingToken(false)}
             onDragEnd={() => setIsDraggingToken(false)}
         >
-            {/* DEBUG OVERLAY */}
-            <div className="absolute top-20 left-4 z-[9999] pointer-events-auto flex flex-col gap-2">
-                <div className="bg-black/80 text-green-400 text-[10px] p-2 font-mono rounded border border-green-900 max-w-[200px] max-h-[200px] overflow-y-auto shadow-xl">
-                    {debugLogs.map((l, i) => <div key={i} className="whitespace-nowrap">{l}</div>)}
-                </div>
-                <button 
-                    onClick={() => setDisableVision(!disableVision)}
-                    className={`px-3 py-2 text-xs font-bold rounded shadow-lg border ${disableVision ? 'bg-red-600 text-white border-red-400' : 'bg-slate-800 text-slate-400 border-slate-600'}`}
-                >
-                    {disableVision ? "VISION DISABLED" : "Disable Vision (Safe Mode)"}
-                </button>
-            </div>
+            {/* DEBUG OVERLAY REMOVED */}
 
             {/* --- TOP RIGHT CONTROLS (Library, Tokens, Combat, Zoom) --- */}
             <div 
-                className={`absolute z-[100] flex gap-2 pointer-events-auto transition-all duration-300 ${sidebarIsOpen ? 'right-[400px]' : 'right-4'}`}
+                className={`absolute z-[100] flex gap-2 pointer-events-auto transition-all duration-300 ${sidebarIsOpen ? 'right-[10px]' : 'right-4'}`}
                 style={{ top: 'calc(1rem + env(safe-area-inset-top))' }}
             >
                 <div 
@@ -2116,8 +2130,9 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                         onClose={() => setShowLibrary(false)} 
                         onDelete={(id) => {
                             // If id is an object (contains {action: 'rename'}), route to rename logic
-                            if (typeof id === 'object' && id.action === 'rename') {
-                                updateMapState('rename_map', id);
+                            if (typeof id === 'object') {
+                                if (id.action === 'rename') updateMapState('rename_map', id);
+                                else if (id.action === 'update_map') updateMapState('update_map', id);
                             } else {
                                 updateMapState('delete_map', id);
                             }
@@ -2150,7 +2165,9 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                             style={{ 
                                 imageRendering: view.scale > 0.5 ? 'high-quality' : 'auto',
                                 transform: 'translateZ(0)', // Force GPU composite layer
-                                willChange: 'transform'
+                                willChange: 'transform',
+                                width: fullDimensions ? fullDimensions.width : 'auto',
+                                height: fullDimensions ? fullDimensions.height : 'auto'
                             }}
                             alt="Map Board"
                         />
