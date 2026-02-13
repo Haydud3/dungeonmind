@@ -8,15 +8,19 @@ const ResolvedImage = ({ id }) => {
 
     useEffect(() => {
         let active = true;
+        let createdUrl = null;
+
         const load = async () => {
             try {
-                const base64 = await retrieveChunkedMap(id);
-                if (!active || !base64) return;
+                const asset = await retrieveChunkedMap(id);
+                if (!active || !asset) return;
                 
-                // Convert Base64 to Blob URL for better rendering stability
-                const res = await fetch(base64);
-                const blob = await res.blob();
-                setUrl(URL.createObjectURL(blob));
+                if (asset instanceof Blob) {
+                    createdUrl = URL.createObjectURL(asset);
+                    setUrl(createdUrl);
+                } else {
+                    setUrl(asset);
+                }
             } catch (e) {
                 console.error("Image reassembly failed:", id, e);
             } finally {
@@ -26,7 +30,7 @@ const ResolvedImage = ({ id }) => {
         load();
         return () => { 
             active = false; 
-            if (url) URL.revokeObjectURL(url); 
+            if (createdUrl) URL.revokeObjectURL(createdUrl); 
         };
     }, [id]);
 

@@ -12,14 +12,15 @@ const VFX_SHADERS = {
     gold: { color: new THREE.Color('#ffcc00'), noiseScale: 2.0, speed: 2.0 }
 };
 
-const VfxMaterial = ({ flavor, isPreview }) => {
+const VfxMaterial = ({ flavor, isPreview, hasRim = false }) => {
     const settings = VFX_SHADERS[flavor] || VFX_SHADERS.magic;
     const uniforms = useMemo(() => ({
         uTime: { value: 0 },
         uColor: { value: settings.color },
         uNoiseScale: { value: settings.noiseScale },
-        uOpacity: { value: isPreview ? 0.4 : 0.8 }
-    }), [flavor, isPreview]);
+        uOpacity: { value: isPreview ? 0.4 : 0.8 },
+        uHasRim: { value: hasRim ? 1.0 : 0.0 }
+    }), [flavor, isPreview, hasRim]);
 
     useFrame((state) => {
         uniforms.uTime.value = state.clock.getElapsedTime() * settings.speed;
@@ -43,12 +44,23 @@ const VfxMaterial = ({ flavor, isPreview }) => {
                 uniform vec3 uColor;
                 uniform float uNoiseScale;
                 uniform float uOpacity;
+                uniform float uHasRim;
                 varying vec2 vUv;
                 float noise(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
                 void main() {
                     float n = noise(vUv * uNoiseScale + uTime);
                     float alpha = uOpacity * (0.5 + 0.5 * sin(uTime + vUv.y * 10.0));
-                    gl_FragColor = vec4(uColor, alpha * (1.0 - length(vUv - 0.5) * 2.0));
+                    
+                    float dist = length(vUv - 0.5) * 2.0;
+                    float finalAlpha = alpha * (1.0 - dist);
+
+                    if (uHasRim > 0.5) {
+                        float rim = smoothstep(0.85, 1.0, dist);
+                        // Dim the core slightly and add the rim
+                        finalAlpha = (finalAlpha * 0.6) + (rim * uOpacity * 1.2);
+                    }
+
+                    gl_FragColor = vec4(uColor, finalAlpha);
                 }
             `}
         />
@@ -62,7 +74,7 @@ const Breath = ({ origin, target, flavor, isPreview }) => {
     return (
         <mesh position={[origin.x, -origin.y, 0]} rotation={[0, 0, angle - Math.PI / 6]}>
             <ringGeometry args={[0, dist, 32, 1, 0, Math.PI / 3]} />
-            <VfxMaterial flavor={flavor} isPreview={isPreview} />
+            <VfxMaterial flavor={flavor} isPreview={isPreview} hasRim={true} />
         </mesh>
     );
 };
@@ -112,10 +124,10 @@ const Rocket = ({ origin, target, flavor, isPreview, startTime, duration }) => {
     );
 };
 
-const Aura = ({ origin, flavor, isPreview }) => (
+const Aura = ({ origin, flavor, isPreview, radius = 50 }) => (
     <mesh position={[origin.x, -origin.y, 0]}>
-        <circleGeometry args={[50, 32]} />
-        <VfxMaterial flavor={flavor} isPreview={isPreview} />
+        <circleGeometry args={[radius, 32]} />
+        <VfxMaterial flavor={flavor} isPreview={isPreview} hasRim={true} />
     </mesh>
 );
 
@@ -147,12 +159,12 @@ const Effect = (props) => {
     }
 };
 
-export default function VfxOverlay({ width, height }) {
+export default function VfxOverlay({ width, height, templates = [] }) {
     const activeEffects = useVfxStore(state => state.activeEffects);
     const targetingPreview = useVfxStore(state => state.targetingPreview);
     if (!width || !height || width <= 0 || height <= 0) return null;
     return (
-        <div className="absolute top-0 left-0 pointer-events-none z-[15]" style={{ width: `${width}px`, height: `${height}px`, willChange: 'transform' }}>
+        <div className="absolute top-0 left-0 pointer-events-none z-[15]" style={{ width: width, height: height, willChange: 'transform' }}>
             <Canvas
                 key={`${width}-${height}`} // Force re-mount to update camera frustum when map size changes
                 orthographic
@@ -163,9 +175,10 @@ export default function VfxOverlay({ width, height }) {
                     position: [0, 0, 10]
                 }}
                 gl={{ alpha: true }}
+                events={null}
                 style={{ 
-                    width: '100%', 
-                    height: '100%', 
+                    width: width, 
+                    height: height, 
                     pointerEvents: 'none',
                     imageRendering: 'pixelated',
                     willChange: 'transform'
@@ -173,6 +186,20 @@ export default function VfxOverlay({ width, height }) {
             >
                 {activeEffects.map(effect => <Effect key={effect.id} {...effect} />)}
                 {targetingPreview && <Effect {...targetingPreview} isPreview />}
+                
+                {/* Render Persistent Templates as VFX */}
+                {templates.map(tpl => {
+                    if (!tpl.flavor) return null;
+                    return (
+                        <Effect 
+                            key={`tpl-vfx-${tpl.id}-${tpl.flavor}-${tpl.radius}`} 
+                            behavior="aura" 
+                            origin={{ x: tpl.x, y: tpl.y }} 
+                            radius={tpl.radius} 
+                            flavor={tpl.flavor} 
+                        />
+                    );
+                })}
             </Canvas>
         </div>
     );

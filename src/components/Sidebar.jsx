@@ -14,7 +14,7 @@ const Sidebar = ({ view, setView, onExit }) => {
     ];
 
     return (
-        <div className="hidden md:flex flex-col w-20 bg-slate-950 border-r border-slate-800 shrink-0 z-50">
+        <div id="app-sidebar" className="hidden md:flex flex-col w-20 bg-slate-950 border-r border-slate-800 shrink-0 z-50">
             <div className="p-4 flex justify-center mb-4">
                 <div className="w-10 h-10 bg-gradient-to-br from-amber-600 to-red-700 rounded-xl shadow-lg flex items-center justify-center text-white font-bold text-xl fantasy-font">
                     DM

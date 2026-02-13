@@ -23,6 +23,15 @@ const idsMatch = (id1, id2) => {
 };
 // END CHANGE
 
+const VFX_FLAVORS = [
+    { id: 'fire', icon: 'flame', color: 'text-orange-500' },
+    { id: 'frost', icon: 'snowflake', color: 'text-cyan-400' },
+    { id: 'acid', icon: 'test-tube-2', color: 'text-green-400' },
+    { id: 'death', icon: 'skull', color: 'text-purple-600' },
+    { id: 'magic', icon: 'sparkles', color: 'text-pink-400' },
+    { id: 'none', icon: 'circle-off', color: 'text-slate-400' }
+];
+
 const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, activeTemplate, sidebarIsOpen, sidebarMode, updateCombatant, removeCombatant, onClearRolls, onAutoRoll, setShowHandoutCreator, code, addManualCombatant, players, npcs, user }) => {
     const { sendPing, triggerVfx } = useCampaign();
     const { targetingPreview, setTargetingPreview, clearTargetingPreview, addEffect } = useVfxStore();
@@ -84,9 +93,64 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     const [tokenBlobUrls, setTokenBlobUrls] = useState({}); // OPTIMIZATION: Cache for Token Blobs
     const [fullDimensions, setFullDimensions] = useState(null); // NEW: Store real dimensions for LOD stretching
     
+    const [stampSettings, setStampSettings] = useState({ color: 'rgba(56, 189, 248, 0.3)', border: '#38bdf8' });
+    const [stampFlavor, setStampFlavor] = useState(null);
+    const [showStampHud, setShowStampHud] = useState(false);
+    const [editingTemplateId, setEditingTemplateId] = useState(null);
     // DEBUG: Diagnostics State
     const [debugLogs, setDebugLogs] = useState([]);
     const [disableVision, setDisableVision] = useState(false); // Toggle to isolate crash source
+
+    // START CHANGE: Fullscreen & Zen Mode Logic
+    const [isFullscreen, setIsFullscreen] = useState(false);
+    const [hudVisible, setHudVisible] = useState(true);
+    const hudTimer = useRef(null);
+
+    useEffect(() => {
+        const onFsChange = () => setIsFullscreen(!!document.fullscreenElement);
+        document.addEventListener('fullscreenchange', onFsChange);
+        return () => document.removeEventListener('fullscreenchange', onFsChange);
+    }, []);
+
+    useEffect(() => {
+        if (!isFullscreen) {
+            setHudVisible(true);
+            return;
+        }
+
+        const onMouseMove = () => {
+            setHudVisible(true);
+            if (hudTimer.current) clearTimeout(hudTimer.current);
+            hudTimer.current = setTimeout(() => setHudVisible(false), 2500);
+        };
+
+        window.addEventListener('mousemove', onMouseMove);
+        // Trigger once on enter
+        onMouseMove();
+        
+        return () => {
+            window.removeEventListener('mousemove', onMouseMove);
+            if (hudTimer.current) clearTimeout(hudTimer.current);
+        };
+    }, [isFullscreen]);
+
+    const toggleFullscreen = async () => {
+        if (!document.fullscreenElement) {
+            try {
+                await document.documentElement.requestFullscreen();
+            } catch (err) {
+                console.error(err);
+            }
+        } else {
+            if (document.exitFullscreen) document.exitFullscreen();
+        }
+    };
+    
+    // Helper class for HUD elements
+    const hudClass = isFullscreen 
+        ? `transition-opacity duration-500 ${hudVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`
+        : '';
+    // END CHANGE
 
     const addLog = (msg) => {
         setDebugLogs(prev => [...prev.slice(-14), `[${new Date().toLocaleTimeString().split(' ')[0]}] ${msg}`]);
@@ -791,8 +855,9 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             }
 
             // VFX Targeting Logic
-            if (targetingPreview) {
-                setTargetingPreview({ ...targetingPreview, target: coords });
+            const currentTargeting = useVfxStore.getState().targetingPreview;
+            if (currentTargeting) {
+                setTargetingPreview({ ...currentTargeting, target: coords });
                 return;
             }
 
@@ -905,16 +970,20 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             const coords = getMapCoords(e);
 
             // VFX Confirmation
-            if (targetingPreview) {
+            const currentTargeting = useVfxStore.getState().targetingPreview;
+            if (currentTargeting) {
                 const uniqueId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-                const finalEffect = { ...targetingPreview, target: coords, id: uniqueId, startTime: Date.now(), duration: 1000 };
-                
-                // 1. Play Locally Immediately (Instant Feedback)
-                addEffect(finalEffect);
-                
-                // 2. Broadcast to others
-                triggerVfx(finalEffect);
-                clearTargetingPreview();
+                const finalEffect = { ...currentTargeting, target: coords, id: uniqueId, startTime: Date.now(), duration: 1000 };
+                try {
+                    // 1. Play Locally Immediately (Instant Feedback)
+                    addEffect(finalEffect);
+                    
+                    // 2. Broadcast to others
+                    triggerVfx(finalEffect);
+                } finally {
+                    // CRITICAL: Always clear preview to prevent UI lockout
+                    clearTargetingPreview();
+                }
                 if (e.stopPropagation) e.stopPropagation();
                 return;
             }
@@ -980,7 +1049,9 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                         x: activeMeasurement.start.x,
                         y: activeMeasurement.start.y,
                         radius: distPx,
-                        color: 'rgba(56, 189, 248, 0.2)' // Cyan for persistent effects
+                        color: stampSettings.color,
+                        borderColor: stampSettings.border,
+                        flavor: stampFlavor
                     };
                     const templates = mapData.templates || [];
                     updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...mapData, templates: [...templates, newTemplate] }}});
@@ -1022,7 +1093,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             window.removeEventListener('pointerup', handleGlobalUp);
             // REMOVED: window.removeEventListener('touchmove', handleGlobalMove);
         };
-    }, [movingTokenId, isPanning, activeMeasurement, tokens, activeTool, mapGrid, targetingPreview]);
+    }, [movingTokenId, isPanning, activeMeasurement, tokens, activeTool, mapGrid, stampSettings]);
 
     // --- 2. MATH HELPERS ---
     
@@ -1090,13 +1161,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         const tokenObj = tokens.find(t => t.id === id);
         if (!tokenObj || !mapDimensions.width) return null;
 
-        // OPTIMIZATION: During drag, use the original position for Vision/VFX calculations
-        // This prevents the expensive vision engine from re-calculating 60 times a second
-        // while dragging, which is the main cause of lag.
-
-        // Prefer stored centerPx for stability
-        if (tokenObj.centerPx) return tokenObj.centerPx;
-
+        // FIX: Always calculate fresh center to avoid stale centerPx from DB causing offsets
         return calculateTokenCenter(tokenObj, mapDimensions.width, mapDimensions.height);
     };
 
@@ -1749,6 +1814,12 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     };
 
     const handleMapRightClick = (e) => {
+        if (targetingPreview) {
+            e.preventDefault();
+            clearTargetingPreview();
+            return;
+        }
+
         if (role !== 'dm' || (activeTool !== 'wall' && activeTool !== 'door' && activeTool !== 'delete')) return;
         
         e.preventDefault();
@@ -1914,8 +1985,81 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                 </div>
             );
         });
-    }, [tokens, movingTokenId, mapDimensions, mapGrid, role, myCharId, user?.uid, visionActive, lights, walls, shakingTokenId, selectedTokenId, data.campaign?.combat, tokenBlobUrls]);
+    }, [tokens, movingTokenId, mapDimensions, mapGrid, role, myCharId, user?.uid, visionActive, lights, walls, shakingTokenId, selectedTokenId, data.campaign?.combat, tokenBlobUrls, activeTool, !!targetingPreview]);
     // END CHANGE
+
+    // START CHANGE: Template Management Helpers
+    const deleteTemplate = (id) => {
+        const newTemplates = (mapData.templates || []).filter(t => t.id !== id);
+        updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...mapData, templates: newTemplates } } });
+    };
+
+    const updateTemplate = (id, changes) => {
+        const newTemplates = (mapData.templates || []).map(t => t.id === id ? { ...t, ...changes } : t);
+        updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...mapData, templates: newTemplates } } });
+    };
+    // END CHANGE
+
+    const renderedTemplateControls = (() => {
+        if (activeTool !== 'sphere_stamp') return null;
+        
+        return (mapData.templates || []).map(tpl => (
+            <div
+                key={`tpl-ctrl-${tpl.id}`}
+                onPointerDown={(e) => e.stopPropagation()}
+                onMouseDown={(e) => e.stopPropagation()}
+                style={{
+                    position: 'absolute',
+                    left: tpl.x,
+                    top: tpl.y,
+                    transform: `translate(-50%, -50%) scale(${1/view.scale})`,
+                    zIndex: 150,
+                    display: 'flex',
+                    gap: '4px',
+                    pointerEvents: 'auto'
+                }}
+            >
+                <button 
+                    onClick={(e) => { e.stopPropagation(); e.preventDefault(); setEditingTemplateId(editingTemplateId === tpl.id ? null : tpl.id); }}
+                    className="w-8 h-8 bg-slate-900/90 border border-slate-600 rounded-full flex items-center justify-center text-pink-400 hover:bg-slate-800 hover:text-white shadow-lg"
+                    title="Change VFX"
+                >
+                    <Icon name="wand-2" size={14} />
+                </button>
+                <button 
+                    onClick={(e) => { e.stopPropagation(); e.preventDefault(); deleteTemplate(tpl.id); }}
+                    className="w-8 h-8 bg-red-900/90 border border-red-700 rounded-full flex items-center justify-center text-white hover:bg-red-700 shadow-lg"
+                    title="Delete Template"
+                >
+                    <Icon name="trash-2" size={14} />
+                </button>
+                
+                {editingTemplateId === tpl.id && (
+                    <div 
+                        className="absolute top-full mt-2 left-1/2 -translate-x-1/2 flex gap-1 bg-slate-900/95 p-1.5 rounded-full border border-slate-600 shadow-xl animate-in slide-in-from-top-2"
+                        onPointerDown={e => e.stopPropagation()}
+                        style={{ width: 'max-content' }}
+                    >
+                        {VFX_FLAVORS.map(f => (
+                            <button
+                                key={f.id}
+                                onClick={(e) => { 
+                                    e.stopPropagation(); 
+                                    e.preventDefault();
+                                    updateTemplate(tpl.id, { flavor: f.id === 'none' ? null : f.id });
+                                    setEditingTemplateId(null);
+                                }}
+                                className={`p-1.5 rounded-full hover:bg-slate-700 transition-colors ${(tpl.flavor === f.id) || (f.id === 'none' && !tpl.flavor) ? 'bg-slate-700 ring-1 ring-white' : ''}`}
+                                title={f.id}
+                            >
+                                <Icon name={f.icon} className={f.color} size={16} />
+                            </button>
+                        ))}
+                    </div>
+                )}
+            </div>
+        ));
+    })();
 
     return (
         <div 
@@ -1930,11 +2074,18 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             onDragLeave={() => setIsDraggingToken(false)}
             onDragEnd={() => setIsDraggingToken(false)}
         >
+            {/* START CHANGE: Hide Left Sidebar in Fullscreen */}
+            {isFullscreen && (
+                <style>{`
+                    #app-sidebar { display: none !important; }
+                `}</style>
+            )}
+            {/* END CHANGE */}
             {/* DEBUG OVERLAY REMOVED */}
 
             {/* --- TOP RIGHT CONTROLS (Library, Tokens, Combat, Zoom) --- */}
             <div 
-                className={`absolute z-[100] flex gap-2 pointer-events-auto transition-all duration-300 ${sidebarIsOpen ? 'right-[10px]' : 'right-4'}`}
+                className={`absolute z-[100] flex gap-2 pointer-events-auto transition-all duration-300 ${sidebarIsOpen ? 'right-[10px]' : 'right-4'} ${hudClass}`}
                 style={{ top: 'calc(1rem + env(safe-area-inset-top))' }}
             >
                 <div 
@@ -1944,6 +2095,10 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                     <button onClick={() => setShowHandoutCreator(true)} className="p-3 md:p-2 text-amber-500 hover:bg-slate-800 rounded-lg min-w-[44px] min-h-[44px] flex items-center justify-center" title="Handouts">
                         <Icon name="scroll" size={20}/>
                     </button>
+                    <button onClick={() => updateMapState('toggle_chat')} className={`p-3 md:p-2 rounded-lg transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center ${sidebarMode === 'chat' ? 'bg-slate-700 text-white' : 'text-slate-300 hover:text-white hover:bg-slate-800'}`} title={sidebarMode === 'chat' ? "Close Chat" : "Open Chat"}>
+                        <Icon name={sidebarMode === 'chat' ? "x" : "message-square"} size={20}/>
+                    </button>
+                    <div className="w-px h-8 bg-slate-700 my-auto"></div>
                     {role === 'dm' && (
                         <>
                             <button onClick={() => setShowLibrary(true)} className="p-3 md:p-2 text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg min-w-[44px] min-h-[44px] flex items-center justify-center" title="Maps">
@@ -1957,9 +2112,6 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                             </button>
                         </>
                     )}
-                    <button onClick={() => updateMapState('toggle_chat')} className={`p-3 md:p-2 rounded-lg transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center ${sidebarMode === 'chat' ? 'bg-slate-700 text-white' : 'text-slate-300 hover:text-white hover:bg-slate-800'}`} title={sidebarMode === 'chat' ? "Close Chat" : "Open Chat"}>
-                        <Icon name={sidebarMode === 'chat' ? "x" : "message-square"} size={20}/>
-                    </button>
                     <div className="w-px h-8 bg-slate-700 my-auto"></div>
                     
                     <button onClick={() => setView(v => ({...v, scale: v.scale / 1.2}))} className="p-3 md:p-2 text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg min-w-[44px] min-h-[44px] flex items-center justify-center"><Icon name="minus" size={20}/></button>
@@ -1967,15 +2119,18 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                         <Icon name="crosshair" size={20}/>
                     </button>
                     <button onClick={() => setView(v => ({...v, scale: v.scale * 1.2}))} className="p-2 md:p-2 text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg min-w-[44px] min-h-[44px] flex items-center justify-center"><Icon name="plus" size={20}/></button>
+                    <button onClick={toggleFullscreen} className={`p-2 md:p-2 rounded-lg min-w-[44px] min-h-[44px] flex items-center justify-center transition-colors ${isFullscreen ? 'text-indigo-400 bg-indigo-900/20' : 'text-slate-300 hover:text-white hover:bg-slate-800'}`} title="Toggle Fullscreen"><Icon name={isFullscreen ? "minimize" : "maximize"} size={20}/></button>
                 </div>
             </div>
 
             {/* --- TOP LEFT HUD (Status) --- */}
             <div 
                 className={`absolute z-[100] pointer-events-auto transition-all duration-300 ${
-                    sidebarIsOpen 
-                        ? 'max-[1150px]:opacity-0 max-[1150px]:pointer-events-none' 
-                        : 'max-[650px]:opacity-0 max-[650px]:pointer-events-none opacity-100'
+                    isFullscreen 
+                        ? (hudVisible ? 'opacity-100' : 'opacity-0 pointer-events-none')
+                        : (sidebarIsOpen 
+                            ? 'max-[1150px]:opacity-0 max-[1150px]:pointer-events-none' 
+                            : 'max-[650px]:opacity-0 max-[650px]:pointer-events-none opacity-100')
                 }`}
                 style={{ top: 'calc(1rem + env(safe-area-inset-top))', left: 'calc(1rem + env(safe-area-inset-left))' }}
             >
@@ -1998,7 +2153,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             <div 
                 className={`absolute ${data.config?.mobileCompact ? 'bottom-[0px]' : 'bottom-0'} md:bottom-6 left-0 w-full flex justify-center pointer-events-auto transition-all duration-300 z-[70] ${
                     sidebarIsOpen ? 'md:pr-[384px]' : ''
-                }`}
+                } ${hudClass}`}
                 style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
             >
                 <div onPointerDown={(e) => e.stopPropagation()}>
@@ -2182,7 +2337,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
                     {/* VFX Layer */}
                     {/* OPTIMIZATION: Disable VFX on Mobile to save WebGL Context Memory (approx 60-100MB) */}
-                    {!isMobile && mapDimensions.width > 0 && <VfxOverlay width={mapDimensions.width} height={mapDimensions.height} />}
+                    {!isMobile && mapDimensions.width > 0 && <VfxOverlay width={mapDimensions.width} height={mapDimensions.height} templates={mapData.templates} />}
 
                     {/* VFX Debug Markers (DOM Space) */}
                     {localStorage.getItem('vtt_debug_vfx') === 'true' && tokens.map(t => {
@@ -2240,6 +2395,29 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                             onClick={handleMapClick}
                             onContextMenu={handleMapRightClick}
                         >
+                            {/* VFX Measurement Line */}
+                            {targetingPreview && targetingPreview.origin && targetingPreview.target && (
+                                <g pointerEvents="none">
+                                    <line 
+                                        x1={targetingPreview.origin.x} y1={targetingPreview.origin.y} 
+                                        x2={targetingPreview.target.x} y2={targetingPreview.target.y} 
+                                        stroke="rgba(255,255,255,0.5)" strokeWidth={2} strokeDasharray="5,5"
+                                    />
+                                    {(() => {
+                                        const distPx = Math.hypot(targetingPreview.target.x - targetingPreview.origin.x, targetingPreview.target.y - targetingPreview.origin.y);
+                                        const feet = Math.round(distPx / (mapGrid.size || 50)) * 5;
+                                        return (
+                                            <g transform={`translate(${targetingPreview.target.x}, ${targetingPreview.target.y - 20})`}>
+                                                <rect x="-20" y="-12" width="40" height="16" rx="4" fill="rgba(0,0,0,0.8)" />
+                                                <text textAnchor="middle" y="0" fill="white" fontSize="10" fontWeight="bold" className="font-mono" dy="3">
+                                                    {feet}ft
+                                                </text>
+                                            </g>
+                                        );
+                                    })()}
+                                </g>
+                            )}
+
                             {/* 1. Render Saved Walls & Doors (Only visible when using wall/door/delete tools) */}
                             {walls.map(w => {
                                 // Only show walls when DM is using the Wall, Door, or Delete tool
@@ -2310,7 +2488,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                             <g key={tpl.id} className="animate-in fade-in">
                                 <circle 
                                     cx={tpl.x} cy={tpl.y} r={tpl.radius} 
-                                    fill={tpl.color} stroke="#f59e0b" strokeWidth={1} strokeDasharray="4,2"
+                                    fill={tpl.flavor ? "none" : tpl.color} stroke={tpl.flavor ? "none" : (tpl.borderColor || "#f59e0b")} strokeWidth={2} strokeDasharray="4,2"
                                 />
                                 {role === 'dm' && activeTool === 'delete' && (
                                     <g className="pointer-events-none">
@@ -2392,6 +2570,9 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
                         {/* Render Tokens */}
                         {renderedTokens}
+
+                        {/* Render Template Controls */}
+                        {renderedTemplateControls}
                     </div>
                 ) : (
                     <div className="flex items-center justify-center w-[800px] h-[600px] bg-slate-800 border-2 border-dashed border-slate-700 rounded-xl m-20">

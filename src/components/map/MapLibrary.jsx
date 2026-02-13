@@ -21,8 +21,9 @@ const MapCard = ({ map, onClick, onDelete }) => {
         // END CHANGE
 
         const resolveImage = async () => {
-            // Prefer thumbnail, fallback to full url
-            const targetUrl = map.thumbnailUrl || map.url;
+            // START CHANGE: Linked maps should never use thumbnails to avoid stale/shared assets
+            const isChunked = map.url?.startsWith('chunked:');
+            const targetUrl = (isChunked && map.thumbnailUrl) ? map.thumbnailUrl : map.url;
 
             if (targetUrl?.startsWith('chunked:')) {
                 try {
@@ -70,7 +71,7 @@ const MapCard = ({ map, onClick, onDelete }) => {
 
             if (blob) {
                 const thumbBase64 = await compressImage(blob, 512, 0.5);
-                const thumbId = await storeChunkedMap(thumbBase64, `${map.name}_thumb_${Date.now()}`);
+                const thumbId = await storeChunkedMap(thumbBase64, `${map.id}_thumb_${Date.now()}`);
                 onDelete({ action: 'update_map', id: map.id, thumbnailUrl: thumbId });
                 setImgSrc(URL.createObjectURL(await (await fetch(thumbBase64)).blob()));
             }
@@ -95,9 +96,11 @@ const MapCard = ({ map, onClick, onDelete }) => {
             )}
             
             <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-all z-20">
-                <button onPointerDown={(e) => e.stopPropagation()} onClick={handleRegenerate} className="p-2 bg-slate-800/90 text-amber-500 rounded-lg hover:bg-slate-700 shadow-xl pointer-events-auto" title="Regenerate Thumbnail">
-                    <Icon name={isRegenerating ? "loader" : "refresh-cw"} className={isRegenerating ? "animate-spin" : ""} size={16}/>
-                </button>
+                {map.url?.startsWith('chunked:') && (
+                    <button onPointerDown={(e) => e.stopPropagation()} onClick={handleRegenerate} className="p-2 bg-slate-800/90 text-amber-500 rounded-lg hover:bg-slate-700 shadow-xl pointer-events-auto" title="Regenerate Thumbnail">
+                        <Icon name={isRegenerating ? "loader" : "refresh-cw"} className={isRegenerating ? "animate-spin" : ""} size={16}/>
+                    </button>
+                )}
                 <button onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); onDelete({ action: 'rename', id: map.id, name: map.name }); }} className="p-2 bg-slate-800/90 text-white rounded-lg hover:bg-indigo-600 shadow-xl pointer-events-auto" title="Rename map"><Icon name="pencil" size={16}/></button>
                 <button onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); onDelete(map.id); }} className="p-2 bg-red-900/90 text-white rounded-lg hover:bg-red-600 shadow-xl pointer-events-auto"><Icon name="trash-2" size={16}/></button>
             </div>
@@ -128,8 +131,8 @@ const MapLibrary = ({ savedMaps, onSelect, onClose, onDelete }) => {
         setIsSearching(true);
         try {
             // 1. IMPROVED QUERY: Gridless + High Res + No Isometric
-            const optimizedQuery = `${searchTerm} battlemap gridless high res -isometric`;
-            const url = `https://customsearch.googleapis.com/customsearch/v1?key=${GOOGLE_SEARCH_KEY}&cx=${GOOGLE_SEARCH_CX}&q=${encodeURIComponent(optimizedQuery)}&searchType=image&num=9&imgSize=large`;
+            const optimizedQuery = `${searchTerm} dnd battlemap -isometric -hex`;
+            const url = `https://customsearch.googleapis.com/customsearch/v1?key=${GOOGLE_SEARCH_KEY}&cx=${GOOGLE_SEARCH_CX}&q=${encodeURIComponent(optimizedQuery)}&searchType=image&num=9&imgSize=xlarge&safe=active`;
             
             const res = await fetch(url);
             const json = await res.json();
@@ -362,9 +365,14 @@ const MapLibrary = ({ savedMaps, onSelect, onClose, onDelete }) => {
                                         map={map} 
                                         onClick={onSelect} 
                                         onDelete={(idOrObj) => {
-                                            if (typeof idOrObj === 'object' && idOrObj.action === 'rename') {
-                                                const newName = prompt("Enter map name:", idOrObj.name);
-                                                if (newName) onDelete({ ...idOrObj, name: newName });
+                                            if (typeof idOrObj === 'object') {
+                                                if (idOrObj.action === 'rename') {
+                                                    const newName = prompt("Enter map name:", idOrObj.name);
+                                                    if (newName) onDelete({ ...idOrObj, name: newName });
+                                                } else if (idOrObj.action === 'update_map') {
+                                                    // Pass through update_map (thumbnail regeneration) without confirmation
+                                                    onDelete(idOrObj);
+                                                }
                                             } else {
                                                 if (confirm("Delete this map permanently?")) onDelete(idOrObj);
                                             }

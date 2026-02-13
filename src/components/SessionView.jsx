@@ -4,6 +4,9 @@ import DiceTray from './DiceTray';
 import { retrieveContext, buildPrompt } from '../utils/loreEngine';
 // START CHANGE: Import Character Store for Targeting
 import { useCharacterStore } from '../stores/useCharacterStore';
+import ResolvedImage from './ResolvedImage';
+import { compressImage } from '../utils/imageCompressor';
+import { storeChunkedMap } from '../utils/storageUtils';
 // END CHANGE
 
 // START CHANGE: Add clearChat to destructured props
@@ -26,6 +29,25 @@ const SessionView = ({
     const [ghostMessage, setGhostMessage] = useState(null);
     // END CHANGE
     const chatEndRef = useRef(null);
+    const fileInputRef = useRef(null);
+    const [isUploading, setIsUploading] = useState(false);
+
+    const handleFileUpload = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        
+        setIsUploading(true);
+        try {
+            const compressed = await compressImage(file, 800, 0.7);
+            const id = await storeChunkedMap(compressed, `chat_img_${Date.now()}`);
+            onSendMessage(id, sendMode, targetUser);
+        } catch (err) {
+            console.error("Upload failed", err);
+            alert("Failed to upload image.");
+        }
+        setIsUploading(false);
+        e.target.value = null;
+    };
 
     // START CHANGE: Apply Damage Handler
     const handleApplyDamage = (amount) => {
@@ -313,8 +335,13 @@ const SessionView = ({
                                         </div>
                                     ) : (
                                         <div className="text-slate-300 text-[15px] leading-relaxed break-words whitespace-pre-wrap group-hover:text-white transition-colors relative">
-                                            {/* START CHANGE: Interactive Dice Rolls */}
-                                            {(() => {
+                                            {msg.content && msg.content.startsWith('chunked:') ? (
+                                                <div className="-my-2">
+                                                    <ResolvedImage id={msg.content} />
+                                                </div>
+                                            ) : (
+                                                /* START CHANGE: Interactive Dice Rolls */
+                                                (() => {
                                                 const html = formatMessage(msg.content);
                                                 // Check for "Rolled 15" or similar patterns from DiceTray
                                                 // Regex matches: "Rolled [Result] (Formula)" or just numbers
@@ -337,7 +364,8 @@ const SessionView = ({
                                                     );
                                                 }
                                                 return <span dangerouslySetInnerHTML={{__html: html}} />;
-                                            })()}
+                                                })()
+                                            )}
                                             {/* END CHANGE */}
                                         </div>
                                     )}
@@ -418,6 +446,10 @@ const SessionView = ({
                             rows={1} 
                             style={{ height: inputText.length > 50 ? 'auto' : '40px' }} 
                         />
+                        <button onClick={() => fileInputRef.current.click()} disabled={isUploading} className="p-2 rounded-md transition-all shrink-0 text-slate-400 hover:text-white hover:bg-slate-700" title="Upload Image">
+                            {isUploading ? <Icon name="loader" size={18} className="animate-spin"/> : <Icon name="image" size={18}/>}
+                        </button>
+                        <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileUpload} />
                         <button onClick={handleSend} disabled={!inputText.trim()} className={`p-2 rounded-md transition-all shrink-0 ${inputText.trim() ? 'bg-indigo-600 hover:bg-indigo-500 text-white' : 'bg-slate-700 text-slate-500 cursor-not-allowed'}`}><Icon name="send" size={18}/></button>
                     </div>
                     {/* END CHANGE */}
