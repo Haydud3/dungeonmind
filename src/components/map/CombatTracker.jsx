@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import Icon from '../Icon';
 
 // 1. Added onClearRolls to the props
-const CombatTracker = ({ combat, onNextTurn, onEndCombat, onClearRolls, role, updateCombatant, onRemove, onAutoRoll, addManualCombatant, players, npcs }) => {
+const CombatTracker = ({ combat, onNextTurn, onEndCombat, onClearRolls, role, updateCombatant, onRemove, onAutoRoll, addManualCombatant, players, npcs, onDiceRoll }) => {
     const combatants = combat?.combatants || [];
     const [showAddMenu, setShowAddMenu] = useState(false);
     const currentTurn = combat?.turn || 0;
@@ -26,12 +26,22 @@ const CombatTracker = ({ combat, onNextTurn, onEndCombat, onClearRolls, role, up
     const rollIndividual = (c) => {
         const master = [...(players || []), ...(npcs || [])].find(n => n.id === c.characterId);
         const dexMod = master ? Math.floor(((master.stats?.dex || 10) - 10) / 2) : 0;
-        const roll = Math.floor(Math.random() * 20) + 1;
-        updateCombatant(c.id, { init: roll + dexMod });
+        
+        if (onDiceRoll) {
+            onDiceRoll(`1d20 + ${dexMod}`, {
+                alias: c.name,
+                flavor: "Initiative",
+                chat: true, // Force chat output so it appears in the sidebar
+                callback: (total) => updateCombatant(c.id, { init: parseInt(total) })
+            });
+        } else {
+            const roll = Math.floor(Math.random() * 20) + 1;
+            updateCombatant(c.id, { init: roll + dexMod });
+        }
     };
 
     return (
-        <div className="absolute top-20 left-4 bottom-auto w-72 bg-slate-900/95 backdrop-blur border border-slate-700 rounded-xl shadow-2xl z-[100] p-0 overflow-hidden flex flex-col max-h-[60vh] animate-in slide-in-from-left">
+        <div className="absolute top-32 md:top-20 left-4 bottom-auto w-72 bg-slate-900/95 backdrop-blur border border-slate-700 rounded-xl shadow-2xl z-[100] p-0 overflow-hidden flex flex-col max-h-[60vh] animate-in slide-in-from-left">
             <div className="p-3 bg-slate-800 border-b border-slate-700 flex justify-between items-center">
                 <h3 className="font-bold text-red-500 fantasy-font flex items-center gap-2"><Icon name="swords" size={16}/> Round {currentRound}</h3>
                 <div className="flex gap-1">

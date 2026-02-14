@@ -26,7 +26,7 @@ const MapToolbar = ({ role, activeTool, setTool, visionActive, onToggleVision, o
     const tools = allTools.filter(t => t.roles.includes(role));
 
     return (
-        <div className="absolute bottom-20 md:bottom-6 left-1/2 -translate-x-1/2 bg-slate-900/90 backdrop-blur border border-slate-700 p-2 rounded-2xl shadow-2xl flex gap-2 pointer-events-auto z-[70]">
+        <div className="bg-slate-900/90 backdrop-blur border border-slate-700 p-2 rounded-2xl shadow-2xl flex gap-2 pointer-events-auto z-[70] mb-2 md:mb-0">
             {tools.map(tool => {
                 const isActive = activeTool === tool.id || (tool.id === 'sphere' && activeTool === 'sphere_stamp');
                 const isStampMode = tool.id === 'sphere' && activeTool === 'sphere_stamp';

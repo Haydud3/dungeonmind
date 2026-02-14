@@ -141,7 +141,7 @@ const conditions = [
     }, [onClose]);
 
     const RADIUS = 85;
-const COND_RADIUS = 130;
+const COND_RADIUS = 150;
 // START CHANGE: Radius for Control Delegation menu
 const CONTROL_RADIUS = 130;
 const VFX_RADIUS = 130;
@@ -185,7 +185,7 @@ return (
             })}
 
             {isStatusExpanded && conditions.map((cond, i) => { // <-- Loop Index Key
-            const angle = 10 + (i * 24); 
+            const angle = 10 + (i * 20); 
             const rad = (angle * Math.PI) / 180;
             const targetX = Math.cos(rad) * COND_RADIUS;
             const targetY = Math.sin(rad) * COND_RADIUS;

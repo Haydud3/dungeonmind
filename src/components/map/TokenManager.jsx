@@ -2,7 +2,7 @@ import React, { useState, useRef } from 'react';
 import Icon from '../Icon';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 
-const TokenManager = ({ data, onDragStart }) => {
+const TokenManager = ({ data, onDragStart, onDiceRoll }) => {
     const [search, setSearch] = useState("");
     const [results, setResults] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
@@ -34,10 +34,15 @@ const TokenManager = ({ data, onDragStart }) => {
         };
 
         window.addEventListener('pointermove', cancelHold);
-        window.addEventListener('pointerup', () => {
+        
+        const cleanup = () => {
             clearTimeout(holdTimer.current);
             window.removeEventListener('pointermove', cancelHold);
-        }, { once: true });
+            window.removeEventListener('pointerup', cleanup);
+            window.removeEventListener('pointercancel', cleanup);
+        };
+        window.addEventListener('pointerup', cleanup);
+        window.addEventListener('pointercancel', cleanup);
     };
 
     const handleSearch = async () => {

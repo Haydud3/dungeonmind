@@ -36,6 +36,11 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     const { sendPing, triggerVfx } = useCampaign();
     const { targetingPreview, setTargetingPreview, clearTargetingPreview, addEffect } = useVfxStore();
 
+    // START CHANGE: Subscribe to drag state for visual indicator
+    const sidebarDragEntity = useCharacterStore(state => state.sidebarDragEntity);
+    const dragPosition = useCharacterStore(state => state.dragPosition);
+    // END CHANGE
+
     // 1. DATA SHORTCUTS (Moved up to fix ReferenceError in State Initializer)
     const mapData = data.campaign?.activeMap || {};
     const tokens = mapData.tokens || [];
@@ -529,21 +534,6 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         }
     }, [activeTool]);
 
-    useEffect(() => {
-        if (sidebarIsOpen && selectedTokenId) {
-            const token = tokens.find(t => t.id === selectedTokenId);
-            if (token) {
-                updateMapState('open_sheet', { 
-                    type: 'token',
-                    tokenId: token.id,
-                    mapId: mapData.id,
-                    token: token,
-                    forceOpen: true
-                });
-            }
-        }
-    }, [selectedTokenId, sidebarIsOpen]);
-
     // START CHANGE: iOS Safari Gesture Prevention (Stops Ghosting/Crashing)
     // This strictly prevents the browser from taking a snapshot (ghosting) for native zoom
     useEffect(() => {
@@ -565,6 +555,30 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             container.removeEventListener('gesturestart', preventGestures);
             container.removeEventListener('gesturechange', preventGestures);
             container.removeEventListener('gestureend', preventGestures);
+        };
+    }, []);
+    // END CHANGE
+
+    // START CHANGE: Reset interaction state on app switch/blur to prevent stuck zoom
+    useEffect(() => {
+        const resetInteraction = () => {
+            pointerCache.current = [];
+            pinchStartDist.current = 0;
+            setIsPanning(false);
+            setMovingTokenId(null);
+            movingTokenPosRef.current = null;
+        };
+
+        window.addEventListener('blur', resetInteraction);
+        
+        const onVisChange = () => {
+            if (document.hidden) resetInteraction();
+        };
+        document.addEventListener('visibilitychange', onVisChange);
+
+        return () => {
+            window.removeEventListener('blur', resetInteraction);
+            document.removeEventListener('visibilitychange', onVisChange);
         };
     }, []);
     // END CHANGE
@@ -809,6 +823,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         const handleGlobalMove = (e) => {
             const sidebarDragEntity = useCharacterStore.getState().sidebarDragEntity;
             if (sidebarDragEntity) {
+                if (e.cancelable) e.preventDefault(); // Prevent scrolling while dragging token
                 useCharacterStore.getState().setDragPosition({ x: e.clientX, y: e.clientY });
                 return;
             }
@@ -927,7 +942,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
             if (sidebarDragEntity) {
                 const rect = containerRef.current.getBoundingClientRect();
-                if (e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom) {
+                if (e.type !== 'pointercancel' && e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom) {
                     const coords = getMapCoords(e);
                     const droppedData = {
                         type: sidebarDragEntity.type,
@@ -1084,6 +1099,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         // FIX: Keep pointermove with passive: false to allow preventDefault()
         window.addEventListener('pointermove', handleGlobalMove, { passive: false });
         window.addEventListener('pointerup', handleGlobalUp);
+        window.addEventListener('pointercancel', handleGlobalUp);
         
         // REMOVED: window.addEventListener('touchmove', handleGlobalMove, { passive: false });
         // ^^^ This was the cause. It sent incompatible event data to the handler.
@@ -1091,6 +1107,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         return () => {
             window.removeEventListener('pointermove', handleGlobalMove);
             window.removeEventListener('pointerup', handleGlobalUp);
+            window.removeEventListener('pointercancel', handleGlobalUp);
             // REMOVED: window.removeEventListener('touchmove', handleGlobalMove);
         };
     }, [movingTokenId, isPanning, activeMeasurement, tokens, activeTool, mapGrid, stampSettings]);
@@ -1573,13 +1590,27 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     const handleOpenSheet = (tokenId) => {
         const token = tokens.find(t => t.id === tokenId);
         if (token) {
+            // OPTIMIZATION: Removed toggle_chat to prevent rapid VfxOverlay mount/unmount cycles
+            // This prevents WebGL Context Lost when switching sidebar modes
+
+            // START CHANGE: Wrap onDiceRoll to force chat output for sidebar
+            // This ensures rolls from the sidebar sheet appear in the dice tray/chat log
+            const sidebarDiceRoll = (formula, options = {}) => {
+                if (onDiceRoll) {
+                    return onDiceRoll(formula, options);
+                }
+            };
+            // END CHANGE
+
             // Tell parent to open sheet with TOKEN data (not character ID)
             updateMapState('open_sheet', { 
                 type: 'token',
                 tokenId: token.id,
                 mapId: mapData.id,
-                token: token,  // Pass full token object
-                forceOpen: true  // Flag: Always open sheet when HUD button is clicked
+                token: { ...token, onDiceRoll: sidebarDiceRoll },  // Pass full token object with dice handler injected
+                forceOpen: true,  // Flag: Always open sheet when HUD button is clicked
+                onDiceRoll: sidebarDiceRoll, // Pass dice roll handler to sheet
+                onClearRolls: onClearRolls // Pass clear handler
             });
             setSelectedTokenId(null);
         }
@@ -1955,6 +1986,10 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             const sizeMult = typeof token.size === 'number' ? token.size : (sizeMap[token.size] || 1);
             const dimension = currentGridSize * sizeMult; 
             const isShaking = shakingTokenId === token.id;
+            
+            // Scale font size inversely to token size to ensure readability on small tokens
+            // Base 12px, scales up for tiny tokens (e.g. 0.5x -> 24px), stays 12px for large tokens
+            const fontSize = Math.max(12, 12 / sizeMult);
 
             return (
                 <div 
@@ -1969,7 +2004,8 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                         transform: 'translate(-50%, -50%)',
                         zIndex: isMoving ? 1000 : 10, // Higher Z-Index when dragging
                         pointerEvents: isMoving ? 'none' : 'auto',
-                        transition: isMoving ? 'none' : 'all 0.2s ease-out'
+                        transition: isMoving ? 'none' : 'all 0.2s ease-out',
+                        fontSize: `${fontSize}px`
                     }}
                     className={isShaking ? "animate-bounce bg-red-500/50 rounded-full" : ""}
                     onPointerDown={(e) => handleTokenPointerDown(e, token.id)}
@@ -2095,7 +2131,10 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                     <button onClick={() => setShowHandoutCreator(true)} className="p-3 md:p-2 text-amber-500 hover:bg-slate-800 rounded-lg min-w-[44px] min-h-[44px] flex items-center justify-center" title="Handouts">
                         <Icon name="scroll" size={20}/>
                     </button>
-                    <button onClick={() => updateMapState('toggle_chat')} className={`p-3 md:p-2 rounded-lg transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center ${sidebarMode === 'chat' ? 'bg-slate-700 text-white' : 'text-slate-300 hover:text-white hover:bg-slate-800'}`} title={sidebarMode === 'chat' ? "Close Chat" : "Open Chat"}>
+                    <button onClick={() => {
+                        updateMapState('toggle_chat');
+                        updateMapState('close_sheet');
+                    }} className={`p-3 md:p-2 rounded-lg transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center ${sidebarMode === 'chat' ? 'bg-slate-700 text-white' : 'text-slate-300 hover:text-white hover:bg-slate-800'}`} title={sidebarMode === 'chat' ? "Close Chat" : "Open Chat"}>
                         <Icon name={sidebarMode === 'chat' ? "x" : "message-square"} size={20}/>
                     </button>
                     <div className="w-px h-8 bg-slate-700 my-auto"></div>
@@ -2151,7 +2190,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             {/* START CHANGE: Pass Vision Props to Toolbar */}
             {/* --- BOTTOM CENTER TOOLBAR --- */}
             <div 
-                className={`absolute ${data.config?.mobileCompact ? 'bottom-[0px]' : 'bottom-0'} md:bottom-6 left-0 w-full flex justify-center pointer-events-auto transition-all duration-300 z-[70] ${
+                className={`absolute ${data.config?.mobileCompact ? 'bottom-[0px]' : 'bottom-0'} md:bottom-6 left-0 w-full flex justify-center pointer-events-none transition-all duration-300 z-[70] ${
                     sidebarIsOpen ? 'md:pr-[384px]' : ''
                 } ${hudClass}`}
                 style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
@@ -2247,7 +2286,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                     onPointerDown={(e) => e.stopPropagation()}
                     className="absolute top-20 right-4 bottom-24 w-64 bg-slate-900/95 backdrop-blur border border-slate-700 rounded-xl shadow-2xl z-[100] p-4 animate-in slide-in-from-right pointer-events-auto"
                 >
-                    <TokenManager data={data} onDragStart={handleDragStart} />
+                    <TokenManager data={data} onDragStart={handleDragStart} onDiceRoll={onDiceRoll} />
                 </div>
             )}
 
@@ -2267,6 +2306,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                         addManualCombatant={addManualCombatant}
                         players={players}
                         npcs={npcs}
+                        onDiceRoll={onDiceRoll}
                         // END CHANGE
                     />
                 </div>
@@ -2337,7 +2377,9 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
                     {/* VFX Layer */}
                     {/* OPTIMIZATION: Disable VFX on Mobile to save WebGL Context Memory (approx 60-100MB) */}
-                    {!isMobile && mapDimensions.width > 0 && <VfxOverlay width={mapDimensions.width} height={mapDimensions.height} templates={mapData.templates} />}
+                    {/* START CHANGE: Unmount VFX when sidebar is open to prevent WebGL Context Lost in Dice Tray */}
+                    {mapDimensions.width > 0 && !sidebarIsOpen && <VfxOverlay width={mapDimensions.width} height={mapDimensions.height} templates={mapData.templates} />}
+                    {/* END CHANGE */}
 
                     {/* VFX Debug Markers (DOM Space) */}
                     {localStorage.getItem('vtt_debug_vfx') === 'true' && tokens.map(t => {
@@ -2707,6 +2749,34 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                     </h2>
                     <div className="mt-2 text-sm text-slate-500 font-mono uppercase tracking-widest">
                         {mapData.name || "Unknown Location"}
+                    </div>
+                </div>
+            )}
+            {/* END CHANGE */}
+
+            {/* START CHANGE: Sidebar Drag Preview Indicator */}
+            {sidebarDragEntity && dragPosition && (
+                <div 
+                    className="fixed z-[9999] pointer-events-none flex flex-col items-center justify-center"
+                    style={{ 
+                        left: dragPosition.x, 
+                        top: dragPosition.y, 
+                        transform: 'translate(-50%, -50%)',
+                        width: '64px',
+                        height: '64px'
+                    }}
+                >
+                    <div className="w-full h-full rounded-full overflow-hidden border-2 border-dashed border-indigo-400 bg-indigo-500/30 shadow-[0_0_15px_rgba(99,102,241,0.5)] animate-pulse">
+                        {sidebarDragEntity.image ? (
+                            <img src={sidebarDragEntity.image} className="w-full h-full object-cover opacity-70" alt="" />
+                        ) : (
+                            <div className="w-full h-full flex items-center justify-center text-indigo-200 font-bold text-xs">
+                                {sidebarDragEntity.name?.[0]}
+                            </div>
+                        )}
+                    </div>
+                    <div className="absolute top-full mt-2 bg-slate-900/90 text-indigo-300 text-[10px] font-bold px-2 py-1 rounded border border-indigo-500/50 whitespace-nowrap shadow-lg backdrop-blur">
+                        Drop to Spawn
                     </div>
                 </div>
             )}
