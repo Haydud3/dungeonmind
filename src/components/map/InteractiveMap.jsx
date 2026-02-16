@@ -1199,11 +1199,16 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     const getTokenCenter = (id) => {
         // Use Data Model for stable, deterministic positioning.
         // DOM-based calculation was causing random offsets due to layout timing.
-        const tokenObj = tokens.find(t => t.id === id);
-        if (!tokenObj || !mapDimensions.width) return null;
+        const tokenObj = tokens.find(t => idsMatch(t.id, id));
+        
+        const img = mapImageRef.current;
+        const width = mapDimensions.width || img?.naturalWidth;
+        const height = mapDimensions.height || img?.naturalHeight;
+
+        if (!tokenObj || !width) return null;
 
         // FIX: Always calculate fresh center to avoid stale centerPx from DB causing offsets
-        return calculateTokenCenter(tokenObj, mapDimensions.width, mapDimensions.height);
+        return calculateTokenCenter(tokenObj, width, height);
     };
 
     const getMapCoords = (e) => {
