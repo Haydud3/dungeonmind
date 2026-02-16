@@ -1,5 +1,5 @@
-import React, { useRef, useMemo } from 'react';
-import { Canvas, useFrame } from '@react-three/fiber';
+import React, { useRef, useMemo, useEffect } from 'react';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { useVfxStore } from '../../stores/useVfxStore';
 import * as THREE from 'three';
 
@@ -80,13 +80,17 @@ const Breath = ({ origin, target, flavor, isPreview }) => {
 };
 
 const Beam = ({ origin, target, flavor, isPreview }) => {
-    const angle = Math.atan2(-(target.y - origin.y), target.x - origin.x);
-    const dist = Math.hypot(target.x - origin.x, target.y - origin.y);
-    
-    // FIX: Ensure midpoint logic aligns with Three.js coordinate space
-    const midX = origin.x + (target.x - origin.x) / 2;
-    // NOTE: Y is negated for Three.js, so we calculate the mid of the NEGATED values
-    const midY = (-origin.y + (-target.y)) / 2;
+    // Memoize the math to prevent jitter during fast mouse movements
+    const { angle, dist, midX, midY } = useMemo(() => {
+        const dx = target.x - origin.x;
+        const dy = target.y - origin.y;
+        return {
+            angle: Math.atan2(-dy, dx),
+            dist: Math.hypot(dx, dy),
+            midX: origin.x + dx / 2,
+            midY: -(origin.y + dy / 2) // Negate the averaged screen Y
+        };
+    }, [origin, target]);
 
     return (
         <mesh position={[midX, midY, 0]} rotation={[0, 0, angle]}>
@@ -159,14 +163,29 @@ const Effect = (props) => {
     }
 };
 
-export default function VfxOverlay({ width, height, templates = [] }) {
+const CameraController = ({ width, height }) => {
+    const { camera } = useThree();
+    useEffect(() => {
+        if (!width || !height) return;
+        camera.left = 0;
+        camera.right = width;
+        camera.top = 0;
+        camera.bottom = -height;
+        camera.updateProjectionMatrix();
+    }, [camera, width, height]);
+    return null;
+};
+
+export default function VfxOverlay({ width, height, templates = [], pixelRatio = 1 }) {
     const activeEffects = useVfxStore(state => state.activeEffects);
     const targetingPreview = useVfxStore(state => state.targetingPreview);
-    if (!width || !height || width <= 0 || height <= 0) return null;
+    
+    if (!width || !height) return null;
+
     return (
-        <div className="absolute top-0 left-0 pointer-events-none z-[15]" style={{ width: width, height: height, willChange: 'transform' }}>
+        <div className="absolute top-0 left-0 pointer-events-none z-[15]" style={{ width, height, willChange: 'transform' }}>
             <Canvas
-                key={`${width}-${height}`} // Force re-mount to update camera frustum when map size changes
+                dpr={pixelRatio}
                 orthographic
                 camera={{
                     left: 0, right: width,
@@ -174,16 +193,17 @@ export default function VfxOverlay({ width, height, templates = [] }) {
                     near: -100, far: 100,
                     position: [0, 0, 10]
                 }}
-                gl={{ alpha: true }}
+                gl={{ alpha: true, antialias: true }}
                 events={null}
                 style={{ 
-                    width: width, 
-                    height: height, 
+                    width: '100%', 
+                    height: '100%', 
                     pointerEvents: 'none',
                     imageRendering: 'pixelated',
                     willChange: 'transform'
                 }}
             >
+                <CameraController width={width} height={height} />
                 {activeEffects.map(effect => <Effect key={effect.id} {...effect} />)}
                 {targetingPreview && <Effect {...targetingPreview} isPreview />}
                 

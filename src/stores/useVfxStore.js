@@ -19,6 +19,7 @@ export const useVfxStore = create((set) => ({
         }, duration);
     },
 
+    clearEffects: () => set({ activeEffects: [] }),
     setTargetingPreview: (preview) => set({ targetingPreview: preview }),
     clearTargetingPreview: () => set({ targetingPreview: null })
 }));

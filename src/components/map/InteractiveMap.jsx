@@ -34,7 +34,7 @@ const VFX_FLAVORS = [
 
 const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, activeTemplate, sidebarIsOpen, sidebarMode, updateCombatant, removeCombatant, onClearRolls, onAutoRoll, setShowHandoutCreator, code, addManualCombatant, players, npcs, user }) => {
     const { sendPing, triggerVfx } = useCampaign();
-    const { targetingPreview, setTargetingPreview, clearTargetingPreview, addEffect } = useVfxStore();
+    const { targetingPreview, setTargetingPreview, clearTargetingPreview, addEffect, clearEffects } = useVfxStore();
 
     // START CHANGE: Subscribe to drag state for visual indicator
     const sidebarDragEntity = useCharacterStore(state => state.sidebarDragEntity);
@@ -249,6 +249,8 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         setFullTexture(null);
         setLodTexture(null);
         setFullDimensions(null);
+        setMapDimensions({ width: 0, height: 0 }); // Force VfxOverlay to unmount
+        clearEffects(); // Clear any lingering VFX from previous map
         setDebugLogs([]); 
         addLog(`Init: ${mapUrl ? 'URL Found' : 'No URL'}`);
         // END CHANGE
@@ -987,8 +989,30 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             // VFX Confirmation
             const currentTargeting = useVfxStore.getState().targetingPreview;
             if (currentTargeting) {
+                let finalTarget = coords;
+
+                // START FIX: Snap to Token Center if dropped on a token
+                const candidates = latestTokensRef.current || [];
+                const gridSize = mapGrid.size || 50;
+                
+                const hitToken = candidates.find(t => {
+                    if (t.isHidden && role !== 'dm') return false;
+                    const cx = (t.x / 100) * mapDimensions.width;
+                    const cy = (t.y / 100) * mapDimensions.height;
+                    const sizeMap = { tiny: 0.5, small: 1, medium: 1, large: 2, huge: 3, gargantuan: 4 };
+                    const sizeMult = typeof t.size === 'number' ? t.size : (sizeMap[t.size] || 1);
+                    const radius = (gridSize * sizeMult) / 2;
+                    return Math.hypot(coords.x - cx, coords.y - cy) <= radius;
+                });
+
+                if (hitToken) {
+                    finalTarget = { x: (hitToken.x / 100) * mapDimensions.width, y: (hitToken.y / 100) * mapDimensions.height };
+                    currentTargeting.targetTokenId = hitToken.id;
+                }
+                // END FIX
+
                 const uniqueId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-                const finalEffect = { ...currentTargeting, target: coords, id: uniqueId, startTime: Date.now(), duration: 1000 };
+                const finalEffect = { ...currentTargeting, target: finalTarget, id: uniqueId, startTime: Date.now(), duration: 1000 };
                 try {
                     // 1. Play Locally Immediately (Instant Feedback)
                     addEffect(finalEffect);
@@ -1110,7 +1134,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             window.removeEventListener('pointercancel', handleGlobalUp);
             // REMOVED: window.removeEventListener('touchmove', handleGlobalMove);
         };
-    }, [movingTokenId, isPanning, activeMeasurement, tokens, activeTool, mapGrid, stampSettings]);
+    }, [movingTokenId, isPanning, activeMeasurement, tokens, activeTool, mapGrid, stampSettings, mapDimensions]);
 
     // --- 2. MATH HELPERS ---
     
@@ -2376,9 +2400,16 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                     />
 
                     {/* VFX Layer */}
-                    {/* OPTIMIZATION: Disable VFX on Mobile to save WebGL Context Memory (approx 60-100MB) */}
+                    {/* OPTIMIZATION: Reduce resolution on Mobile to save WebGL Context Memory (approx 60-100MB saved) */}
                     {/* START CHANGE: Unmount VFX when sidebar is open to prevent WebGL Context Lost in Dice Tray */}
-                    {mapDimensions.width > 0 && !sidebarIsOpen && <VfxOverlay width={mapDimensions.width} height={mapDimensions.height} templates={mapData.templates} />}
+                    {mapDimensions.width > 0 && !sidebarIsOpen && (
+                        <VfxOverlay 
+                            width={mapDimensions.width}
+                            height={mapDimensions.height}
+                            templates={mapData.templates} 
+                            pixelRatio={isMobile ? Math.min(0.5, 2048 / Math.max(mapDimensions.width, mapDimensions.height)) : 1}
+                        />
+                    )}
                     {/* END CHANGE */}
 
                     {/* VFX Debug Markers (DOM Space) */}
@@ -2715,7 +2746,12 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                             activeUsers={data.activeUsers}
                             assignments={data.assignments}
                             onStartVfxTargeting={(vfx) => {
-                                const origin = getTokenCenter(token.id);
+                                // Force a fresh calculation using the latest reactive dimensions
+                                const img = mapImageRef.current;
+                                if (!img) return;
+
+                                const origin = calculateTokenCenter(token, mapDimensions.width || img.naturalWidth, mapDimensions.height || img.naturalHeight);
+                                
                                 if (origin) {
                                     if (localStorage.getItem('vtt_debug_vfx') === 'true') {
                                         console.group(`[VFX DEBUG] Local Targeting Start`);
