@@ -7,7 +7,7 @@ import { parsePdf } from '../utils/dndBeyondParser.js';
 import { enrichCharacter } from '../utils/srdEnricher.js';
 
 // START CHANGE: Add generatePlayer to props
-const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView, user, aiHelper, onDiceRoll, onLogAction, edition, apiKey, generatePlayer }) => {
+const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView, user, aiHelper, onDiceRoll, diceLog, onLogAction, edition, apiKey, generatePlayer }) => {
     const [showCreationMenu, setShowCreationMenu] = useState(false);
     // START CHANGE: Add Forge State
     const [showForge, setShowForge] = useState(false);
@@ -189,7 +189,19 @@ const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView,
                 <SheetContainer 
                     characterId={viewingCharacterId} 
                     onSave={handleSheetSave} 
-                    onDiceRoll={onDiceRoll} 
+                    onDiceRoll={async (formula, options) => {
+                        if (onDiceRoll) {
+                            const r = await onDiceRoll(formula, { ...options, chat: true, isPrivate: role === 'dm' });
+                            if (typeof r === 'number') return r;
+                            if (r && typeof r === 'object') {
+                                if (typeof r.total === 'number') return r.total;
+                                if (typeof r.result === 'number') return r.result;
+                            }
+                            const parsed = parseInt(r);
+                            return isNaN(parsed) ? 0 : parsed;
+                        }
+                    }}
+                    diceLog={diceLog}
                     onLogAction={onLogAction}
                     onBack={() => setViewingCharacterId(null)} 
                     // START CHANGE: Pass Role here to enable DM Tab

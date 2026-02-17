@@ -19,7 +19,7 @@ const STATUS_ICONS = {
 };
 
 // FIX: Added onMouseDown, onTouchStart, and onClick to props
-const Token = ({ token, isOwner, cellPx, isDragging, isSelected, isTurn, onMouseDown, onTouchStart, onClick }) => {
+const Token = ({ token, isOwner, cellPx, isDragging, isSelected, isTurn, onMouseDown, onTouchStart, onClick, showNameplate = true }) => {
     const sizeMap = { medium: 1, large: 2, huge: 3, gargantuan: 4, tiny: 0.5 };
     const sizeMultiplier = typeof token.size === 'number' ? token.size : (sizeMap[token.size] || 1);
     const dimension = cellPx * sizeMultiplier;
@@ -45,6 +45,16 @@ const Token = ({ token, isOwner, cellPx, isDragging, isSelected, isTurn, onMouse
         'cast': 'animate-pulse shadow-[0_0_15px_rgba(99,102,241,0.8)]'
     };
     const animClass = token.anim ? (animMap[token.anim] || '') : '';
+
+    // HP Calculation for Sphere Effect
+    const hp = token.hp?.current;
+    const maxHp = token.hp?.max;
+    const hasHp = typeof hp === 'number' && typeof maxHp === 'number' && maxHp > 0;
+    const hpPercent = hasHp ? Math.max(0, Math.min(100, (hp / maxHp) * 100)) : 0;
+    
+    let baseColor = '34, 197, 94'; // Green
+    if (hpPercent < 50) baseColor = '234, 179, 8'; // Yellow
+    if (hpPercent < 25) baseColor = '239, 68, 68'; // Red
 
     // FIX: Removed overridePos, safeX, safeY, x, and y definitions here 
     // because positioning is handled by the parent container in InteractiveMap.jsx
@@ -105,6 +115,25 @@ const Token = ({ token, isOwner, cellPx, isDragging, isSelected, isTurn, onMouse
                     </div>
                 )}
                 
+                {/* Health Ring Overlay */}
+                {isOwner && hasHp && !isDead && (
+                    <svg className="absolute inset-0 w-full h-full pointer-events-none -rotate-90 z-20" viewBox="0 0 100 100">
+                        {/* Background Track */}
+                        <circle cx="50" cy="50" r="46" fill="none" stroke="rgba(0,0,0,0.4)" strokeWidth="6" />
+                        {/* Progress Arc */}
+                        <circle 
+                            cx="50" cy="50" r="46" 
+                            fill="none" 
+                            stroke={`rgb(${baseColor})`} 
+                            strokeWidth="6"
+                            strokeDasharray="289.026"
+                            strokeDashoffset={289.026 * (1 - (hpPercent / 100))}
+                            strokeLinecap="round"
+                            className="transition-all duration-500 ease-out"
+                        />
+                    </svg>
+                )}
+
                 {isDead && (
                     <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
                         <Icon name="skull" size={dimension * 0.6} className="text-red-600 opacity-80"/>
@@ -134,7 +163,8 @@ const Token = ({ token, isOwner, cellPx, isDragging, isSelected, isTurn, onMouse
                 })}
             </div>
 
-            <div 
+            {showNameplate && (
+                <div 
                 className={`absolute left-1/2 bg-slate-950/80 backdrop-blur-sm text-white rounded-full pointer-events-none select-none z-30 shadow-lg border ${isPc ? 'border-amber-500/30' : 'border-red-500/30'} border-opacity-50`}
                 style={{ 
                     fontSize: `${fontSize}px`,
@@ -152,8 +182,9 @@ const Token = ({ token, isOwner, cellPx, isDragging, isSelected, isTurn, onMouse
                     whiteSpace: 'nowrap'
                 }}
             >
-                {token.name || "Unknown"}
-            </div>
+                    {token.name || "Unknown"}
+                </div>
+            )}
             {/* --- END OF CHANGES --- */}
         </div>
     );

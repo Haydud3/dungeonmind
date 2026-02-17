@@ -6,7 +6,7 @@ import SheetContainer from './character-sheet/SheetContainer';
 import { useCharacterStore } from '../stores/useCharacterStore';
 
 // START CHANGE: Add manual combatant props to destructuring
-const WorldView = ({ data, role, updateCloud, updateMapState, user, apiKey, onDiceRoll, savePlayer, onInitiative, updateCombatant, removeCombatant, onClearRolls, onAutoRoll, setShowHandoutCreator, code, addManualCombatant, players, npcs, sidebarMode, onLogAction, sidebarIsOpen }) => {
+const WorldView = ({ data, role, updateCloud, updateMapState, user, apiKey, onDiceRoll, diceLog, savePlayer, onInitiative, updateCombatant, removeCombatant, onClearRolls, onAutoRoll, setShowHandoutCreator, code, addManualCombatant, players, npcs, sidebarMode, onLogAction, sidebarIsOpen }) => {
     // State to track which sheet is open
     const [activeSheetId, setActiveSheetId] = useState(null);
     const [sheetContext, setSheetContext] = useState(null); // NEW STATE FOR SHEET CONTEXT
@@ -83,6 +83,7 @@ const WorldView = ({ data, role, updateCloud, updateMapState, user, apiKey, onDi
                         addManualCombatant={addManualCombatant}
                         players={players}
                         npcs={npcs}
+                        diceLog={diceLog}
                         // END CHANGE
                     />
                 </div>
@@ -97,8 +98,21 @@ const WorldView = ({ data, role, updateCloud, updateMapState, user, apiKey, onDi
                         characterId={sheetContext?.characterId}
                         tokenId={sheetContext?.tokenId}
                         isTokenSheet={sheetContext?.isTokenSheet}
+                        diceLog={diceLog}
                         onClose={() => { setActiveSheetId(null); setSheetContext(null); }}
-                        onDiceRoll={onDiceRoll}
+                        onDiceRoll={async (formula, options) => {
+                            if (onDiceRoll) {
+                                const r = await onDiceRoll(formula, { ...options, chat: true, isPrivate: role === 'dm' });
+                                if (typeof r === 'number') return r;
+                                if (r && typeof r === 'object') {
+                                    if (typeof r.total === 'number') return r.total;
+                                    if (typeof r.result === 'number') return r.result;
+                                    if (typeof r.value === 'number') return r.value;
+                                }
+                                const parsed = parseInt(r);
+                                return isNaN(parsed) ? 0 : parsed;
+                            }
+                        }}
                         onInitiative={onInitiative}
                         onLogAction={onLogAction}
                         onPlaceTemplate={(spell) => {}}

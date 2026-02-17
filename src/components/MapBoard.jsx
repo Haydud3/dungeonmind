@@ -18,7 +18,7 @@ import CompendiumModal from './map/CompendiumModal';
 // --- CONFIG ---
 const GRID_SIZE_DEFAULT = 5;
 
-const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDiceRoll, savePlayer, activeTemplate, onClearTemplate, onInitiative, onPlaceTemplate }) => {
+const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDiceRoll, savePlayer, activeTemplate, onClearTemplate, onInitiative, onPlaceTemplate, diceLog }) => {
     const canvasRef = useRef(null);
     const containerRef = useRef(null);
 
@@ -355,7 +355,19 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
     const deleteToken = (tokenId) => {
         if (!confirm("Remove this token?")) return;
         const newTokens = tokens.filter(t => t.id !== tokenId);
-        updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...data.campaign.activeMap, tokens: newTokens } } });
+        
+        // Remove from combat tracker
+        const combat = data.campaign?.combat;
+        let newCampaign = { ...data.campaign, activeMap: { ...data.campaign.activeMap, tokens: newTokens } };
+
+        if (combat?.combatants) {
+            const newCombatants = combat.combatants.filter(c => String(c.tokenId) !== String(tokenId));
+            if (newCombatants.length !== combat.combatants.length) {
+                newCampaign.combat = { ...combat, combatants: newCombatants };
+            }
+        }
+
+        updateCloud({ ...data, campaign: newCampaign });
         setSelectedTokenId(null);
     };
 
@@ -1133,6 +1145,7 @@ const MapBoard = ({ data, role, updateMapState, updateCloud, user, apiKey, onDic
                         onSave={savePlayer} 
                         onDiceRoll={onDiceRoll} 
                         onInitiative={onInitiative}
+                        diceLog={diceLog}
                         // --- FIX: PASS ROLE HERE ---
                         role={role}
                         // ---------------------------

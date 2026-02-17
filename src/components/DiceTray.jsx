@@ -8,7 +8,7 @@ const DiceTray = ({ diceLog = [], handleDiceRoll }) => {
                 {[4, 6, 8, 10, 12, 20, 100].map(d => (
                     <button 
                         key={d} 
-                        onClick={() => handleDiceRoll(d)} 
+                        onClick={() => handleDiceRoll(`1d${d}`, { alias: `d${d} Roll` })} 
                         className="bg-slate-700 hover:bg-amber-700 text-xs font-mono py-2 rounded border border-slate-600 transition-colors text-white"
                     >
                         d{d}
@@ -18,14 +18,20 @@ const DiceTray = ({ diceLog = [], handleDiceRoll }) => {
             
             <div className="h-24 overflow-y-auto custom-scroll bg-slate-900/50 rounded p-2 font-mono text-xs space-y-1">
                 {diceLog.map(log => (
-                    <div key={log.id} className="flex justify-between border-b border-slate-800 pb-1">
-                        <span className="text-slate-400">{log.die}</span>
-                        <span className={`font-bold ${
-                            log.result == 20 && log.die === 'd20' ? 'text-green-400' : 
-                            log.result == 1 && log.die === 'd20' ? 'text-red-400' : 'text-amber-400'
-                        }`}>
-                            {log.result}
-                        </span>
+                    <div key={log.id} className="flex flex-col border-b border-slate-800 pb-2 mb-1 last:border-0">
+                        <div className="flex justify-between items-baseline">
+                            <span className="font-bold text-slate-300">{log.die}</span>
+                            <span className="text-[10px] text-slate-500">{log.formulaDisplay}</span>
+                        </div>
+                        <div className="flex justify-between items-center mt-1">
+                            <div className="flex items-center gap-1 text-slate-400">
+                                <span className={log.natural == 20 ? "text-green-400 font-bold" : log.natural == 1 ? "text-red-400 font-bold" : ""}>
+                                    {log.natural}
+                                </span>
+                                {log.mod !== undefined && log.mod !== 0 && <span>{log.mod >= 0 ? '+' : ''}{log.mod}</span>}
+                            </div>
+                            <span className="text-lg font-bold text-amber-500">= {log.result}</span>
+                        </div>
                     </div>
                 ))}
             </div>

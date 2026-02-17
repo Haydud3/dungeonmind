@@ -32,7 +32,7 @@ const VFX_FLAVORS = [
     { id: 'none', icon: 'circle-off', color: 'text-slate-400' }
 ];
 
-const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, activeTemplate, sidebarIsOpen, sidebarMode, updateCombatant, removeCombatant, onClearRolls, onAutoRoll, setShowHandoutCreator, code, addManualCombatant, players, npcs, user }) => {
+const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, activeTemplate, sidebarIsOpen, sidebarMode, updateCombatant, removeCombatant, onClearRolls, onAutoRoll, setShowHandoutCreator, code, addManualCombatant, players, npcs, user, diceLog }) => {
     const { sendPing, triggerVfx } = useCampaign();
     const { targetingPreview, setTargetingPreview, clearTargetingPreview, addEffect, clearEffects } = useVfxStore();
 
@@ -48,7 +48,10 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     const lights = mapData.lights || [];
     const mapUrl = mapData.url;
     const visionActive = mapData.visionActive !== false; 
-    const mapGrid = mapData.grid || { size: 50, offsetX: 0, offsetY: 0, visible: true, snap: true };
+    const mapGrid = { 
+        size: 50, offsetX: 0, offsetY: 0, visible: true, snap: true, nameplates: true,
+        ...(mapData.grid || {}) 
+    };
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || window.innerWidth <= 768;
 
     // 2. ALL STATE HOOKS
@@ -89,6 +92,11 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     const [spawningToken, setSpawningToken] = useState(null);
     const [gridCalStart, setGridCalStart] = useState(null);
     const gridCalStartRef = useRef(null); // NEW: Reference for global listeners
+    const [selectionStart, setSelectionStart] = useState(null);
+    const selectionStartRef = useRef(null);
+    const [multiSelectStart, setMultiSelectStart] = useState(null);
+    const multiSelectStartRef = useRef(null);
+    const [multiSelectedIds, setMultiSelectedIds] = useState([]);
     const [activeLightId, setActiveLightId] = useState(null);
     const [assembledMapUrl, setAssembledMapUrl] = useState(null);
     const [fullTexture, setFullTexture] = useState(null);
@@ -115,6 +123,15 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         const onFsChange = () => setIsFullscreen(!!document.fullscreenElement);
         document.addEventListener('fullscreenchange', onFsChange);
         return () => document.removeEventListener('fullscreenchange', onFsChange);
+    }, []);
+
+    // DEBUG: Monitor WebGL Context
+    useEffect(() => {
+        const handleContextLost = (e) => {
+            console.error("[DEBUG] WebGL Context Lost detected on main window.");
+        };
+        window.addEventListener('webglcontextlost', handleContextLost);
+        return () => window.removeEventListener('webglcontextlost', handleContextLost);
     }, []);
 
     useEffect(() => {
@@ -180,6 +197,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     const latestTokensRef = useRef(tokens);
     const latestMeasurementRef = useRef(activeMeasurement);
     const playedVfxRef = useRef(new Set());
+    const groupOriginsRef = useRef({}); // Stores initial positions for group drag
 
     // 4. VISION ENGINE LOGIC (Memoized to prevent render loops)
     const img = mapImageRef.current;
@@ -534,6 +552,15 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             setGridCalStart(null);
             gridCalStartRef.current = null;
         }
+        if (activeTool !== 'init_select') {
+            setSelectionStart(null);
+            selectionStartRef.current = null;
+        }
+        if (activeTool !== 'move') {
+            setMultiSelectStart(null);
+            multiSelectStartRef.current = null;
+            setMultiSelectedIds([]);
+        }
     }, [activeTool]);
 
     // START CHANGE: iOS Safari Gesture Prevention (Stops Ghosting/Crashing)
@@ -880,7 +907,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
             // B. NORMAL MOVE LOGIC (1 Finger/Mouse)
             const isDrawing = ['wall', 'door', 'delete'].includes(activeTool);
-            if (!movingTokenId && !isPanning && !activeMeasurement && !gridCalStartRef.current && !isDrawing) return;
+            if (!movingTokenId && !isPanning && !activeMeasurement && !gridCalStartRef.current && !selectionStartRef.current && !multiSelectStartRef.current && !isDrawing) return;
             
             if (activeMeasurement) {
                 setActiveMeasurement(prev => ({ ...prev, end: coords }));
@@ -899,6 +926,10 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                     x: gStart.x + (dx >= 0 ? side : -side),
                     y: gStart.y + (dy >= 0 ? side : -side)
                 });
+            } else if (selectionStartRef.current) {
+                setCursorPos(coords);
+            } else if (multiSelectStartRef.current) {
+                setCursorPos(coords);
             } else if (movingTokenId) {
                 // OPTIMIZATION: Direct DOM Manipulation for Dragging
                 // This bypasses React State updates (re-renders) for smooth 60fps dragging
@@ -912,14 +943,36 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                     const snapped = snapToGrid(coords.x, coords.y, img.naturalWidth, img.naturalHeight, sMult);
                     movingTokenPosRef.current = snapped;
 
-                    // Move DOM Element directly
-                    const el = document.getElementById(`token-node-${movingTokenId}`);
-                    if (el) {
-                        const px = (snapped.x / 100) * mapDimensions.width;
-                        const py = (snapped.y / 100) * mapDimensions.height;
-                        el.style.left = `${px}px`;
-                        el.style.top = `${py}px`;
-                        el.style.transition = 'none'; // Disable CSS transition during drag
+                    // Group Drag Logic
+                    if (multiSelectedIds.includes(movingTokenId)) {
+                        // Calculate delta from leader's original position
+                        const leaderOrigin = groupOriginsRef.current[movingTokenId];
+                        if (leaderOrigin) {
+                            const deltaX = snapped.x - leaderOrigin.x;
+                            const deltaY = snapped.y - leaderOrigin.y;
+
+                            multiSelectedIds.forEach(id => {
+                                const origin = groupOriginsRef.current[id];
+                                if (origin) {
+                                    const newX = origin.x + deltaX;
+                                    const newY = origin.y + deltaY;
+                                    const el = document.getElementById(`token-node-${id}`);
+                                    if (el) {
+                                        el.style.left = `${(newX / 100) * mapDimensions.width}px`;
+                                        el.style.top = `${(newY / 100) * mapDimensions.height}px`;
+                                        el.style.transition = 'none';
+                                    }
+                                }
+                            });
+                        }
+                    } else {
+                        // Single Token Drag
+                        const el = document.getElementById(`token-node-${movingTokenId}`);
+                        if (el) {
+                            el.style.left = `${(snapped.x / 100) * mapDimensions.width}px`;
+                            el.style.top = `${(snapped.y / 100) * mapDimensions.height}px`;
+                            el.style.transition = 'none';
+                        }
                     }
                 }
             } else if (isPanning) {
@@ -981,6 +1034,8 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             const mTokenId = movingTokenId;
             const mPos = movingTokenPosRef.current; // Use Ref instead of State
             const gStart = gridCalStartRef.current; 
+            const sStart = selectionStartRef.current;
+            const msStart = multiSelectStartRef.current;
             const mData = latestDataRef.current;
             const currentTokens = latestTokensRef.current;
 
@@ -1057,6 +1112,97 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                 if (e.stopPropagation) e.stopPropagation();
                 return;
             }
+
+            // Initiative Selection Logic
+            if (activeTool === 'init_select' && sStart) {
+                const x1 = Math.min(sStart.x, coords.x);
+                const y1 = Math.min(sStart.y, coords.y);
+                const x2 = Math.max(sStart.x, coords.x);
+                const y2 = Math.max(sStart.y, coords.y);
+
+                const selectedNpcs = currentTokens.filter(t => {
+                    if (t.type === 'pc' || t.isHidden) return false; // Ignore PCs and Hidden tokens
+                    const tx = (t.x / 100) * mapDimensions.width;
+                    const ty = (t.y / 100) * mapDimensions.height;
+                    return tx >= x1 && tx <= x2 && ty >= y1 && ty <= y2;
+                });
+
+                if (selectedNpcs.length > 0) {
+                    const combat = mData.campaign?.combat || { active: true, round: 1, turn: 0, combatants: [] };
+                    let newCombatants = [...(combat.combatants || [])];
+                    let madeChanges = false;
+
+                    selectedNpcs.forEach(token => {
+                        const master = (npcs || []).find(n => idsMatch(n.id, token.characterId));
+                        const dexMod = master ? Math.floor(((master.stats?.dex || 10) - 10) / 2) : 0;
+                        const roll = Math.floor(Math.random() * 20) + 1 + dexMod;
+
+                        const existingIdx = newCombatants.findIndex(c => c.tokenId === token.id);
+                        if (existingIdx !== -1) {
+                            // Only roll if they don't have initiative yet
+                            if (newCombatants[existingIdx].init === null || newCombatants[existingIdx].init === undefined) {
+                                newCombatants[existingIdx] = { ...newCombatants[existingIdx], init: roll };
+                                madeChanges = true;
+                            }
+                        } else {
+                            newCombatants.push({
+                                id: token.id,
+                                characterId: token.characterId,
+                                name: token.name,
+                                init: roll,
+                                type: 'npc',
+                                tokenId: token.id,
+                                image: token.image
+                            });
+                            madeChanges = true;
+                        }
+                    });
+
+                    if (madeChanges) {
+                        newCombatants.sort((a, b) => (b.init || 0) - (a.init || 0));
+                        updateCloud({ ...mData, campaign: { ...mData.campaign, combat: { ...combat, combatants: newCombatants, active: true } } });
+                        triggerHaptic('medium');
+                    }
+                }
+                
+                setSelectionStart(null);
+                selectionStartRef.current = null;
+                setCursorPos({ x: 0, y: 0 });
+                setActiveTool('move');
+                if (e.stopPropagation) e.stopPropagation();
+                return;
+            }
+
+            // Multi-Select Logic (Right Click Drag)
+            if (msStart) {
+                const x1 = Math.min(msStart.x, coords.x);
+                const y1 = Math.min(msStart.y, coords.y);
+                const x2 = Math.max(msStart.x, coords.x);
+                const y2 = Math.max(msStart.y, coords.y);
+
+                const selected = currentTokens.filter(t => {
+                    if (t.isHidden && role !== 'dm') return false;
+                    
+                    // Permission Check
+                    const isOwner = role === 'dm' || t.ownerId === user?.uid || (t.controlledBy || []).includes(user?.uid);
+                    if (!isOwner) return false;
+
+                    const tx = (t.x / 100) * mapDimensions.width;
+                    const ty = (t.y / 100) * mapDimensions.height;
+                    return tx >= x1 && tx <= x2 && ty >= y1 && ty <= y2;
+                });
+
+                setMultiSelectedIds(selected.map(t => t.id));
+                
+                setMultiSelectStart(null);
+                multiSelectStartRef.current = null;
+                setCursorPos({ x: 0, y: 0 });
+                
+                // Prevent context menu from firing immediately after drag
+                if (e.stopPropagation) e.stopPropagation();
+                return;
+            }
+
             // 1. CLICK LOGIC: Open Radial HUD (Check distance from touchStartPos)
             const dist = Math.hypot(e.clientX - touchStartPos.current.x, e.clientY - touchStartPos.current.y);
             const isClick = dist < 5;
@@ -1070,11 +1216,32 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             if (mTokenId && mPos && !isClick) {
                 const img = mapImageRef.current;
                 if (img) {
-                    const { x, y } = mPos; // Already snapped in handleGlobalMove
-                    // Calculate and store centerPoint for VFX engine
-                    const centerPx = calculateTokenCenter({ x, y }, img.naturalWidth, img.naturalHeight);
+                    let newTokens = [...currentTokens];
+                    if (multiSelectedIds.includes(mTokenId)) {
+                        // Group Move Commit
+                        const leaderOrigin = groupOriginsRef.current[mTokenId];
+                        if (leaderOrigin) {
+                            const deltaX = mPos.x - leaderOrigin.x;
+                            const deltaY = mPos.y - leaderOrigin.y;
+                            
+                            newTokens = newTokens.map(t => {
+                                if (multiSelectedIds.includes(t.id) && groupOriginsRef.current[t.id]) {
+                                    const origin = groupOriginsRef.current[t.id];
+                                    const nx = origin.x + deltaX;
+                                    const ny = origin.y + deltaY;
+                                    const centerPx = calculateTokenCenter({ x: nx, y: ny }, img.naturalWidth, img.naturalHeight);
+                                    return { ...t, x: nx, y: ny, centerPx };
+                                }
+                                return t;
+                            });
+                        }
+                    } else {
+                        // Single Move Commit
+                        const { x, y } = mPos;
+                        const centerPx = calculateTokenCenter({ x, y }, img.naturalWidth, img.naturalHeight);
+                        newTokens = newTokens.map(t => t.id === mTokenId ? { ...t, x, y, centerPx } : t);
+                    }
                     
-                    const newTokens = currentTokens.map(t => t.id === mTokenId ? { ...t, x, y, centerPx } : t);
                     updateCloud({ ...mData, campaign: { ...data.campaign, activeMap: { ...data.campaign.activeMap, tokens: newTokens } } }, true);
                 }
             }
@@ -1134,7 +1301,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             window.removeEventListener('pointercancel', handleGlobalUp);
             // REMOVED: window.removeEventListener('touchmove', handleGlobalMove);
         };
-    }, [movingTokenId, isPanning, activeMeasurement, tokens, activeTool, mapGrid, stampSettings, mapDimensions]);
+    }, [movingTokenId, isPanning, activeMeasurement, tokens, activeTool, mapGrid, stampSettings, mapDimensions, multiSelectedIds]);
 
     // --- 2. MATH HELPERS ---
     
@@ -1250,6 +1417,20 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         const img = mapImageRef.current;
         if (!img) return;
 
+        // Group Drag Setup
+        if (multiSelectedIds.includes(tokenId)) {
+            const origins = {};
+            multiSelectedIds.forEach(id => {
+                const t = latestTokensRef.current.find(tk => tk.id === id);
+                if (t) origins[id] = { x: t.x, y: t.y };
+            });
+            groupOriginsRef.current = origins;
+        } else {
+            // If clicking outside selection, clear selection unless shift is held (optional, but standard)
+            // For now, simple clear as per prompt implication
+            setMultiSelectedIds([]);
+        }
+
         setMovingTokenId(tokenId);
         setIsDraggingToken(true);
         setDragStartPx({ x: (token.x / 100) * img.naturalWidth, y: (token.y / 100) * img.naturalHeight });
@@ -1287,7 +1468,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         }
 
         // 1. Grid Calibration & Drawing Priority (Phase 1 Reset)
-        const isDrawingTool = ['wall', 'door', 'delete', 'light', 'grid_cal', 'ruler', 'sphere', 'sphere_stamp'].includes(activeTool);
+        const isDrawingTool = ['wall', 'door', 'delete', 'light', 'grid_cal', 'ruler', 'sphere', 'sphere_stamp', 'init_select'].includes(activeTool);
         
         if (isDrawingTool) {
             setIsPanning(false);
@@ -1303,6 +1484,15 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                 const startCoords = getMapCoords(e);
                 setGridCalStart(startCoords);
                 gridCalStartRef.current = startCoords;
+                setCursorPos(startCoords);
+                return;
+            }
+
+            // Initiative Selection Start
+            if (activeTool === 'init_select') {
+                const startCoords = getMapCoords(e);
+                setSelectionStart(startCoords);
+                selectionStartRef.current = startCoords;
                 setCursorPos(startCoords);
                 return;
             }
@@ -1328,10 +1518,22 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             return;
         }
 
+        // 2. Multi-Select Start (Right Click in Move Mode)
+        if (activeTool === 'move' && e.button === 2) {
+            const startCoords = getMapCoords(e);
+            setMultiSelectStart(startCoords);
+            multiSelectStartRef.current = startCoords;
+            setCursorPos(startCoords);
+            return;
+        }
+
         // 2. Map Panning (Default Interaction)
         if (activeTool === 'move' && !movingTokenId) {
             e.currentTarget.setPointerCapture(e.pointerId);
             setIsPanning(true);
+            if (multiSelectedIds.length > 0) {
+                setMultiSelectedIds([]);
+            }
         }
 
         // 3. Long-Press Ping Logic
@@ -1375,7 +1577,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             }
         }
         
-        if (activeTool === 'wall' || activeTool === 'door' || activeTool === 'delete') {
+        if (activeTool === 'wall' || activeTool === 'door' || activeTool === 'delete' || multiSelectStartRef.current) {
             setCursorPos(coords);
         }
     };
@@ -1395,7 +1597,25 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             const img = mapImageRef.current;
             if (img) {
                 const { x, y } = movingTokenPosRef.current; // Already snapped
-                const newTokens = tokens.map(t => t.id === movingTokenId ? { ...t, x, y } : t);
+                let newTokens = [...tokens];
+
+                if (multiSelectedIds.includes(movingTokenId)) {
+                    const leaderOrigin = groupOriginsRef.current[movingTokenId];
+                    if (leaderOrigin) {
+                        const deltaX = x - leaderOrigin.x;
+                        const deltaY = y - leaderOrigin.y;
+                        newTokens = newTokens.map(t => {
+                            if (multiSelectedIds.includes(t.id) && groupOriginsRef.current[t.id]) {
+                                const origin = groupOriginsRef.current[t.id];
+                                return { ...t, x: origin.x + deltaX, y: origin.y + deltaY };
+                            }
+                            return t;
+                        });
+                    }
+                } else {
+                    newTokens = newTokens.map(t => t.id === movingTokenId ? { ...t, x, y } : t);
+                }
+
                 updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...mapData, tokens: newTokens } } });
             }
         }
@@ -1610,7 +1830,22 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     const handleDeleteToken = (tokenId) => {
         if(confirm("Banish this entity?")) {
             const newTokens = tokens.filter(t => t.id !== tokenId);
-            updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...mapData, tokens: newTokens } } });
+            
+            // Remove from combat tracker
+            const combat = data.campaign?.combat;
+            let newCampaign = { 
+                ...data.campaign, 
+                activeMap: { ...mapData, tokens: newTokens } 
+            };
+
+            if (combat?.combatants) {
+                const newCombatants = combat.combatants.filter(c => !idsMatch(c.tokenId, tokenId));
+                if (newCombatants.length !== combat.combatants.length) {
+                    newCampaign.combat = { ...combat, combatants: newCombatants };
+                }
+            }
+
+            updateCloud({ ...data, campaign: newCampaign });
             setSelectedTokenId(null);
         }
     };
@@ -1626,7 +1861,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             // This ensures rolls from the sidebar sheet appear in the dice tray/chat log
             const sidebarDiceRoll = (formula, options = {}) => {
                 if (onDiceRoll) {
-                    return onDiceRoll(formula, options);
+                    return onDiceRoll(formula, { ...options, chat: true, isPrivate: role === 'dm' });
                 }
             };
             // END CHANGE
@@ -1874,15 +2109,19 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     };
 
     const handleMapRightClick = (e) => {
+        e.preventDefault();
         if (targetingPreview) {
-            e.preventDefault();
             clearTargetingPreview();
+            return;
+        }
+        
+        // Prevent context menu if we were multi-selecting
+        if (multiSelectStartRef.current) {
             return;
         }
 
         if (role !== 'dm' || (activeTool !== 'wall' && activeTool !== 'door' && activeTool !== 'delete')) return;
         
-        e.preventDefault();
         // CUT: Right-click stops the chain
         setWallStart(null);
     };
@@ -2000,6 +2239,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             const currentCombatant = data.campaign?.combat?.combatants?.[data.campaign.combat.turn];
             const isMyTurn = data.campaign?.combat?.active && currentCombatant?.id === token.id;
             const isMoving = movingTokenId === token.id;
+            const isMultiSelected = multiSelectedIds.includes(token.id);
             
             let px = 0, py = 0;
             
@@ -2009,6 +2249,20 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                 px = (token.x / 100) * mapDimensions.width;
                 py = (token.y / 100) * mapDimensions.height;
             }
+
+            // START CHANGE: Highlight tokens inside selection box
+            let isHighlighted = false;
+            if (activeTool === 'init_select' && selectionStart) {
+                const x1 = Math.min(selectionStart.x, cursorPos.x);
+                const y1 = Math.min(selectionStart.y, cursorPos.y);
+                const x2 = Math.max(selectionStart.x, cursorPos.x);
+                const y2 = Math.max(selectionStart.y, cursorPos.y);
+
+                if (token.type !== 'pc' && !token.isHidden && px >= x1 && px <= x2 && py >= y1 && py <= y2) {
+                    isHighlighted = true;
+                }
+            }
+            // END CHANGE
             
             const currentGridSize = mapGrid.size || 50;
             const sizeMap = { tiny: 0.5, small: 1, medium: 1, large: 2, huge: 3, gargantuan: 4 };
@@ -2036,21 +2290,22 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                         transition: isMoving ? 'none' : 'all 0.2s ease-out',
                         fontSize: `${fontSize}px`
                     }}
-                    className={isShaking ? "animate-bounce bg-red-500/50 rounded-full" : ""}
+                    className={`${isShaking ? "animate-bounce bg-red-500/50 rounded-full" : ""} ${isHighlighted ? "ring-4 ring-amber-500 shadow-[0_0_15px_#f59e0b] scale-110 z-50 transition-all duration-150" : ""} ${isMultiSelected ? "ring-2 ring-indigo-400 shadow-[0_0_10px_rgba(99,102,241,0.5)]" : ""}`}
                     onPointerDown={(e) => handleTokenPointerDown(e, token.id)}
                 >
                     <Token 
                         token={{ ...token, image: tokenBlobUrls[token.id] || token.image }} // Pass Blob URL if available
-                        isOwner={role === 'dm' || token.ownerId === data.user?.uid} 
+                        isOwner={role === 'dm' || token.ownerId === user?.uid || (token.controlledBy || []).includes(user?.uid)} 
                         cellPx={currentGridSize} 
                         isDragging={isMoving}
                         isSelected={selectedTokenId === token.id}
                         isTurn={isMyTurn}
+                        showNameplate={mapGrid.nameplates !== false}
                     />
                 </div>
             );
         });
-    }, [tokens, movingTokenId, mapDimensions, mapGrid, role, myCharId, user?.uid, visionActive, lights, walls, shakingTokenId, selectedTokenId, data.campaign?.combat, tokenBlobUrls, activeTool, !!targetingPreview]);
+    }, [tokens, movingTokenId, mapDimensions, mapGrid, role, myCharId, user?.uid, visionActive, lights, walls, shakingTokenId, selectedTokenId, data.campaign?.combat, tokenBlobUrls, activeTool, !!targetingPreview, selectionStart, cursorPos, multiSelectedIds]);
     // END CHANGE
 
     // START CHANGE: Template Management Helpers
@@ -2133,6 +2388,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             // ENSURE THIS IS HERE:
             style={{ touchAction: 'none' }} 
             onPointerDown={handlePointerDown}
+            onContextMenu={(e) => e.preventDefault()}
             onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; }}
             onDrop={handleDrop}
             onDragEnter={() => setIsDraggingToken(true)}
@@ -2330,7 +2586,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                         updateCombatant={updateCombatant}
                         onRemove={removeCombatant}
                         onClearRolls={onClearRolls}
-                        onAutoRoll={onAutoRoll}
+                        onAutoRoll={() => setActiveTool('init_select')}
                         // START CHANGE: Pass data through to tracker
                         addManualCombatant={addManualCombatant}
                         players={players}
@@ -2468,7 +2724,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
                         {/* Phase 3 Wall/Door SVG Layer */}
                         <svg 
-                            className={`absolute top-0 left-0 w-full h-full z-[8] ${(['wall', 'door', 'delete', 'light', 'grid_cal'].includes(activeTool) || activeMeasurement) ? 'pointer-events-auto' : 'pointer-events-none'}`} 
+                            className={`absolute top-0 left-0 w-full h-full z-[8] ${(['wall', 'door', 'delete', 'light', 'grid_cal', 'init_select'].includes(activeTool) || activeMeasurement) ? 'pointer-events-auto' : 'pointer-events-none'}`} 
                             viewBox={`0 0 ${mapDimensions.width} ${mapDimensions.height}`}
                             onClick={handleMapClick}
                             onContextMenu={handleMapRightClick}
@@ -2612,6 +2868,36 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                                     stroke="#22d3ee" 
                                     strokeWidth={3 / view.scale} 
                                     strokeDasharray={`${8 / view.scale},${4 / view.scale}`}
+                                    pointerEvents="none"
+                                />
+                            )}
+
+                            {/* 4.5 Render Initiative Selection Box */}
+                            {selectionStart && activeTool === 'init_select' && (
+                                <rect 
+                                    x={Math.min(selectionStart.x, cursorPos.x)} 
+                                    y={Math.min(selectionStart.y, cursorPos.y)} 
+                                    width={Math.abs(cursorPos.x - selectionStart.x)} 
+                                    height={Math.abs(cursorPos.y - selectionStart.y)} 
+                                    fill="rgba(245, 158, 11, 0.15)" 
+                                    stroke="#f59e0b" 
+                                    strokeWidth={2 / view.scale} 
+                                    strokeDasharray={`${5 / view.scale},${5 / view.scale}`}
+                                    pointerEvents="none"
+                                />
+                            )}
+
+                            {/* 4.6 Render Multi-Select Box */}
+                            {multiSelectStart && activeTool === 'move' && (
+                                <rect 
+                                    x={Math.min(multiSelectStart.x, cursorPos.x)} 
+                                    y={Math.min(multiSelectStart.y, cursorPos.y)} 
+                                    width={Math.abs(cursorPos.x - multiSelectStart.x)} 
+                                    height={Math.abs(cursorPos.y - multiSelectStart.y)} 
+                                    fill="rgba(99, 102, 241, 0.15)" 
+                                    stroke="#6366f1" 
+                                    strokeWidth={2 / view.scale} 
+                                    strokeDasharray={`${5 / view.scale},${5 / view.scale}`}
                                     pointerEvents="none"
                                 />
                             )}

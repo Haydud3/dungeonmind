@@ -68,6 +68,17 @@ const GridControls = ({ grid, onUpdate, onClose, activeTool, setActiveTool }) =>
                             </button>
                         </div>
 
+                        {/* 1.5 Nameplates Toggle */}
+                        <div className="flex items-center justify-between">
+                            <label className="text-xs text-slate-400 font-bold uppercase">Nameplates</label>
+                            <button 
+                                onClick={() => handleChange('nameplates', !(grid.nameplates !== false))} 
+                                className={`w-10 h-5 rounded-full transition-colors relative ${grid.nameplates !== false ? 'bg-indigo-600' : 'bg-slate-700'}`}
+                            >
+                                <div className={`absolute top-1 left-1 w-3 h-3 bg-white rounded-full transition-transform ${grid.nameplates !== false ? 'translate-x-5' : 'translate-x-0'}`}></div>
+                            </button>
+                        </div>
+
                         {/* 2. Cell Size Slider */}
                         <div>
                             <label className="text-xs text-slate-400 font-bold uppercase flex justify-between">

@@ -32,7 +32,14 @@ const CombatTracker = ({ combat, onNextTurn, onEndCombat, onClearRolls, role, up
                 alias: c.name,
                 flavor: "Initiative",
                 chat: true, // Force chat output so it appears in the sidebar
-                callback: (total) => updateCombatant(c.id, { init: parseInt(total) })
+                isPrivate: role === 'dm', // DM rolls are private
+                callback: (total) => {
+                    let val = total;
+                    if (typeof total === 'object' && total !== null) {
+                        val = total.total ?? total.result ?? total.value;
+                    }
+                    updateCombatant(c.id, { init: parseInt(val) || 0 });
+                }
             });
         } else {
             const roll = Math.floor(Math.random() * 20) + 1;
@@ -48,7 +55,7 @@ const CombatTracker = ({ combat, onNextTurn, onEndCombat, onClearRolls, role, up
                     {role === 'dm' && (
                         <>
                             <button onClick={() => setShowAddMenu(!showAddMenu)} title="Add Combatant" className="p-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded transition-colors shadow-lg"><Icon name="plus" size={14}/></button>
-                            <button onClick={onAutoRoll} title="Auto-roll Monsters" className="p-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded transition-colors shadow-lg"><Icon name="zap" size={14}/></button>
+                            <button onClick={onAutoRoll} title="Select NPCs to Roll" className="p-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded transition-colors shadow-lg"><Icon name="zap" size={14}/></button>
                             <button onClick={handleEndCombat} className="text-[10px] bg-slate-700 hover:bg-red-900 px-2 py-1 rounded">End</button>
                         </>
                     )}

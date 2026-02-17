@@ -19,6 +19,7 @@ import DiceOverlay from './components/DiceOverlay';
 import ResolvedImage from './components/ResolvedImage';
 import HandoutEditor from './components/HandoutEditor';
 import LoreView from './components/LoreView';
+import DiceTray from './components/DiceTray';
 import { useCharacterStore } from './stores/useCharacterStore'; 
 import { retrieveContext, buildPrompt, buildCastList } from './utils/loreEngine';
 import { retrieveChunkedMap, resolveChunkedHtml, parseHandoutBody } from './utils/storageUtils';
@@ -395,15 +396,38 @@ function DungeonMindApp() {
   };
   // END CHANGE
 
-  const handleDiceRoll = (sides, modifier = 0, label = "Roll") => {
+  const handleDiceRoll = (formula, modifier = 0, label = "Roll") => {
     // Legacy support for (d, silent) signature
     let silent = false;
-    let mod = modifier;
+    let mod = 0;
     let lbl = label;
+    let sides = 20;
 
-    if (typeof modifier === 'boolean') {
+    // Handle options object (used by character sheet)
+    if (typeof modifier === 'object' && modifier !== null) {
+        mod = modifier.modifier || 0;
+        lbl = modifier.alias || modifier.flavor || label;
+        silent = modifier.silent || (modifier.chat === false);
+    } else if (typeof modifier === 'number') {
+        mod = modifier;
+    } else if (typeof modifier === 'boolean') {
         silent = modifier;
-        mod = 0;
+    }
+
+    // Robust parsing for formula (e.g. "1d20", "1d20 + 5", 20)
+    if (typeof formula === 'string') {
+        const match = formula.match(/(\d+)?d(\d+)(?:\s*([+-])\s*(\d+))?/i);
+        if (match) {
+            sides = parseInt(match[2]);
+            if (match[3] && match[4] && mod === 0) {
+                const val = parseInt(match[4]);
+                mod = match[3] === '+' ? val : -val;
+            }
+        } else {
+            sides = parseInt(formula) || 20;
+        }
+    } else {
+        sides = formula;
     }
 
     return new Promise((resolve) => {
@@ -414,29 +438,22 @@ function DungeonMindApp() {
             const isCrit = sides === 20 && roll === 20;
             const isFail = sides === 20 && roll === 1;
 
-            setRollingDice({ die: sides, result: roll, id: Date.now() });
-            setShowTools(false); 
+            setRollingDice({ die: formula, result: roll, id: Date.now(), total });
             setTimeout(() => {
-                setDiceLog(prev => [{id: Date.now(), die: `d${sides}`, result: roll}, ...prev]);
+                setDiceLog(prev => [{
+                    id: Date.now(), 
+                    die: lbl !== "Roll" ? lbl : formula, 
+                    formulaDisplay: `d${sides}${mod !== 0 ? (mod > 0 ? `+${mod}` : mod) : ''}`,
+                    result: total, 
+                    natural: roll,
+                    mod: mod
+                }, ...prev]);
                 
                 // START CHANGE: Send global chat message instead of local log
-                // The silent flag can be used for things like backend rolls if needed
-                if (!silent) {
-                    const rollType = effectiveRole === 'dm' ? 'roll-private' : 'roll-public';
+                if (!silent && effectiveRole !== 'dm') {
                     const modStr = mod >= 0 ? `+${mod}` : mod;
-                    
-                    const html = `
-                        <div class="flex flex-col text-xs">
-                            <span class="font-bold text-slate-400 uppercase mb-1">${lbl}</span>
-                            <div class="text-base">
-                                <span class="${isCrit ? 'text-green-400 font-bold' : isFail ? 'text-red-400 font-bold' : 'text-white'}">d${sides} (${roll})</span>
-                                ${mod !== 0 ? `<span class="text-slate-500 mx-1">${modStr}</span>` : ''}
-                                ${mod !== 0 ? `<span class="text-slate-500 mr-1">=</span>` : ''}
-                                ${mod !== 0 ? `<span class="text-xl font-bold text-amber-500">${total}</span>` : ''}
-                            </div>
-                        </div>
-                    `;
-                    sendChatMessage(html, rollType);
+                    const html = `<div class="flex flex-col text-xs dice-roll-result" data-total="${total}"><span class="font-bold text-slate-400 uppercase mb-1">${lbl}</span><div class="flex items-baseline gap-1"><span class="text-base ${isCrit ? 'text-green-400 font-bold' : isFail ? 'text-red-400 font-bold' : 'text-white'}">d${sides} (${roll})</span>${mod !== 0 ? `<span class="text-slate-500 text-xs">${modStr}</span>` : ''}<span class="text-slate-500 text-xs">=</span><span class="text-xl font-bold text-amber-500">${total}</span></div></div>`;
+                    sendChatMessage(html, 'roll-public');
                 }
                 // END CHANGE
 
@@ -607,7 +624,9 @@ function DungeonMindApp() {
       updateCloud({ ...data, campaign: { ...data.campaign, combat: { ...combatState, combatants } } }, true);
       
       // Announce Initiative to Chat
-      sendChatMessage(`rolled Initiative: <span class="text-amber-500 font-bold">${roll}</span>`, 'roll-public');
+      if (effectiveRole !== 'dm') {
+          sendChatMessage(`rolled Initiative: <span class="text-amber-500 font-bold">${roll}</span>`, 'roll-public');
+      }
   };
 
   const autoRollNPCs = () => {
@@ -866,6 +885,7 @@ function DungeonMindApp() {
                           updateMapState={updateMapState} 
                           onDiceRoll={handleDiceRoll} 
                           user={user} 
+                          diceLog={diceLog}
                           apiKey={apiKey} 
                           savePlayer={savePlayer} 
                           activeTemplate={activeTemplate} 
@@ -886,7 +906,11 @@ function DungeonMindApp() {
                           npcs={data.npcs}
                           sidebarMode={rightPanel.mode}
                           sidebarIsOpen={rightPanel.mode !== 'closed'}
-                          onLogAction={(msg) => sendChatMessage(msg, 'chat-public')}
+                          onLogAction={(msg) => {
+                              if (effectiveRole !== 'dm') {
+                                  sendChatMessage(msg, 'chat-public');
+                              }
+                          }}
                       />
                       
                       {/* SIDEBAR AS OVERLAY - DOES NOT AFFECT MAP GEOMETRY */}
@@ -910,7 +934,12 @@ function DungeonMindApp() {
                                           onDiceRoll={handleDiceRoll} 
                                           role={effectiveRole}
                                           isOwner={true}
-                                          onLogAction={(html) => sendChatMessage(html, 'chat-public')}
+                                          diceLog={diceLog}
+                                          onLogAction={(html) => {
+                                              if (effectiveRole !== 'dm') {
+                                                  sendChatMessage(html, 'chat-public');
+                                              }
+                                          }}
                                       />
                                   )}
                                   {rightPanel.mode === 'chat' && (
@@ -948,12 +977,17 @@ function DungeonMindApp() {
               {currentView === 'atlas' && <WorldCreator data={data} setData={setData} role={effectiveRole} updateCloud={updateCloud} updateMapState={updateMapState} aiHelper={queryAiService} apiKey={apiKey} />}
 
               {/* 4. PARTY (PCs) */}
-              {currentView === 'party' && <PartyView data={data} role={effectiveRole} activeChar={data.assignments?.[user?.uid]} updateCloud={updateCloud} savePlayer={savePlayer} deletePlayer={deletePlayer} setView={setCurrentView} user={user} aiHelper={queryAiService} onDiceRoll={handleDiceRoll} apiKey={apiKey} edition={data.config?.edition} onPlaceTemplate={handlePlaceTemplate} onInitiative={handleInitiative} 
-                  generatePlayer={generatePlayer}
+              {currentView === 'party' && <PartyView data={data} role={effectiveRole} activeChar={data.assignments?.[user?.uid]} updateCloud={updateCloud} savePlayer={savePlayer} deletePlayer={deletePlayer} setView={setCurrentView} user={user} aiHelper={queryAiService} onDiceRoll={handleDiceRoll} diceLog={diceLog} apiKey={apiKey} edition={data.config?.edition} onPlaceTemplate={handlePlaceTemplate} onInitiative={handleInitiative} 
+                  generatePlayer={generatePlayer} 
+                  onLogAction={(msg) => {
+                      if (effectiveRole !== 'dm') {
+                          sendChatMessage(msg, 'chat-public');
+                      }
+                  }}
               />}
 
               {/* 5. BESTIARY (NPCs) */}
-              {currentView === 'npcs' && <NpcView data={data} setData={setData} role={effectiveRole} updateCloud={updateCloud} generateNpc={generateNpc} setChatInput={setInputText} setView={setCurrentView} onPossess={setPossessedNpcId} aiHelper={queryAiService} apiKey={apiKey} edition={data.config?.edition} onDiceRoll={handleDiceRoll} onPlaceTemplate={handlePlaceTemplate} onInitiative={handleInitiative} />}
+              {currentView === 'npcs' && <NpcView data={data} setData={setData} role={effectiveRole} updateCloud={updateCloud} generateNpc={generateNpc} setChatInput={setInputText} setView={setCurrentView} onPossess={setPossessedNpcId} aiHelper={queryAiService} apiKey={apiKey} edition={data.config?.edition} onDiceRoll={handleDiceRoll} diceLog={diceLog} onPlaceTemplate={handlePlaceTemplate} onInitiative={handleInitiative} />}
               
               {/* START CHANGE: Ensure 'sheet' view only renders when explicitly active and not overriding others */}
               {currentView === 'sheet' && (
@@ -962,6 +996,7 @@ function DungeonMindApp() {
                           characterId={data.assignments?.[user?.uid]} 
                           onSave={savePlayer} 
                           onDiceRoll={handleDiceRoll} 
+                          diceLog={diceLog}
                           // --- FIX: PASS ROLE HERE ---
                           role={effectiveRole}
                           // ---------------------------
@@ -1030,6 +1065,19 @@ function DungeonMindApp() {
        )}
        <div className="fixed inset-0 pointer-events-none z-[99999]">{rollingDice && <DiceOverlay roll={rollingDice} />}</div>
        
+       {/* Global Dice Tray Sidebar */}
+       {showTools && (
+           <div className="fixed z-[100] right-0 top-0 bottom-0 w-64 bg-slate-900/95 backdrop-blur border-l border-slate-700 p-4 shadow-2xl animate-in slide-in-from-right duration-300 flex flex-col">
+               <div className="flex justify-between items-center mb-4">
+                   <span className="fantasy-font text-amber-500 text-lg">Dice Roller</span>
+                   <button onClick={() => setShowTools(false)} className="text-slate-400 hover:text-white">
+                       <Icon name="x" size={24}/>
+                   </button>
+               </div>
+               <DiceTray diceLog={diceLog} handleDiceRoll={handleDiceRoll} />
+           </div>
+       )}
+
        {sidebarDragEntity && (
            <div 
                className="fixed z-[999999] pointer-events-none w-16 h-16 rounded-full border-2 border-amber-500 bg-slate-900 shadow-2xl overflow-hidden flex items-center justify-center animate-in zoom-in-50 duration-200"

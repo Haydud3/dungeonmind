@@ -55,7 +55,7 @@ const calculateFaces = (type) => {
         if (type === 20) geo = new THREE.IcosahedronGeometry(1); 
         
         // Convert to non-indexed to get raw triangle data
-        const nonIndexed = geo.toNonIndexed(); 
+        const nonIndexed = geo.index ? geo.toNonIndexed() : geo; 
         const pos = nonIndexed.attributes.position;
         const normal = nonIndexed.attributes.normal;
         
@@ -142,13 +142,53 @@ const CONFIG = {
 // --- DIE MESH ---
 const DieMesh = ({ dieType, result }) => {
     const meshRef = useRef();
-    const safeType = parseInt(dieType) || 6;
-    const cfg = CONFIG[safeType] || CONFIG[6];
+    console.log("[DEBUG] DieMesh input:", { dieType, result });
+    
+    // START CHANGE: Robust parsing for dieType (e.g. "d20", "1d20", 20)
+    let type = 6;
+    const strType = String(dieType).toLowerCase();
+    if (strType.includes('d')) {
+        const parts = strType.split('d');
+        // Find the last numeric part (handles "d1d4" -> 4, "1d20" -> 20)
+        for (let i = parts.length - 1; i >= 0; i--) {
+            const val = parseInt(parts[i]);
+            if (!isNaN(val) && val > 0) {
+                type = val;
+                break;
+            }
+        }
+    } else {
+        type = parseInt(strType) || 6;
+    }
+    const safeType = CONFIG[type] ? type : 6;
+    const cfg = CONFIG[safeType];
+    // END CHANGE
+    
+    // START CHANGE: Sanitize result to prevent NaN
+    const safeResult = useMemo(() => {
+        if (result === null || result === undefined) return 1;
+        
+        // Handle object if passed directly
+        if (typeof result === 'object') {
+             const val = result.total ?? result.result ?? result.value;
+             if (val !== undefined) return parseInt(val) || 1;
+        }
+
+        const r = parseInt(result);
+        return isNaN(r) ? 1 : r;
+    }, [result]);
+    // END CHANGE
 
     const geometry = useMemo(() => cfg.geo(), [safeType]);
 
     const { faceData, targetQuat, d4GroupRot } = useMemo(() => {
         let rawFaces = calculateFaces(safeType);
+        
+        // START CHANGE: Safety fallback if faces are missing
+        if (!rawFaces || rawFaces.length === 0) {
+            rawFaces = calculateFaces(6);
+        }
+        // END CHANGE
         
         // --- FACE SELECTION ---
         rawFaces.sort((a, b) => b.pos.y - a.pos.y);
@@ -169,12 +209,12 @@ const DieMesh = ({ dieType, result }) => {
 
         rawFaces.forEach(f => {
             if (f === winnerFace) {
-                let val = result;
-                if (safeType === 10 && result === 10) val = 0;
+                let val = safeResult;
+                if (safeType === 10 && safeResult === 10) val = 0;
                 valueMap.set(f, val);
             } else {
                 let val = Math.floor(Math.random() * safeType) + 1;
-                if (val === result) val = (val % safeType) + 1;
+                if (val === safeResult) val = (val % safeType) + 1;
                 if (safeType === 10 && val === 10) val = 0;
                 if (safeType === 100) val = Math.floor(Math.random() * 10) * 10;
                 valueMap.set(f, val);
@@ -205,13 +245,13 @@ const DieMesh = ({ dieType, result }) => {
                 pos: [finalPos.x, finalPos.y, finalPos.z],
                 rot: [dummy.rotation.x, dummy.rotation.y, dummy.rotation.z],
                 val: displayVal,
-                isResult: (val === result),
+                isResult: (val === safeResult),
                 visible: true
             };
         });
 
         return { faceData: textItems, targetQuat: targetQ, d4GroupRot: groupRot };
-    }, [safeType, result]);
+    }, [safeType, safeResult]);
 
     useFrame((state, delta) => {
         if (!meshRef.current) return;
@@ -265,18 +305,19 @@ const DieMesh = ({ dieType, result }) => {
 };
 
 const DiceOverlay = ({ roll }) => {
+    console.log("[DEBUG] DiceOverlay roll data:", roll);
     if (!roll) return null;
 
     return (
         <div className="fixed inset-0 z-[9999] pointer-events-none flex items-center justify-center w-screen h-screen">
             <div className="absolute inset-0 bg-black/60 backdrop-blur-[2px] animate-in fade-in duration-300"></div>
             <div className="w-full h-full relative z-10">
-                <Canvas camera={{ position: [0, 10, 0], fov: 40 }}>
+                <Canvas dpr={[1, 1.5]} camera={{ position: [0, 10, 0], fov: 40 }} gl={{ antialias: false, powerPreference: "high-performance" }}>
                     <ambientLight intensity={3} />
                     <pointLight position={[10, 10, 10]} intensity={2} />
                     <pointLight position={[-10, 10, -10]} intensity={1} color="orange" />
                     
-                    <DieMesh dieType={roll.die} result={roll.result} />
+                    <DieMesh dieType={roll.die || roll.sides || roll.formula} result={roll.total ?? roll.result ?? roll.value} />
                     
                     <ContactShadows position={[0, 0, 0]} opacity={0.5} scale={40} blur={2} far={10} color="#000" />
                 </Canvas>

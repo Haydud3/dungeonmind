@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Icon from './Icon';
-import DiceTray from './DiceTray';
 import { retrieveContext, buildPrompt } from '../utils/loreEngine';
 // START CHANGE: Import Character Store for Targeting
 import { useCharacterStore } from '../stores/useCharacterStore';
@@ -342,11 +341,12 @@ const SessionView = ({
                                             ) : (
                                                 /* START CHANGE: Interactive Dice Rolls */
                                                 (() => {
-                                                const html = formatMessage(msg.content);
+                                                const isRoll = msg.type?.startsWith('roll-');
+                                                const html = isRoll ? msg.content : formatMessage(msg.content);
                                                 // Check for "Rolled 15" or similar patterns from DiceTray
                                                 // Regex matches: "Rolled [Result] (Formula)" or just numbers
                                                 // FIX: Added safety check (msg.content && ...)
-                                                const damageMatch = msg.content && msg.content.match(/Rolled\s+(\d+)/i);
+                                                const damageMatch = msg.content && (msg.content.match(/Rolled\s+(\d+)/i) || msg.content.match(/data-total="(\d+)"/));
                                                 
                                                 if (role === 'dm' && damageMatch) {
                                                     const dmg = parseInt(damageMatch[1]);

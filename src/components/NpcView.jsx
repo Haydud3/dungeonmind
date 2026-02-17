@@ -7,7 +7,7 @@ import { parsePdf } from '../utils/dndBeyondParser.js';
 import { enrichCharacter } from '../utils/srdEnricher.js';
 
 // START CHANGE: Add generateNpc to props
-const NpcView = ({ data, setData, role, updateCloud, setChatInput, setView, onPossess, aiHelper, apiKey, edition, onDiceRoll, generateNpc }) => {
+const NpcView = ({ data, setData, role, updateCloud, setChatInput, setView, onPossess, aiHelper, apiKey, edition, onDiceRoll, diceLog, generateNpc }) => {
     // View State
     const [viewingNpcId, setViewingNpcId] = useState(null);
 // END CHANGE
@@ -273,7 +273,19 @@ const NpcView = ({ data, setData, role, updateCloud, setChatInput, setView, onPo
                     characterId={viewingNpcId} 
                     onSave={handleSheetSave} 
                     onBack={() => setViewingNpcId(null)} 
-                    onDiceRoll={onDiceRoll} 
+                    onDiceRoll={async (formula, options) => {
+                        if (onDiceRoll) {
+                            const r = await onDiceRoll(formula, { ...options, chat: true, isPrivate: role === 'dm' });
+                            if (typeof r === 'number') return r;
+                            if (r && typeof r === 'object') {
+                                if (typeof r.total === 'number') return r.total;
+                                if (typeof r.result === 'number') return r.result;
+                            }
+                            const parsed = parseInt(r);
+                            return isNaN(parsed) ? 0 : parsed;
+                        }
+                    }} 
+                    diceLog={diceLog}
                     onLogAction={(msg) => addLogEntry({ message: msg, id: Date.now() })}
                     isNpc={true} 
                     // --- FIX: PASS ROLE HERE ---
