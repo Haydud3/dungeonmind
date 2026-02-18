@@ -3,7 +3,38 @@ import { useCharacterStore } from '../../stores/useCharacterStore';
 import Icon from '../Icon';
 import { compressImage } from '../../utils/imageCompressor';
 
-const HeaderStats = ({ onDiceRoll, onLogAction, onBack, onPossess, isNpc, combatActive, onInitiative }) => {
+const HeaderStats = ({ onDiceRoll, onLogAction, onBack, onPossess, isNpc, combatActive, onInitiative, role }) => {
+  // --- DM EDIT HANDLERS ---
+  const handleHpEdit = (e) => {
+    if (role !== 'dm') return;
+    e.stopPropagation();
+    const val = prompt("Edit HP (current/max):", `${currentHP}/${maxHP}`);
+    if (val) {
+      const parts = val.split('/');
+      const newCurr = parseInt(parts[0]);
+      if (!isNaN(newCurr)) updateHP('current', newCurr);
+      
+      if (parts.length > 1) {
+        const newMax = parseInt(parts[1]);
+        if (!isNaN(newMax)) updateHP('max', newMax);
+      }
+    }
+  };
+
+  const handleHitDiceEdit = (e) => {
+    if (role !== 'dm') return;
+    e.stopPropagation();
+    const val = prompt("Edit Hit Dice (current/max/die):", `${hitDice.current}/${hitDice.max}/${hitDice.die}`);
+    if (val) {
+      const parts = val.split('/');
+      const updates = { ...hitDice };
+      if (parts[0] !== undefined && !isNaN(parseInt(parts[0]))) updates.current = parseInt(parts[0]);
+      if (parts[1] !== undefined && !isNaN(parseInt(parts[1]))) updates.max = parseInt(parts[1]);
+      if (parts[2]) updates.die = parts[2].trim();
+      updateInfo('hitDice', updates);
+    }
+  };
+
   const { character, updateHP, updateStat, updateDeathSaves, setDeathSaves, recoverSlots, shortRest, updateInfo } = useCharacterStore();
   const [isExpanded, setIsExpanded] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -119,9 +150,18 @@ const HeaderStats = ({ onDiceRoll, onLogAction, onBack, onPossess, isNpc, combat
             <div className="flex-1 flex flex-col justify-center min-w-0" onClick={() => setIsExpanded(!isExpanded)}>
                 <div className="flex justify-between items-end mb-1">
                     <span className="text-sm font-bold text-white truncate">{character.name}</span>
-                    <span className={`text-xs font-mono ${isDying ? 'text-red-500 font-bold animate-pulse' : 'text-slate-400'}`}>
+                    <span 
+                        className={`text-xs font-mono ${isDying ? 'text-red-500 font-bold animate-pulse' : 'text-slate-400'} ${role === 'dm' ? 'cursor-pointer hover:text-white underline decoration-dotted' : ''}`}
+                        onClick={handleHpEdit}
+                    >
                         {isDying ? "CRITICAL" : `${currentHP}/${maxHP}`}
                     </span>
+                       {(e) => {
+                           if (role === 'dm') {
+                               e.preventDefault();
+                               handleHitDiceEdit(e);
+                           }
+                       }}
                 </div>
                 
                 {isDying ? (

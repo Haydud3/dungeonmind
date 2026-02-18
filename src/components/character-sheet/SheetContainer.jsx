@@ -121,6 +121,7 @@ const SheetContainer = ({ characterId, tokenId, data, onSave, onDiceRoll, onLogA
                 combatActive={combatActive}
                 onInitiative={onInitiative}
                 isOwner={isOwner}
+                role={role}
             />
 
             {/* --- VISUAL DEBUGGER (Remove this once fixed) --- */}

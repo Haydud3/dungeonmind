@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import Icon from '../Icon';
 import Token from '../Token';
 // START CHANGE: Import isPointInPolygon
@@ -433,6 +433,32 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
      const handleGridUpdate = (newGrid) => {
          updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...data.campaign.activeMap, grid: newGrid } } });
     };
+
+    const handleOpenSheet = useCallback((tokenId) => {
+        const token = tokens.find(t => t.id === tokenId);
+        if (token) {
+            // START CHANGE: Wrap onDiceRoll to force chat output for sidebar
+            // This ensures rolls from the sidebar sheet appear in the dice tray/chat log
+            const sidebarDiceRoll = (formula, options = {}) => {
+                if (onDiceRoll) {
+                    return onDiceRoll(formula, { ...options, chat: true, isPrivate: role === 'dm' });
+                }
+            };
+            // END CHANGE
+
+            // Tell parent to open sheet with TOKEN data (not character ID)
+            updateMapState('open_sheet', { 
+                type: 'token',
+                tokenId: token.id,
+                mapId: mapData.id,
+                token: { ...token, onDiceRoll: sidebarDiceRoll },  // Pass full token object with dice handler injected
+                forceOpen: true,  // Flag: Always open sheet when HUD button is clicked
+                onDiceRoll: sidebarDiceRoll, // Pass dice roll handler to sheet
+                onClearRolls: onClearRolls // Pass clear handler
+            });
+            setSelectedTokenId(null);
+        }
+    }, [tokens, mapData.id, updateMapState, onDiceRoll, role, onClearRolls]);
 
     const handleNextTurn = () => {
         const c = data.campaign?.combat || { active: true, round: 1, turn: 0, combatants: [] };
@@ -1151,7 +1177,11 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             const isClick = dist < 5;
 
             if (mTokenId && isClick) {
-                setSelectedTokenId(mTokenId);
+                if (sidebarIsOpen) {
+                    handleOpenSheet(mTokenId);
+                } else {
+                    setSelectedTokenId(mTokenId);
+                }
                 triggerHaptic('light');
             }
 
@@ -1263,7 +1293,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             window.removeEventListener('pointercancel', handleGlobalUp);
             // REMOVED: window.removeEventListener('touchmove', handleGlobalMove);
         };
-    }, [movingTokenId, isPanning, activeMeasurement, tokens, activeTool, mapGrid, stampSettings, mapDimensions, multiSelectedIds]);
+    }, [movingTokenId, isPanning, activeMeasurement, tokens, activeTool, mapGrid, stampSettings, mapDimensions, multiSelectedIds, sidebarIsOpen, handleOpenSheet]);
 
     // --- 2. MATH HELPERS ---
     
@@ -1810,36 +1840,6 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         }
     };
     
-    // START CHANGE: Connect Sheet Opener
-    const handleOpenSheet = (tokenId) => {
-        const token = tokens.find(t => t.id === tokenId);
-        if (token) {
-            // OPTIMIZATION: Removed toggle_chat to prevent rapid VfxOverlay mount/unmount cycles
-            // This prevents WebGL Context Lost when switching sidebar modes
-
-            // START CHANGE: Wrap onDiceRoll to force chat output for sidebar
-            // This ensures rolls from the sidebar sheet appear in the dice tray/chat log
-            const sidebarDiceRoll = (formula, options = {}) => {
-                if (onDiceRoll) {
-                    return onDiceRoll(formula, { ...options, chat: true, isPrivate: role === 'dm' });
-                }
-            };
-            // END CHANGE
-
-            // Tell parent to open sheet with TOKEN data (not character ID)
-            updateMapState('open_sheet', { 
-                type: 'token',
-                tokenId: token.id,
-                mapId: mapData.id,
-                token: { ...token, onDiceRoll: sidebarDiceRoll },  // Pass full token object with dice handler injected
-                forceOpen: true,  // Flag: Always open sheet when HUD button is clicked
-                onDiceRoll: sidebarDiceRoll, // Pass dice roll handler to sheet
-                onClearRolls: onClearRolls // Pass clear handler
-            });
-            setSelectedTokenId(null);
-        }
-    };
-
     // START CHANGE: Door Toggle and Wall Delete Logic
     const handleToggleDoor = (wallId) => {
         const newWalls = walls.map(w => w.id === wallId ? { ...w, isOpen: !w.isOpen } : w);
