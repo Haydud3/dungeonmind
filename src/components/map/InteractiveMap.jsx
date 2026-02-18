@@ -205,6 +205,11 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     const playedVfxRef = useRef(new Set());
     const groupOriginsRef = useRef({}); // Stores initial positions for group drag
 
+    // SYNC REFS: Update refs immediately during render to ensure event handlers 
+    // always have the absolute latest state, avoiding race conditions in high-concurrency.
+    latestDataRef.current = data;
+    latestTokensRef.current = tokens;
+
     // 4. VISION ENGINE LOGIC (Memoized to prevent render loops)
     const img = mapImageRef.current;
     const myCharId = data.assignments?.[user?.uid];
@@ -554,13 +559,6 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     useEffect(() => {
         viewRef.current = view;
     }, [view]);
-    // END CHANGE
-
-    useEffect(() => {
-        latestDataRef.current = data;
-        latestTokensRef.current = tokens;
-        latestMeasurementRef.current = activeMeasurement;
-    }, [data, tokens, activeMeasurement]);
 
     useEffect(() => {
         if (mapData.view) {
@@ -1115,7 +1113,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                             }
                         } else {
                             newCombatants.push({
-                                id: token.id,
+                                id: `combatant-${token.id}-${Date.now()}`,
                                 characterId: token.characterId,
                                 name: token.name,
                                 init: roll,
@@ -1683,7 +1681,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                 const speedStr = typeof m.speed === 'object' ? 
                     Object.entries(m.speed).map(([k,v]) => `${k} ${v}`).join(', ') : m.speed;
 
-                const newNpcId = Date.now();
+                const newNpcId = `npc-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
                 
                 // Construct the "Basic" NPC using the Bestiary Importer's Logic
                 const basicNpc = {
@@ -1729,7 +1727,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
                 // Create the Token Instance
                 const newToken = {
-                    id: newNpcId + 1, 
+                    id: `token-${Date.now()}`,
                     characterId: newNpcId, 
                     type: 'npc',
                     x: finalX, 
@@ -1781,7 +1779,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                 const ownerUid = Object.keys(currentData.assignments || {}).find(uid => String(currentData.assignments[uid]) === String(entityId));
 
                 const newToken = {
-                    id: Date.now(),
+                    id: `token-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
                     characterId: entityId,
                     type: type || 'npc',
                     x, y,
@@ -2378,9 +2376,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             {/* START CHANGE: Pass Vision Props to Toolbar */}
             {/* --- BOTTOM CENTER TOOLBAR --- */}
             <div 
-                className={`absolute ${data.config?.mobileCompact ? 'bottom-[0px]' : 'bottom-0'} md:bottom-6 left-0 w-full flex justify-center pointer-events-none transition-all duration-300 z-[70] ${
-                    sidebarIsOpen ? 'md:pr-[384px]' : ''
-                } ${hudClass}`}
+                className={`absolute ${data.config?.mobileCompact ? 'bottom-[0px]' : 'bottom-0'} md:bottom-6 inset-x-0 flex justify-center pointer-events-none transition-all duration-300 z-[70] ${sidebarIsOpen ? 'md:pr-[384px]' : ''} ${!isFullscreen ? 'md:pl-16' : ''} ${hudClass}`}
                 style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
             >
                 <div onPointerDown={(e) => e.stopPropagation()}>
