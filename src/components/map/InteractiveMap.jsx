@@ -10,11 +10,13 @@ import TokenManager from './TokenManager';
 import GridControls from './GridControls';
 import CombatTracker from './CombatTracker';
 import RadialHUD from './RadialHUD';
+import FxControls from './FxControls';
+import ObjectControls from './ObjectControls';
+import VfxOverlay from './VfxOverlay';
 import { enrichCharacter } from '../../utils/srdEnricher';
 import { useCharacterStore } from '../../stores/useCharacterStore';
-import { useCampaign } from '../../contexts/CampaignContext';
 import { useVfxStore } from '../../stores/useVfxStore';
-import VfxOverlay from './VfxOverlay';
+import { useCampaign } from '../../contexts/CampaignContext';
 
 // START CHANGE: Defensive ID Matcher (Defined globally to fix scoping crash)
 const idsMatch = (id1, id2) => {
@@ -23,18 +25,12 @@ const idsMatch = (id1, id2) => {
 };
 // END CHANGE
 
-const VFX_FLAVORS = [
-    { id: 'fire', icon: 'flame', color: 'text-orange-500' },
-    { id: 'frost', icon: 'snowflake', color: 'text-cyan-400' },
-    { id: 'acid', icon: 'test-tube-2', color: 'text-green-400' },
-    { id: 'death', icon: 'skull', color: 'text-purple-600' },
-    { id: 'magic', icon: 'sparkles', color: 'text-pink-400' },
-    { id: 'none', icon: 'circle-off', color: 'text-slate-400' }
-];
-
 const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, activeTemplate, sidebarIsOpen, sidebarMode, updateCombatant, removeCombatant, onClearRolls, onAutoRoll, setShowHandoutCreator, code, addManualCombatant, players, npcs, user, diceLog }) => {
-    const { sendPing, triggerVfx } = useCampaign();
-    const { targetingPreview, setTargetingPreview, clearTargetingPreview, addEffect, clearEffects } = useVfxStore();
+    const { sendPing } = useCampaign();
+    // START CHANGE: Import VFX Store
+    const addEffect = useVfxStore(state => state.addEffect);
+    const setTargetingPreview = useVfxStore(state => state.setTargetingPreview);
+    // END CHANGE
 
     // START CHANGE: Subscribe to drag state for visual indicator
     const sidebarDragEntity = useCharacterStore(state => state.sidebarDragEntity);
@@ -108,8 +104,17 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     
     const [stampSettings, setStampSettings] = useState({ color: 'rgba(56, 189, 248, 0.3)', border: '#38bdf8' });
     const [stampFlavor, setStampFlavor] = useState(null);
-    const [showStampHud, setShowStampHud] = useState(false);
-    const [editingTemplateId, setEditingTemplateId] = useState(null);
+    // START CHANGE: FX State
+    const [fxSettings, setFxSettings] = useState({ type: 'burst', flavor: 'fire' });
+    // END CHANGE
+    // START CHANGE: Object State
+    const [objectSettings, setObjectSettings] = useState({ type: 'wall' });
+    
+    const effectiveTool = useMemo(() => {
+        if (activeTool === 'objects') return objectSettings.type;
+        return activeTool;
+    }, [activeTool, objectSettings.type]);
+    // END CHANGE
     // DEBUG: Diagnostics State
     const [debugLogs, setDebugLogs] = useState([]);
     const [disableVision, setDisableVision] = useState(false); // Toggle to isolate crash source
@@ -183,6 +188,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     const containerRef = useRef(null);
     const visionCanvasRef = useRef(null);
     const mapImageRef = useRef(null);
+    const maxDimensionsRef = useRef({ width: 0, height: 0 });
     // START CHANGE: View Ref to fix Desktop Zoom Stutter/Lock
     const viewRef = useRef(view);
     // END CHANGE
@@ -268,7 +274,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         setLodTexture(null);
         setFullDimensions(null);
         setMapDimensions({ width: 0, height: 0 }); // Force VfxOverlay to unmount
-        clearEffects(); // Clear any lingering VFX from previous map
+        maxDimensionsRef.current = { width: 0, height: 0 };
         setDebugLogs([]); 
         addLog(`Init: ${mapUrl ? 'URL Found' : 'No URL'}`);
         // END CHANGE
@@ -324,6 +330,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                                 if (isMounted) {
                                     setFullDimensions(dims);
                                     setMapDimensions(dims); // Ensure logic uses full size immediately
+                                    maxDimensionsRef.current = dims;
                                 }
                                 probe.close();
                             } catch (e) { console.warn("Dimension probe failed", e); }
@@ -420,11 +427,11 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         } else {
             setAssembledMapUrl(null);
         }
-    }, [view.scale, fullTexture, lodTexture, isMobile]);
-
-    // 5. HANDLERS
-    const handleGridUpdate = (newGrid) => {
-        updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...data.campaign.activeMap, grid: newGrid } } });
+     }, [view.scale, fullTexture, lodTexture, isMobile]);
+ 
+     // 5. HANDLERS
+     const handleGridUpdate = (newGrid) => {
+         updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...data.campaign.activeMap, grid: newGrid } } });
     };
 
     const handleNextTurn = () => {
@@ -556,12 +563,18 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             setSelectionStart(null);
             selectionStartRef.current = null;
         }
+        if (activeTool !== 'fx') {
+            // Clear any FX previews if needed
+        }
         if (activeTool !== 'move') {
             setMultiSelectStart(null);
             multiSelectStartRef.current = null;
             setMultiSelectedIds([]);
         }
-    }, [activeTool]);
+        if (effectiveTool !== 'wall') {
+            setWallStart(null);
+        }
+    }, [activeTool, effectiveTool]);
 
     // START CHANGE: iOS Safari Gesture Prevention (Stops Ghosting/Crashing)
     // This strictly prevents the browser from taking a snapshot (ghosting) for native zoom
@@ -811,42 +824,6 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     }, [data.chatLog]);
     // END CHANGE
 
-    // START CHANGE: Multi-User VFX Listener
-    useEffect(() => {
-        if (!data.chatLog || data.chatLog.length === 0) return;
-        const lastMsg = data.chatLog[data.chatLog.length - 1];
-        
-        if (lastMsg.type === 'vfx' && (Date.now() - lastMsg.timestamp < 3000)) {
-            // Skip own messages (handled locally for instant feedback)
-            if (lastMsg.senderId === user?.uid) return;
-
-            if (!playedVfxRef.current.has(lastMsg.id)) {
-                playedVfxRef.current.add(lastMsg.id);
-                let effect = { ...lastMsg.payload };
-                
-                // Recalculate centers to ensure alignment on this client's screen
-                if (effect.originTokenId) {
-                    const center = getTokenCenter(effect.originTokenId);
-                    if (center) effect.origin = center;
-                }
-                if (effect.targetTokenId) {
-                    const center = getTokenCenter(effect.targetTokenId);
-                    if (center) effect.target = center;
-                }
-                
-                if (localStorage.getItem('vtt_debug_vfx') === 'true') {
-                    console.group(`[VFX DEBUG] Remote Effect: ${effect.behavior}`);
-                    console.log("Final Payload:", effect);
-                    console.log("Map Dimensions:", mapDimensions);
-                    console.groupEnd();
-                }
-
-                addEffect(effect);
-            }
-        }
-    }, [data.chatLog, user?.uid]);
-    // END CHANGE
-
     // --- 1.5 GLOBAL INTERACTION ESCAPE ---
     useEffect(() => {
         const handleGlobalMove = (e) => {
@@ -898,19 +875,26 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                 return;
             }
 
-            // VFX Targeting Logic
-            const currentTargeting = useVfxStore.getState().targetingPreview;
-            if (currentTargeting) {
-                setTargetingPreview({ ...currentTargeting, target: coords });
-                return;
-            }
-
             // B. NORMAL MOVE LOGIC (1 Finger/Mouse)
-            const isDrawing = ['wall', 'door', 'delete'].includes(activeTool);
+            const isDrawing = ['objects', 'delete', 'fx'].includes(activeTool);
             if (!movingTokenId && !isPanning && !activeMeasurement && !gridCalStartRef.current && !selectionStartRef.current && !multiSelectStartRef.current && !isDrawing) return;
             
             if (activeMeasurement) {
                 setActiveMeasurement(prev => ({ ...prev, end: coords }));
+                
+                // Update VFX targeting preview
+                if (activeTool === 'fx') {
+                    const distPx = Math.hypot(coords.x - activeMeasurement.start.x, coords.y - activeMeasurement.start.y);
+                    const isDirectional = ['beam', 'breath', 'rocket'].includes(fxSettings.type);
+                    setTargetingPreview({
+                        behavior: fxSettings.type,
+                        flavor: fxSettings.flavor,
+                        origin: activeMeasurement.start,
+                        target: coords,
+                        radius: !isDirectional ? Math.max(distPx, 50) : 0
+                    });
+                }
+
                 // Clear ping timer if we are drawing a measurement/stamp
                 if (longPressTimer.current) {
                     clearTimeout(longPressTimer.current);
@@ -1040,47 +1024,6 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             const currentTokens = latestTokensRef.current;
 
             const coords = getMapCoords(e);
-
-            // VFX Confirmation
-            const currentTargeting = useVfxStore.getState().targetingPreview;
-            if (currentTargeting) {
-                let finalTarget = coords;
-
-                // START FIX: Snap to Token Center if dropped on a token
-                const candidates = latestTokensRef.current || [];
-                const gridSize = mapGrid.size || 50;
-                
-                const hitToken = candidates.find(t => {
-                    if (t.isHidden && role !== 'dm') return false;
-                    const cx = (t.x / 100) * mapDimensions.width;
-                    const cy = (t.y / 100) * mapDimensions.height;
-                    const sizeMap = { tiny: 0.5, small: 1, medium: 1, large: 2, huge: 3, gargantuan: 4 };
-                    const sizeMult = typeof t.size === 'number' ? t.size : (sizeMap[t.size] || 1);
-                    const radius = (gridSize * sizeMult) / 2;
-                    return Math.hypot(coords.x - cx, coords.y - cy) <= radius;
-                });
-
-                if (hitToken) {
-                    finalTarget = { x: (hitToken.x / 100) * mapDimensions.width, y: (hitToken.y / 100) * mapDimensions.height };
-                    currentTargeting.targetTokenId = hitToken.id;
-                }
-                // END FIX
-
-                const uniqueId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-                const finalEffect = { ...currentTargeting, target: finalTarget, id: uniqueId, startTime: Date.now(), duration: 1000 };
-                try {
-                    // 1. Play Locally Immediately (Instant Feedback)
-                    addEffect(finalEffect);
-                    
-                    // 2. Broadcast to others
-                    triggerVfx(finalEffect);
-                } finally {
-                    // CRITICAL: Always clear preview to prevent UI lockout
-                    clearTargetingPreview();
-                }
-                if (e.stopPropagation) e.stopPropagation();
-                return;
-            }
 
             // Grid Calibration Math
             if (activeTool === 'grid_cal' && gStart) {
@@ -1265,12 +1208,31 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                 }
             }
 
+            // 3.5 FX LOGIC
+            if (activeMeasurement && activeTool === 'fx') {
+                const distPx = Math.hypot(activeMeasurement.end.x - activeMeasurement.start.x, activeMeasurement.end.y - activeMeasurement.start.y);
+                
+                // For Beam/Breath, we need a drag. For Burst/Aura, a click is enough (distPx ~ 0).
+                const isDirectional = ['beam', 'breath', 'rocket'].includes(fxSettings.type);
+                
+                if (isDirectional && distPx > 10) {
+                    addEffect({ behavior: fxSettings.type, flavor: fxSettings.flavor, origin: activeMeasurement.start, target: activeMeasurement.end, duration: 1000 });
+                } else if (!isDirectional) {
+                    // Burst/Aura triggers on click or drag
+                    const radius = distPx > 5 ? distPx : 50;
+                    addEffect({ behavior: fxSettings.type, flavor: fxSettings.flavor, origin: activeMeasurement.start, radius, duration: fxSettings.type === 'burst' ? 800 : 2000 });
+                }
+                triggerHaptic('medium');
+                setTargetingPreview(null);
+            }
+
             // 4. UNCONDITIONAL RESET (Fixes the "Sticking Token" bug)
             setMovingTokenId(null);
             movingTokenPosRef.current = null;
             setIsPanning(false);
             setIsDraggingToken(false);
             setActiveMeasurement(null);
+            setTargetingPreview(null);
             
             // PERSISTENCE: Save latest view state from Ref to localStorage
             // Keying by Map ID ensures you don't use a forest zoom level on a tavern map
@@ -1388,7 +1350,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     };
 
     const handleTokenPointerDown = (e, tokenId) => {
-        if (activeTool !== 'move' || targetingPreview) return;
+        if (activeTool !== 'move') return;
         e.stopPropagation(); 
         
         // Hierarchy: Token click stops map panning immediately
@@ -1439,8 +1401,6 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     const handlePointerDown = (e) => {
         if (e.button !== 0 && e.button !== 2 && e.pointerType !== 'touch') return; 
         
-        if (targetingPreview) return;
-
         // 1. Add pointer to cache for multi-touch tracking
         if (!pointerCache.current.find(p => p.id === e.pointerId)) {
             pointerCache.current.push({ id: e.pointerId, x: e.clientX, y: e.clientY });
@@ -1468,7 +1428,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         }
 
         // 1. Grid Calibration & Drawing Priority (Phase 1 Reset)
-        const isDrawingTool = ['wall', 'door', 'delete', 'light', 'grid_cal', 'ruler', 'sphere', 'sphere_stamp', 'init_select'].includes(activeTool);
+        const isDrawingTool = ['objects', 'delete', 'grid_cal', 'ruler', 'sphere', 'sphere_stamp', 'init_select', 'fx'].includes(activeTool);
         
         if (isDrawingTool) {
             setIsPanning(false);
@@ -1498,13 +1458,13 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             }
 
             // Measurement Tools
-            if (['ruler', 'sphere', 'sphere_stamp'].includes(activeTool)) {
+            if (['ruler', 'sphere', 'sphere_stamp', 'fx'].includes(activeTool)) {
                 const img = mapImageRef.current;
                 let startX = coords.x;
                 let startY = coords.y;
 
                 if (mapGrid.snap && img) {
-                    const isSphere = activeTool === 'sphere';
+                    const isSphere = activeTool === 'sphere' || activeTool === 'fx';
                     const snapOffset = isSphere ? 0 : (mapGrid.size / 2);
                     startX = (Math.round((coords.x - mapGrid.offsetX) / mapGrid.size) * mapGrid.size) + mapGrid.offsetX + snapOffset;
                     startY = (Math.round((coords.y - mapGrid.offsetY) / mapGrid.size) * mapGrid.size) + mapGrid.offsetY + snapOffset;
@@ -1899,12 +1859,16 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         const canvas = visionCanvasRef.current;
         
         if (img && canvas) {
-            // START CHANGE: Only update dimensions if we don't have them or if this is the full map
-            // This prevents the LOD thumbnail (512px) from overwriting the Full Map dimensions (4000px)
-            if (!fullDimensions || (img.naturalWidth > fullDimensions.width)) {
-                setMapDimensions({ width: img.naturalWidth, height: img.naturalHeight });
+            // 1. Authoritative Dimension Tracking
+            if (img.naturalWidth > maxDimensionsRef.current.width) {
+                maxDimensionsRef.current = { width: img.naturalWidth, height: img.naturalHeight };
             }
-            // END CHANGE
+
+            const realWidth = maxDimensionsRef.current.width || img.naturalWidth;
+            const realHeight = maxDimensionsRef.current.height || img.naturalHeight;
+            
+            setFullDimensions({ width: realWidth, height: realHeight });
+            setMapDimensions({ width: realWidth, height: realHeight });
 
             // DIAGNOSTIC: Check against Hardware Texture Limits
             // Mobile devices often have 4096px or 8192px limits. Exceeding this causes massive lag/crashes.
@@ -1917,11 +1881,11 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                     triggerHaptic('heavy'); // Warn user physically
                 }
             }
-            // --- END CHANGES ---
-            // 1. Init Vision Canvas
-            canvas.width = fullDimensions ? fullDimensions.width : img.naturalWidth;
-            canvas.height = fullDimensions ? fullDimensions.height : img.naturalHeight;
-            addLog(`Canvas Init: ${canvas.width}x${canvas.height}`);
+
+            // 2. Init Vision Canvas (Authoritative Size)
+            canvas.width = realWidth;
+            canvas.height = realHeight;
+            addLog(`Canvas Init: ${realWidth}x${realHeight}`);
             setMapReady(true); // --- CHANGES: Trigger re-render so DOM tokens and Memos update with naturalWidth ---
             renderVision();
             
@@ -1961,7 +1925,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         let worldY = (mouseY - view.y) / view.scale;
 
         // Apply Snap to grid for wall/door anchor points
-        if (mapGrid.snap && (activeTool === 'wall' || activeTool === 'door')) {
+        if (mapGrid.snap && (effectiveTool === 'wall' || effectiveTool === 'door')) {
             worldX = Math.round((worldX - mapGrid.offsetX) / mapGrid.size) * mapGrid.size + mapGrid.offsetX;
             worldY = Math.round((worldY - mapGrid.offsetY) / mapGrid.size) * mapGrid.size + mapGrid.offsetY;
         }
@@ -1973,7 +1937,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         const pixelY = (percentY / 100) * img.naturalHeight;
 
         // --- DOOR TOOL: Hit-Test to Convert Wall to Door or Toggle Door Open/Close ---
-        if (activeTool === 'door') {
+        if (effectiveTool === 'door') {
             const HIT_THRESHOLD = 10; // pixels
             
             // Search for nearby walls
@@ -2011,7 +1975,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         }
 
         // --- LIGHT TOOL: Place or Select a light source ---
-        if (activeTool === 'light') {
+        if (effectiveTool === 'light') {
             const HIT_THRESHOLD = 20; // Radius in pixels to select existing light
             
             const existingLight = (mapData.lights || []).find(l => {
@@ -2040,7 +2004,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         }
 
         // --- DELETE TOOL: Hit-Test and Remove Wall, Light, or Template ---
-        if (activeTool === 'delete') {
+        if (effectiveTool === 'delete') {
             const HIT_THRESHOLD = 15; // pixels
             
             // 1. Check Lights first
@@ -2086,7 +2050,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         }
 
         // --- WALL TOOL: Draw walls with anchor/lock/chain ---
-        if (activeTool !== 'wall') return;
+        if (effectiveTool !== 'wall') return;
 
         if (!wallStart) {
             // ANCHOR: First tap sets the start point
@@ -2096,7 +2060,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             // CHAIN: Create wall and immediately set new start to this point
             const newWall = {
                 id: `wall-${Date.now()}`,
-                type: activeTool,
+                type: effectiveTool,
                 p1: { x: wallStart.x, y: wallStart.y },
                 p2: { x: pixelX, y: pixelY },
                 open: false,
@@ -2120,7 +2084,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             return;
         }
 
-        if (role !== 'dm' || (activeTool !== 'wall' && activeTool !== 'door' && activeTool !== 'delete')) return;
+        if (role !== 'dm' || (effectiveTool !== 'wall' && effectiveTool !== 'door' && effectiveTool !== 'delete')) return;
         
         // CUT: Right-click stops the chain
         setWallStart(null);
@@ -2305,7 +2269,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                 </div>
             );
         });
-    }, [tokens, movingTokenId, mapDimensions, mapGrid, role, myCharId, user?.uid, visionActive, lights, walls, shakingTokenId, selectedTokenId, data.campaign?.combat, tokenBlobUrls, activeTool, !!targetingPreview, selectionStart, cursorPos, multiSelectedIds]);
+    }, [tokens, movingTokenId, mapDimensions, mapGrid, role, myCharId, user?.uid, visionActive, lights, walls, shakingTokenId, selectedTokenId, data.campaign?.combat, tokenBlobUrls, activeTool, selectionStart, cursorPos, multiSelectedIds]);
     // END CHANGE
 
     // START CHANGE: Template Management Helpers
@@ -2319,67 +2283,6 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...mapData, templates: newTemplates } } });
     };
     // END CHANGE
-
-    const renderedTemplateControls = (() => {
-        if (activeTool !== 'sphere_stamp') return null;
-        
-        return (mapData.templates || []).map(tpl => (
-            <div
-                key={`tpl-ctrl-${tpl.id}`}
-                onPointerDown={(e) => e.stopPropagation()}
-                onMouseDown={(e) => e.stopPropagation()}
-                style={{
-                    position: 'absolute',
-                    left: tpl.x,
-                    top: tpl.y,
-                    transform: `translate(-50%, -50%) scale(${1/view.scale})`,
-                    zIndex: 150,
-                    display: 'flex',
-                    gap: '4px',
-                    pointerEvents: 'auto'
-                }}
-            >
-                <button 
-                    onClick={(e) => { e.stopPropagation(); e.preventDefault(); setEditingTemplateId(editingTemplateId === tpl.id ? null : tpl.id); }}
-                    className="w-8 h-8 bg-slate-900/90 border border-slate-600 rounded-full flex items-center justify-center text-pink-400 hover:bg-slate-800 hover:text-white shadow-lg"
-                    title="Change VFX"
-                >
-                    <Icon name="wand-2" size={14} />
-                </button>
-                <button 
-                    onClick={(e) => { e.stopPropagation(); e.preventDefault(); deleteTemplate(tpl.id); }}
-                    className="w-8 h-8 bg-red-900/90 border border-red-700 rounded-full flex items-center justify-center text-white hover:bg-red-700 shadow-lg"
-                    title="Delete Template"
-                >
-                    <Icon name="trash-2" size={14} />
-                </button>
-                
-                {editingTemplateId === tpl.id && (
-                    <div 
-                        className="absolute top-full mt-2 left-1/2 -translate-x-1/2 flex gap-1 bg-slate-900/95 p-1.5 rounded-full border border-slate-600 shadow-xl animate-in slide-in-from-top-2"
-                        onPointerDown={e => e.stopPropagation()}
-                        style={{ width: 'max-content' }}
-                    >
-                        {VFX_FLAVORS.map(f => (
-                            <button
-                                key={f.id}
-                                onClick={(e) => { 
-                                    e.stopPropagation(); 
-                                    e.preventDefault();
-                                    updateTemplate(tpl.id, { flavor: f.id === 'none' ? null : f.id });
-                                    setEditingTemplateId(null);
-                                }}
-                                className={`p-1.5 rounded-full hover:bg-slate-700 transition-colors ${(tpl.flavor === f.id) || (f.id === 'none' && !tpl.flavor) ? 'bg-slate-700 ring-1 ring-white' : ''}`}
-                                title={f.id}
-                            >
-                                <Icon name={f.icon} className={f.color} size={16} />
-                            </button>
-                        ))}
-                    </div>
-                )}
-            </div>
-        ));
-    })();
 
     return (
         <div 
@@ -2621,6 +2524,27 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                 </div>
             )}
 
+            {/* FX Controls Panel */}
+            {activeTool === 'fx' && (
+                <FxControls 
+                    settings={fxSettings} 
+                    onUpdate={setFxSettings} 
+                    currentWeather={mapData.weather}
+                    onWeatherChange={(w) => updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...mapData, weather: w } } })}
+                    role={role}
+                    onClose={() => setActiveTool('move')} 
+                />
+            )}
+
+            {/* Map Object Controls Panel */}
+            {activeTool === 'objects' && (
+                <ObjectControls 
+                    settings={objectSettings} 
+                    onUpdate={setObjectSettings} 
+                    onClose={() => setActiveTool('move')} 
+                />
+            )}
+
             {/* --- TRANSFORM LAYER --- */}
             <div 
                 style={{ 
@@ -2660,34 +2584,17 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                         style={{ width: '100%', height: '100%', display: 'block' }}
                     />
 
-                    {/* VFX Layer */}
-                    {/* OPTIMIZATION: Reduce resolution on Mobile to save WebGL Context Memory (approx 60-100MB saved) */}
-                    {/* START CHANGE: Unmount VFX when sidebar is open to prevent WebGL Context Lost in Dice Tray */}
-                    {mapDimensions.width > 0 && !sidebarIsOpen && (
+                    {/* START CHANGE: VFX Overlay Layer */}
+                    {mapReady && fullDimensions && (
                         <VfxOverlay 
-                            width={mapDimensions.width}
-                            height={mapDimensions.height}
+                            width={fullDimensions.width} 
+                            height={fullDimensions.height} 
                             templates={mapData.templates} 
-                            pixelRatio={isMobile ? Math.min(0.5, 2048 / Math.max(mapDimensions.width, mapDimensions.height)) : 1}
+                            weather={mapData.weather}
+                            pixelRatio={Math.min(2, window.devicePixelRatio)} 
                         />
                     )}
                     {/* END CHANGE */}
-
-                    {/* VFX Debug Markers (DOM Space) */}
-                    {localStorage.getItem('vtt_debug_vfx') === 'true' && tokens.map(t => {
-                        const center = getTokenCenter(t.id);
-                        if (!center) return null;
-                        return (
-                            <div 
-                                key={`debug-center-${t.id}`}
-                                className="absolute w-3 h-3 border-2 border-red-500 rounded-full z-[200] pointer-events-none flex items-center justify-center"
-                                style={{ left: center.x, top: center.y, transform: 'translate(-50%, -50%)' }}
-                            >
-                                <div className="w-0.5 h-4 bg-red-500 absolute"></div>
-                                <div className="h-0.5 w-4 bg-red-500 absolute"></div>
-                            </div>
-                        );
-                    })}
 
                     {pings.map(ping => (
                         <div 
@@ -2724,38 +2631,15 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
                         {/* Phase 3 Wall/Door SVG Layer */}
                         <svg 
-                            className={`absolute top-0 left-0 w-full h-full z-[8] ${(['wall', 'door', 'delete', 'light', 'grid_cal', 'init_select'].includes(activeTool) || activeMeasurement) ? 'pointer-events-auto' : 'pointer-events-none'}`} 
+                            className={`absolute top-0 left-0 w-full h-full z-[8] ${(['objects', 'delete', 'grid_cal', 'init_select', 'fx'].includes(activeTool) || activeMeasurement) ? 'pointer-events-auto' : 'pointer-events-none'}`} 
                             viewBox={`0 0 ${mapDimensions.width} ${mapDimensions.height}`}
                             onClick={handleMapClick}
                             onContextMenu={handleMapRightClick}
                         >
-                            {/* VFX Measurement Line */}
-                            {targetingPreview && targetingPreview.origin && targetingPreview.target && (
-                                <g pointerEvents="none">
-                                    <line 
-                                        x1={targetingPreview.origin.x} y1={targetingPreview.origin.y} 
-                                        x2={targetingPreview.target.x} y2={targetingPreview.target.y} 
-                                        stroke="rgba(255,255,255,0.5)" strokeWidth={2} strokeDasharray="5,5"
-                                    />
-                                    {(() => {
-                                        const distPx = Math.hypot(targetingPreview.target.x - targetingPreview.origin.x, targetingPreview.target.y - targetingPreview.origin.y);
-                                        const feet = Math.round(distPx / (mapGrid.size || 50)) * 5;
-                                        return (
-                                            <g transform={`translate(${targetingPreview.target.x}, ${targetingPreview.target.y - 20})`}>
-                                                <rect x="-20" y="-12" width="40" height="16" rx="4" fill="rgba(0,0,0,0.8)" />
-                                                <text textAnchor="middle" y="0" fill="white" fontSize="10" fontWeight="bold" className="font-mono" dy="3">
-                                                    {feet}ft
-                                                </text>
-                                            </g>
-                                        );
-                                    })()}
-                                </g>
-                            )}
-
                             {/* 1. Render Saved Walls & Doors (Only visible when using wall/door/delete tools) */}
                             {walls.map(w => {
                                 // Only show walls when DM is using the Wall, Door, or Delete tool
-                                const isToolActive = role === 'dm' && (activeTool === 'wall' || activeTool === 'door' || activeTool === 'delete');
+                                const isToolActive = role === 'dm' && (activeTool === 'objects' || activeTool === 'delete');
                                 if (!isToolActive) return null;
                                 
                                 const isDoor = w.type === 'door';
@@ -2777,7 +2661,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                         {/* Ruler & Sphere Visuals */}
                         {activeMeasurement && (
                             <g pointerEvents="none">
-                                {activeMeasurement.type === 'ruler' ? (
+                                {activeMeasurement.type === 'ruler' || (activeMeasurement.type === 'fx' && ['beam', 'breath', 'rocket'].includes(fxSettings.type)) ? (
                                     <>
                                         <line 
                                             x1={activeMeasurement.start.x} y1={activeMeasurement.start.y} 
@@ -2833,23 +2717,23 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                             </g>
                         ))}
 
-                        {wallStart && (activeTool === 'wall' || activeTool === 'door') && (
+                        {wallStart && (effectiveTool === 'wall' || effectiveTool === 'door') && (
                             <>
                                     <line 
                                         x1={wallStart.x} y1={wallStart.y} x2={cursorPos.x} y2={cursorPos.y} 
-                                        stroke={activeTool === 'wall' ? '#3b82f6' : '#f59e0b'} 
+                                        stroke={effectiveTool === 'wall' ? '#3b82f6' : '#f59e0b'} 
                                         strokeWidth={4} strokeDasharray="10,5" opacity={0.6}
                                     />
-                                    <circle cx={wallStart.x} cy={wallStart.y} r={8} fill={activeTool === 'wall' ? '#3b82f6' : '#f59e0b'} className="animate-pulse" />
+                                    <circle cx={wallStart.x} cy={wallStart.y} r={8} fill={effectiveTool === 'wall' ? '#3b82f6' : '#f59e0b'} className="animate-pulse" />
                                 </>
                             )}
                             
                             {/* 3. Render Proximity Circle for Door/Delete Tools */}
-                            {(activeTool === 'delete' || activeTool === 'door') && (
+                            {(effectiveTool === 'delete' || effectiveTool === 'door') && (
                                 <circle 
                                     cx={cursorPos.x} cy={cursorPos.y} r={10}
                                     fill="none"
-                                    stroke={activeTool === 'delete' ? '#ef4444' : '#f59e0b'}
+                                    stroke={effectiveTool === 'delete' ? '#ef4444' : '#f59e0b'}
                                     strokeWidth={2}
                                     strokeDasharray="5,5"
                                     opacity={0.4}
@@ -2902,7 +2786,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                                 />
                             )}
                         {/* 5. Render Light Anchors (DM Only) */}
-                            {role === 'dm' && (activeTool === 'light' || activeTool === 'delete') && lights.map(l => (
+                            {role === 'dm' && (effectiveTool === 'light' || effectiveTool === 'delete') && lights.map(l => (
                                 <g key={l.id} transform={`translate(${(l.x/100)*mapImageRef.current.naturalWidth}, ${(l.y/100)*mapImageRef.current.naturalHeight})`}>
                                     <circle r={10} fill="rgba(255, 170, 0, 0.4)" stroke="#ffaa00" strokeWidth={2} />
                                     <path d="M-4,-4 L4,4 M-4,4 L4,-4" stroke="#ffaa00" strokeWidth={2} />
@@ -2934,9 +2818,6 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
                         {/* Render Tokens */}
                         {renderedTokens}
-
-                        {/* Render Template Controls */}
-                        {renderedTemplateControls}
                     </div>
                 ) : (
                     <div className="flex items-center justify-center w-[800px] h-[600px] bg-slate-800 border-2 border-dashed border-slate-700 rounded-xl m-20">
@@ -3036,25 +2917,6 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                             npcs={npcs}
                             activeUsers={data.activeUsers}
                             assignments={data.assignments}
-                            onStartVfxTargeting={(vfx) => {
-                                // Force a fresh calculation using the latest reactive dimensions
-                                const img = mapImageRef.current;
-                                if (!img) return;
-
-                                const origin = calculateTokenCenter(token, mapDimensions.width || img.naturalWidth, mapDimensions.height || img.naturalHeight);
-                                
-                                if (origin) {
-                                    if (localStorage.getItem('vtt_debug_vfx') === 'true') {
-                                        console.group(`[VFX DEBUG] Local Targeting Start`);
-                                        console.log("Token:", token.name, `(${token.id})`);
-                                        console.log("Grid Pos:", token.x, token.y);
-                                        console.log("Calculated Center:", origin);
-                                        console.groupEnd();
-                                    }
-                                    setTargetingPreview({ ...vfx, origin, target: origin, tokenId: token.id, originTokenId: token.id });
-                                    setSelectedTokenId(null);
-                                }
-                            }}
                         />
                     </div>
                 );

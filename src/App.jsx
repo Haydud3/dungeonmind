@@ -58,7 +58,7 @@ function DungeonMindApp() {
   const { 
     data, setData, gameParams, joinCampaign, leaveCampaign, 
     updateCloud, savePlayer, deletePlayer, loreChunks, setLoreChunks,
-    kickPlayer, banPlayer, unbanPlayer, triggerVfx 
+    kickPlayer, banPlayer, unbanPlayer 
   } = useCampaign();
   useEffect(() => {
     if (user !== undefined) setIsAuthReady(true);

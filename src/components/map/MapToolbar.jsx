@@ -16,9 +16,8 @@ const MapToolbar = ({ role, activeTool, setTool, visionActive, onToggleVision, o
         { id: 'move', icon: 'mouse-pointer-2', label: 'Move', roles: ['dm', 'player'] },
         { id: 'ruler', icon: 'ruler', label: 'Ruler', roles: ['dm', 'player'] },
         { id: 'sphere', icon: 'circle-dot', label: 'Sphere AoE', roles: ['dm', 'player'] },
-        { id: 'wall', icon: 'brick-wall', label: 'Wall', roles: ['dm'] },
-        { id: 'door', icon: 'door-closed', label: 'Door', roles: ['dm'] },
-        { id: 'light', icon: 'lamp', label: 'Light', roles: ['dm'] },
+        { id: 'fx', icon: 'wand-2', label: 'FX', roles: ['dm', 'player'] },
+        { id: 'objects', icon: 'plus-square', label: 'Objects', roles: ['dm'] },
         { id: 'delete', icon: 'trash-2', label: 'Delete', roles: ['dm'] },
         { id: 'grid', icon: 'grid', label: 'Grid', roles: ['dm'] },
     ];

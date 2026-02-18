@@ -1,25 +1,27 @@
 import { create } from 'zustand';
 
-export const useVfxStore = create((set) => ({
+export const useVfxStore = create((set, get) => ({
     activeEffects: [],
-    targetingPreview: null, // { origin: {x,y}, target: {x,y}, flavor, behavior, tokenId }
-
+    targetingPreview: null,
+    
     addEffect: (effect) => {
-        const id = effect.id || (Date.now() + Math.random());
+        const id = Date.now() + Math.random();
         const duration = effect.duration || 1000;
-        set((state) => ({
-            activeEffects: [...state.activeEffects, { ...effect, id, startTime: Date.now() }]
-        }));
         
-        // Cleanup after duration to prevent memory leaks
+        const newEffect = { 
+            ...effect, 
+            id, 
+            startTime: Date.now(),
+            duration 
+        };
+        
+        set(state => ({ activeEffects: [...state.activeEffects, newEffect] }));
+        
+        // Auto-cleanup after animation finishes
         setTimeout(() => {
-            set((state) => ({
-                activeEffects: state.activeEffects.filter(e => e.id !== id)
-            }));
-        }, duration);
+            set(state => ({ activeEffects: state.activeEffects.filter(e => e.id !== id) }));
+        }, duration + 200);
     },
 
-    clearEffects: () => set({ activeEffects: [] }),
-    setTargetingPreview: (preview) => set({ targetingPreview: preview }),
-    clearTargetingPreview: () => set({ targetingPreview: null })
+    setTargetingPreview: (preview) => set({ targetingPreview: preview })
 }));
