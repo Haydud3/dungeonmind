@@ -15,6 +15,9 @@ const CombatTracker = ({ combat, onNextTurn, onEndCombat, onClearRolls, role, up
     };
 
     const handleSort = () => {
+        // Prevent reordering logic if the list is empty or has only one item
+        if (combatants.length <= 1) return;
+
         const sorted = [...combatants].sort((a, b) => {
             if (a.init === null) return 1;
             if (b.init === null) return -1;
