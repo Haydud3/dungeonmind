@@ -25,11 +25,12 @@ const idsMatch = (id1, id2) => {
 };
 // END CHANGE
 
-const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, activeTemplate, sidebarIsOpen, sidebarMode, updateCombatant, removeCombatant, onClearRolls, onAutoRoll, setShowHandoutCreator, code, addManualCombatant, players, npcs, user, diceLog }) => {
-    const { sendPing } = useCampaign();
+const InteractiveMap = ({ data = {}, role, updateMapState, updateCloud, onDiceRoll, activeTemplate, sidebarIsOpen, sidebarMode, updateCombatant, removeCombatant, onClearRolls, onAutoRoll, setShowHandoutCreator, code, addManualCombatant, players, npcs, user, diceLog }) => {
+    const { sendPing, updateCampaign, addToken, updateToken, deleteToken, isConnected } = useCampaign();
     // START CHANGE: Import VFX Store
     const addEffect = useVfxStore(state => state.addEffect);
     const setTargetingPreview = useVfxStore(state => state.setTargetingPreview);
+    const targetingPreview = useVfxStore(state => state.targetingPreview);
     // END CHANGE
 
     // START CHANGE: Subscribe to drag state for visual indicator
@@ -38,17 +39,23 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     // END CHANGE
 
     // 1. DATA SHORTCUTS (Moved up to fix ReferenceError in State Initializer)
-    const mapData = data.campaign?.activeMap || {};
+    const mapData = data?.campaign?.activeMap || {};
     const tokens = mapData.tokens || [];
     const walls = mapData.walls || [];
-    const lights = mapData.lights || [];
+    const [tempLights, setTempLights] = useState(null);
+    const lights = tempLights || mapData.lights || [];
     const mapUrl = mapData.url;
     const visionActive = mapData.visionActive !== false; 
-    const mapGrid = { 
+    const [tempGrid, setTempGrid] = useState(null);
+    const mapGrid = tempGrid || { 
         size: 50, offsetX: 0, offsetY: 0, visible: true, snap: true, nameplates: true,
         ...(mapData.grid || {}) 
     };
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || window.innerWidth <= 768;
+
+    // START CHANGE: Derive active sidebar state from prop or context data
+    const activeSidebar = sidebarMode || data.ui?.sidebar;
+    // END CHANGE
 
     // 2. ALL STATE HOOKS
     const [view, setView] = useState(() => {
@@ -102,6 +109,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     const [tokenBlobUrls, setTokenBlobUrls] = useState({}); // OPTIMIZATION: Cache for Token Blobs
     const [fullDimensions, setFullDimensions] = useState(null); // NEW: Store real dimensions for LOD stretching
     
+    const saveTimeoutRef = useRef(null);
     const [stampSettings, setStampSettings] = useState({ color: 'rgba(56, 189, 248, 0.3)', border: '#38bdf8' });
     const [stampFlavor, setStampFlavor] = useState(null);
     // START CHANGE: FX State
@@ -187,6 +195,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     // 3. ALL REFS (Must be before Vision Logic)
     const containerRef = useRef(null);
     const visionCanvasRef = useRef(null);
+    const discoveryCanvasRef = useRef(null); // NEW: Persistent Fog Layer
     const mapImageRef = useRef(null);
     const maxDimensionsRef = useRef({ width: 0, height: 0 });
     // START CHANGE: View Ref to fix Desktop Zoom Stutter/Lock
@@ -203,7 +212,10 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     const latestTokensRef = useRef(tokens);
     const latestMeasurementRef = useRef(activeMeasurement);
     const playedVfxRef = useRef(new Set());
+    const lastVisionStateRef = useRef(''); // For dirty-checking vision
+    const lastProcessedPingId = useRef(null);
     const groupOriginsRef = useRef({}); // Stores initial positions for group drag
+    const visionWorkerRef = useRef(null); // NEW: Worker Reference
 
     // 4. VISION ENGINE LOGIC (Memoized to prevent render loops)
     const img = mapImageRef.current;
@@ -266,6 +278,15 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     }, [role, visionActive, myCharId, user?.uid, tokens, walls, mapDimensions, mapGrid.size, mapReady]); // ---
     // END CHANGE
 
+    // START CHANGE: Initialize Vision Worker
+    useEffect(() => {
+        visionWorkerRef.current = new Worker(new URL('./vision.worker.js', import.meta.url), { type: 'module' });
+        return () => {
+            visionWorkerRef.current?.terminate();
+        };
+    }, []);
+    // END CHANGE
+
     // Phase 2: Handle Chunked Map Loading from Firestore
     useEffect(() => {
         // START CHANGE: Reset state for loading screen
@@ -300,15 +321,18 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                 };
 
                 // 1. Load Thumbnail (LOD)
-                if (mapData.thumbnailUrl?.startsWith('chunked:')) {
+                const isChunked = mapUrl?.startsWith('chunked:');
+                if (isChunked && mapData.thumbnailUrl?.startsWith('chunked:')) {
                     try {
                         const thumbBlob = await retrieveChunkedMap(mapData.thumbnailUrl, controller.signal);
                         if (isMounted) setLodTexture(await processMapAsset(thumbBlob, "Thumbnail"));
                     } catch (e) {
                         console.warn("Failed to load thumbnail chunk:", e);
                     }
-                } else {
+                } else if (isChunked) {
                     setLodTexture(mapData.thumbnailUrl);
+                } else {
+                    setLodTexture(null); // Hyperlinks don't use thumbnails
                 }
 
                 // 2. Load Full Texture
@@ -431,7 +455,16 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
  
      // 5. HANDLERS
      const handleGridUpdate = (newGrid) => {
-         updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...data.campaign.activeMap, grid: newGrid } } });
+        setTempGrid(newGrid); // Instant visual feedback
+        
+        if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = setTimeout(() => {
+            const currentData = latestDataRef.current;
+            const newData = { ...currentData, campaign: { ...currentData.campaign, activeMap: { ...currentData.campaign.activeMap, grid: newGrid } } };
+            latestDataRef.current = newData;
+            updateCampaign({ 'campaign.activeMap.grid': newGrid });
+            setTempGrid(null);
+        }, 500);
     };
 
     const handleOpenSheet = useCallback((tokenId) => {
@@ -461,19 +494,25 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     }, [tokens, mapData.id, updateMapState, onDiceRoll, role, onClearRolls]);
 
     const handleNextTurn = () => {
-        const c = data.campaign?.combat || { active: true, round: 1, turn: 0, combatants: [] };
+        const currentData = latestDataRef.current;
+        const c = currentData.campaign?.combat || { active: true, round: 1, turn: 0, combatants: [] };
         let nextTurn = c.turn + 1;
         let nextRound = c.round;
         if (nextTurn >= (c.combatants || []).length) {
             nextTurn = 0;
             nextRound++;
         }
-        updateCloud({ ...data, campaign: { ...data.campaign, combat: { ...c, turn: nextTurn, round: nextRound } } });
+        const newData = { ...currentData, campaign: { ...currentData.campaign, combat: { ...c, turn: nextTurn, round: nextRound } } };
+        latestDataRef.current = newData;
+        updateCampaign({ 'campaign.combat.turn': nextTurn, 'campaign.combat.round': nextRound });
     };
 
     const handleEndCombat = () => {
         if(confirm("End the encounter?")) {
-            updateCloud({ ...data, campaign: { ...data.campaign, combat: { active: false, round: 1, turn: 0, combatants: [] } } });
+            const currentData = latestDataRef.current;
+            const newData = { ...currentData, campaign: { ...currentData.campaign, combat: { active: false, round: 1, turn: 0, combatants: [] } } };
+            latestDataRef.current = newData;
+            updateCampaign({ 'campaign.combat': { active: false, round: 1, turn: 0, combatants: [] } });
             setShowCombat(false);
         }
     };
@@ -515,8 +554,11 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
     const handleStartCombat = () => {
         const c = data.campaign?.combat;
+        const currentData = latestDataRef.current;
         if (!c?.active) {
-            updateCloud({ ...data, campaign: { ...data.campaign, combat: { ...c, active: true, round: 1, turn: 0 } } });
+            const newData = { ...currentData, campaign: { ...currentData.campaign, combat: { ...c, active: true, round: 1, turn: 0 } } };
+            latestDataRef.current = newData;
+            updateCampaign({ 'campaign.combat.active': true, 'campaign.combat.round': 1, 'campaign.combat.turn': 0 });
         }
         setShowCombat(true);
     };
@@ -577,7 +619,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     }, [mapData.id]);
 
     useEffect(() => {
-        if (data.campaign?.combat?.active) setShowCombat(true);
+        setShowCombat(!!data.campaign?.combat?.active);
     }, [data.campaign?.combat?.active]);
 
     useEffect(() => {
@@ -653,11 +695,18 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
     // --- 1. RENDERERS (Vision Logic) ---
     
-    const renderVision = () => {
+    const updateVision = () => {
         const canvas = visionCanvasRef.current;
         const img = mapImageRef.current;
-        // DIAGNOSTIC: Check disableVision flag
-        if (!canvas || !img || !img.complete || isPanning || !mapReady || disableVision) return; 
+        const worker = visionWorkerRef.current;
+        if (!canvas || !img || !img.complete || isPanning || !mapReady || disableVision || !worker) return; 
+
+        // START CHANGE: Vision Dirty-Checking
+        // Only perform expensive polygon math if the state of the map has actually changed.
+        const visionStateKey = JSON.stringify([tokens.map(t => `${t.id}-${t.x}-${t.y}-${t.isHidden}`), walls.length, lights.length, visionActive]);
+        if (visionStateKey === lastVisionStateRef.current) return;
+        lastVisionStateRef.current = visionStateKey;
+        // END CHANGE
 
         // START CHANGE: Dynamic Canvas Cap based on Device
         const MAX_CANVAS_DIM = isMobile ? 2048 : 4096;
@@ -674,48 +723,95 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         const finalW = Math.floor(logicalW * finalRatio);
         const finalH = Math.floor(logicalH * finalRatio);
 
+        // --- 0. SETUP DISCOVERY CANVAS ---
         if (canvas.width !== finalW || canvas.height !== finalH) {
             canvas.width = finalW;
             canvas.height = finalH;
         }
+
+        // --- 1. PRE-PROCESS ASSETS ---
+        const gridSize = mapGrid.size || 50;
+        const maxMapDim = Math.max(logicalW, logicalH) * 2;
+
+        // --- 2. PREPARE WORKER DATA ---
+        const emitters = tokens.filter(token => {
+            if (role === 'dm') return token.type === 'pc';
+            return idsMatch(token.characterId, myCharId) || 
+                   idsMatch(token.ownerId, user?.uid) ||
+                   (token.controlledBy || []).includes(user?.uid);
+        }).map(token => {
+            const origin = calculateTokenCenter(token, logicalW, logicalH);
+            const character = data.players?.find(p => idsMatch(p.id, token.characterId)) || 
+                              data.npcs?.find(n => idsMatch(n.id, token.characterId));
+            const settings = getCharacterVisionSettings(character, gridSize);
+            return { id: token.id, x: origin.x, y: origin.y, radius: settings.radius };
+        });
+
+        // Send to Worker
+        worker.onmessage = (e) => {
+            const results = e.data; // [{ id, nearPoly, farPoly }]
+            drawVisionFrame(results, logicalW, logicalH, finalRatio, lowPerf);
+        };
+
+        worker.postMessage({
+            emitters,
+            walls,
+            bounds: { width: logicalW, height: logicalH },
+            maxDim: maxMapDim
+        });
+    };
+
+    const drawVisionFrame = (polyResults, logicalW, logicalH, finalRatio, lowPerf) => {
+        const canvas = visionCanvasRef.current;
+        if (!canvas) return;
+
+        // Re-construct emitters with their calculated polys
+        const emittersToDraw = tokens.filter(token => {
+            if (role === 'dm') return token.type === 'pc';
+            return idsMatch(token.characterId, myCharId) || 
+                   idsMatch(token.ownerId, user?.uid) ||
+                   (token.controlledBy || []).includes(user?.uid);
+        }).map(token => {
+            const origin = calculateTokenCenter(token, logicalW, logicalH);
+            const result = polyResults.find(r => r.id === token.id);
+            return {
+                token,
+                origin,
+                visionRadius: result ? result.radius : 0, // Passed back or re-derived
+                nearPoly: result ? result.nearPoly : [],
+                farPoly: result ? result.farPoly : []
+            };
+        });
+
+        // --- DRAWING ---
+        if (!discoveryCanvasRef.current) discoveryCanvasRef.current = document.createElement('canvas');
+        const dCanvas = discoveryCanvasRef.current;
+        if (dCanvas.width !== logicalW || dCanvas.height !== logicalH) { dCanvas.width = logicalW; dCanvas.height = logicalH; }
+        const dCtx = dCanvas.getContext('2d');
 
         const ctx = canvas.getContext('2d', { alpha: true });
         ctx.imageSmoothingEnabled = !lowPerf;
         ctx.setTransform(finalRatio, 0, 0, finalRatio, 0, 0);
         ctx.clearRect(0, 0, logicalW, logicalH);
 
-        // --- 1. PRE-PROCESS ASSETS ---
-        const blockingSegments = walls.filter(w => !(w.type === 'door' && w.isOpen));
-        const hasWalls = blockingSegments.length > 0;
-        const gridSize = mapGrid.size || 50;
-        const maxMapDim = Math.max(logicalW, logicalH) * 2;
-
-        // --- 2. DEFINE VIEWERS ---
-        const allEmitters = tokens.map(token => {
-            const origin = calculateTokenCenter(token, logicalW, logicalH);
-            const character = data.players?.find(p => idsMatch(p.id, token.characterId)) || 
-                              data.npcs?.find(n => idsMatch(n.id, token.characterId));
-            
-            const settings = getCharacterVisionSettings(character, gridSize);
-
-            return {
-                token,
-                origin,
-                visionRadius: settings.radius,
-                nearPoly: calculateVisibilityPolygon(origin, blockingSegments, { width: logicalW, height: logicalH }, settings.radius),
-                farPoly: calculateVisibilityPolygon(origin, blockingSegments, { width: logicalW, height: logicalH }, maxMapDim)
-            };
-        });
-
-        let emittersToDraw = [];
-        if (role === 'dm') {
-            emittersToDraw = allEmitters.filter(e => e.token.type === 'pc');
-        } else {
-            emittersToDraw = allEmitters.filter(e => 
-                idsMatch(e.token.characterId, myCharId) || 
-                idsMatch(e.token.ownerId, user?.uid) ||
-                (e.token.controlledBy || []).includes(user?.uid)
-            );
+        // --- 2.5 UPDATE DISCOVERY LAYER ---
+        if (visionActive && role !== 'dm') {
+            dCtx.save();
+            dCtx.fillStyle = '#ffffff';
+            emittersToDraw.forEach(({ origin, visionRadius, nearPoly }) => {
+                if (!nearPoly || nearPoly.length === 0) {
+                    dCtx.beginPath();
+                    dCtx.arc(origin.x, origin.y, visionRadius, 0, Math.PI * 2);
+                    dCtx.fill();
+                    return;
+                }
+                dCtx.beginPath();
+                dCtx.moveTo(nearPoly[0].x, nearPoly[0].y);
+                for (let i = 1; i < nearPoly.length; i++) dCtx.lineTo(nearPoly[i].x, nearPoly[i].y);
+                dCtx.closePath();
+                dCtx.fill();
+            });
+            dCtx.restore();
         }
 
         // --- 3. RENDER FOG PASS ---
@@ -725,6 +821,15 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             ctx.globalAlpha = role === 'dm' ? 0.5 : 1.0; 
             ctx.fillRect(0, 0, logicalW, logicalH);
             
+            // Cut out Discovery (Dim Fog)
+            if (role !== 'dm') {
+                ctx.globalCompositeOperation = 'destination-out';
+                ctx.globalAlpha = 0.5; // 50% opacity for explored areas
+                ctx.drawImage(dCanvas, 0, 0, logicalW, logicalH);
+            }
+
+            // Cut out Current Vision (Clear)
+            ctx.globalAlpha = 1.0;
             ctx.globalCompositeOperation = 'destination-out';
             emittersToDraw.forEach(({ origin, visionRadius, nearPoly }) => {
                 // If a player is in total darkness with NO walls, they should see their radius
@@ -752,6 +857,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             });
         } else {
             // SUNLIGHT MODE: If there are walls, cover map in black and carve LOS
+            const hasWalls = walls.some(w => !(w.type === 'door' && w.isOpen));
             const validPolys = emittersToDraw.filter(e => e.farPoly && e.farPoly.length > 0);
             
             if (hasWalls && validPolys.length > 0 && role !== 'dm') {
@@ -771,10 +877,11 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         }
 
         // --- 4. LIGHT SOURCES ---
+        // Note: Lights are still drawn on main thread for now as they are simple circles/gradients
+        // Optimizing them would require sending light data to worker too.
         const lights = mapData.lights || [];
         const clippingPolygons = emittersToDraw.map(e => e.farPoly).filter(p => p && p.length > 0);
         const hasClippingPolygons = clippingPolygons.length > 0;
-
         if (lights.length > 0 && hasClippingPolygons) {
             ctx.save();
             ctx.beginPath();
@@ -794,9 +901,10 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                 };
                 const radiusPx = (light.radius / 5) * (mapGrid.size || 50);
                 
+                // For lights, we still calculate locally for now to avoid complex worker message passing
+                // Optimization: This could be moved to worker in Step 3 if needed.
                 const blockingSegments = walls.filter(w => !(w.type === 'door' && w.isOpen));
-                // FIX: Bounds must match natural pixel coordinate space
-                const poly = calculateVisibilityPolygon(origin, blockingSegments, { width: logicalW, height: logicalH }, radiusPx);
+                const poly = calculateVisibilityPolygon(origin, blockingSegments, { width: logicalW, height: logicalH }, radiusPx); // Imported util
 
                 ctx.save();
                 if (poly && poly.length > 0) {
@@ -825,12 +933,12 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         ctx.globalAlpha = 1.0;
         ctx.shadowBlur = 0;
     };
-    // END CHANGE
+    // END CHANGE: Async Vision
 
     // Re-render when relevant state changes (Removed activePlayerVisionData dependency)
     // --- CHANGES: Reactive Loop - Use requestAnimationFrame for smoother vision updates on remote token moves ---
     useEffect(() => { 
-        const frame = requestAnimationFrame(renderVision); 
+        const frame = requestAnimationFrame(updateVision); 
         return () => cancelAnimationFrame(frame);
     }, [tokens, walls, lights, visionActive, role, mapUrl, data.campaign?.characters, mapReady]);
     // --- CHANGES: End ---
@@ -838,16 +946,18 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     // START CHANGE: Multi-User Ping Listener
     useEffect(() => {
         if (!data.chatLog || data.chatLog.length === 0) return;
+        
         const lastMsg = data.chatLog[data.chatLog.length - 1];
         
         // Only trigger if it's a ping from someone else within the last 3 seconds
-        if (lastMsg.type === 'ping' && lastMsg.senderId !== user?.uid && (Date.now() - lastMsg.timestamp < 3000)) {
+        if (lastMsg.type === 'ping' && lastMsg.id !== lastProcessedPingId.current && lastMsg.senderId !== user?.uid && (Date.now() - lastMsg.timestamp < 3000)) {
+            lastProcessedPingId.current = lastMsg.id;
             const newPing = { id: lastMsg.id || Date.now(), x: lastMsg.x, y: lastMsg.y };
             setPings(prev => [...prev, newPing]);
             setTimeout(() => setPings(prev => prev.filter(p => p.id !== newPing.id)), 5000);
             triggerHaptic('ping');
         }
-    }, [data.chatLog]);
+    }, [data.chatLog, user?.uid, sendPing]);
     // END CHANGE
 
     // --- 1.5 GLOBAL INTERACTION ESCAPE ---
@@ -1046,8 +1156,6 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             const gStart = gridCalStartRef.current; 
             const sStart = selectionStartRef.current;
             const msStart = multiSelectStartRef.current;
-            const mData = latestDataRef.current;
-            const currentTokens = latestTokensRef.current;
 
             const coords = getMapCoords(e);
 
@@ -1089,7 +1197,8 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                 const x2 = Math.max(sStart.x, coords.x);
                 const y2 = Math.max(sStart.y, coords.y);
 
-                const selectedNpcs = currentTokens.filter(t => {
+                const latestTokens = latestTokensRef.current || [];
+                const selectedNpcs = latestTokens.filter(t => {
                     if (t.type === 'pc' || t.isHidden) return false; // Ignore PCs and Hidden tokens
                     const tx = (t.x / 100) * mapDimensions.width;
                     const ty = (t.y / 100) * mapDimensions.height;
@@ -1097,6 +1206,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                 });
 
                 if (selectedNpcs.length > 0) {
+                    const mData = latestDataRef.current;
                     const combat = mData.campaign?.combat || { active: true, round: 1, turn: 0, combatants: [] };
                     let newCombatants = [...(combat.combatants || [])];
                     let madeChanges = false;
@@ -1129,7 +1239,9 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
                     if (madeChanges) {
                         newCombatants.sort((a, b) => (b.init || 0) - (a.init || 0));
-                        updateCloud({ ...mData, campaign: { ...mData.campaign, combat: { ...combat, combatants: newCombatants, active: true } } });
+                        const newData = { ...mData, campaign: { ...mData.campaign, combat: { ...combat, combatants: newCombatants, active: true } } };
+                        latestDataRef.current = newData;
+                        updateCampaign({ 'campaign.combat.combatants': newCombatants, 'campaign.combat.active': true });
                         triggerHaptic('medium');
                     }
                 }
@@ -1149,7 +1261,8 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                 const x2 = Math.max(msStart.x, coords.x);
                 const y2 = Math.max(msStart.y, coords.y);
 
-                const selected = currentTokens.filter(t => {
+                const latestTokens = latestTokensRef.current || [];
+                const selected = latestTokens.filter(t => {
                     if (t.isHidden && role !== 'dm') return false;
                     
                     // Permission Check
@@ -1177,10 +1290,9 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             const isClick = dist < 5;
 
             if (mTokenId && isClick) {
-                if (sidebarIsOpen) {
+                setSelectedTokenId(mTokenId);
+                if (sidebarMode === 'sheet') {
                     handleOpenSheet(mTokenId);
-                } else {
-                    setSelectedTokenId(mTokenId);
                 }
                 triggerHaptic('light');
             }
@@ -1189,7 +1301,6 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             if (mTokenId && mPos && !isClick) {
                 const img = mapImageRef.current;
                 if (img) {
-                    let newTokens = [...currentTokens];
                     if (multiSelectedIds.includes(mTokenId)) {
                         // Group Move Commit
                         const leaderOrigin = groupOriginsRef.current[mTokenId];
@@ -1197,25 +1308,17 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                             const deltaX = mPos.x - leaderOrigin.x;
                             const deltaY = mPos.y - leaderOrigin.y;
                             
-                            newTokens = newTokens.map(t => {
-                                if (multiSelectedIds.includes(t.id) && groupOriginsRef.current[t.id]) {
-                                    const origin = groupOriginsRef.current[t.id];
-                                    const nx = origin.x + deltaX;
-                                    const ny = origin.y + deltaY;
-                                    const centerPx = calculateTokenCenter({ x: nx, y: ny }, img.naturalWidth, img.naturalHeight);
-                                    return { ...t, x: nx, y: ny, centerPx };
+                            multiSelectedIds.forEach(id => {
+                                const origin = groupOriginsRef.current[id];
+                                if (origin) {
+                                    updateToken(id, { x: origin.x + deltaX, y: origin.y + deltaY });
                                 }
-                                return t;
                             });
                         }
                     } else {
                         // Single Move Commit
-                        const { x, y } = mPos;
-                        const centerPx = calculateTokenCenter({ x, y }, img.naturalWidth, img.naturalHeight);
-                        newTokens = newTokens.map(t => t.id === mTokenId ? { ...t, x, y, centerPx } : t);
+                        updateToken(mTokenId, { x: mPos.x, y: mPos.y });
                     }
-                    
-                    updateCloud({ ...mData, campaign: { ...data.campaign, activeMap: { ...data.campaign.activeMap, tokens: newTokens } } }, true);
                 }
             }
 
@@ -1233,7 +1336,9 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                         flavor: stampFlavor
                     };
                     const templates = mapData.templates || [];
-                    updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...mapData, templates: [...templates, newTemplate] }}});
+                    const newData = { ...latestDataRef.current, campaign: { ...latestDataRef.current.campaign, activeMap: { ...mapData, templates: [...templates, newTemplate] }}};
+                    latestDataRef.current = newData;
+                    updateCampaign({ 'campaign.activeMap.templates': [...templates, newTemplate] });
                     triggerHaptic('heavy');
                 }
             }
@@ -1293,7 +1398,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             window.removeEventListener('pointercancel', handleGlobalUp);
             // REMOVED: window.removeEventListener('touchmove', handleGlobalMove);
         };
-    }, [movingTokenId, isPanning, activeMeasurement, tokens, activeTool, mapGrid, stampSettings, mapDimensions, multiSelectedIds, sidebarIsOpen, handleOpenSheet]);
+    }, [movingTokenId, isPanning, activeMeasurement, tokens, activeTool, mapGrid, stampSettings, mapDimensions, multiSelectedIds, handleOpenSheet, sidebarMode, updateToken]);
 
     // --- 2. MATH HELPERS ---
     
@@ -1458,7 +1563,19 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         }
 
         // 1. Grid Calibration & Drawing Priority (Phase 1 Reset)
-        const isDrawingTool = ['objects', 'delete', 'grid_cal', 'ruler', 'sphere', 'sphere_stamp', 'init_select', 'fx'].includes(activeTool);
+        const isDrawingTool = ['objects', 'delete', 'grid', 'grid_cal', 'ruler', 'sphere', 'sphere_stamp', 'init_select', 'fx'].includes(activeTool);
+
+        // START CHANGE: Right-click panning override for drawing tools
+        if (isDrawingTool && e.button === 2) {
+            e.currentTarget.setPointerCapture(e.pointerId);
+            setIsPanning(true);
+            if (longPressTimer.current) {
+                clearTimeout(longPressTimer.current);
+                longPressTimer.current = null;
+            }
+            return;
+        }
+        // END CHANGE
         
         if (isDrawingTool) {
             setIsPanning(false);
@@ -1493,8 +1610,8 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                 let startX = coords.x;
                 let startY = coords.y;
 
-                if (mapGrid.snap && img) {
-                    const isSphere = activeTool === 'sphere' || activeTool === 'fx';
+                if (mapGrid.snap && img && activeTool !== 'fx') {
+                    const isSphere = activeTool === 'sphere';
                     const snapOffset = isSphere ? 0 : (mapGrid.size / 2);
                     startX = (Math.round((coords.x - mapGrid.offsetX) / mapGrid.size) * mapGrid.size) + mapGrid.offsetX + snapOffset;
                     startY = (Math.round((coords.y - mapGrid.offsetY) / mapGrid.size) * mapGrid.size) + mapGrid.offsetY + snapOffset;
@@ -1606,7 +1723,22 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                     newTokens = newTokens.map(t => t.id === movingTokenId ? { ...t, x, y } : t);
                 }
 
-                updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...mapData, tokens: newTokens } } });
+                // Atomic Update via sub-collection
+                if (multiSelectedIds.includes(movingTokenId)) {
+                    const leaderOrigin = groupOriginsRef.current[movingTokenId];
+                    if (leaderOrigin) {
+                        const deltaX = mPos.x - leaderOrigin.x;
+                        const deltaY = mPos.y - leaderOrigin.y;
+                        multiSelectedIds.forEach(id => {
+                            const origin = groupOriginsRef.current[id];
+                            if (origin) {
+                                updateToken(id, { x: origin.x + deltaX, y: origin.y + deltaY });
+                            }
+                        });
+                    }
+                } else {
+                    updateToken(movingTokenId, { x: mPos.x, y: mPos.y });
+                }
             }
         }
 
@@ -1634,10 +1766,6 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         
         setIsDraggingToken(false);
         setIsPanning(false);
-        
-        // 1. Use Mirror Refs for absolute latest data
-        const currentTokens = latestTokensRef.current || [];
-        const currentData = latestDataRef.current;
 
         // 2. Parse unified JSON payload
         let droppedData = {};
@@ -1727,6 +1855,10 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                 // CRITICAL: Run through the Enricher to fix ActionsTab compatibility
                 const enrichedNpc = await enrichCharacter(basicNpc);
 
+                // Sync to Cloud - Re-read refs to prevent race conditions during async fetch
+                const latestData = latestDataRef.current;
+                const latestTokens = latestTokensRef.current || [];
+
                 // Create the Token Instance
                 const newToken = {
                     id: newNpcId + 1, 
@@ -1742,15 +1874,18 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                     isInstance: true
                 };
 
-                // Sync to Cloud
-                updateCloud({
-                    ...currentData,
-                    npcs: [...(currentData.npcs || []), enrichedNpc],
+                const finalUpdate = {
+                    ...latestData,
+                    npcs: [...(latestData.npcs || []), enrichedNpc],
                     campaign: {
-                        ...currentData.campaign,
-                        activeMap: { ...currentData.campaign.activeMap, tokens: [...currentTokens, newToken] }
+                        ...latestData.campaign,
+                        activeMap: { ...latestData.campaign.activeMap, tokens: [...latestTokens, newToken] }
                     }
-                }, true);
+                };
+                latestDataRef.current = finalUpdate;
+                latestTokensRef.current = finalUpdate.campaign.activeMap.tokens;
+                updateCampaign({ 'npcs': [...(latestData.npcs || []), enrichedNpc] }, true);
+                addToken(newToken);
 
             } catch (err) {
                 console.error("Spawn enrichment failed:", err);
@@ -1771,21 +1906,24 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             const img = mapImageRef.current;
             
             if (img) {
+                const latestData = latestDataRef.current;
+                const latestTokens = latestTokensRef.current || [];
+
                 const { x, y } = snapToGrid(pos.x, pos.y, img.naturalWidth, img.naturalHeight);
                 
-                const master = (currentData.players || []).find(p => p.id === entityId) || 
-                               (currentData.npcs || []).find(n => n.id === entityId);
+                const master = (latestData.players || []).find(p => p.id === entityId) || 
+                               (latestData.npcs || []).find(n => n.id === entityId);
                 
                 if (!master) return;
 
-                const ownerUid = Object.keys(currentData.assignments || {}).find(uid => String(currentData.assignments[uid]) === String(entityId));
+                const ownerUid = Object.keys(latestData.assignments || {}).find(uid => String(latestData.assignments[uid]) === String(entityId));
 
                 const newToken = {
                     id: Date.now(),
                     characterId: entityId,
                     type: type || 'npc',
                     x, y,
-                    image: master.image || image,
+                    image: master.image || image || null,
                     name: master.name,
                     size: master.size || 'medium',
                     hp: master.hp ? { ...master.hp } : { current: 10, max: 10 },
@@ -1794,16 +1932,19 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                     isInstance: true
                 };
                 
-                updateCloud({ 
-                    ...currentData, 
+                const finalUpdate = { 
+                    ...latestData, 
                     campaign: { 
-                        ...currentData.campaign, 
+                        ...latestData.campaign, 
                         activeMap: { 
-                            ...currentData.campaign.activeMap, 
-                            tokens: [...currentTokens, newToken] 
+                            ...latestData.campaign.activeMap, 
+                            tokens: [...(latestTokens || []), newToken] 
                         } 
                     } 
-                }, true);
+                };
+                latestDataRef.current = finalUpdate;
+                latestTokensRef.current = finalUpdate.campaign.activeMap.tokens;
+                addToken(newToken);
                 
                 triggerHaptic('medium');
             }
@@ -1813,42 +1954,56 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
     // START CHANGE: HUD Action Handlers
     const handleUpdateToken = (updatedToken) => {
-        const newTokens = tokens.map(t => t.id === updatedToken.id ? updatedToken : t);
-        updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...mapData, tokens: newTokens } } });
+        updateToken(updatedToken.id, updatedToken);
     };
 
     const handleDeleteToken = (tokenId) => {
         if(confirm("Banish this entity?")) {
-            const newTokens = tokens.filter(t => t.id !== tokenId);
+            const currentData = latestDataRef.current;
+            const currentTokens = currentData.campaign?.activeMap?.tokens || [];
+            const newTokens = currentTokens.filter(t => t.id !== tokenId);
             
             // Remove from combat tracker
-            const combat = data.campaign?.combat;
-            let newCampaign = { 
-                ...data.campaign, 
-                activeMap: { ...mapData, tokens: newTokens } 
-            };
+            const updates = {};
+            const combat = currentData.campaign?.combat;
 
             if (combat?.combatants) {
                 const newCombatants = combat.combatants.filter(c => !idsMatch(c.tokenId, tokenId));
                 if (newCombatants.length !== combat.combatants.length) {
-                    newCampaign.combat = { ...combat, combatants: newCombatants };
+                    updates['campaign.combat.combatants'] = newCombatants;
                 }
             }
 
-            updateCloud({ ...data, campaign: newCampaign });
+            deleteToken(tokenId);
+            
+            let newCampaign = { ...currentData.campaign, activeMap: { ...mapData, tokens: newTokens } };
+            const newData = { ...currentData, campaign: newCampaign };
+            latestDataRef.current = newData;
+            latestTokensRef.current = newTokens;
+            if (Object.keys(updates).length > 0) updateCampaign(updates);
             setSelectedTokenId(null);
         }
     };
     
     // START CHANGE: Door Toggle and Wall Delete Logic
     const handleToggleDoor = (wallId) => {
-        const newWalls = walls.map(w => w.id === wallId ? { ...w, isOpen: !w.isOpen } : w);
-        updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...mapData, walls: newWalls } } });
+        const currentData = latestDataRef.current;
+        const currentWalls = currentData.campaign?.activeMap?.walls || [];
+        const newWalls = currentWalls.map(w => w.id === wallId ? { ...w, isOpen: !w.isOpen } : w);
+        
+        const newData = { ...currentData, campaign: { ...currentData.campaign, activeMap: { ...currentData.campaign.activeMap, walls: newWalls } } };
+        latestDataRef.current = newData;
+        updateCampaign({ 'campaign.activeMap.walls': newWalls });
     };
 
     const handleDeleteWall = (wallId) => {
-        const newWalls = walls.filter(w => w.id !== wallId);
-        updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...mapData, walls: newWalls } } });
+        const currentData = latestDataRef.current;
+        const currentWalls = currentData.campaign?.activeMap?.walls || [];
+        const newWalls = currentWalls.filter(w => w.id !== wallId);
+        
+        const newData = { ...currentData, campaign: { ...currentData.campaign, activeMap: { ...currentData.campaign.activeMap, walls: newWalls } } };
+        latestDataRef.current = newData;
+        updateCampaign({ 'campaign.activeMap.walls': newWalls });
     };
     // END CHANGE
 
@@ -1887,7 +2042,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             canvas.height = realHeight;
             addLog(`Canvas Init: ${realWidth}x${realHeight}`);
             setMapReady(true); // --- CHANGES: Trigger re-render so DOM tokens and Memos update with naturalWidth ---
-            renderVision();
+            updateVision();
             
             // REMOVED: snapAllTokens(); (Fixes ReferenceError)
         }
@@ -1924,8 +2079,8 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         let worldX = (mouseX - view.x) / view.scale;
         let worldY = (mouseY - view.y) / view.scale;
 
-        // Apply Snap to grid for wall/door anchor points
-        if (mapGrid.snap && (effectiveTool === 'wall' || effectiveTool === 'door')) {
+        // Apply Snap to grid for door anchor points (Walls are now free-form)
+        if (mapGrid.snap && (effectiveTool === 'door')) {
             worldX = Math.round((worldX - mapGrid.offsetX) / mapGrid.size) * mapGrid.size + mapGrid.offsetX;
             worldY = Math.round((worldY - mapGrid.offsetY) / mapGrid.size) * mapGrid.size + mapGrid.offsetY;
         }
@@ -1969,7 +2124,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                 }
                 
                 const newWalls = walls.map(w => w.id === nearbyWall.id ? updatedWall : w);
-                updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...mapData, walls: newWalls } } });
+                updateCampaign({ 'campaign.activeMap.walls': newWalls });
             }
             return;
         }
@@ -1997,7 +2152,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                 radius: 20, // 20ft default
                 color: 'rgba(255, 170, 0, 0.8)'
             };
-            updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...mapData, lights: [...(mapData.lights || []), newLight] } } });
+            updateCampaign({ 'campaign.activeMap.lights': [...(mapData.lights || []), newLight] });
             setActiveLightId(newLight.id);
             triggerHaptic('medium');
             return;
@@ -2007,6 +2162,35 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         if (effectiveTool === 'delete') {
             const HIT_THRESHOLD = 15; // pixels
             
+            // 0. Check Tokens
+            const tokenToDelete = tokens.find(t => {
+                const tx = (t.x / 100) * img.naturalWidth;
+                const ty = (t.y / 100) * img.naturalHeight;
+                const sizeMap = { tiny: 0.5, small: 1, medium: 1, large: 2, huge: 3, gargantuan: 4 };
+                const sizeMult = typeof t.size === 'number' ? t.size : (sizeMap[t.size] || 1);
+                const radius = (mapGrid.size * sizeMult) / 2;
+                return Math.hypot(pixelX - tx, pixelY - ty) <= radius;
+            });
+
+            if (tokenToDelete) {
+                const currentData = latestDataRef.current;
+                const updates = {};
+                const combat = currentData.campaign?.combat;
+
+                if (combat?.combatants) {
+                    const newCombatants = combat.combatants.filter(c => !idsMatch(c.tokenId, tokenToDelete.id));
+                    if (newCombatants.length !== combat.combatants.length) {
+                        updates['campaign.combat.combatants'] = newCombatants;
+                    }
+                }
+
+                deleteToken(tokenToDelete.id);
+                if (Object.keys(updates).length > 0) updateCampaign(updates);
+                if (selectedTokenId === tokenToDelete.id) setSelectedTokenId(null);
+                triggerHaptic('medium');
+                return;
+            }
+
             // 1. Check Lights first
             const lightToDelete = lights.find(l => {
                 const lx = (l.x / 100) * img.naturalWidth;
@@ -2016,7 +2200,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
             if (lightToDelete) {
                 const newLights = lights.filter(l => l.id !== lightToDelete.id);
-                updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...mapData, lights: newLights } } });
+                updateCampaign({ 'campaign.activeMap.lights': newLights });
                 return;
             }
 
@@ -2027,7 +2211,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
 
             if (templateToDelete) {
                 const newTemplates = mapData.templates.filter(t => t.id !== templateToDelete.id);
-                updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...mapData, templates: newTemplates }}});
+                updateCampaign({ 'campaign.activeMap.templates': newTemplates });
                 return;
             }
 
@@ -2044,7 +2228,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             if (wallToDelete) {
                 // Delete the wall
                 const newWalls = walls.filter(w => w.id !== wallToDelete.id);
-                updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...mapData, walls: newWalls } } });
+                updateCampaign({ 'campaign.activeMap.walls': newWalls });
             }
             return;
         }
@@ -2066,7 +2250,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                 open: false,
             };
             
-            updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...mapData, walls: [...walls, newWall] } } });
+            updateCampaign({ 'campaign.activeMap.walls': [...walls, newWall] });
             setWallStart({ x: pixelX, y: pixelY }); // Automatically start next wall here
             triggerHaptic('medium');
         }
@@ -2075,7 +2259,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     const handleMapRightClick = (e) => {
         e.preventDefault();
         if (targetingPreview) {
-            clearTargetingPreview();
+            setTargetingPreview(null);
             return;
         }
         
@@ -2083,6 +2267,11 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
         if (multiSelectStartRef.current) {
             return;
         }
+
+        // START CHANGE: Don't cancel wall chain if we were panning (right-click drag)
+        const dist = Math.hypot(e.clientX - touchStartPos.current.x, e.clientY - touchStartPos.current.y);
+        if (dist > 10) return;
+        // END CHANGE
 
         if (role !== 'dm' || (effectiveTool !== 'wall' && effectiveTool !== 'door' && effectiveTool !== 'delete')) return;
         
@@ -2210,8 +2399,15 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             // OPTIMIZATION: Always render at stored position. 
             // Dragging is handled by Direct DOM manipulation, so we don't need to calculate drag pos here.
             if (img) {
-                px = (token.x / 100) * mapDimensions.width;
-                py = (token.y / 100) * mapDimensions.height;
+                // START CHANGE: Anti-Jitter for Dragging (Step 3: Network Sync)
+                if (isMoving && movingTokenPosRef.current) {
+                    px = (movingTokenPosRef.current.x / 100) * mapDimensions.width;
+                    py = (movingTokenPosRef.current.y / 100) * mapDimensions.height;
+                } else {
+                    px = (token.x / 100) * mapDimensions.width;
+                    py = (token.y / 100) * mapDimensions.height;
+                }
+                // END CHANGE
             }
 
             // START CHANGE: Highlight tokens inside selection box
@@ -2275,12 +2471,12 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
     // START CHANGE: Template Management Helpers
     const deleteTemplate = (id) => {
         const newTemplates = (mapData.templates || []).filter(t => t.id !== id);
-        updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...mapData, templates: newTemplates } } });
+        updateCampaign({ 'campaign.activeMap.templates': newTemplates });
     };
 
     const updateTemplate = (id, changes) => {
         const newTemplates = (mapData.templates || []).map(t => t.id === id ? { ...t, ...changes } : t);
-        updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...mapData, templates: newTemplates } } });
+        updateCampaign({ 'campaign.activeMap.templates': newTemplates });
     };
     // END CHANGE
 
@@ -2307,6 +2503,15 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             {/* END CHANGE */}
             {/* DEBUG OVERLAY REMOVED */}
 
+            {/* START CHANGE: Connection Lost Indicator */}
+            {!isConnected && (
+                <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[200] bg-red-600/90 text-white px-4 py-1.5 rounded-full text-xs font-bold shadow-lg flex items-center gap-2 animate-pulse pointer-events-none backdrop-blur-sm border border-red-400/50">
+                    <Icon name="wifi-off" size={14}/>
+                    <span>Connection Lost</span>
+                </div>
+            )}
+            {/* END CHANGE */}
+
             {/* --- TOP RIGHT CONTROLS (Library, Tokens, Combat, Zoom) --- */}
             <div 
                 className={`absolute z-[100] flex gap-2 pointer-events-auto transition-all duration-300 ${sidebarIsOpen ? 'right-[10px]' : 'right-4'} ${hudClass}`}
@@ -2320,10 +2525,16 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                         <Icon name="scroll" size={20}/>
                     </button>
                     <button onClick={() => {
+                        updateMapState('toggle_journal');
+                        updateMapState('close_sheet');
+                    }} className={`p-3 md:p-2 rounded-lg transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center ${activeSidebar === 'journal' ? 'bg-slate-700 text-white' : 'text-slate-300 hover:text-white hover:bg-slate-800'}`} title={activeSidebar === 'journal' ? "Close Journal" : "Open Journal"}>
+                        <Icon name="book-open" size={20}/>
+                    </button>
+                    <button onClick={() => {
                         updateMapState('toggle_chat');
                         updateMapState('close_sheet');
-                    }} className={`p-3 md:p-2 rounded-lg transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center ${sidebarMode === 'chat' ? 'bg-slate-700 text-white' : 'text-slate-300 hover:text-white hover:bg-slate-800'}`} title={sidebarMode === 'chat' ? "Close Chat" : "Open Chat"}>
-                        <Icon name={sidebarMode === 'chat' ? "x" : "message-square"} size={20}/>
+                    }} className={`p-3 md:p-2 rounded-lg transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center ${activeSidebar === 'chat' ? 'bg-slate-700 text-white' : 'text-slate-300 hover:text-white hover:bg-slate-800'}`} title={activeSidebar === 'chat' ? "Close Chat" : "Open Chat"}>
+                        <Icon name={activeSidebar === 'chat' ? "x" : "message-square"} size={20}/>
                     </button>
                     <div className="w-px h-8 bg-slate-700 my-auto"></div>
                     {role === 'dm' && (
@@ -2334,10 +2545,12 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                             <button onClick={() => setShowTokens(!showTokens)} className={`p-3 md:p-2 rounded-lg transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center ${showTokens ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:text-white hover:bg-slate-800'}`} title="Tokens">
                                 <Icon name="users" size={20}/>
                             </button>
-                            <button onClick={() => showCombat ? setShowCombat(false) : handleStartCombat()} className={`p-3 md:p-2 rounded-lg transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center ${showCombat || data.campaign?.combat?.active ? 'bg-red-600 text-white animate-pulse' : 'text-slate-300 hover:text-white hover:bg-slate-800'}`} title="Combat Tracker">
-                                <Icon name="swords" size={20}/>
-                            </button>
                         </>
+                    )}
+                    {(role === 'dm' || data.campaign?.combat?.active) && (
+                        <button onClick={() => showCombat ? setShowCombat(false) : (role === 'dm' ? handleStartCombat() : setShowCombat(true))} className={`p-3 md:p-2 rounded-lg transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center ${showCombat || data.campaign?.combat?.active ? 'bg-red-600 text-white animate-pulse' : 'text-slate-300 hover:text-white hover:bg-slate-800'}`} title="Combat Tracker">
+                            <Icon name="swords" size={20}/>
+                        </button>
                     )}
                     <div className="w-px h-8 bg-slate-700 my-auto"></div>
                     
@@ -2356,8 +2569,8 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                     isFullscreen 
                         ? (hudVisible ? 'opacity-100' : 'opacity-0 pointer-events-none')
                         : (sidebarIsOpen 
-                            ? 'max-[1150px]:opacity-0 max-[1150px]:pointer-events-none' 
-                            : 'max-[650px]:opacity-0 max-[650px]:pointer-events-none opacity-100')
+                            ? 'max-[1500px]:opacity-0 max-[1500px]:pointer-events-none' 
+                            : 'max-[1100px]:opacity-0 max-[1100px]:pointer-events-none opacity-100')
                 }`}
                 style={{ top: 'calc(1rem + env(safe-area-inset-top))', left: 'calc(1rem + env(safe-area-inset-left))' }}
             >
@@ -2389,15 +2602,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                         activeTool={activeTool} 
                         setTool={setActiveTool} 
                         visionActive={visionActive}
-                        onToggleVision={() => {
-                            updateCloud({ 
-                                ...data, 
-                                campaign: { 
-                                    ...data.campaign, 
-                                    activeMap: { ...mapData, visionActive: !visionActive }  
-                                    } 
-                                });
-                            }}
+                        onToggleVision={() => updateCampaign({ 'campaign.activeMap.visionActive': !visionActive })}
                         />
                     </div>
                 </div>
@@ -2416,12 +2621,10 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
             
             {/* Light Adjustment HUD */}
             {role === 'dm' && activeTool === 'light' && activeLightId && (() => {
-                const light = (mapData.lights || []).find(l => l.id === activeLightId);
+                const light = lights.find(l => l.id === activeLightId);
                 if (!light) return null;
 
                 const updateLight = (changes) => {
-                    const newLights = mapData.lights.map(l => l.id === activeLightId ? { ...l, ...changes } : l);
-                    updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...mapData, lights: newLights } } });
                 };
 
                 return (
@@ -2530,7 +2733,7 @@ const InteractiveMap = ({ data, role, updateMapState, updateCloud, onDiceRoll, a
                     settings={fxSettings} 
                     onUpdate={setFxSettings} 
                     currentWeather={mapData.weather}
-                    onWeatherChange={(w) => updateCloud({ ...data, campaign: { ...data.campaign, activeMap: { ...mapData, weather: w } } })}
+                    onWeatherChange={(w) => updateCampaign({ 'campaign.activeMap.weather': w })}
                     role={role}
                     onClose={() => setActiveTool('move')} 
                 />

@@ -1,4 +1,4 @@
-import React, { useRef, useMemo, useLayoutEffect } from 'react';
+import React, { useRef, useMemo, useLayoutEffect, memo } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { useVfxStore } from '../../stores/useVfxStore';
 import * as THREE from 'three';
@@ -291,7 +291,7 @@ const DebugMarker = ({ position, color = "cyan" }) => (
     </group>
 );
 
-const Effect = (props) => {
+const Effect = memo((props) => {
     const isDebug = localStorage.getItem('vtt_debug_vfx') === 'true';
     switch (props.behavior) {
         case 'breath': return <><Breath {...props} />{isDebug && <DebugMarker position={[props.origin.x, -props.origin.y, 1]} />}</>;
@@ -301,7 +301,7 @@ const Effect = (props) => {
         case 'burst': return <><Burst {...props} />{isDebug && <DebugMarker position={[props.origin.x, -props.origin.y, 1]} />}</>;
         default: return null;
     }
-};
+});
 
 const CameraController = ({ width, height }) => {
     const { camera, size, gl } = useThree();
@@ -328,6 +328,12 @@ export default function VfxOverlay({ width, height, templates = [], weather, pix
     const targetingPreview = useVfxStore(state => state.targetingPreview);
     
     if (!width || !height) return null;
+    
+    // Cap dimensions to prevent WebGL context loss on huge maps
+    const MAX_DIM = 4096;
+    const scale = Math.min(1, MAX_DIM / Math.max(width, height));
+    const renderWidth = Math.floor(width * scale);
+    const renderHeight = Math.floor(height * scale);
 
     return (
         <div 
@@ -341,7 +347,6 @@ export default function VfxOverlay({ width, height, templates = [], weather, pix
             }}
         >
             <Canvas
-                key={`vfx-canvas-${width}-${height}`}
                 dpr={1} // Force 1:1 pixel mapping to match Vision Canvas
                 resize={{ debounce: 0 }}
                 orthographic

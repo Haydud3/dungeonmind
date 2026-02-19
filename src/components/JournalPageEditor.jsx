@@ -24,6 +24,7 @@ const JournalPageEditor = ({
     const [resolvedContent, setResolvedContent] = useState("");
     const [syncStatus, setSyncStatus] = useState("idle");
     const [aiWorking, setAiWorking] = useState(false);
+    const [toolbarExpanded, setToolbarExpanded] = useState(false); // NEW: Toolbar state
     const toast = useToast();
     const quillRef = useRef(null);
     const debounceRef = useRef(null);
@@ -356,123 +357,142 @@ const JournalPageEditor = ({
 
     return (
         <div className="infinite-desk">
-            {/* --- CHANGES: HUD Header with Embedded Toolbar --- */}
-            <div className="h-16 border-b border-slate-700 bg-slate-900/95 backdrop-blur flex items-center justify-between px-4 z-50 shrink-0 shadow-md">
+            {/* --- CHANGES: Dynamic height header for expandable toolbar --- */}
+            <div className={`border-b border-slate-700 bg-slate-900/95 backdrop-blur flex flex-col justify-center px-4 z-50 shrink-0 shadow-md transition-all duration-300 ${toolbarExpanded ? 'h-28' : 'h-16'}`}>
+                <style>{`
+                    #${TOOLBAR_ID} {
+                        display: flex !important;
+                        align-items-center;
+                        border: none !important;
+                        scrollbar-width: none;
+                        -ms-overflow-style: none;
+                    }
+                    #${TOOLBAR_ID}.collapsed {
+                        flex-wrap: nowrap !important;
+                        overflow-x: auto !important;
+                    }
+                    #${TOOLBAR_ID}::-webkit-scrollbar { display: none; }
+                    #${TOOLBAR_ID} .ql-formats {
+                        display: flex !important;
+                        flex-shrink: 0 !important;
+                        margin-right: 8px !important;
+                    }
+                `}</style>
                 
-                {/* Left: Navigation */}
-                <button onClick={onBack} className="text-slate-400 hover:text-white mr-4">
-                    <Icon name="arrow-left" size={24} />
-                </button>
-
-                {/* Center: THE DETACHED TOOLBAR (Quill fills this div) */}
-                {/* --- CHANGES: Remove overflow classes from JSX to rely on CSS --- */}
-                {/* We strictly control overflow in CSS to handle the Mobile vs Desktop split */}
-                <div id={TOOLBAR_ID} className="flex-1 flex items-center ql-toolbar ql-snow px-2 mask-gradient">
-                    {/* Quill will inject buttons here. */}
-                    <span className="ql-formats">
-                        <select className="ql-header" defaultValue="">
-                            <option value="1"></option>
-                            <option value="2"></option>
-                            <option value=""></option>
-                            <option value=""></option>
-                            <option value=""></option>
-                        </select>
-                    </span>
-                    <span className="ql-formats">
-                        <button className="ql-bold"></button>
-                        <button className="ql-italic"></button>
-                        <button className="ql-underline"></button>
-                        <button className="ql-strike"></button>
-                    </span>
-                    {/* --- CHANGES: Add Color & Background Pickers --- */}
-                    <span className="ql-formats">
-                        <select className="ql-color"></select>
-                        <select className="ql-background"></select>
-                    </span>
-                    {/* --- END OF CHANGES --- */}
-                    <span className="ql-formats">
-                        <button className="ql-list" value="ordered"></button>
-                        <button className="ql-list" value="bullet"></button>
-                    </span>
-                    <span className="ql-formats">
-                        <button className="ql-link"></button>
-                        <button className="ql-image"></button>
-                    </span>
-                     {/* Custom Buttons need specific classes matching handlers */}
-                    <span className="ql-formats">
-                        <button className="ql-aiSpark">
-                            <Icon name="sparkles" size={16} />
-                        </button>
-                    </span>
-                </div>
-
-                {/* Right: Actions */}
-                <div className="flex items-center gap-1 md:gap-3 ml-2 shrink-0">
-                     {/* --- CHANGES: Add Zoom Controls --- */}
-                    <div className="hidden md:flex items-center bg-slate-800 rounded border border-slate-700 mr-2">
-                        <button onClick={() => adjustZoom(-0.1)} className="p-1 hover:text-white text-slate-400 border-r border-slate-700">
-                            <Icon name="minus" size={12}/>
-                        </button>
-                        <span className="text-[10px] w-8 text-center font-mono text-slate-300">{Math.round(zoom * 100)}%</span>
-                        <button onClick={() => adjustZoom(0.1)} className="p-1 hover:text-white text-slate-400 border-l border-slate-700">
-                            <Icon name="plus" size={12}/>
-                        </button>
-                    </div>
-                    {/* --- END OF CHANGES --- */}
-
-                     {/* Sync Status - Hide on small mobile to save space */}
-                     {(() => {
-                        const statusMap = {
-                            idle: { icon: 'cloud-off', color: 'text-slate-500' },
-                            typing: { icon: 'pencil', color: 'text-amber-500' },
-                            saving: { icon: 'loader', color: 'text-blue-500', anim: 'animate-spin' },
-                            saved: { icon: 'check', color: 'text-green-500' }
-                        };
-                        const current = statusMap[syncStatus] || statusMap.idle;
-                        return <div className="hidden sm:block"><Icon name={current.icon} size={18} className={`${current.color} ${current.anim || ''}`} /></div>;
-                    })()}
-
-                    {/* --- CHANGES: Restore Granular Permission Dropdown Menu --- */}
-                    <div className="relative" ref={permMenuRef}>
-                        <button onClick={() => setShowPermMenu(!showPermMenu)} className={`p-2 rounded hover:bg-slate-800 transition-colors flex items-center gap-1 ${page.isPublic ? 'text-green-400' : (page.visibleTo?.length > 0 ? 'text-indigo-400' : 'text-red-400')}`}>
-                            <Icon name={page.isPublic ? "globe" : (page.visibleTo?.length > 0 ? "users" : "lock")} size={20}/>
-                        </button>
-
-                        {showPermMenu && (
-                            <div className="absolute top-full right-0 mt-2 w-72 bg-slate-800 border border-slate-600 rounded-lg shadow-2xl z-[1000] p-2 animate-in zoom-in-95 duration-100">
-                                <h4 className="text-xs font-bold text-slate-500 uppercase mb-2 px-2">Visible To...</h4>
-                                
-                                <div onClick={toggleVisibility} className="flex items-center justify-between p-2 rounded hover:bg-slate-700 cursor-pointer mb-2 border-b border-slate-700">
-                                    <span className="text-sm font-bold text-white flex items-center gap-2"><Icon name="globe" size={14}/> <span>Everyone</span></span>
-                                    {page.isPublic && <Icon name="check" size={16} className="text-green-500"/>}
-                                </div>
-
-                                <div className="space-y-1 max-h-60 overflow-y-auto custom-scroll">
-                                    {players && players.length > 0 ? players.map(p => {
-                                        const targetId = p.id; 
-                                        const isSelected = page.visibleTo?.includes(targetId);
-                                        
-                                        return (
-                                            <div key={p.id} onClick={() => toggleCharacterPermission(targetId)} className={`flex items-center justify-between p-2 rounded cursor-pointer ${isSelected ? 'bg-indigo-900/30 border border-indigo-500/30' : 'hover:bg-slate-700 border border-transparent'}`}>
-                                                <div className="flex items-center gap-2">
-                                                    <div className="w-6 h-6 rounded bg-slate-900 overflow-hidden shrink-0 border border-slate-700">
-                                                        {p.image ? <img src={p.image} className="w-full h-full object-cover"/> : <div className="flex items-center justify-center h-full text-[10px] text-slate-500 font-bold">{p.name[0]}</div>}
-                                                    </div>
-                                                    <span className="text-sm text-slate-200 font-bold truncate">{p.name}</span>
-                                                </div>
-                                                {isSelected && <Icon name="check" size={14} className="text-indigo-400 shrink-0"/>}
-                                            </div>
-                                        );
-                                    }) : <div className="p-4 text-center text-xs text-slate-500 italic">No characters found.</div>}
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                    {/* --- END OF CHANGES --- */}
-                    
-                    <button onClick={() => onDelete(page.id)} className="text-slate-500 hover:text-red-500 p-2 rounded hover:bg-slate-800 transition-colors">
-                        <Icon name="trash-2" size={20}/>
+                <div className="flex items-center justify-between w-full">
+                    {/* Left: Navigation */}
+                    <button onClick={onBack} className="text-slate-400 hover:text-white mr-2 shrink-0">
+                        <Icon name="arrow-left" size={24} />
                     </button>
+
+                    {/* Center: THE DETACHED TOOLBAR (Quill fills this div) */}
+                    <div id={TOOLBAR_ID} className={`flex-1 ql-toolbar ql-snow px-2 ${toolbarExpanded ? 'flex-wrap' : 'collapsed'}`}>
+                        {/* Quill will inject all these buttons. Flex-wrap will handle layout. */}
+                        <span className="ql-formats">
+                            <select className="ql-header" defaultValue="">
+                                <option value="1"></option>
+                                <option value="2"></option>
+                                <option value=""></option>
+                            </select>
+                        </span>
+                        <span className="ql-formats">
+                            <button className="ql-bold"></button>
+                            <button className="ql-italic"></button>
+                            <button className="ql-underline"></button>
+                            <button className="ql-strike"></button>
+                        </span>
+                        <span className="ql-formats">
+                            <select className="ql-color"></select>
+                            <select className="ql-background"></select>
+                        </span>
+                        <span className="ql-formats">
+                            <button className="ql-list" value="ordered"></button>
+                            <button className="ql-list" value="bullet"></button>
+                        </span>
+                        <span className="ql-formats">
+                            <button className="ql-link"></button>
+                            <button className="ql-image"></button>
+                        </span>
+                        <span className="ql-formats">
+                            <button className="ql-aiSpark">
+                                <Icon name="sparkles" size={16} />
+                            </button>
+                        </span>
+                    </div>
+
+                    {/* Right: Actions */}
+                    <div className="flex items-center gap-1 md:gap-3 ml-2 shrink-0">
+                        {/* NEW: Expand Toolbar Button */}
+                        <button onClick={() => setToolbarExpanded(!toolbarExpanded)} className="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors">
+                            <Icon name={toolbarExpanded ? "chevron-up" : "more-horizontal"} size={20} />
+                        </button>
+
+                        {/* --- CHANGES: Add Zoom Controls --- */}
+                        <div className="hidden md:flex items-center bg-slate-800 rounded border border-slate-700">
+                            <button onClick={() => adjustZoom(-0.1)} className="p-1 hover:text-white text-slate-400 border-r border-slate-700">
+                                <Icon name="minus" size={12}/>
+                            </button>
+                            <span className="text-[10px] w-8 text-center font-mono text-slate-300">{Math.round(zoom * 100)}%</span>
+                            <button onClick={() => adjustZoom(0.1)} className="p-1 hover:text-white text-slate-400 border-l border-slate-700">
+                                <Icon name="plus" size={12}/>
+                            </button>
+                        </div>
+                        {/* --- END OF CHANGES --- */}
+
+                        {/* Sync Status - Hide on small mobile to save space */}
+                        {(() => {
+                            const statusMap = {
+                                idle: { icon: 'cloud-off', color: 'text-slate-500' },
+                                typing: { icon: 'pencil', color: 'text-amber-500' },
+                                saving: { icon: 'loader', color: 'text-blue-500', anim: 'animate-spin' },
+                                saved: { icon: 'check', color: 'text-green-500' }
+                            };
+                            const current = statusMap[syncStatus] || statusMap.idle;
+                            return <div className="hidden sm:block"><Icon name={current.icon} size={18} className={`${current.color} ${current.anim || ''}`} /></div>;
+                        })()}
+
+                        {/* --- CHANGES: Restore Granular Permission Dropdown Menu --- */}
+                        <div className="relative" ref={permMenuRef}>
+                            <button onClick={() => setShowPermMenu(!showPermMenu)} className={`p-2 rounded hover:bg-slate-800 transition-colors flex items-center gap-1 ${page.isPublic ? 'text-green-400' : (page.visibleTo?.length > 0 ? 'text-indigo-400' : 'text-red-400')}`}>
+                                <Icon name={page.isPublic ? "globe" : (page.visibleTo?.length > 0 ? "users" : "lock")} size={20}/>
+                            </button>
+
+                            {showPermMenu && (
+                                <div className="absolute top-full right-0 mt-2 w-72 bg-slate-800 border border-slate-600 rounded-lg shadow-2xl z-[1000] p-2 animate-in zoom-in-95 duration-100">
+                                    <h4 className="text-xs font-bold text-slate-500 uppercase mb-2 px-2">Visible To...</h4>
+                                    
+                                    <div onClick={toggleVisibility} className="flex items-center justify-between p-2 rounded hover:bg-slate-700 cursor-pointer mb-2 border-b border-slate-700">
+                                        <span className="text-sm font-bold text-white flex items-center gap-2"><Icon name="globe" size={14}/> <span>Everyone</span></span>
+                                        {page.isPublic && <Icon name="check" size={16} className="text-green-500"/>}
+                                    </div>
+
+                                    <div className="space-y-1 max-h-60 overflow-y-auto custom-scroll">
+                                        {players && players.length > 0 ? players.map(p => {
+                                            const targetId = p.id; 
+                                            const isSelected = page.visibleTo?.includes(targetId);
+                                            
+                                            return (
+                                                <div key={p.id} onClick={() => toggleCharacterPermission(targetId)} className={`flex items-center justify-between p-2 rounded cursor-pointer ${isSelected ? 'bg-indigo-900/30 border border-indigo-500/30' : 'hover:bg-slate-700 border border-transparent'}`}>
+                                                    <div className="flex items-center gap-2">
+                                                        <div className="w-6 h-6 rounded bg-slate-900 overflow-hidden shrink-0 border border-slate-700">
+                                                            {p.image ? <img src={p.image} className="w-full h-full object-cover"/> : <div className="flex items-center justify-center h-full text-[10px] text-slate-500 font-bold">{p.name[0]}</div>}
+                                                        </div>
+                                                        <span className="text-sm text-slate-200 font-bold truncate">{p.name}</span>
+                                                    </div>
+                                                    {isSelected && <Icon name="check" size={14} className="text-indigo-400 shrink-0"/>}
+                                                </div>
+                                            );
+                                        }) : <div className="p-4 text-center text-xs text-slate-500 italic">No characters found.</div>}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                        {/* --- END OF CHANGES --- */}
+                        
+                        <button onClick={() => onDelete(page.id)} className="text-slate-500 hover:text-red-500 p-2 rounded hover:bg-slate-800 transition-colors">
+                            <Icon name="trash-2" size={20}/>
+                        </button>
+                    </div>
                 </div>
             </div>
 

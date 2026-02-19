@@ -24,13 +24,14 @@ const DB_INIT_DATA = {
     }
 };
 
-const INITIAL_APP_STATE = { ...DB_INIT_DATA, players: [], journal_pages: {}, chatLog: [] };
+const INITIAL_APP_STATE = { ...DB_INIT_DATA, players: [], journal_pages: {}, chatLog: [], ui: { sidebar: null } };
 
 export const CampaignProvider = ({ children }) => {
     const [gameParams, setGameParams] = useState(null); 
 // --- CHANGES: Internal Auth State & Presence Trigger ---
     const [user, setUser] = useState(null);
     const [data, setData] = useState(INITIAL_APP_STATE);
+    const [isConnected, setIsConnected] = useState(true); // Track connection status
 
     // 0. Internal Auth Listener
     useEffect(() => {
@@ -61,6 +62,7 @@ export const CampaignProvider = ({ children }) => {
         if (isOffline) {
             const local = localStorage.getItem('dm_local_data');
             setData(local ? JSON.parse(local) : INITIAL_APP_STATE);
+            setIsConnected(true); // Offline mode is considered "connected" locally
             return;
         }
 
@@ -68,6 +70,8 @@ export const CampaignProvider = ({ children }) => {
         
         // Listeners
         const unsubRoot = onSnapshot(rootRef, { includeMetadataChanges: true }, (snap) => {
+            setIsConnected(!snap.metadata.fromCache); // Update connection status based on cache state
+
             if (snap.exists()) {
                 // --- CHANGES: Remove pending save gate to allow fluid real-time updates from other users ---
                 const d = snap.data();
@@ -117,89 +121,202 @@ export const CampaignProvider = ({ children }) => {
             setLoreChunks(allChunks);
         });
 
+        // START CHANGE: Tokens Sub-collection Listener
+        const tokensRef = collection(rootRef, 'tokens');
+        const unsubTokens = onSnapshot(tokensRef, (snap) => {
+            const tokens = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+                // Step 3: Client-side filtering of hidden tokens for players to reduce state bloat
+                .filter(t => {
+                    return gameParams.role === 'dm' || !t.isHidden;
+                });
+            setData(prev => ({
+                ...prev,
+                campaign: {
+                    ...prev.campaign,
+                    activeMap: { ...prev.campaign.activeMap, tokens }
+                }
+            }));
+        });
+        // END CHANGE
+
         // Presence
         if (user && !isOffline) updateDoc(rootRef, { [`activeUsers.${user.uid}`]: user.email || "Anonymous" }).catch(console.error);
 
-        return () => { unsubRoot(); unsubPlayers(); unsubJournal(); unsubChat(); unsubLore(); };
+        return () => { unsubRoot(); unsubPlayers(); unsubJournal(); unsubChat(); unsubLore(); unsubTokens(); };
     }, [gameParams, user]);
 
-     // --- 2. ACTIONS ---
-    const updateMapState = (action, payload) => {
-        const currentMap = data.campaign?.activeMap || {};
-        let updatedMap = { ...currentMap };
-
-        switch (action) {
-            case 'move_token':
-                updatedMap.tokens = (currentMap.tokens || []).map(t => 
-                    String(t.id) === String(payload.tokenId) ? { ...t, x: payload.x, y: payload.y } : t
-                );
-                break;
-            case 'update_token':
-                updatedMap.tokens = (currentMap.tokens || []).map(t => 
-                    String(t.id) === String(payload.id) ? { ...t, ...payload } : t
-                );
-                break;
-            case 'delete_token':
-                updatedMap.tokens = (currentMap.tokens || []).filter(t => String(t.id) !== String(payload));
-                break;
-            case 'add_token':
-                updatedMap.tokens = [...(currentMap.tokens || []), payload];
-                break;
-            case 'load_map':
-                updatedMap = { ...payload, id: payload.id || Date.now() };
-                break;
-            case 'rename_map':
-                const renamedMaps = (data.campaign?.savedMaps || []).map(m => 
-                    m.id === payload.id ? { ...m, name: payload.newName } : m
-                );
-                updateCloud({ ...data, campaign: { ...data.campaign, savedMaps: renamedMaps } });
-                return;
-            case 'delete_map':
-                const filteredMaps = (data.campaign?.savedMaps || []).filter(m => m.id !== payload);
-                updateCloud({ ...data, campaign: { ...data.campaign, savedMaps: filteredMaps } });
-                return;
-            case 'open_sheet':
-                setData(prev => ({ ...prev, activeSheet: payload }));
-                return;
-        }
-
-        updateCloud({
-            ...data,
-            campaign: { ...data.campaign, activeMap: updatedMap }
-        }, action === 'move_token');
-    };
-
-    const updateCloud = (newData, immediate = false) => {
+    // --- 2. ACTIONS ---
+    
+    // NEW: Internal helper to send changes to Firestore
+    const _updateCampaignDocument = (changes, immediate = false) => {
         isPendingSave.current = true; 
-// ---------------------------------------------------------
-        // NEW: Sanitizer function to strip 'undefined' which Firebase hates
+
+        // Sanitizer function to strip 'undefined' which Firebase hates
         const sanitize = (obj) => {
             return JSON.parse(JSON.stringify(obj, (key, value) =>
                 value === undefined ? null : value
             ));
         };
 
-        const sanitizedData = sanitize(newData);
-        const { players, chatLog, journal_pages, ...rootData } = sanitizedData;
-        
-        setData(prev => ({ ...prev, ...sanitizedData })); // Optimistic UI
-// ---------------------------------------------------------
-
         if (gameParams?.isOffline) {
-// context: line 88 (updated to use sanitizedData)
-            localStorage.setItem('dm_local_data', JSON.stringify(sanitizedData));
+            // Offline mode: apply changes to local storage
+            const currentLocal = JSON.parse(localStorage.getItem('dm_local_data') || JSON.stringify(INITIAL_APP_STATE));
+            let updatedLocal = { ...currentLocal };
+            
+            // Simple deep merge for offline simulation
+            for (const path in changes) {
+                const parts = path.split('.');
+                let target = updatedLocal;
+                for (let i = 0; i < parts.length - 1; i++) {
+                    if (!target[parts[i]]) target[parts[i]] = {};
+                    target = target[parts[i]];
+                }
+                target[parts[parts.length - 1]] = changes[path];
+            }
+            
+            localStorage.setItem('dm_local_data', JSON.stringify(sanitize(updatedLocal)));
+            setData(updatedLocal);
             return;
         }
         
         const doSave = () => {
             const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code);
-            setDoc(ref, rootData, { merge: true }).then(() => {
+            // Use updateDoc for granular field updates
+            updateDoc(ref, sanitize(changes)).then(() => {
                 isPendingSave.current = false; 
-            });
+            }).catch(err => console.error("Save failed:", err));
         };
         
         if (saveTimer.current) clearTimeout(saveTimer.current);
         if (immediate) doSave(); else saveTimer.current = setTimeout(doSave, 1000); 
+    };
+
+    // NEW: Public API for updating campaign data
+    const updateCampaign = (changes, immediate = false) => {
+        // Optimistically update local state
+        setData(prev => {
+            let newState = { ...prev };
+            // Deep clone to avoid mutation
+            newState = JSON.parse(JSON.stringify(newState));
+            
+            for (const path in changes) {
+                const parts = path.split('.');
+                let target = newState;
+                for (let i = 0; i < parts.length - 1; i++) {
+                    if (!target[parts[i]]) target[parts[i]] = {};
+                    target = target[parts[i]];
+                }
+                target[parts[parts.length - 1]] = changes[path];
+            }
+            return newState;
+        });
+        
+        _updateCampaignDocument(changes, immediate);
+    };
+
+    // Legacy wrapper for backward compatibility if needed
+    const updateCloud = (newData, immediate = false) => {
+        console.warn("Deprecated updateCloud called. Please migrate to updateCampaign.");
+        if (newData.campaign) {
+            updateCampaign({ 'campaign': newData.campaign }, immediate);
+        }
+    };
+
+    // START CHANGE: Atomic Token Operations
+    const addToken = (token) => {
+        if (!gameParams?.code) return;
+        // Optimistic Update
+        setData(prev => {
+            const currentTokens = prev.campaign?.activeMap?.tokens || [];
+            return { ...prev, campaign: { ...prev.campaign, activeMap: { ...prev.campaign.activeMap, tokens: [...currentTokens, token] } } };
+        });
+        const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'tokens', String(token.id));
+        setDoc(ref, token);
+    };
+
+    const updateToken = (tokenId, changes) => {
+        if (!gameParams?.code) return;
+        // Optimistic Update
+        let tokenExists = false;
+        setData(prev => {
+            const currentTokens = prev.campaign?.activeMap?.tokens || [];
+            tokenExists = currentTokens.some(t => String(t.id) === String(tokenId));
+            if (!tokenExists) return prev; // Don't update if not found locally
+            
+            const newTokens = currentTokens.map(t => String(t.id) === String(tokenId) ? { ...t, ...changes } : t);
+            return { ...prev, campaign: { ...prev.campaign, activeMap: { ...prev.campaign.activeMap, tokens: newTokens } } };
+        });
+        
+        if (!tokenExists) return; // Stop if token was deleted locally
+
+        const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'tokens', String(tokenId));
+        // Use setDoc with merge to handle potential sync race conditions without crashing
+        setDoc(ref, changes, { merge: true }).catch(err => {
+            console.warn("Token update failed (likely deleted):", err.message);
+        });
+    };
+
+    const deleteToken = (tokenId) => {
+        if (!gameParams?.code) return;
+        // Optimistic Update
+        setData(prev => {
+            const currentTokens = prev.campaign?.activeMap?.tokens || [];
+            const newTokens = currentTokens.filter(t => String(t.id) !== String(tokenId));
+            return { ...prev, campaign: { ...prev.campaign, activeMap: { ...prev.campaign.activeMap, tokens: newTokens } } };
+        });
+        const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'tokens', String(tokenId));
+        deleteDoc(ref);
+    };
+    // END CHANGE
+
+    const updateMapState = (action, payload) => {
+        const currentMap = data.campaign?.activeMap || {};
+
+        switch (action) {
+            case 'move_token':
+                updateToken(payload.tokenId, { x: payload.x, y: payload.y });
+                break;
+            case 'update_token':
+                updateToken(payload.id, payload);
+                break;
+            case 'delete_token':
+                deleteToken(payload);
+                break;
+            case 'add_token':
+                addToken(payload);
+                break;
+            case 'load_map':
+                updateCampaign({ 'campaign.activeMap': { ...payload, id: payload.id || Date.now() } });
+                break;
+            case 'rename_map':
+                const renamedMaps = (data.campaign?.savedMaps || []).map(m => 
+                    m.id === payload.id ? { ...m, name: payload.newName } : m
+                );
+                updateCampaign({ 'campaign.savedMaps': renamedMaps });
+                return;
+            case 'delete_map':
+                const filteredMaps = (data.campaign?.savedMaps || []).filter(m => m.id !== payload);
+                updateCampaign({ 'campaign.savedMaps': filteredMaps });
+                return;
+            case 'update_map':
+                const updatedSavedMaps = (data.campaign?.savedMaps || []).map(m => 
+                    m.id === payload.id ? { ...m, ...payload } : m
+                );
+                updateCampaign({ 'campaign.savedMaps': updatedSavedMaps });
+                return;
+            case 'open_sheet':
+                setData(prev => ({ ...prev, activeSheet: payload }));
+                return;
+            case 'close_sheet':
+                setData(prev => ({ ...prev, activeSheet: null }));
+                return;
+            case 'toggle_journal':
+                setData(prev => ({ ...prev, ui: { ...prev.ui, sidebar: prev.ui?.sidebar === 'journal' ? null : 'journal' } }));
+                return;
+            case 'toggle_chat':
+                setData(prev => ({ ...prev, ui: { ...prev.ui, sidebar: prev.ui?.sidebar === 'chat' ? null : 'chat' } }));
+                return;
+        }
     };
 
     const savePlayer = async (player) => {
@@ -280,6 +397,35 @@ export const CampaignProvider = ({ children }) => {
     };
     // END CHANGE
 
+    // START CHANGE: Chat & Journal Helpers for Sidebar Views
+    const sendMessage = async (content, type = 'chat-public', targetId = null, contextMode = 'fast') => {
+        if (!gameParams?.code) return;
+        const msg = {
+            content,
+            type,
+            targetId,
+            senderId: user?.uid,
+            senderName: user?.displayName || user?.email?.split('@')[0] || "Anonymous",
+            timestamp: Date.now(),
+            contextMode
+        };
+        const ref = collection(doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code), 'chat');
+        await setDoc(doc(ref), msg);
+    };
+
+    const deleteJournalPage = async (pageId) => {
+        if (!gameParams?.code) return;
+        const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'journal', pageId);
+        await deleteDoc(ref);
+    };
+    
+    const saveJournalPage = async (pageId, pageData) => {
+        if (!gameParams?.code) return;
+        const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'journal', pageId);
+        await setDoc(ref, pageData, { merge: true });
+    };
+    // END CHANGE
+
     // --- MEMOIZED VALUE (Prevents Infinite Renders & "1, M" Errors) ---
     const value = useMemo(() => ({
         data, setData, gameParams, 
@@ -287,12 +433,15 @@ export const CampaignProvider = ({ children }) => {
         user, 
         joinCampaign, leaveCampaign, 
 // --- 2 lines after changes ---
-        updateCloud, updateMapState, savePlayer, deletePlayer, 
-        loreChunks, setLoreChunks,
+        updateCampaign, updateCloud, updateMapState, savePlayer, deletePlayer, 
+        addToken, updateToken, deleteToken, // Exported for atomic access
+        loreChunks, setLoreChunks, 
+        sendMessage, deleteJournalPage, saveJournalPage, // Sidebar Helpers
         sendPing,
         triggerVfx,
-        kickPlayer, banPlayer, unbanPlayer
-    }), [data, gameParams, loreChunks, user]);
+        kickPlayer, banPlayer, unbanPlayer,
+        isConnected
+    }), [data, gameParams, loreChunks, user, isConnected]);
 
     return (
         <CampaignContext.Provider value={value}>

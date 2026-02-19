@@ -4,7 +4,7 @@ import JournalPageEditor from './JournalPageEditor';
 import Icon from './Icon';
 // --- END OF CHANGES ---
 
-const JournalView = ({ data, role, userId, aiHelper, onSavePage, onDeletePage }) => {
+const JournalView = ({ data, role, userId, aiHelper, onSavePage, onDeletePage, onClose }) => {
     const [activePageId, setActivePageId] = useState(null);
 
     // --- CHANGES: Keep filtering logic, but removed isEditing/Outline state ---
@@ -63,9 +63,14 @@ const JournalView = ({ data, role, userId, aiHelper, onSavePage, onDeletePage })
             <div className="w-full max-w-5xl mx-auto space-y-4">
                 <div className="flex justify-between items-center mb-6">
                     <h2 className="text-2xl text-amber-500 fantasy-font">Journal</h2>
-                    <button onClick={handleCreate} className="bg-amber-600 hover:bg-amber-500 text-white px-4 py-2 rounded shadow-lg flex items-center gap-2">
-                        <Icon name="plus" size={18}/> <span>New Entry</span>
-                    </button>
+                    <div className="flex items-center gap-2">
+                        <button onClick={handleCreate} className="bg-amber-600 hover:bg-amber-500 text-white px-4 py-2 rounded shadow-lg flex items-center gap-2">
+                            <Icon name="plus" size={18}/> <span>New Entry</span>
+                        </button>
+                        {onClose && <button onClick={onClose} className="text-slate-400 hover:text-white p-2 hover:bg-slate-800 rounded-lg transition-colors">
+                            <Icon name="x" size={20}/>
+                        </button>}
+                    </div>
                 </div>
 
                 <div className="grid gap-3">
