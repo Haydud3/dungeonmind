@@ -2,7 +2,7 @@ import React, { useState, useRef } from 'react';
 import Icon from '../Icon';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 
-const TokenManager = ({ data, onDragStart, onDiceRoll }) => {
+const TokenManager = ({ data, onDragStart, onDiceRoll, onClearTokens, onClearAllMaps }) => {
     const [search, setSearch] = useState("");
     const [results, setResults] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
@@ -62,7 +62,9 @@ const TokenManager = ({ data, onDragStart, onDiceRoll }) => {
 
     return (
         <div className="flex flex-col h-full text-slate-200" style={{ touchAction: 'pan-y' }}>
-            <h3 className="text-xs font-bold text-slate-500 uppercase mb-2 px-1">Hold to Spawn</h3>
+            <div className="flex justify-between items-center mb-2 px-1">
+                <h3 className="text-xs font-bold text-slate-500 uppercase">Hold to Spawn</h3>
+            </div>
 
             {/* SEARCH BAR */}
             <div className="flex gap-1 mb-4">

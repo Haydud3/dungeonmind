@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import Icon from '../Icon';
-import { storeMapWithThumbnail } from '../../utils/storageUtils';
+import { storeMapWithThumbnail, storeChunkedMap } from '../../utils/storageUtils';
 import { compressImage } from '../../utils/imageCompressor';
 
 const GOOGLE_SEARCH_CX = "c38cb56920a4f45df"; 
@@ -22,7 +22,7 @@ const MapCard = ({ map, onClick, onDelete }) => {
 
         const resolveImage = async () => {
             // START CHANGE: Linked maps should never use thumbnails to avoid stale/shared assets
-            const isChunked = map.url?.startsWith('chunked:');
+            const isChunked = map.url?.startsWith('chunked:') || map.url === 'tiled';
             const targetUrl = (isChunked && map.thumbnailUrl) ? map.thumbnailUrl : map.url;
 
             if (targetUrl?.startsWith('chunked:')) {
@@ -62,7 +62,7 @@ const MapCard = ({ map, onClick, onDelete }) => {
             const { compressImage } = await import('../../utils/imageCompressor');
             
             let blob;
-            if (map.url?.startsWith('chunked:')) {
+            if (map.url?.startsWith('chunked:') || map.url === 'tiled') {
                 blob = await retrieveChunkedMap(map.url);
             } else {
                 const res = await fetch(map.url);
@@ -112,7 +112,54 @@ const MapCard = ({ map, onClick, onDelete }) => {
 };
 // END CHANGE
 
-const MapLibrary = ({ savedMaps, onSelect, onClose, onDelete }) => {
+// START CHANGE: Tiling Helper
+const sliceImageIntoTiles = async (file, tileSize = 512) => {
+    const blob = file instanceof Blob ? file : await (await fetch(file)).blob();
+    const img = await createImageBitmap(blob);
+    const { width: fullWidth, height: fullHeight } = img;
+    
+    const levels = {};
+    const scales = [1, 0.5, 0.25]; // Level 0 (100%), Level 1 (50%), Level 2 (25%)
+    
+    for (const scale of scales) {
+        const levelKey = scale === 1 ? "0" : (scale === 0.5 ? "1" : "2");
+        const targetW = Math.floor(fullWidth * scale);
+        const targetH = Math.floor(fullHeight * scale);
+        
+        const canvas = document.createElement('canvas');
+        canvas.width = targetW;
+        canvas.height = targetH;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, targetW, targetH);
+        
+        const scaledBmp = await createImageBitmap(canvas);
+        const cols = Math.ceil(targetW / tileSize);
+        const rows = Math.ceil(targetH / tileSize);
+        const levelTiles = [];
+
+        for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) {
+                const tileCanvas = document.createElement('canvas');
+                const tw = Math.min(tileSize, targetW - c * tileSize);
+                const th = Math.min(tileSize, targetH - r * tileSize);
+                tileCanvas.width = tw;
+                tileCanvas.height = th;
+                const tileCtx = tileCanvas.getContext('2d');
+                tileCtx.drawImage(scaledBmp, c * tileSize, r * tileSize, tw, th, 0, 0, tw, th);
+                const base64 = tileCanvas.toDataURL('image/webp', 0.6);
+                levelTiles.push({ r, c, base64, w: tw, h: th });
+            }
+        }
+        levels[levelKey] = levelTiles;
+        scaledBmp.close();
+    }
+    
+    img.close();
+    return { levels, width: fullWidth, height: fullHeight };
+};
+// END CHANGE
+
+const MapLibrary = ({ savedMaps, onAdd, onSelect, onClose, onDelete }) => {
     const [searchTerm, setSearchTerm] = useState("");
     const [searchResults, setSearchResults] = useState([]);
     const [isSearching, setIsSearching] = useState(false);
@@ -131,7 +178,7 @@ const MapLibrary = ({ savedMaps, onSelect, onClose, onDelete }) => {
         setIsSearching(true);
         try {
             // 1. IMPROVED QUERY: Gridless + High Res + No Isometric
-            const optimizedQuery = `${searchTerm} dnd battlemap -isometric -hex`;
+            const optimizedQuery = `${searchTerm} dnd battlemap`;
             const url = `https://customsearch.googleapis.com/customsearch/v1?key=${GOOGLE_SEARCH_KEY}&cx=${GOOGLE_SEARCH_CX}&q=${encodeURIComponent(optimizedQuery)}&searchType=image&num=9&imgSize=xlarge&safe=active`;
             
             const res = await fetch(url);
@@ -167,22 +214,34 @@ const MapLibrary = ({ savedMaps, onSelect, onClose, onDelete }) => {
         
         setIsUploading(true);
         try {
-            // Phase 1: Generate Dual Assets
-            // 1. The "Full" Texture (4K WebP)
-            const fullBase64 = await compressImage(file, 4096, 0.8);
-            
-            // 2. The "LOD" Thumbnail (512px WebP)
+            // 1. The "LOD" Thumbnail (512px WebP) for fast initial load
             const thumbBase64 = await compressImage(file, 512, 0.5);
             
-            // Store both in Firestore
-            const { fullId, thumbId } = await storeMapWithThumbnail(fullBase64, thumbBase64, file.name);
+            // 2. Slice the original into Tiles (Pyramid)
+            const { levels, width, height } = await sliceImageIntoTiles(file, 512);
+            
+            // 3. Store the Thumbnail
+            const { thumbId } = await storeMapWithThumbnail(null, thumbBase64, file.name);
+            
+            // 4. Store each Tile and collect IDs
+            const storedLevels = {};
+            for (const [z, tiles] of Object.entries(levels)) {
+                storedLevels[z] = [];
+                for (const tile of tiles) {
+                    const tileId = await storeChunkedMap(tile.base64, `${file.name}_z${z}_tile_${tile.r}_${tile.c}`);
+                    storedLevels[z].push({ r: tile.r, c: tile.c, url: tileId, w: tile.w, h: tile.h });
+                }
+            }
             
             // Standardized payload with isNew flag
-            onSelect({ 
+            onAdd({ 
                 id: `upload-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`, 
                 name: file.name, 
-                url: fullId,
+                url: 'tiled', // Marker for tiled rendering
                 thumbnailUrl: thumbId,
+                levels: storedLevels,
+                width,
+                height,
                 isNew: true,
                 walls: [],
                 grid: { size: 50, offsetX: 0, offsetY: 0, visible: true, snap: true }
@@ -202,7 +261,7 @@ const MapLibrary = ({ savedMaps, onSelect, onClose, onDelete }) => {
         if (!linkUrl.trim()) return;
 
         // Standardized payload with isNew flag
-        onSelect({ 
+        onAdd({ 
             id: `link-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`, 
             name: "Linked Map (" + new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) + ")", 
             url: linkUrl,
@@ -335,13 +394,13 @@ const MapLibrary = ({ savedMaps, onSelect, onClose, onDelete }) => {
                                     <div 
                                         key={map.id} 
                                         className="group relative aspect-video bg-slate-800 rounded-xl overflow-hidden border border-slate-700 hover:border-amber-500 cursor-pointer transition-all shadow-md pointer-events-auto" 
-                                        onClick={() => onSelect(map)}
+                                        onClick={() => onAdd(map)}
                                     >
                                         <img src={map.url} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" alt={map.name} loading="lazy" />
                                         <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-transparent opacity-60"></div>
                                         <div className="absolute bottom-3 left-3 right-3">
                                             <div className="text-xs font-bold text-white truncate">{map.name}</div>
-                                            <div className="text-[10px] text-amber-500/80 font-mono mt-0.5">Click to Project</div>
+                                            <div className="text-[10px] text-amber-500/80 font-mono mt-0.5">Click to Archive</div>
                                         </div>
                                     </div>
                                 ))}

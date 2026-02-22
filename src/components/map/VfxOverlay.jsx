@@ -3,6 +3,8 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { useVfxStore } from '../../stores/useVfxStore';
 import * as THREE from 'three';
 
+const isMobile = typeof navigator !== 'undefined' && (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || window.innerWidth <= 768);
+
 const VFX_SHADERS = {
     fire: { color: new THREE.Color('#ff4400'), noiseScale: 5.0, speed: 2.0 },
     frost: { color: new THREE.Color('#00ffff'), noiseScale: 3.0, speed: 1.0 },
@@ -303,7 +305,7 @@ const Effect = memo((props) => {
     }
 });
 
-const CameraController = ({ width, height }) => {
+const CameraController = ({ width, height, view }) => {
     const { camera, size, gl } = useThree();
     useLayoutEffect(() => {
         if (!width || !height) return;
@@ -323,21 +325,19 @@ const CameraController = ({ width, height }) => {
     return null;
 };
 
-export default function VfxOverlay({ width, height, templates = [], weather, pixelRatio = 1 }) {
+const VfxOverlay = memo(({ width, height, templates = [], weather, pixelRatio = 1, view }) => {
     const activeEffects = useVfxStore(state => state.activeEffects);
     const targetingPreview = useVfxStore(state => state.targetingPreview);
     
     if (!width || !height) return null;
     
-    // Cap dimensions to prevent WebGL context loss on huge maps
-    const MAX_DIM = 4096;
-    const scale = Math.min(1, MAX_DIM / Math.max(width, height));
-    const renderWidth = Math.floor(width * scale);
-    const renderHeight = Math.floor(height * scale);
+    // START CHANGE: Aggressive Mobile Capping
+    // Viewport-sized WebGL is naturally capped by screen resolution
+    // END CHANGE
 
     return (
-        <div 
-            className="absolute top-0 left-0 pointer-events-none z-[15]" 
+        <div
+            className="fixed top-0 left-0 pointer-events-none z-[15]" 
             style={{ 
                 width: `${width}px`, 
                 height: `${height}px`, 
@@ -357,7 +357,13 @@ export default function VfxOverlay({ width, height, templates = [], weather, pix
                     position: [0, 0, 10],
                     manual: true
                 }}
-                gl={{ alpha: true, antialias: true }}
+                gl={{ 
+                    alpha: true, 
+                    antialias: !isMobile, 
+                    powerPreference: 'low-power',
+                    precision: isMobile ? 'lowp' : 'highp',
+                    failIfMajorPerformanceCaveat: true 
+                }}
                 events={null}
                 style={{ 
                     width: '100%', 
@@ -371,7 +377,7 @@ export default function VfxOverlay({ width, height, templates = [], weather, pix
                     willChange: 'transform'
                 }}
             >
-                <CameraController width={width} height={height} />
+                <CameraController width={width} height={height} view={view} />
                 {weather && <Weather type={weather} width={width} height={height} />}
                 {activeEffects.map(effect => <Effect key={effect.id} {...effect} />)}
                 {targetingPreview && <Effect {...targetingPreview} isPreview />}
@@ -392,4 +398,6 @@ export default function VfxOverlay({ width, height, templates = [], weather, pix
             </Canvas>
         </div>
     );
-}
+});
+
+export default VfxOverlay;

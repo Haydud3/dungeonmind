@@ -18,6 +18,47 @@ import { useCharacterStore } from '../../stores/useCharacterStore';
 import { useVfxStore } from '../../stores/useVfxStore';
 import { useCampaign } from '../../contexts/CampaignContext';
 
+// START CHANGE: Tile Sub-component for async loading
+const MapTile = ({ tile, tileSize }) => {
+    const [src, setSrc] = useState(null);
+    
+    useEffect(() => {
+        let active = true;
+        let blobUrl = null;
+        const load = async () => {
+            const { retrieveChunkedMap } = await import('../../utils/storageUtils');
+            const blob = await retrieveChunkedMap(tile.url);
+            if (active && blob) {
+                blobUrl = URL.createObjectURL(blob);
+                setSrc(blobUrl);
+            }
+        };
+        load();
+        return () => { 
+            active = false; 
+            if (blobUrl) URL.revokeObjectURL(blobUrl); 
+        };
+    }, [tile.url]);
+
+    if (!src) return null;
+
+    return (
+        <img 
+            src={src}
+            alt=""
+            className="absolute pointer-events-none select-none"
+            style={{
+                left: tile.c * tileSize,
+                top: tile.r * tileSize,
+                width: tile.w,
+                height: tile.h,
+                imageRendering: 'auto'
+            }}
+        />
+    );
+};
+// END CHANGE
+
 // START CHANGE: Defensive ID Matcher (Defined globally to fix scoping crash)
 const idsMatch = (id1, id2) => {
     if (id1 === null || id1 === undefined || id2 === null || id2 === undefined) return false;
@@ -83,6 +124,8 @@ const InteractiveMap = ({ data = {}, role, updateMapState, updateCloud, onDiceRo
     const movingTokenPosRef = useRef(null); // OPTIMIZATION: Use Ref instead of State for drag
     const [wallStart, setWallStart] = useState(null);
     const [cursorPos, setCursorPos] = useState({x:0, y:0}); 
+    const pendingClearRef = useRef(false); // NEW: Protects clear operation from stale props
+    const clearTimeoutRef = useRef(null); // NEW: Safety timeout for clear state
     const [shakingTokenId, setShakingTokenId] = useState(null);
     const [selectedTokenId, setSelectedTokenId] = useState(null);
     const [pings, setPings] = useState([]); 
@@ -105,8 +148,10 @@ const InteractiveMap = ({ data = {}, role, updateMapState, updateCloud, onDiceRo
     const [fullTexture, setFullTexture] = useState(null);
     const [lodTexture, setLodTexture] = useState(null);
     const [mapReady, setMapReady] = useState(false); 
+    const [visibleTiles, setVisibleTiles] = useState([]); // NEW: Visible tiles state
     const hasAutoCentered = useRef(false);
     const [tokenBlobUrls, setTokenBlobUrls] = useState({}); // OPTIMIZATION: Cache for Token Blobs
+    const [containerDimensions, setContainerDimensions] = useState({ width: 0, height: 0 }); // NEW: Viewport tracking
     const [fullDimensions, setFullDimensions] = useState(null); // NEW: Store real dimensions for LOD stretching
     
     const saveTimeoutRef = useRef(null);
@@ -210,6 +255,7 @@ const InteractiveMap = ({ data = {}, role, updateMapState, updateCloud, onDiceRo
     const pinchStartScale = useRef(1); 
     const latestDataRef = useRef(data);
     const latestTokensRef = useRef(tokens);
+    const tokensMapIdRef = useRef(mapData.id); // NEW: Track map ID for tokens ref
     const latestMeasurementRef = useRef(activeMeasurement);
     const playedVfxRef = useRef(new Set());
     const lastVisionStateRef = useRef(''); // For dirty-checking vision
@@ -287,6 +333,107 @@ const InteractiveMap = ({ data = {}, role, updateMapState, updateCloud, onDiceRo
     }, []);
     // END CHANGE
 
+    // START CHANGE: Track Viewport Size
+    useEffect(() => {
+        const updateSize = () => {
+            if (containerRef.current) {
+                const rect = containerRef.current.getBoundingClientRect();
+                setContainerDimensions({ width: rect.width, height: rect.height });
+            }
+        };
+        window.addEventListener('resize', updateSize);
+        updateSize();
+        return () => window.removeEventListener('resize', updateSize);
+    }, []);
+    // END CHANGE
+
+    // START CHANGE: Bucketed scale for vision resolution switching
+    // This prevents the vision worker from re-calculating on every tiny zoom step,
+    // but allows the canvas to resize when crossing major thresholds (0.2, 0.4, etc)
+    const visionResolutionBucket = useMemo(() => {
+        if (!isMobile) return 1;
+        if (view.scale < 0.2) return 0.2;
+        if (view.scale < 0.4) return 0.4;
+        return 1;
+    }, [view.scale, isMobile]);
+    // END CHANGE
+
+    // START CHANGE: Persistent Discovery Canvas Management
+    // This canvas tracks explored areas. We cap its resolution to save memory on mobile.
+    useEffect(() => {
+        if (!mapReady || !mapDimensions.width) return;
+        
+        if (!discoveryCanvasRef.current) discoveryCanvasRef.current = document.createElement('canvas');
+        const dCanvas = discoveryCanvasRef.current;
+        
+        const D_MAX = isMobile ? 1024 : 2048;
+        const dRatio = Math.min(1, D_MAX / Math.max(mapDimensions.width, mapDimensions.height));
+        const dW = Math.floor(mapDimensions.width * dRatio);
+        const dH = Math.floor(mapDimensions.height * dRatio);
+
+        if (dCanvas.width !== dW || dCanvas.height !== dH) {
+            dCanvas.width = dW;
+            dCanvas.height = dH;
+            const ctx = dCanvas.getContext('2d');
+            ctx.clearRect(0, 0, dW, dH);
+        }
+    }, [mapDimensions.width, mapDimensions.height, mapReady, isMobile]);
+    // END CHANGE
+
+    // START CHANGE: Tiled Map Visibility Logic
+    useEffect(() => {
+        if (mapData.url !== 'tiled' || !mapData.levels || !mapReady) return;
+
+        const container = containerRef.current;
+        if (!container) return;
+
+        const rect = container.getBoundingClientRect();
+        const tileSize = 512;
+
+        // START CHANGE: Extreme Zoom Culling for Mobile
+        // If zoomed out very far on mobile, hide tiles and rely on the LOD thumbnail background.
+        if (isMobile && view.scale < 0.15) {
+            setVisibleTiles([]);
+            return;
+        }
+        // END CHANGE
+
+        // Determine Zoom Level: 0 for high zoom (>0.5), 1 for mid zoom (0.25-0.5), 2 for low zoom (<=0.25)
+        let z = "0";
+        let levelScale = 1;
+        if (view.scale <= 0.25) {
+            z = "2";
+            levelScale = 0.25;
+        } else if (view.scale <= 0.5) {
+            z = "1";
+            levelScale = 0.5;
+        }
+
+        const levelTiles = mapData.levels[z] || [];
+
+        // Viewport in World Space
+        const worldLeft = -view.x / view.scale;
+        const worldTop = -view.y / view.scale;
+        const worldRight = (rect.width - view.x) / view.scale;
+        const worldBottom = (rect.height - view.y) / view.scale;
+
+        // The size of a tile in World Space
+        const worldTileSize = tileSize / levelScale;
+
+        const startCol = Math.floor(worldLeft / worldTileSize);
+        const endCol = Math.ceil(worldRight / worldTileSize);
+        const startRow = Math.floor(worldTop / worldTileSize);
+        const endRow = Math.ceil(worldBottom / worldTileSize);
+
+        const visible = levelTiles.filter(tile => 
+            tile.c >= startCol - 1 && tile.c <= endCol + 1 && 
+            tile.r >= startRow - 1 && tile.r <= endRow + 1
+        ).map(t => ({ ...t, z, levelScale }));
+        
+        setVisibleTiles(visible);
+    }, [view.scale, view.x, view.y, mapData.levels, mapData.url, mapReady, isMobile]);
+    // END CHANGE
+
     // Phase 2: Handle Chunked Map Loading from Firestore
     useEffect(() => {
         // START CHANGE: Reset state for loading screen
@@ -294,6 +441,7 @@ const InteractiveMap = ({ data = {}, role, updateMapState, updateCloud, onDiceRo
         setFullTexture(null);
         setLodTexture(null);
         setFullDimensions(null);
+        setVisibleTiles([]);
         setMapDimensions({ width: 0, height: 0 }); // Force VfxOverlay to unmount
         maxDimensionsRef.current = { width: 0, height: 0 };
         setDebugLogs([]); 
@@ -307,6 +455,15 @@ const InteractiveMap = ({ data = {}, role, updateMapState, updateCloud, onDiceRo
             try {
                 const { retrieveChunkedMap } = await import('../../utils/storageUtils');
                 
+                // START CHANGE: Handle Tiled Map Metadata
+                if (mapData.url === 'tiled' && mapData.width) {
+                    const dims = { width: mapData.width, height: mapData.height };
+                    setFullDimensions(dims);
+                    setMapDimensions(dims);
+                    maxDimensionsRef.current = dims;
+                }
+                // END CHANGE
+
                 // Helper: Handle Blob or URL
                 const processMapAsset = async (asset, label) => {
                     if (!asset) return null;
@@ -322,12 +479,14 @@ const InteractiveMap = ({ data = {}, role, updateMapState, updateCloud, onDiceRo
 
                 // 1. Load Thumbnail (LOD)
                 const isChunked = mapUrl?.startsWith('chunked:');
-                if (isChunked && mapData.thumbnailUrl?.startsWith('chunked:')) {
+                if ((isChunked || mapUrl === 'tiled') && mapData.thumbnailUrl?.startsWith('chunked:')) {
                     try {
                         const thumbBlob = await retrieveChunkedMap(mapData.thumbnailUrl, controller.signal);
                         if (isMounted) setLodTexture(await processMapAsset(thumbBlob, "Thumbnail"));
                     } catch (e) {
-                        console.warn("Failed to load thumbnail chunk:", e);
+                        if (e.name !== 'AbortError' && e.message !== 'Aborted') {
+                            console.warn("Failed to load thumbnail chunk:", e);
+                        }
                     }
                 } else if (isChunked) {
                     setLodTexture(mapData.thumbnailUrl);
@@ -362,10 +521,22 @@ const InteractiveMap = ({ data = {}, role, updateMapState, updateCloud, onDiceRo
 
                             // OPTIMIZATION: Skip heavy processing on Mobile to prevent OOM Crashes
                             // Mobile browsers crash when holding Blob + Bitmap + Canvas + NewBlob in memory simultaneously.
-                            // We rely on the raw blob for mobile (which usually works fine) and only re-encode on Desktop.
                             if (isMobile) {
-                                addLog("Mobile: Using Raw Blob");
-                                if (isMounted) setFullTexture(await processMapAsset(fullBlob, "Full Map"));
+                                // NEW: Force downsample large images on mobile to 2048px max
+                                const MAX_SAFE = 2048;
+                                const bmp = await createImageBitmap(fullBlob);
+                                if (bmp.width > MAX_SAFE || bmp.height > MAX_SAFE) {
+                                    const scale = Math.min(MAX_SAFE / bmp.width, MAX_SAFE / bmp.height);
+                                    const canvas = document.createElement('canvas');
+                                    canvas.width = Math.floor(bmp.width * scale);
+                                    canvas.height = Math.floor(bmp.height * scale);
+                                    canvas.getContext('2d').drawImage(bmp, 0, 0, canvas.width, canvas.height);
+                                    const downsampled = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.7));
+                                    if (isMounted) setFullTexture(await processMapAsset(downsampled, "Mobile Downsample"));
+                                    bmp.close();
+                                } else {
+                                    if (isMounted) setFullTexture(await processMapAsset(fullBlob, "Full Map"));
+                                }
                             } else {
                                 try {
                                     const bmp = await createImageBitmap(fullBlob);
@@ -390,13 +561,24 @@ const InteractiveMap = ({ data = {}, role, updateMapState, updateCloud, onDiceRo
                         }
                         // END CHANGE
                     } catch (e) {
-                        addLog(`Chunk Error: ${e.message}`);
+                        if (e.name !== 'AbortError' && e.message !== 'Aborted') {
+                            addLog(`Chunk Error: ${e.message}`);
+                        }
                     }
+                } else if (mapUrl === 'tiled') {
+                    // Tiled maps use MapTile components for full res
+                    setFullTexture(null);
                 } else {
                     setFullTexture(mapUrl);
                     // If not chunked, we can't probe blob, so we rely on handleMapLoad
                     setFullDimensions(null); 
                 }
+
+                // START CHANGE: Mark tiled map ready immediately if dimensions exist
+                if (mapUrl === 'tiled' && mapData.width && isMounted) {
+                    setMapReady(true);
+                }
+                // END CHANGE
             } catch (e) {
                 addLog(`Init Fail: ${e.message}`);
             }
@@ -408,7 +590,7 @@ const InteractiveMap = ({ data = {}, role, updateMapState, updateCloud, onDiceRo
             controller.abort();
             createdUrls.forEach(url => URL.revokeObjectURL(url));
         };
-    }, [mapUrl, mapData.thumbnailUrl, isMobile]);
+    }, [mapUrl, mapData.thumbnailUrl, mapData.width, mapData.height, mapData.levels, isMobile]);
 
     // OPTIMIZATION: Convert Token Base64 Images to Blobs
     useEffect(() => {
@@ -440,16 +622,16 @@ const InteractiveMap = ({ data = {}, role, updateMapState, updateCloud, onDiceRo
 
     // Phase 3: LOD Swapping Logic
     useEffect(() => {
-        const useLOD = isMobile && view.scale < 0.25;
+        const useLOD = (isMobile && view.scale < 0.25) || mapUrl === 'tiled';
         
-        if (useLOD && lodTexture) {
+        if (mapUrl === 'tiled') {
+            // For tiled maps, always show LOD as background
             setAssembledMapUrl(lodTexture);
-        } else if (fullTexture) {
-            setAssembledMapUrl(fullTexture);
-        } else if (lodTexture) {
-            setAssembledMapUrl(lodTexture); // Fallback while full loads
         } else {
-            setAssembledMapUrl(null);
+            if (useLOD && lodTexture) setAssembledMapUrl(lodTexture);
+            else if (fullTexture) setAssembledMapUrl(fullTexture);
+            else if (lodTexture) setAssembledMapUrl(lodTexture);
+            else setAssembledMapUrl(null);
         }
      }, [view.scale, fullTexture, lodTexture, isMobile]);
  
@@ -552,6 +734,32 @@ const InteractiveMap = ({ data = {}, role, updateMapState, updateCloud, onDiceRo
     };
     // END CHANGE
 
+    // START CHANGE: Center-Focused Zoom Handler
+    const handleZoom = (factor) => {
+        const container = containerRef.current;
+        if (!container) return;
+
+        const rect = container.getBoundingClientRect();
+        const centerX = rect.width / 2;
+        const centerY = rect.height / 2;
+
+        setView(prev => {
+            const newScale = Math.min(Math.max(0.1, prev.scale * factor), 5.0);
+            
+            const worldX = (centerX - prev.x) / prev.scale;
+            const worldY = (centerY - prev.y) / prev.scale;
+
+            const newX = centerX - (worldX * newScale);
+            const newY = centerY - (worldY * newScale);
+
+            const nextView = { x: newX, y: newY, scale: newScale };
+            localStorage.setItem(`vtt_view_${mapData.id || code}`, JSON.stringify(nextView));
+            return nextView;
+        });
+        triggerHaptic('light');
+    };
+    // END CHANGE
+
     const handleStartCombat = () => {
         const c = data.campaign?.combat;
         const currentData = latestDataRef.current;
@@ -599,10 +807,52 @@ const InteractiveMap = ({ data = {}, role, updateMapState, updateCloud, onDiceRo
     // END CHANGE
 
     useEffect(() => {
+        // START CHANGE: Debug Logging
+        if (localStorage.getItem('vtt_debug') === 'true') {
+            console.group(`[VTT DEBUG] Map Sync: ${mapData.id}`);
+            console.log("Incoming Tokens:", tokens?.length);
+            const corrupt = tokens?.filter(t => !t.name || t.name === 'Unknown');
+            if (corrupt?.length > 0) console.error("Corrupt Tokens in Props:", corrupt);
+            console.groupEnd();
+        }
+        // END CHANGE
+
+        // START CHANGE: Reset pending clear on map switch
+        if (!idsMatch(tokensMapIdRef.current, mapData.id)) {
+            pendingClearRef.current = false;
+            if (clearTimeoutRef.current) clearTimeout(clearTimeoutRef.current);
+        }
+        // END CHANGE
+
+        // START CHANGE: Prevent stale tokens from overwriting optimistic clear
+        if (pendingClearRef.current) {
+            // Safety: Auto-reset after 2s to prevent getting stuck
+            if (!clearTimeoutRef.current) {
+                clearTimeoutRef.current = setTimeout(() => {
+                    pendingClearRef.current = false;
+                    clearTimeoutRef.current = null;
+                }, 2000);
+            }
+
+            if (tokens && tokens.length === 0) {
+                pendingClearRef.current = false; // Clear confirmed by props
+                if (clearTimeoutRef.current) {
+                    clearTimeout(clearTimeoutRef.current);
+                    clearTimeoutRef.current = null;
+                }
+            } else {
+                // Prop is still stale (has tokens), so ignore it for the ref
+                latestDataRef.current = data;
+                latestMeasurementRef.current = activeMeasurement;
+                return; 
+            }
+        }
+        // END CHANGE
         latestDataRef.current = data;
         latestTokensRef.current = tokens;
+        tokensMapIdRef.current = mapData.id;
         latestMeasurementRef.current = activeMeasurement;
-    }, [data, tokens, activeMeasurement]);
+    }, [data, tokens, activeMeasurement, mapData.id]);
 
     useEffect(() => {
         if (mapData.view) {
@@ -709,25 +959,26 @@ const InteractiveMap = ({ data = {}, role, updateMapState, updateCloud, onDiceRo
         // END CHANGE
 
         // START CHANGE: Dynamic Canvas Cap based on Device
-        const MAX_CANVAS_DIM = isMobile ? 2048 : 4096;
+        // Viewport-Sized Canvas doesn't need aggressive capping anymore
         // END CHANGE
+
         // Use mapDimensions (Logical Size) instead of img.naturalWidth (Texture Size)
         const logicalW = mapDimensions.width || img.naturalWidth;
         const logicalH = mapDimensions.height || img.naturalHeight;
         
         const maxDim = Math.max(logicalW, logicalH);
-        const scaleRatio = maxDim > MAX_CANVAS_DIM ? (MAX_CANVAS_DIM / maxDim) : 1;
-        const lowPerf = localStorage.getItem('vtt_low_performance') === 'true';
-        const finalRatio = lowPerf ? scaleRatio * 0.5 : scaleRatio;
+        const lowPerf = isMobile || localStorage.getItem('vtt_low_performance') === 'true';
 
-        const finalW = Math.floor(logicalW * finalRatio);
-        const finalH = Math.floor(logicalH * finalRatio);
-
-        // --- 0. SETUP DISCOVERY CANVAS ---
-        if (canvas.width !== finalW || canvas.height !== finalH) {
-            canvas.width = finalW;
-            canvas.height = finalH;
+        // START CHANGE: Size canvas to VIEWPORT, not MAP
+        // OPTIMIZATION: On mobile, use a lower internal resolution for the vision canvas
+        const dpr = isMobile ? 0.75 : 1;
+        const targetW = Math.floor(containerDimensions.width * dpr);
+        const targetH = Math.floor(containerDimensions.height * dpr);
+        if (canvas.width !== targetW || canvas.height !== targetH) {
+            canvas.width = targetW;
+            canvas.height = targetH;
         }
+        // END CHANGE
 
         // --- 1. PRE-PROCESS ASSETS ---
         const gridSize = mapGrid.size || 50;
@@ -750,7 +1001,7 @@ const InteractiveMap = ({ data = {}, role, updateMapState, updateCloud, onDiceRo
         // Send to Worker
         worker.onmessage = (e) => {
             const results = e.data; // [{ id, nearPoly, farPoly }]
-            drawVisionFrame(results, logicalW, logicalH, finalRatio, lowPerf);
+            drawVisionFrame(results, logicalW, logicalH, lowPerf);
         };
 
         worker.postMessage({
@@ -761,9 +1012,10 @@ const InteractiveMap = ({ data = {}, role, updateMapState, updateCloud, onDiceRo
         });
     };
 
-    const drawVisionFrame = (polyResults, logicalW, logicalH, finalRatio, lowPerf) => {
+    const drawVisionFrame = (polyResults, logicalW, logicalH, lowPerf) => {
         const canvas = visionCanvasRef.current;
-        if (!canvas) return;
+        const dCanvas = discoveryCanvasRef.current;
+        if (!canvas || !dCanvas) return;
 
         // Re-construct emitters with their calculated polys
         const emittersToDraw = tokens.filter(token => {
@@ -784,19 +1036,21 @@ const InteractiveMap = ({ data = {}, role, updateMapState, updateCloud, onDiceRo
         });
 
         // --- DRAWING ---
-        if (!discoveryCanvasRef.current) discoveryCanvasRef.current = document.createElement('canvas');
-        const dCanvas = discoveryCanvasRef.current;
-        if (dCanvas.width !== logicalW || dCanvas.height !== logicalH) { dCanvas.width = logicalW; dCanvas.height = logicalH; }
-        const dCtx = dCanvas.getContext('2d');
-
         const ctx = canvas.getContext('2d', { alpha: true });
         ctx.imageSmoothingEnabled = !lowPerf;
-        ctx.setTransform(finalRatio, 0, 0, finalRatio, 0, 0);
-        ctx.clearRect(0, 0, logicalW, logicalH);
+        
+        // START CHANGE: Apply Viewport Transform (Pan/Zoom)
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.setTransform(view.scale, 0, 0, view.scale, view.x, view.y);
+        // END CHANGE
 
         // --- 2.5 UPDATE DISCOVERY LAYER ---
         if (visionActive && role !== 'dm') {
+            const dCtx = dCanvas.getContext('2d');
+            const dRatio = dCanvas.width / logicalW;
             dCtx.save();
+            dCtx.setTransform(dRatio, 0, 0, dRatio, 0, 0);
             dCtx.fillStyle = '#ffffff';
             emittersToDraw.forEach(({ origin, visionRadius, nearPoly }) => {
                 if (!nearPoly || nearPoly.length === 0) {
@@ -825,6 +1079,8 @@ const InteractiveMap = ({ data = {}, role, updateMapState, updateCloud, onDiceRo
             if (role !== 'dm') {
                 ctx.globalCompositeOperation = 'destination-out';
                 ctx.globalAlpha = 0.5; // 50% opacity for explored areas
+                
+                // Draw discovery layer stretched to map size
                 ctx.drawImage(dCanvas, 0, 0, logicalW, logicalH);
             }
 
@@ -940,7 +1196,7 @@ const InteractiveMap = ({ data = {}, role, updateMapState, updateCloud, onDiceRo
     useEffect(() => { 
         const frame = requestAnimationFrame(updateVision); 
         return () => cancelAnimationFrame(frame);
-    }, [tokens, walls, lights, visionActive, role, mapUrl, data.campaign?.characters, mapReady]);
+    }, [tokens, walls, lights, visionActive, role, mapUrl, data.campaign?.characters, mapReady, visionResolutionBucket, view, containerDimensions]);
     // --- CHANGES: End ---
 
     // START CHANGE: Multi-User Ping Listener
@@ -1311,13 +1567,23 @@ const InteractiveMap = ({ data = {}, role, updateMapState, updateCloud, onDiceRo
                             multiSelectedIds.forEach(id => {
                                 const origin = groupOriginsRef.current[id];
                                 if (origin) {
-                                    updateToken(id, { x: origin.x + deltaX, y: origin.y + deltaY });
+                                    // START CHANGE: Send full object to prevent data loss
+                                    const token = latestTokensRef.current.find(t => t.id === id);
+                                    if (token) {
+                                        updateToken(id, { ...token, x: origin.x + deltaX, y: origin.y + deltaY });
+                                    }
+                                    // END CHANGE
                                 }
                             });
                         }
                     } else {
                         // Single Move Commit
-                        updateToken(mTokenId, { x: mPos.x, y: mPos.y });
+                        // START CHANGE: Send full object to prevent data loss
+                        const token = latestTokensRef.current.find(t => t.id === mTokenId);
+                        if (token) {
+                            updateToken(mTokenId, { ...token, x: mPos.x, y: mPos.y });
+                        }
+                        // END CHANGE
                     }
                 }
             }
@@ -1767,11 +2033,18 @@ const InteractiveMap = ({ data = {}, role, updateMapState, updateCloud, onDiceRo
         setIsDraggingToken(false);
         setIsPanning(false);
 
-        // 2. Parse unified JSON payload
+        // 1. Parse unified JSON payload with safety check
         let droppedData = {};
         try {
             const raw = e.dataTransfer.getData("text/plain");
+            // START CHANGE: Silently ignore non-JSON drops (like image URLs) to prevent console spam
+            if (!raw || (!raw.startsWith('{') && !raw.startsWith('['))) return;
+            
             droppedData = JSON.parse(raw);
+            
+            if (localStorage.getItem('vtt_debug') === 'true') {
+                console.log("[VTT DEBUG] Drop detected:", droppedData.name, "Current Ref Count:", latestTokensRef.current?.length);
+            }
         } catch (err) {
             console.error("Drop Parse Error: Invalid JSON", err);
             return;
@@ -1855,20 +2128,23 @@ const InteractiveMap = ({ data = {}, role, updateMapState, updateCloud, onDiceRo
                 // CRITICAL: Run through the Enricher to fix ActionsTab compatibility
                 const enrichedNpc = await enrichCharacter(basicNpc);
 
-                // Sync to Cloud - Re-read refs to prevent race conditions during async fetch
-                const latestData = latestDataRef.current;
-                const latestTokens = latestTokensRef.current || [];
-
                 // Create the Token Instance
                 const newToken = {
                     id: newNpcId + 1, 
                     characterId: newNpcId, 
                     type: 'npc',
-                    x: finalX, 
-                    y: finalY, 
+                    x: finalX, y: finalY, 
                     name: m.name, 
                     image: imageUrl,
-                    size: (m.size || 'medium').toLowerCase(),
+                    size: (() => {
+                        const s = (m.size || 'medium').toLowerCase();
+                        if (s.includes('tiny')) return 'tiny';
+                        if (s.includes('small')) return 'small';
+                        if (s.includes('large')) return 'large';
+                        if (s.includes('huge')) return 'huge';
+                        if (s.includes('gargantuan')) return 'gargantuan';
+                        return 'medium';
+                    })(),
                     hp: { current: m.hit_points, max: m.hit_points, temp: 0 },
                     statuses: [], 
                     isInstance: true
@@ -1876,16 +2152,31 @@ const InteractiveMap = ({ data = {}, role, updateMapState, updateCloud, onDiceRo
 
                 const finalUpdate = {
                     ...latestData,
-                    npcs: [...(latestData.npcs || []), enrichedNpc],
-                    campaign: {
-                        ...latestData.campaign,
-                        activeMap: { ...latestData.campaign.activeMap, tokens: [...latestTokens, newToken] }
-                    }
                 };
-                latestDataRef.current = finalUpdate;
-                latestTokensRef.current = finalUpdate.campaign.activeMap.tokens;
-                updateCampaign({ 'npcs': [...(latestData.npcs || []), enrichedNpc] }, true);
-                addToken(newToken);
+
+                // START CHANGE: Atomic Multi-Field Update to prevent race conditions
+                const updates = {};
+                const currentNpcs = latestDataRef.current?.npcs || [];
+                if (!currentNpcs.some(n => idsMatch(n.id, enrichedNpc.id))) {
+                    updates['npcs'] = [...currentNpcs, enrichedNpc];
+                }
+
+                let currentTokens = latestTokensRef.current || [];
+                if (!idsMatch(tokensMapIdRef.current, mapData.id)) {
+                    currentTokens = tokens || [];
+                }
+                
+                const validTokens = currentTokens.filter(t => t.name && t.name !== 'Unknown');
+                const nextTokens = [...validTokens, newToken];
+                
+                updates['campaign.activeMap.tokens'] = nextTokens;
+                
+                // Optimistic UI Update
+                latestTokensRef.current = nextTokens;
+                tokensMapIdRef.current = mapData.id;
+                
+                updateCampaign(updates);
+                // END CHANGE
 
             } catch (err) {
                 console.error("Spawn enrichment failed:", err);
@@ -1906,8 +2197,15 @@ const InteractiveMap = ({ data = {}, role, updateMapState, updateCloud, onDiceRo
             const img = mapImageRef.current;
             
             if (img) {
-                const latestData = latestDataRef.current;
-                const latestTokens = latestTokensRef.current || [];
+                let latestData = latestDataRef.current;
+                let latestTokens = latestTokensRef.current || [];
+                
+                // START CHANGE: Safety check for map mismatch (Stale Ref Protection)
+                if (!idsMatch(latestData.campaign?.activeMap?.id, mapData.id) || !idsMatch(tokensMapIdRef.current, mapData.id)) {
+                    latestData = data;
+                    latestTokens = tokens || [];
+                }
+                // END CHANGE
 
                 const { x, y } = snapToGrid(pos.x, pos.y, img.naturalWidth, img.naturalHeight);
                 
@@ -1917,6 +2215,18 @@ const InteractiveMap = ({ data = {}, role, updateMapState, updateCloud, onDiceRo
                 if (!master) return;
 
                 const ownerUid = Object.keys(latestData.assignments || {}).find(uid => String(latestData.assignments[uid]) === String(entityId));
+
+                // START CHANGE: Atomic Token Addition with Duplicate Prevention
+                let currentTokens = latestTokensRef.current || [];
+                if (!idsMatch(tokensMapIdRef.current, mapData.id)) {
+                    currentTokens = tokens || [];
+                }
+
+                // Prevent duplicate PC tokens if one already exists
+                if (type === 'pc' && currentTokens.some(t => idsMatch(t.characterId, entityId))) {
+                    console.warn("[VTT] PC token already on map. Ignoring drop.");
+                    return;
+                }
 
                 const newToken = {
                     id: Date.now(),
@@ -1931,20 +2241,16 @@ const InteractiveMap = ({ data = {}, role, updateMapState, updateCloud, onDiceRo
                     controlledBy: type === 'pc' && ownerUid ? [ownerUid] : [],
                     isInstance: true
                 };
+
+                const validTokens = currentTokens.filter(t => t.name && t.name !== 'Unknown');
+                const nextTokens = [...validTokens, newToken];
+
+                // Optimistic UI Update
+                latestTokensRef.current = nextTokens;
+                tokensMapIdRef.current = mapData.id;
                 
-                const finalUpdate = { 
-                    ...latestData, 
-                    campaign: { 
-                        ...latestData.campaign, 
-                        activeMap: { 
-                            ...latestData.campaign.activeMap, 
-                            tokens: [...(latestTokens || []), newToken] 
-                        } 
-                    } 
-                };
-                latestDataRef.current = finalUpdate;
-                latestTokensRef.current = finalUpdate.campaign.activeMap.tokens;
-                addToken(newToken);
+                updateCampaign({ 'campaign.activeMap.tokens': nextTokens });
+                // END CHANGE
                 
                 triggerHaptic('medium');
             }
@@ -2013,7 +2319,7 @@ const InteractiveMap = ({ data = {}, role, updateMapState, updateCloud, onDiceRo
         const img = mapImageRef.current;
         const canvas = visionCanvasRef.current;
         
-        if (img && canvas) {
+        if (img && canvas && img.naturalWidth > 0) {
             // 1. Authoritative Dimension Tracking
             if (img.naturalWidth > maxDimensionsRef.current.width) {
                 maxDimensionsRef.current = { width: img.naturalWidth, height: img.naturalHeight };
@@ -2554,11 +2860,11 @@ const InteractiveMap = ({ data = {}, role, updateMapState, updateCloud, onDiceRo
                     )}
                     <div className="w-px h-8 bg-slate-700 my-auto"></div>
                     
-                    <button onClick={() => setView(v => ({...v, scale: v.scale / 1.2}))} className="p-3 md:p-2 text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg min-w-[44px] min-h-[44px] flex items-center justify-center"><Icon name="minus" size={20}/></button>
+                    <button onClick={() => handleZoom(1 / 1.2)} className="p-3 md:p-2 text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg min-w-[44px] min-h-[44px] flex items-center justify-center"><Icon name="minus" size={20}/></button>
                     <button onClick={centerOnTarget} className="p-3 md:p-2 text-amber-500 hover:bg-slate-800 rounded-lg min-w-[44px] min-h-[44px] flex items-center justify-center" title={role === 'dm' ? "Center Map" : "Center on My Character"}>
                         <Icon name="crosshair" size={20}/>
                     </button>
-                    <button onClick={() => setView(v => ({...v, scale: v.scale * 1.2}))} className="p-2 md:p-2 text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg min-w-[44px] min-h-[44px] flex items-center justify-center"><Icon name="plus" size={20}/></button>
+                    <button onClick={() => handleZoom(1.2)} className="p-2 md:p-2 text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg min-w-[44px] min-h-[44px] flex items-center justify-center"><Icon name="plus" size={20}/></button>
                     <button onClick={toggleFullscreen} className={`p-2 md:p-2 rounded-lg min-w-[44px] min-h-[44px] flex items-center justify-center transition-colors ${isFullscreen ? 'text-indigo-400 bg-indigo-900/20' : 'text-slate-300 hover:text-white hover:bg-slate-800'}`} title="Toggle Fullscreen"><Icon name={isFullscreen ? "minimize" : "maximize"} size={20}/></button>
                 </div>
             </div>
@@ -2677,7 +2983,62 @@ const InteractiveMap = ({ data = {}, role, updateMapState, updateCloud, onDiceRo
                     onPointerDown={(e) => e.stopPropagation()}
                     className="absolute top-20 right-4 bottom-24 w-64 bg-slate-900/95 backdrop-blur border border-slate-700 rounded-xl shadow-2xl z-[100] p-4 animate-in slide-in-from-right pointer-events-auto"
                 >
-                    <TokenManager data={data} onDragStart={handleDragStart} onDiceRoll={onDiceRoll} />
+                    <TokenManager 
+                        data={data} 
+                        onDragStart={handleDragStart} 
+                        onDiceRoll={onDiceRoll} 
+                        // START CHANGE: Add Clear Tokens Handler
+                        onClearTokens={() => {
+                            if (confirm("WARNING: This will remove ALL tokens from the current map. Continue?")) {
+                                pendingClearRef.current = true; // Flag to ignore stale props
+                                updateCampaign({ 'campaign.activeMap.tokens': [] });
+                                latestTokensRef.current = [];
+                                tokensMapIdRef.current = mapData.id;
+                                // START CHANGE: Sync data ref to prevent reversion on next drop
+                                if (latestDataRef.current?.campaign?.activeMap) {
+                                    latestDataRef.current = {
+                                        ...latestDataRef.current,
+                                        campaign: {
+                                            ...latestDataRef.current.campaign,
+                                            activeMap: { ...latestDataRef.current.campaign.activeMap, tokens: [] }
+                                        }
+                                    };
+                                }
+                                // END CHANGE
+                                setPings([]); 
+                                triggerHaptic('heavy');
+                            }
+                        }}
+                        onClearAllMaps={() => {
+                            if (confirm("DANGER: This will wipe token positions from ALL maps in your library. Are you sure?")) {
+                                pendingClearRef.current = true;
+                                const savedMaps = data.campaign?.savedMaps || [];
+                                const newSavedMaps = savedMaps.map(m => ({ ...m, tokens: [] }));
+                                
+                                updateCampaign({ 
+                                    'campaign.activeMap.tokens': [],
+                                    'campaign.savedMaps': newSavedMaps
+                                });
+                                
+                                latestTokensRef.current = [];
+                                tokensMapIdRef.current = mapData.id;
+                                
+                                if (latestDataRef.current?.campaign) {
+                                    latestDataRef.current = {
+                                        ...latestDataRef.current,
+                                        campaign: {
+                                            ...latestDataRef.current.campaign,
+                                            activeMap: { ...latestDataRef.current.campaign.activeMap, tokens: [] },
+                                            savedMaps: newSavedMaps
+                                        }
+                                    };
+                                }
+                                setPings([]);
+                                triggerHaptic('heavy');
+                            }
+                        }}
+                        // END CHANGE
+                    />
                 </div>
             )}
 
@@ -2709,7 +3070,22 @@ const InteractiveMap = ({ data = {}, role, updateMapState, updateCloud, onDiceRo
                 <div onPointerDown={(e) => e.stopPropagation()}>
                     <MapLibrary 
                         savedMaps={data.campaign?.savedMaps || []} 
+                        onAdd={(newMap) => {
+                            console.log("[DEBUG] Archiving map:", newMap.name);
+                            const mapData = { ...newMap };
+                            delete mapData.isNew;
+                            const savedMaps = latestDataRef.current?.campaign?.savedMaps || [];
+                            if (!savedMaps.some(m => m.url === newMap.url)) {
+                                updateCampaign({ 'campaign.savedMaps': [...savedMaps, mapData] });
+                            }
+                        }}
                         onSelect={(selectedMap) => { 
+                            const mapData = { ...selectedMap };
+                            delete mapData.isNew;
+
+                            updateCampaign({ 'campaign.activeMap': mapData });
+
+                            // Update local UI state
                             updateMapState('load_map', selectedMap); 
                             setShowLibrary(false); 
                         }} 
@@ -2779,19 +3155,31 @@ const InteractiveMap = ({ data = {}, role, updateMapState, updateCloud, onDiceRo
                             alt="Map Board"
                         />
 
+                        {/* START CHANGE: Render Tiles for Tiled Maps */}
+                        {mapReady && mapData.url === 'tiled' && (
+                            <div className="absolute inset-0 pointer-events-none">
+                                {visibleTiles.map(tile => (
+                                    <MapTile key={`${tile.z}-${tile.r}-${tile.c}`} tile={tile} tileSize={512} levelScale={tile.levelScale} />
+                                ))}
+                            </div>
+                        )}
+                        {/* END CHANGE */}
+
                     {/* START CHANGE: Single Vision Canvas (Layer 4) */}
                     {/* Fog Canvas is gone. Vision Canvas handles everything. */}
                     <canvas 
                         ref={visionCanvasRef}
-                        className="absolute top-0 left-0 pointer-events-none z-[6]"
-                        style={{ width: '100%', height: '100%', display: 'block' }}
+                        className="fixed top-0 left-0 pointer-events-none z-[60]"
+                        style={{ width: '100vw', height: '100vh', display: 'block' }}
                     />
 
                     {/* START CHANGE: VFX Overlay Layer */}
-                    {mapReady && fullDimensions && (
+                    {/* Optimization: Unmount VFX on mobile when zoomed out to free GPU memory */}
+                    {mapReady && fullDimensions && (!isMobile || view.scale >= 0.15) && (
                         <VfxOverlay 
-                            width={fullDimensions.width} 
-                            height={fullDimensions.height} 
+                            width={mapDimensions.width} 
+                            height={mapDimensions.height} 
+                            view={view}
                             templates={mapData.templates} 
                             weather={mapData.weather}
                             pixelRatio={Math.min(2, window.devicePixelRatio)} 
