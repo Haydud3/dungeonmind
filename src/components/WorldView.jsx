@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import InteractiveMap from './map/InteractiveMap';
+import TacticalMap from '../../features/map';
 // START CHANGE: Correct Import Path
 import SheetContainer from './character-sheet/SheetContainer'; 
 // END CHANGE
@@ -87,10 +87,10 @@ const WorldView = ({ data, role, updateCloud, updateMapState, user, apiKey, onDi
             {/* The Main Map Area */}
             <div className="flex-1 relative h-full min-w-0 flex flex-col">
                 <div className="flex-1 relative w-full h-full overflow-hidden">
-                    <InteractiveMap 
+                    <TacticalMap 
                         data={data} 
                         role={role} 
-                        user={user} // CRITICAL FIX: Pass user prop for LOS calculations
+                        user={user}
                         updateCloud={updateCloud} 
                         updateMapState={handleMapAction}
                         sidebarIsOpen={sidebarIsOpen || showSidebar}
@@ -105,7 +105,7 @@ const WorldView = ({ data, role, updateCloud, updateMapState, user, apiKey, onDi
                         players={players}
                         npcs={npcs}
                         diceLog={diceLog}
-                        // END CHANGE
+                        onLogAction={onLogAction}
                     />
                 </div>
             </div>

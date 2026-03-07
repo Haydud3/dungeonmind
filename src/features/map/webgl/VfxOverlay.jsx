@@ -1,6 +1,6 @@
-import React, { useRef, useMemo, useLayoutEffect, memo } from 'react';
-import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { useVfxStore } from '../../stores/useVfxStore';
+import React, { useRef, useMemo, memo } from 'react';
+import { useFrame } from '@react-three/fiber';
+import { useVfxStore } from '../../../stores/useVfxStore';
 import * as THREE from 'three';
 
 const isMobile = typeof navigator !== 'undefined' && (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || window.innerWidth <= 768);
@@ -14,7 +14,7 @@ const VFX_SHADERS = {
     gold: { color: new THREE.Color('#ffcc00'), noiseScale: 2.0, speed: 2.0 }
 };
 
-const VfxMaterial = ({ flavor, isPreview, hasRim = false, isBeam = false }) => {
+const VfxMaterial = ({ flavor, isPreview, hasRim = false, isBeam = false, wallUniforms, viewerUniforms, visionActive, discoveryTexture, mapDimensions, isDM }) => {
     const settings = VFX_SHADERS[flavor] || VFX_SHADERS.magic;
     const uniforms = useMemo(() => ({
         uTime: { value: 0 },
@@ -22,8 +22,16 @@ const VfxMaterial = ({ flavor, isPreview, hasRim = false, isBeam = false }) => {
         uNoiseScale: { value: settings.noiseScale },
         uOpacity: { value: isPreview ? 0.4 : 0.8 },
         uHasRim: { value: hasRim ? 1.0 : 0.0 },
-        uIsBeam: { value: isBeam ? 1.0 : 0.0 }
-    }), [flavor, isPreview, hasRim, isBeam]);
+        uIsBeam: { value: isBeam ? 1.0 : 0.0 },
+        uWalls: { value: wallUniforms.buffer },
+        uWallCount: { value: wallUniforms.count },
+        uViewers: { value: viewerUniforms.buffer },
+        uViewerCount: { value: viewerUniforms.count },
+        uVisionActive: { value: visionActive },
+        uDiscoveryTexture: { value: discoveryTexture || new THREE.Texture() },
+        uMapDimensions: { value: new THREE.Vector2(mapDimensions.width || 1, mapDimensions.height || 1) },
+        uIsDM: { value: isDM }
+    }), [flavor, isPreview, hasRim, isBeam, wallUniforms, viewerUniforms, visionActive, discoveryTexture, mapDimensions, isDM]);
 
     useFrame((state) => {
         uniforms.uTime.value = state.clock.getElapsedTime() * settings.speed;
@@ -37,8 +45,10 @@ const VfxMaterial = ({ flavor, isPreview, hasRim = false, isBeam = false }) => {
             uniforms={uniforms}
             vertexShader={`
                 varying vec2 vUv;
+                varying vec2 vWorldPos;
                 void main() {
                     vUv = uv;
+                    vWorldPos = (modelMatrix * vec4(position, 1.0)).xy;
                     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
                 }
             `}
@@ -49,8 +59,29 @@ const VfxMaterial = ({ flavor, isPreview, hasRim = false, isBeam = false }) => {
                 uniform float uOpacity;
                 uniform float uHasRim;
                 uniform float uIsBeam;
+                uniform vec4 uWalls[100];
+                uniform int uWallCount;
+                uniform vec4 uViewers[8];
+                uniform int uViewerCount;
+                uniform bool uVisionActive;
+                uniform bool uIsDM;
+                uniform sampler2D uDiscoveryTexture;
+                uniform vec2 uMapDimensions;
                 varying vec2 vUv;
+                varying vec2 vWorldPos;
+
                 float noise(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+
+                bool rayIntersectsSegment(vec2 a, vec2 b, vec2 c, vec2 d) {
+                    vec2 r = b - a;
+                    vec2 s = d - c;
+                    float det = r.x * s.y - r.y * s.x;
+                    if (abs(det) < 0.0001) return false;
+                    float t = ((c.x - a.x) * s.y - (c.y - a.y) * s.x) / det;
+                    float u = ((c.x - a.x) * r.y - (c.y - a.y) * r.x) / det;
+                    return (t > 0.0 && t < 1.0 && u > 0.0 && u < 1.0);
+                }
+
                 void main() {
                     float n = noise(vUv * uNoiseScale + uTime);
                     float alpha = uOpacity * (0.5 + 0.5 * sin(uTime + vUv.y * 10.0));
@@ -65,6 +96,33 @@ const VfxMaterial = ({ flavor, isPreview, hasRim = false, isBeam = false }) => {
                         finalAlpha = (finalAlpha * 0.6) + (rim * uOpacity * 1.2);
                     }
 
+                    if (uVisionActive) {
+                        float currentIntensity = 0.0;
+                        for (int i = 0; i < 8; i++) {
+                            if (i >= uViewerCount) break;
+                            float dist = distance(vWorldPos, uViewers[i].xy);
+                            if (dist > uViewers[i].z) continue;
+                            bool blocked = false;
+                            for (int j = 0; j < 100; j++) {
+                                if (j >= uWallCount) break;
+                                if (rayIntersectsSegment(uViewers[i].xy, vWorldPos, uWalls[j].xy, uWalls[j].zw)) { blocked = true; break; }
+                            }
+                            if (!blocked) {
+                                currentIntensity += 1.0 - smoothstep(uViewers[i].z * 0.7, uViewers[i].z, dist);
+                            }
+                        }
+
+                        vec2 dUv = vec2(vWorldPos.x / uMapDimensions.x, vWorldPos.y / -uMapDimensions.y);
+                        float discovered = texture2D(uDiscoveryTexture, dUv).r;
+
+                        if (uIsDM) {
+                            finalAlpha *= (0.4 + min(currentIntensity * 0.3, 0.6));
+                        } else {
+                            float visibility = max(min(currentIntensity, 1.0), discovered * 0.2);
+                            finalAlpha *= visibility;
+                        }
+                    }
+
                     gl_FragColor = vec4(uColor, finalAlpha);
                 }
             `}
@@ -72,19 +130,19 @@ const VfxMaterial = ({ flavor, isPreview, hasRim = false, isBeam = false }) => {
     );
 };
 
-const Breath = ({ origin, target, flavor, isPreview }) => {
+const Breath = ({ origin, target, flavor, isPreview, wallUniforms, viewerUniforms, visionActive, discoveryTexture, mapDimensions, isDM }) => {
     // Negate Y for Three.js Y-Up space
     const angle = Math.atan2(-(target.y - origin.y), target.x - origin.x);
     const dist = Math.hypot(target.x - origin.x, target.y - origin.y);
     return (
         <mesh position={[origin.x, -origin.y, 0]} rotation={[0, 0, angle - Math.PI / 6]}>
             <ringGeometry args={[0, dist, 32, 1, 0, Math.PI / 3]} />
-            <VfxMaterial flavor={flavor} isPreview={isPreview} hasRim={true} />
+            <VfxMaterial flavor={flavor} isPreview={isPreview} hasRim={true} wallUniforms={wallUniforms} viewerUniforms={viewerUniforms} visionActive={visionActive} discoveryTexture={discoveryTexture} mapDimensions={mapDimensions} isDM={isDM} />
         </mesh>
     );
 };
 
-const Beam = ({ origin, target, flavor, isPreview }) => {
+const Beam = ({ origin, target, flavor, isPreview, wallUniforms, viewerUniforms, visionActive, discoveryTexture, mapDimensions, isDM }) => {
     // Memoize the math to prevent jitter during fast mouse movements
     const { angle, dist, midX, midY } = useMemo(() => {
         const dx = target.x - origin.x;
@@ -100,12 +158,12 @@ const Beam = ({ origin, target, flavor, isPreview }) => {
     return (
         <mesh position={[midX, midY, 0]} rotation={[0, 0, angle]}>
             <planeGeometry args={[dist, 20]} />
-            <VfxMaterial flavor={flavor} isPreview={isPreview} isBeam={true} />
+            <VfxMaterial flavor={flavor} isPreview={isPreview} isBeam={true} wallUniforms={wallUniforms} viewerUniforms={viewerUniforms} visionActive={visionActive} discoveryTexture={discoveryTexture} mapDimensions={mapDimensions} isDM={isDM} />
         </mesh>
     );
 };
 
-const Rocket = ({ origin, target, flavor, isPreview, startTime, duration }) => {
+const Rocket = ({ origin, target, flavor, isPreview, startTime, duration, wallUniforms, viewerUniforms, visionActive, discoveryTexture, mapDimensions, isDM }) => {
     const meshRef = useRef();
     const addEffect = useVfxStore(state => state.addEffect);
     const hasExploded = useRef(false);
@@ -128,12 +186,12 @@ const Rocket = ({ origin, target, flavor, isPreview, startTime, duration }) => {
     return (
         <mesh ref={meshRef} position={[origin.x, -origin.y, 0]} rotation={[0, 0, angle]}>
             <sphereGeometry args={[10, 16, 16]} />
-            <VfxMaterial flavor={flavor} isPreview={isPreview} />
+            <VfxMaterial flavor={flavor} isPreview={isPreview} wallUniforms={wallUniforms} viewerUniforms={viewerUniforms} visionActive={visionActive} discoveryTexture={discoveryTexture} mapDimensions={mapDimensions} isDM={isDM} />
         </mesh>
     );
 };
 
-const Weather = ({ type, width, height }) => {
+const Weather = ({ type, width, height, wallUniforms, viewerUniforms, visionActive, discoveryTexture, mapDimensions, isDM }) => {
     const count = 2500; // Increased density for better visibility
     const pointsRef = useRef();
     
@@ -194,7 +252,15 @@ const Weather = ({ type, width, height }) => {
         uType: { value: type === 'rain' ? 0.0 : type === 'snow' ? 1.0 : 2.0 },
         uColor: { value: new THREE.Color(material.color) },
         uOpacity: { value: material.opacity },
-    }), [type, material]);
+        uWalls: { value: wallUniforms.buffer },
+        uWallCount: { value: wallUniforms.count },
+        uViewers: { value: viewerUniforms.buffer },
+        uViewerCount: { value: viewerUniforms.count },
+        uVisionActive: { value: visionActive },
+        uDiscoveryTexture: { value: discoveryTexture || new THREE.Texture() },
+        uMapDimensions: { value: new THREE.Vector2(mapDimensions.width || 1, mapDimensions.height || 1) },
+        uIsDM: { value: isDM }
+    }), [type, material, wallUniforms, viewerUniforms, visionActive, discoveryTexture, mapDimensions, isDM]);
 
     return (
         <points ref={pointsRef} key={`weather-${type}`} frustumCulled={false}>
@@ -213,8 +279,10 @@ const Weather = ({ type, width, height }) => {
                 uniforms={uniforms}
                 vertexShader={`
                     uniform float uType;
+                    varying vec2 vWorldPos;
                     void main() {
                         vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                        vWorldPos = (modelMatrix * vec4(position, 1.0)).xy;
                         // Rain needs a larger point size to draw the streak
                         gl_PointSize = (uType < 0.5) ? 48.0 : (uType < 1.5 ? 4.0 : 3.0);
                         gl_Position = projectionMatrix * mvPosition;
@@ -224,6 +292,26 @@ const Weather = ({ type, width, height }) => {
                     uniform float uType;
                     uniform vec3 uColor;
                     uniform float uOpacity;
+                    uniform vec4 uWalls[100];
+                    uniform int uWallCount;
+                    uniform vec4 uViewers[8];
+                    uniform int uViewerCount;
+                    uniform bool uVisionActive;
+                    uniform bool uIsDM;
+                    uniform sampler2D uDiscoveryTexture;
+                    uniform vec2 uMapDimensions;
+                    varying vec2 vWorldPos;
+
+                    bool rayIntersectsSegment(vec2 a, vec2 b, vec2 c, vec2 d) {
+                        vec2 r = b - a;
+                        vec2 s = d - c;
+                        float det = r.x * s.y - r.y * s.x;
+                        if (abs(det) < 0.0001) return false;
+                        float t = ((c.x - a.x) * s.y - (c.y - a.y) * s.x) / det;
+                        float u = ((c.x - a.x) * r.y - (c.y - a.y) * r.x) / det;
+                        return (t > 0.0 && t < 1.0 && u > 0.0 && u < 1.0);
+                    }
+
                     void main() {
                         float alpha = uOpacity;
                         if (uType < 0.5) {
@@ -242,6 +330,34 @@ const Weather = ({ type, width, height }) => {
                             if (dist > 0.5) discard;
                             alpha *= smoothstep(0.5, 0.4, dist);
                         }
+
+                        if (uVisionActive) {
+                            float currentIntensity = 0.0;
+                            for (int i = 0; i < 8; i++) {
+                                if (i >= uViewerCount) break;
+                                float dist = distance(vWorldPos, uViewers[i].xy);
+                                if (dist > uViewers[i].z) continue;
+                                bool blocked = false;
+                                for (int j = 0; j < 100; j++) {
+                                    if (j >= uWallCount) break;
+                                    if (rayIntersectsSegment(uViewers[i].xy, vWorldPos, uWalls[j].xy, uWalls[j].zw)) { blocked = true; break; }
+                                }
+                                if (!blocked) {
+                                    currentIntensity += 1.0 - smoothstep(uViewers[i].z * 0.7, uViewers[i].z, dist);
+                                }
+                            }
+
+                            vec2 dUv = vec2(vWorldPos.x / uMapDimensions.x, vWorldPos.y / -uMapDimensions.y);
+                            float discovered = texture2D(uDiscoveryTexture, dUv).r;
+
+                            if (uIsDM) {
+                                alpha *= (0.4 + min(currentIntensity * 0.3, 0.6));
+                            } else {
+                                float visibility = max(min(currentIntensity, 1.0), discovered * 0.2);
+                                alpha *= visibility;
+                            }
+                        }
+
                         gl_FragColor = vec4(uColor, alpha);
                     }
                 `}
@@ -250,7 +366,7 @@ const Weather = ({ type, width, height }) => {
     );
 };
 
-const Burst = ({ origin, flavor, isPreview, startTime, radius = 30, duration = 1000 }) => {
+const Burst = ({ origin, flavor, isPreview, startTime, radius = 30, duration = 1000, wallUniforms, viewerUniforms, visionActive, discoveryTexture, mapDimensions, isDM }) => {
     const meshRef = useRef();
     
     useFrame(() => {
@@ -264,15 +380,15 @@ const Burst = ({ origin, flavor, isPreview, startTime, radius = 30, duration = 1
     return (
         <mesh ref={meshRef} position={[origin.x, -origin.y, 0]}>
             <circleGeometry args={[radius, 32]} />
-            <VfxMaterial flavor={flavor} isPreview={isPreview} hasRim={true} />
+            <VfxMaterial flavor={flavor} isPreview={isPreview} hasRim={true} wallUniforms={wallUniforms} viewerUniforms={viewerUniforms} visionActive={visionActive} discoveryTexture={discoveryTexture} mapDimensions={mapDimensions} isDM={isDM} />
         </mesh>
     );
 };
 
-const Aura = ({ origin, flavor, isPreview, radius = 50 }) => (
+const Aura = ({ origin, flavor, isPreview, radius = 50, wallUniforms, viewerUniforms, visionActive, discoveryTexture, mapDimensions, isDM }) => (
     <mesh position={[origin.x, -origin.y, 0]}>
         <circleGeometry args={[radius, 32]} />
-        <VfxMaterial flavor={flavor} isPreview={isPreview} hasRim={true} />
+        <VfxMaterial flavor={flavor} isPreview={isPreview} hasRim={true} wallUniforms={wallUniforms} viewerUniforms={viewerUniforms} visionActive={visionActive} discoveryTexture={discoveryTexture} mapDimensions={mapDimensions} isDM={isDM} />
     </mesh>
 );
 
@@ -305,98 +421,38 @@ const Effect = memo((props) => {
     }
 });
 
-const CameraController = ({ width, height, view }) => {
-    const { camera, size, gl } = useThree();
-    useLayoutEffect(() => {
-        if (!width || !height) return;
-        
-        // FORCE the drawing buffer to match map pixels exactly (3500x3850)
-        // The 'true' argument updates the style.width/height as well
-        gl.setSize(width, height, true);
-        
-        camera.left = 0;
-        camera.right = width;
-        camera.top = 0;
-        camera.bottom = -height;
-        camera.position.set(0, 0, 10); // Top-left origin in Three.js space
-        camera.zoom = 1;
-        camera.updateProjectionMatrix();
-    }, [camera, width, height, size.width, size.height, gl]);
-    return null;
-};
-
-const VfxOverlay = memo(({ width, height, templates = [], weather, pixelRatio = 1, view }) => {
+const VfxOverlay = memo(({ width, height, templates = [], weather, wallUniforms, viewerUniforms, visionActive, discoveryTexture, mapDimensions, isDM }) => {
     const activeEffects = useVfxStore(state => state.activeEffects);
     const targetingPreview = useVfxStore(state => state.targetingPreview);
     
     if (!width || !height) return null;
-    
-    // START CHANGE: Aggressive Mobile Capping
-    // Viewport-sized WebGL is naturally capped by screen resolution
-    // END CHANGE
 
     return (
-        <div
-            className="fixed top-0 left-0 pointer-events-none z-[15]" 
-            style={{ 
-                width: `${width}px`, 
-                height: `${height}px`, 
-                maxWidth: 'none', 
-                maxHeight: 'none',
-                willChange: 'transform' 
-            }}
-        >
-            <Canvas
-                dpr={1} // Force 1:1 pixel mapping to match Vision Canvas
-                resize={{ debounce: 0 }}
-                orthographic
-                camera={{
-                    left: 0, right: width,
-                    top: 0, bottom: -height,
-                    near: -100, far: 100,
-                    position: [0, 0, 10],
-                    manual: true
-                }}
-                gl={{ 
-                    alpha: true, 
-                    antialias: !isMobile, 
-                    powerPreference: 'low-power',
-                    precision: isMobile ? 'lowp' : 'highp',
-                    failIfMajorPerformanceCaveat: true 
-                }}
-                events={null}
-                style={{ 
-                    width: '100%', 
-                    height: '100%', 
-                    display: 'block',
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    pointerEvents: 'none',
-                    imageRendering: 'pixelated',
-                    willChange: 'transform'
-                }}
-            >
-                <CameraController width={width} height={height} view={view} />
-                {weather && <Weather type={weather} width={width} height={height} />}
-                {activeEffects.map(effect => <Effect key={effect.id} {...effect} />)}
-                {targetingPreview && <Effect {...targetingPreview} isPreview />}
-                
-                {/* Render Persistent Templates as VFX */}
-                {templates.map(tpl => {
-                    if (!tpl.flavor) return null;
-                    return (
-                        <Effect 
-                            key={`tpl-vfx-${tpl.id}-${tpl.flavor}-${tpl.radius}`} 
-                            behavior="aura" 
-                            origin={{ x: tpl.x, y: tpl.y }} 
-                            radius={tpl.radius} 
-                            flavor={tpl.flavor} 
-                        />
-                    );
-                })}
-            </Canvas>
-        </div>
+        <group position={[0, 0, 1]}>
+            {weather && <Weather type={weather} width={width} height={height} wallUniforms={wallUniforms} viewerUniforms={viewerUniforms} visionActive={visionActive} discoveryTexture={discoveryTexture} mapDimensions={mapDimensions} isDM={isDM} />}
+            {activeEffects.map(effect => <Effect key={effect.id} {...effect} wallUniforms={wallUniforms} viewerUniforms={viewerUniforms} visionActive={visionActive} discoveryTexture={discoveryTexture} mapDimensions={mapDimensions} isDM={isDM} />)}
+            {targetingPreview && <Effect {...targetingPreview} isPreview wallUniforms={wallUniforms} viewerUniforms={viewerUniforms} visionActive={visionActive} discoveryTexture={discoveryTexture} mapDimensions={mapDimensions} isDM={isDM} />}
+            
+            {/* Render Persistent Templates as VFX */}
+            {templates.map(tpl => {
+                if (!tpl.flavor) return null;
+                return (
+                    <Effect 
+                        key={`tpl-vfx-${tpl.id}-${tpl.flavor}-${tpl.radius}`} 
+                        behavior="aura" 
+                        origin={{ x: tpl.x, y: tpl.y }} 
+                        radius={tpl.radius} 
+                        flavor={tpl.flavor} 
+                        wallUniforms={wallUniforms}
+                        viewerUniforms={viewerUniforms}
+                        visionActive={visionActive}
+                        discoveryTexture={discoveryTexture}
+                        mapDimensions={mapDimensions}
+                        isDM={isDM}
+                    />
+                );
+            })}
+        </group>
     );
 });
 

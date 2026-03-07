@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import Icon from '../Icon';
-import { useCharacterStore } from '../../stores/useCharacterStore';
+import { useCharacterStore } from '../../../stores/useCharacterStore';
 
 const TokenManager = ({ data, onDragStart, onDiceRoll, onClearTokens, onClearAllMaps }) => {
     const [search, setSearch] = useState("");

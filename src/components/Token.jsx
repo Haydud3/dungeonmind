@@ -19,7 +19,7 @@ const STATUS_ICONS = {
 };
 
 // FIX: Added onMouseDown, onTouchStart, and onClick to props
-const Token = ({ token, isOwner, cellPx, isDragging, isSelected, isTurn, onMouseDown, onTouchStart, onClick, showNameplate = true }) => {
+const Token = ({ token, isOwner, cellPx, isDragging, isSelected, isTurn, onMouseDown, onTouchStart, onClick, showNameplate = true, showImage = true, showHealth = true }) => {
     const sizeMap = { medium: 1, large: 2, huge: 3, gargantuan: 4, tiny: 0.5 };
     const sizeMultiplier = typeof token.size === 'number' ? token.size : (sizeMap[token.size] || 1);
     const dimension = cellPx * sizeMultiplier;
@@ -92,19 +92,19 @@ const Token = ({ token, isOwner, cellPx, isDragging, isSelected, isTurn, onMouse
             title={token.name || "Unknown"}
         >
             <div 
-                className="w-full h-full rounded-full bg-slate-900 overflow-hidden relative box-border"
+                className={`w-full h-full rounded-full overflow-hidden relative box-border ${showImage ? 'bg-slate-900' : 'bg-transparent'}`}
                 style={{
-                    borderWidth: `${borderThickness}px`,
+                    borderWidth: showImage ? `${borderThickness}px` : '0px',
                     borderStyle: 'solid',
                     borderColor: borderColor,
                     boxShadow: isTurn 
                         ? '0 0 30px #f59e0b, 0 0 15px #f59e0b' 
-                        : `0 0 ${shadowBlur}px ${isPc ? 'rgba(34,197,94,0.6)' : 'rgba(239,68,68,0.2)'}${isSelected ? ', 0 0 20px rgba(99, 102, 241, 0.8)' : ''}`,
+                        : (showImage ? `0 0 ${shadowBlur}px ${isPc ? 'rgba(34,197,94,0.6)' : 'rgba(239,68,68,0.2)'}${isSelected ? ', 0 0 20px rgba(99, 102, 241, 0.8)' : ''}` : 'none'),
                     imageRendering: 'auto',
                     WebkitFontSmoothing: 'antialiased'
                 }}
             >
-                {token.img || token.image ? (
+                {showImage && (token.img || token.image ? (
                     <img src={token.img || token.image} className="w-full h-full object-cover pointer-events-none select-none" alt={token.name} draggable="false" />
                 ) : (
                     <div 
@@ -113,10 +113,10 @@ const Token = ({ token, isOwner, cellPx, isDragging, isSelected, isTurn, onMouse
                     >
                         {(token.name || "?").substring(0, 2).toUpperCase()}
                     </div>
-                )}
+                ))}
                 
                 {/* Health Ring Overlay */}
-                {isOwner && hasHp && !isDead && (
+                {showHealth && isOwner && hasHp && !isDead && (
                     <svg className="absolute inset-0 w-full h-full pointer-events-none -rotate-90 z-20" viewBox="0 0 100 100">
                         {/* Background Track */}
                         <circle cx="50" cy="50" r="46" fill="none" stroke="rgba(0,0,0,0.4)" strokeWidth="6" />
