@@ -1,16 +1,18 @@
 import React from 'react';
-import * as LucideIcons from 'lucide-react';
+import { icons } from 'lucide-react';
 
-const Icon = ({ name, size = 20, className = "" }) => {
-  // Convert "arrow-right" to "ArrowRight"
-  const formatName = (str) => {
-    if (!str) return 'HelpCircle';
-    return str.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join('');
-  };
+const toPascalCase = (str) => {
+  return str.replace(/(^\w|-\w)/g, (g) => g.replace(/-/, "").toUpperCase());
+};
 
-  const IconComponent = LucideIcons[formatName(name)] || LucideIcons.HelpCircle;
+const Icon = ({ name, color, size, className }) => {
+  const LucideIcon = icons[toPascalCase(name)];
 
-  return <IconComponent size={size} className={className} />;
+  if (!LucideIcon) {
+    return null;
+  }
+
+  return <LucideIcon color={color} size={size} className={className} />;
 };
 
 export default Icon;

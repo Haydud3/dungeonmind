@@ -79,7 +79,7 @@ const SettingsView = ({
         } 
         // If not DM, add (Promote)
         else {
-            if (!confirm("Promote this user to Dungeon Master? They will have full control over the map and settings.")) return;
+            if (!confirm("Promote this user to Dungeon Master? They will have full control over the campaign settings.")) return;
             newDmIds.push(uid);
         }
 
@@ -166,7 +166,7 @@ const SettingsView = ({
                                     />
                                     <div>
                                         <div className="font-bold text-slate-200">Compact Mobile HUD</div>
-                                        <div className="text-xs text-slate-500">Lowers the map toolbar to maximize screen space on phones.</div>
+                                        <div className="text-xs text-slate-500">Lowers the toolbar to maximize screen space on phones.</div>
                                     </div>
                                 </div>
 

@@ -28,7 +28,6 @@ const INITIAL_APP_STATE = { ...DB_INIT_DATA, players: [], journal_pages: {}, cha
 
 export const CampaignProvider = ({ children }) => {
     const [gameParams, setGameParams] = useState(null); 
-// --- CHANGES: Internal Auth State & Presence Trigger ---
     const [user, setUser] = useState(null);
     const [data, setData] = useState(INITIAL_APP_STATE);
     const [isConnected, setIsConnected] = useState(true); // Track connection status
@@ -49,7 +48,6 @@ export const CampaignProvider = ({ children }) => {
             [`activeUsers.${user.uid}`]: myName 
         }).catch(e => console.error("Presence Error:", e));
     }, [gameParams?.code, user]);
-// --- 2 lines after changes ---
     const [loreChunks, setLoreChunks] = useState([]);
     const saveTimer = useRef(null);
     const isPendingSave = useRef(false); 
@@ -73,10 +71,8 @@ export const CampaignProvider = ({ children }) => {
             setIsConnected(!snap.metadata.fromCache); // Update connection status based on cache state
 
             if (snap.exists()) {
-                // --- CHANGES: Remove pending save gate to allow fluid real-time updates from other users ---
                 const d = snap.data();
                 
-                // START CHANGE: Ban Enforcement & Auto-Join Registration
                 if (user && d.bannedUsers?.includes(user.uid)) {
                     localStorage.removeItem('dm_last_code'); 
                     setGameParams(null); 
@@ -87,7 +83,6 @@ export const CampaignProvider = ({ children }) => {
                 if (user && !d.activeUsers?.[uid]) {
                     updateDoc(rootRef, { [`activeUsers.${uid}`]: user.email || "Anonymous" }).catch(() => {});
                 }
-                // END CHANGE
 
                 setData(prev => ({ ...prev, ...d })); 
             } else if (gameParams.role === 'dm') {
@@ -121,7 +116,6 @@ export const CampaignProvider = ({ children }) => {
             setLoreChunks(allChunks);
         });
 
-        // START CHANGE: Tokens Sub-collection Listener
         const tokensRef = collection(rootRef, 'tokens');
         const unsubTokens = onSnapshot(tokensRef, (snap) => {
             const tokens = snap.docs.map(d => ({ id: d.id, ...d.data() }))
@@ -137,12 +131,17 @@ export const CampaignProvider = ({ children }) => {
                 }
             }));
         });
-        // END CHANGE
+
+        const mapsRef = collection(rootRef, 'maps');
+        const unsubMaps = onSnapshot(mapsRef, (snap) => {
+            const mapsData = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+            setData(prev => ({ ...prev, maps: mapsData }));
+        });
 
         // Presence
         if (user && !isOffline) updateDoc(rootRef, { [`activeUsers.${user.uid}`]: user.email || "Anonymous" }).catch(console.error);
 
-        return () => { unsubRoot(); unsubPlayers(); unsubJournal(); unsubChat(); unsubLore(); unsubTokens(); };
+        return () => { unsubRoot(); unsubPlayers(); unsubJournal(); unsubChat(); unsubLore(); unsubTokens(); unsubMaps(); };
     }, [gameParams, user]);
 
     // --- 2. ACTIONS ---
@@ -217,12 +216,18 @@ export const CampaignProvider = ({ children }) => {
     // Legacy wrapper for backward compatibility if needed
     const updateCloud = (newData, immediate = false) => {
         console.warn("Deprecated updateCloud called. Please migrate to updateCampaign.");
-        if (newData.campaign) {
-            updateCampaign({ 'campaign': newData.campaign }, immediate);
-        }
+        
+        const changes = {};
+        if (newData.campaign) changes.campaign = newData.campaign;
+        if (newData.handouts) changes.handouts = newData.handouts;
+        if (newData.npcs) changes.npcs = newData.npcs;
+        if (newData.locations) changes.locations = newData.locations;
+        if (newData.config) changes.config = newData.config;
+        if (newData.onboardingComplete !== undefined) changes.onboardingComplete = newData.onboardingComplete;
+        
+        updateCampaign(changes, immediate);
     };
 
-    // START CHANGE: Atomic Token Operations
     const addToken = (token) => {
         if (!gameParams?.code) return;
         // Optimistic Update
@@ -267,7 +272,6 @@ export const CampaignProvider = ({ children }) => {
         const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'tokens', String(tokenId));
         deleteDoc(ref);
     };
-    // END CHANGE
 
     const updateMapState = (action, payload) => {
         const currentMap = data.campaign?.activeMap || {};
@@ -361,7 +365,6 @@ export const CampaignProvider = ({ children }) => {
         await updateDoc(ref, { bannedUsers: fb.arrayRemove(targetUid) });
     };
 
-    // START CHANGE: Global Ping Helper
     const sendPing = (coords) => {
         if (!gameParams?.code || gameParams.isOffline) return;
         const ref = collection(doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code), 'chat');
@@ -373,9 +376,7 @@ export const CampaignProvider = ({ children }) => {
             timestamp: Date.now()
         });
     };
-    // END CHANGE
 
-    // START CHANGE: Global VFX Helper
     const triggerVfx = (payload) => {
         if (!gameParams?.code) return;
         
@@ -395,9 +396,7 @@ export const CampaignProvider = ({ children }) => {
         const ref = collection(doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code), 'chat');
         setDoc(doc(ref), msg);
     };
-    // END CHANGE
 
-    // START CHANGE: Chat & Journal Helpers for Sidebar Views
     const sendMessage = async (content, type = 'chat-public', targetId = null, contextMode = 'fast') => {
         if (!gameParams?.code) return;
         const msg = {
@@ -424,15 +423,12 @@ export const CampaignProvider = ({ children }) => {
         const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'journal', pageId);
         await setDoc(ref, pageData, { merge: true });
     };
-    // END CHANGE
 
     // --- MEMOIZED VALUE (Prevents Infinite Renders & "1, M" Errors) ---
     const value = useMemo(() => ({
         data, setData, gameParams, 
-// --- CHANGES: Add user to exports ---
         user, 
         joinCampaign, leaveCampaign, 
-// --- 2 lines after changes ---
         updateCampaign, updateCloud, updateMapState, savePlayer, deletePlayer, 
         addToken, updateToken, deleteToken, // Exported for atomic access
         loreChunks, setLoreChunks, 

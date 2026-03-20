@@ -185,7 +185,7 @@ const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView,
 
     if (viewingCharacterId) {
         return (
-            <div className="fixed inset-0 z-[9999] bg-slate-950 flex flex-col h-full w-full">
+            <div className="flex flex-col h-full w-full">
                 <SheetContainer 
                     characterId={viewingCharacterId} 
                     onSave={handleSheetSave} 

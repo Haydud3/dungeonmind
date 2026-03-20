@@ -1,26 +1,20 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import ReactQuill, { Quill } from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
-// --- CHANGES: Remove problematic 'require' fallback ---
-import 'quill-mention'; 
 import 'quill-mention/dist/quill.mention.css';
 
-// The previous "if (Quill && !Quill.imports...) { require(...) }" block caused the crash.
-// The import above is sufficient to register the module in a browser environment.
-// --- END OF CHANGES ---
+
 
 import { useToast } from './ToastProvider'; 
 import Icon from './Icon';
 import { resolveChunkedHtml, storeChunkedMap } from '../utils/storageUtils';
 import { compressImage } from '../utils/imageCompressor';
 
-// --- CHANGES: Ensure component receives all necessary props for privacy-gated mentions ---
 const JournalPageEditor = ({ 
     page, onSave, onDelete, onBack, aiHelper,
     isDm, players = [], npcs = [], locations = [], onEntitySelect 
 }) => {
     const [localContent, setLocalContent] = useState(page.content || "");
-// --- END OF CHANGES ---
     const [resolvedContent, setResolvedContent] = useState("");
     const [syncStatus, setSyncStatus] = useState("idle");
     const [aiWorking, setAiWorking] = useState(false);
@@ -29,11 +23,9 @@ const JournalPageEditor = ({
     const quillRef = useRef(null);
     const debounceRef = useRef(null);
     
-    // --- CHANGES: Add state and handlers for Permission Menu ---
     const [showPermMenu, setShowPermMenu] = useState(false);
     const permMenuRef = useRef(null);
     
-    // --- CHANGES: Add Zoom State & Handlers ---
     const [zoom, setZoom] = useState(1); // 1 = 100%
 
     const adjustZoom = (delta) => {
@@ -42,8 +34,7 @@ const JournalPageEditor = ({
             return parseFloat(newZoom.toFixed(1)); // Avoid floating point weirdness
         });
     };
-    // --- END OF CHANGES ---
-
+    
     // Close menu when clicking outside
     useEffect(() => {
         const handleClickOutside = (event) => {
@@ -65,14 +56,10 @@ const JournalPageEditor = ({
         }
         onSave(page.id, { ...page, visibleTo: newList });
     };
-    // --- END OF CHANGES ---
 
-    // --- CHANGES: Define Custom Toolbar ID and Update Modules ---
     // We define a Custom Toolbar ID to link the HTML container to Quill
     const TOOLBAR_ID = "journal-toolbar-container";
-    // --- END OF CHANGES ---
 
-    // START CHANGE: Resolve images on load/edit
     useEffect(() => {
         const resolve = async () => {
             if (page.content) {
@@ -110,7 +97,6 @@ const JournalPageEditor = ({
             try {
                 const editor = quillRef.current.getEditor();
                 if (editor) {
-                    // --- CHANGES: Fix Duplication and Prevent Mobile Keyboard Pop ---
                     // 1. Clear existing content first. This prevents the new content from being 
                     //    appended to the old content (which caused the "duplicate at bottom" bug).
                     editor.setText(''); 
@@ -121,13 +107,10 @@ const JournalPageEditor = ({
                     // 3. REMOVED: editor.setSelection(...)
                     // We removed the setSelection call. This ensures the keyboard does NOT 
                     // open automatically. The user must now tap the text to start typing.
-                    // --- END OF CHANGES ---
                     
-                    // --- CHANGES: FIX CTRL+Z UNDO BUG ---
                     // We must clear the history stack immediately after loading the page content.
                     // This tells Quill: "This content is the starting point. Do not undo past here."
                     editor.history.clear(); 
-                    // --- END OF CHANGES ---
                 }
             } catch (e) {
                 console.warn("Editor not ready yet, skipping initial load paste.");
@@ -135,11 +118,10 @@ const JournalPageEditor = ({
         }
     }, [resolvedContent]);
 
-    // --- CHANGES: Guard handleChange against editor race conditions ---
     const handleChange = (content, delta, source, editor) => {
         // Only save if the change came from the 'user' (typing)
         if (source !== 'user') return; 
-
+        
         // Safety check (though usually editor is passed as arg)
         if (!editor) return;
 
@@ -156,7 +138,6 @@ const JournalPageEditor = ({
             }, 500);
         }, 700);
     };
-    // --- END OF CHANGES ---
 
     const toggleVisibility = () => { 
         onSave(page.id, { ...page, isPublic: !page.isPublic }); 
@@ -165,10 +146,8 @@ const JournalPageEditor = ({
     // --- CUSTOM HANDLERS FOR QUILL TOOLBAR ---
 
     const handleImageUpload = () => {
-        // --- CHANGES: Guard editor access in image upload handler ---
         if (!quillRef.current) return;
         const editor = quillRef.current.getEditor();
-        // --- END OF CHANGES ---
         const input = document.createElement('input');
         input.setAttribute('type', 'file');
         input.setAttribute('accept', 'image/*');
@@ -183,11 +162,9 @@ const JournalPageEditor = ({
                 const compressedBase64 = await compressImage(file, 800);
                 const chunkedId = await storeChunkedMap(compressedBase64, `journal_img_${file.name}`);
                 
-                // --- CHANGES: Use local editor reference for insertion ---
                 const range = editor.getSelection(true);
                 editor.insertEmbed(range.index, 'chunkedImage', chunkedId, 'user');
                 editor.setSelection(range.index + 1, 'silent');
-                // --- END OF CHANGES ---
             } catch (err) {
                 console.error(err);
                 toast("Image insertion failed", "error");
@@ -297,10 +274,8 @@ const JournalPageEditor = ({
         setAiWorking(false);
     };
 
-    /// --- CHANGES: Use Ref to stabilize modules and prevent History Wipes ---
     // We store dynamic data in a Ref so we can access the LATEST data in the closure
     // without forcing the 'modules' object to regenerate (which resets Quill history).
-    // --- CHANGES: Use Ref to stabilize data for modules (Fixes Undo) ---
     // We hold the latest data in a Ref. This allows us to use it in the 'mention' module
     // WITHOUT adding it to the useMemo dependencies. This prevents the modules from
     // regenerating on every render, which preserves the Undo History.
@@ -353,11 +328,9 @@ const JournalPageEditor = ({
             }
         }
     }), []);
-    // --- END OF CHANGES ---
 
     return (
         <div className="infinite-desk">
-            {/* --- CHANGES: Dynamic height header for expandable toolbar --- */}
             <div className={`border-b border-slate-700 bg-slate-900/95 backdrop-blur flex flex-col justify-center px-4 z-50 shrink-0 shadow-md transition-all duration-300 ${toolbarExpanded ? 'h-28' : 'h-16'}`}>
                 <style>{`
                     #${TOOLBAR_ID} {
@@ -380,7 +353,6 @@ const JournalPageEditor = ({
                 `}</style>
                 
                 <div className="flex items-center justify-between w-full">
-                    {/* Left: Navigation */}
                     <button onClick={onBack} className="text-slate-400 hover:text-white mr-2 shrink-0">
                         <Icon name="arrow-left" size={24} />
                     </button>
@@ -427,7 +399,6 @@ const JournalPageEditor = ({
                             <Icon name={toolbarExpanded ? "chevron-up" : "more-horizontal"} size={20} />
                         </button>
 
-                        {/* --- CHANGES: Add Zoom Controls --- */}
                         <div className="hidden md:flex items-center bg-slate-800 rounded border border-slate-700">
                             <button onClick={() => adjustZoom(-0.1)} className="p-1 hover:text-white text-slate-400 border-r border-slate-700">
                                 <Icon name="minus" size={12}/>
@@ -437,7 +408,6 @@ const JournalPageEditor = ({
                                 <Icon name="plus" size={12}/>
                             </button>
                         </div>
-                        {/* --- END OF CHANGES --- */}
 
                         {/* Sync Status - Hide on small mobile to save space */}
                         {(() => {
@@ -451,7 +421,6 @@ const JournalPageEditor = ({
                             return <div className="hidden sm:block"><Icon name={current.icon} size={18} className={`${current.color} ${current.anim || ''}`} /></div>;
                         })()}
 
-                        {/* --- CHANGES: Restore Granular Permission Dropdown Menu --- */}
                         <div className="relative" ref={permMenuRef}>
                             <button onClick={() => setShowPermMenu(!showPermMenu)} className={`p-2 rounded hover:bg-slate-800 transition-colors flex items-center gap-1 ${page.isPublic ? 'text-green-400' : (page.visibleTo?.length > 0 ? 'text-indigo-400' : 'text-red-400')}`}>
                                 <Icon name={page.isPublic ? "globe" : (page.visibleTo?.length > 0 ? "users" : "lock")} size={20}/>
@@ -487,7 +456,6 @@ const JournalPageEditor = ({
                                 </div>
                             )}
                         </div>
-                        {/* --- END OF CHANGES --- */}
                         
                         <button onClick={() => onDelete(page.id)} className="text-slate-500 hover:text-red-500 p-2 rounded hover:bg-slate-800 transition-colors">
                             <Icon name="trash-2" size={20}/>
@@ -498,7 +466,6 @@ const JournalPageEditor = ({
 
             {/* THE VIEWPORT: This is where the paper floats */}
             <div className="desk-viewport custom-scroll">
-                {/* --- CHANGES: Apply Zoom Transform to Sheet --- */}
                 <div 
                     className="journal-sheet transition-transform duration-200 ease-out"
                     style={{ 
@@ -516,7 +483,6 @@ const JournalPageEditor = ({
                         className="journal-title-input"
                     />
                     
-                    {/* --- CHANGES: Keep Uncontrolled Mode (No 'value' prop) to preserve History --- */}
                     {/* We rely entirely on the useEffects above to load data. */}
                     <ReactQuill 
                         ref={quillRef} 
@@ -527,7 +493,6 @@ const JournalPageEditor = ({
                         modules={modules} 
                         className="flex-1" 
                     />
-                    {/* --- END OF CHANGES --- */}
                 </div>
             </div>
         </div>

@@ -51,12 +51,9 @@ const SessionView = ({
     // START CHANGE: Apply Damage Handler
     const handleApplyDamage = (amount) => {
         const { targetId, updateHP } = useCharacterStore.getState();
-        if (!targetId) return alert("No token targeted! Click a token on the map first.");
+        if (!targetId) return alert("No target selected!");
 
         // We need to update the token's HP in the GLOBAL cloud data, not just local state.
-        // Since SessionView doesn't have direct access to 'updateToken', we must rely on 'data.campaign.activeMap'
-        // But for safety, we will just alert if this deep integration is missing.
-        // Ideally, SessionView should receive an 'onApplyDamage' prop from App.jsx or WorldView.
         
         // TEMPORARY LOCAL FIX: Use the store if the target is the LOADED character
         const storeChar = useCharacterStore.getState().character;

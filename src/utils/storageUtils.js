@@ -1,5 +1,5 @@
 import { db, storage } from '../firebase';
-import { collection, addDoc, doc, setDoc, getDocs, query, orderBy, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, doc, setDoc, getDocs, query, orderBy, serverTimestamp, deleteDoc, writeBatch } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 // Upload a Blob/File to Firebase Storage and return the public URL
@@ -7,6 +7,13 @@ export const uploadImage = async (blob, path) => {
     if (!storage) throw new Error("Firebase Storage not initialized");
     const storageRef = ref(storage, path);
     await uploadBytes(storageRef, blob);
+    return await getDownloadURL(storageRef);
+};
+
+export const uploadFile = async (file, path) => {
+    if (!storage) throw new Error("Firebase Storage not initialized");
+    const storageRef = ref(storage, path);
+    await uploadBytes(storageRef, file);
     return await getDownloadURL(storageRef);
 };
 
@@ -46,6 +53,34 @@ export const storeChunkedMap = async (base64, name) => {
     }
 
     return `chunked:${metaRef.id}`;
+};
+
+export const deleteChunkedMap = async (chunkedId) => {
+    if (!chunkedId || !chunkedId.startsWith('chunked:')) {
+        console.warn("Invalid chunkedId for deletion:", chunkedId);
+        return;
+    }
+    const docId = chunkedId.replace('chunked:', '');
+
+    try {
+        const chunksRef = collection(db, "map_metadata", docId, "chunks");
+        const snapshot = await getDocs(chunksRef);
+        
+        if (!snapshot.empty) {
+            const batch = writeBatch(db);
+            snapshot.docs.forEach(doc => {
+                batch.delete(doc.ref);
+            });
+            await batch.commit();
+        }
+
+        const metaRef = doc(db, "map_metadata", docId);
+        await deleteDoc(metaRef);
+
+    } catch (error) {
+        console.error(`Failed to delete chunked map ${docId}:`, error);
+        // We can re-throw or handle it as needed. For now, just log it.
+    }
 };
 
 // Phase 3: Store both Full and LOD assets

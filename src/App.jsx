@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 import * as fb from './firebase'; 
-import { collection, query, orderBy, limit, onSnapshot, addDoc, setDoc, deleteDoc, doc } from './firebase';
 import Icon from './components/Icon';
 import Sidebar from './components/Sidebar';
 import { CampaignProvider, useCampaign } from './contexts/CampaignContext';
@@ -12,21 +11,53 @@ import SessionView from './components/SessionView';
 import PartyView from './components/PartyView';
 import SettingsView from './components/SettingsView';
 import OnboardingWizard from './components/OnboardingWizard';
-import WorldView from './components/WorldView';
 import WorldCreator from './components/WorldCreator'; 
+import TacticalMapView from './components/TacticalMapView';
 import NpcView from './components/NpcView';
 import DiceOverlay from './components/DiceOverlay';
 import ResolvedImage from './components/ResolvedImage';
 import HandoutEditor from './components/HandoutEditor';
 import LoreView from './components/LoreView';
-import DiceTray from './components/DiceTray';
 import { useCharacterStore } from './stores/useCharacterStore'; 
 import { retrieveContext, buildPrompt, buildCastList } from './utils/loreEngine';
 import { retrieveChunkedMap, resolveChunkedHtml, parseHandoutBody } from './utils/storageUtils';
 
-// START CHANGE: Import SheetContainer
 import SheetContainer from './components/character-sheet/SheetContainer';
-// END CHANGE
+import SideSheet from './components/SideSheet';
+
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error("ErrorBoundary caught error:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex flex-col items-center justify-center h-full text-red-400 p-4 text-center bg-slate-900">
+            <Icon name="alert-triangle" size={48} className="mb-4" />
+            <h2 className="text-xl font-bold mb-2">Something went wrong in this view</h2>
+            <p className="mb-4 max-w-md opacity-80 font-mono text-sm bg-black/30 p-2 rounded">{this.state.error?.message}</p>
+            <button 
+                onClick={() => this.setState({ hasError: false })}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 rounded text-white transition-colors border border-slate-700"
+            >
+                Try Again
+            </button>
+        </div>
+      );
+    }
+    return this.props.children; 
+  }
+}
 
 const DB_INIT_DATA = { 
     hostId: null,
@@ -41,8 +72,6 @@ const DB_INIT_DATA = {
     config: { edition: '2014', strictMode: true }, 
     campaign: { 
         genesis: { tone: 'Heroic', conflict: 'Dragon vs Kingdom', campaignName: 'New Campaign' }, 
-        activeMap: { url: null, revealPaths: [], tokens: [], walls: [], lights: [], grid: { size: 50, offsetX: 0, offsetY: 0, visible: true, snap: true } }, 
-        savedMaps: [],
         activeHandout: null, 
         location: "Start",
         combat: { active: false, round: 1, turn: 0, combatants: [] }
@@ -57,7 +86,7 @@ function DungeonMindApp() {
 
   const { 
     data, setData, gameParams, joinCampaign, leaveCampaign, 
-    updateCloud, savePlayer, deletePlayer, loreChunks, setLoreChunks,
+    updateCampaign, updateCloud, savePlayer, deletePlayer, loreChunks, setLoreChunks,
     kickPlayer, banPlayer, unbanPlayer 
   } = useCampaign();
   useEffect(() => {
@@ -65,7 +94,6 @@ function DungeonMindApp() {
   }, [user]);
   const toast = useToast(); 
 
-  // START CHANGE: Deep Linking Router Logic
   const BASE_PATH = '/dungeonmind';
   
   // 1. Map internal IDs to friendly URL slugs
@@ -73,7 +101,7 @@ function DungeonMindApp() {
       'session': 'session',
       'sheet': 'sheet',
       'journal': 'journal',
-      'map': 'tactical',
+      'map': 'map',
       'party': 'player-character',
       'npcs': 'bestiary',
       'lore': 'lore',
@@ -106,7 +134,6 @@ function DungeonMindApp() {
       window.addEventListener('popstate', handlePopState);
       return () => window.removeEventListener('popstate', handlePopState);
   }, []);
-  // END CHANGE
 
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -122,32 +149,21 @@ function DungeonMindApp() {
   const [activeTemplate, setActiveTemplate] = useState(null); // NEW: Track active spell template
   const addLogEntry = useCharacterStore((state) => state.addLogEntry);
 
-  // START CHANGE: Global Right Panel State (Sheet/Chat)
   const [rightPanel, setRightPanel] = useState({ mode: 'closed', data: null });
   
   const handleOpenSheet = (id) => setRightPanel({ mode: 'sheet', data: id });
   const handleToggleChat = () => setRightPanel(prev => prev.mode === 'chat' ? { mode: 'closed', data: null } : { mode: 'chat', data: null });
   const handleClosePanel = () => setRightPanel({ mode: 'closed', data: null });
-  // END CHANGE
 
-  // START CHANGE: Handler to clear dice history
   const handleClearRolls = () => {
       setDiceLog([]);
       toast("Combat ended: Dice history cleared.", "info");
   };
-  // END CHANGE
 
   const [apiKey, setApiKey] = useState(() => localStorage.getItem('dm_api_key') || '');
   const [aiProvider, setAiProvider] = useState(() => localStorage.getItem('dm_ai_provider') || 'puter');
-  // START CHANGE: Remove Lore State (Handled in Context)
-  // const [loreChunks, setLoreChunks] = useState([]);
-  // END CHANGE
   const [openAiModel, setOpenAiModel] = useState(() => localStorage.getItem('dm_openai_model') || 'gpt-4o');
   const [puterModel, setPuterModel] = useState(() => localStorage.getItem('dm_puter_model') || 'mistral-large-latest');
-
-  // START CHANGE: Move Ghost Token hooks to top level to follow Rules of Hooks
-  const sidebarDragEntity = useCharacterStore(state => state.sidebarDragEntity);
-  const dragPosition = useCharacterStore(state => state.dragPosition);
 
   useEffect(() => { localStorage.setItem('dm_api_key', apiKey); }, [apiKey]);
   useEffect(() => { localStorage.setItem('dm_ai_provider', aiProvider); }, [aiProvider]);
@@ -167,9 +183,8 @@ function DungeonMindApp() {
     return () => unsub();
   }, [gameParams]); 
 
-  // START CHANGE: Sequential Handout Reveal Logic with Stream Parsing
   useEffect(() => {
-      const h = localHandout || data.campaign?.activeHandout; // --- CHANGES: Resolve either global or local handout ---
+      const h = localHandout || data.campaign?.activeHandout;
       if (!h) {
           setActiveHandoutImageUrl('');
           setActiveHandoutBlocks([]);
@@ -195,7 +210,6 @@ function DungeonMindApp() {
 
               // 4. Reveal Check
               if (localHandout) {
-                  // --- CHANGES: If selected locally from archive, show immediately ---
                   setShowHandout(true);
               } else {
                   // Global Reveal Logic (Must not be a draft and must be recently revealed)
@@ -210,13 +224,11 @@ function DungeonMindApp() {
           }
       };
       resolveAndShow();
-  }, [data.campaign?.activeHandout, localHandout]); // --- CHANGES: Add localHandout to dependency array ---
-  // END CHANGE
+  }, [data.campaign?.activeHandout, localHandout]);
 
   const effectiveRole = (data && user && data.dmIds?.includes(user.uid)) ? 'dm' : 'player';
 
   // --- HELPER FUNCTIONS ---
-  // START CHANGE: Add missing save functions needed for Journal/Session views
   const saveJournalEntry = async (pageId, pageData) => {
       if (!gameParams?.isOffline) {
         const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'journal', pageId.toString());
@@ -227,104 +239,6 @@ function DungeonMindApp() {
   const deleteJournalEntryFunc = async (pageId) => {
       const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'journal', pageId.toString());
       await deleteDoc(ref);
-  };
-  // END CHANGE
-
-  const updateMapState = (action, payload) => {
-      const currentMap = data.campaign?.activeMap || { url: null, revealPaths: [], tokens: [], walls: [], grid: null };
-      const savedMaps = data.campaign?.savedMaps || [];
-      let newMap = { ...currentMap };
-      let newSavedMaps = [...savedMaps];
-
-      // CRITICAL: Before we do anything else, if there is an active map, 
-      // save its CURRENT tokens/walls into the library array so we don't "forget" positions.
-      if (currentMap.url) {
-          const currentIdx = newSavedMaps.findIndex(m => m.url === currentMap.url);
-          if (currentIdx > -1) {
-              newSavedMaps[currentIdx] = { ...currentMap };
-          }
-      }
-
-      if (action === 'set_image') { 
-          if (payload && !newSavedMaps.find(m => m.url === payload)) {
-             newSavedMaps.push({ 
-                 id: Date.now(), 
-                 name: `Map ${newSavedMaps.length + 1}`, 
-                 url: payload,
-                 grid: { size: 50, offsetX: 0, offsetY: 0, visible: true, snap: true },
-                 walls: [],
-                 tokens: [],
-                 templates: []
-             });
-          }
-          newMap = { url: payload, revealPaths: [], walls: [], tokens: [], view: { zoom: 1, pan: {x:0,y:0} } };
-      } else if (action === 'load_map') {
-          if (!payload || payload.url === null) {
-              newMap = { url: null, revealPaths: [], walls: [], tokens: [], templates: [], grid: { size: 50, offsetX: 0, offsetY: 0, visible: true, snap: true }, view: { zoom: 1, pan: { x: 0, y: 0 } } };
-          } else {
-              const existingIdx = newSavedMaps.findIndex(m => m.url === payload.url);
-              
-              if (existingIdx === -1) {
-                  // It's brand new (from Search/Link)
-                  const newEntry = {
-                      ...payload,
-                      id: payload.id || Date.now(),
-                      revealPaths: payload.revealPaths || [],
-                      walls: payload.walls || [],
-                      tokens: payload.tokens || [], // Ensure this exists!
-                      grid: payload.grid || { size: 50, offsetX: 0, offsetY: 0, visible: true, snap: true }
-                  };
-                  newSavedMaps = [...newSavedMaps, newEntry];
-                  newMap = newEntry;
-              } else {
-                  // It exists: Use the version we just "Snapshotted" or found in the cabinet
-                  newMap = { ...newSavedMaps[existingIdx] };
-              }
-          }
-      } else if (action === 'start_path') { newMap.revealPaths = [...newMap.revealPaths, payload]; 
-      } else if (action === 'append_point') {
-          const lastPath = { ...newMap.revealPaths[newMap.revealPaths.length - 1] };
-          lastPath.points = [...lastPath.points, payload];
-          const newPaths = [...newMap.revealPaths];
-          newPaths[newPaths.length - 1] = lastPath;
-          newMap.revealPaths = newPaths;
-      } else if (action === 'clear_fog') { newMap.revealPaths = []; 
-      } else if (action === 'delete_map') {
-          const targetId = payload;
-          const mapBeingDeleted = newSavedMaps.find(m => m.id === targetId);
-          newSavedMaps = newSavedMaps.filter(m => m.id !== targetId);
-
-          // CRITICAL FIX: If deleting the active map, reset to a standardized empty state
-          if (mapBeingDeleted && mapBeingDeleted.url === currentMap.url) {
-              newMap = { 
-                  url: null, 
-                  revealPaths: [], 
-                  walls: [], 
-                  tokens: [], 
-                  templates: [],
-                  grid: { size: 50, offsetX: 0, offsetY: 0, visible: true, snap: true }, 
-                  view: { zoom: 1, pan: { x: 0, y: 0 } } 
-              };
-          }
-      // START CHANGE: Add update_token case to Map State engine
-      } else if (action === 'update_token') {
-          newMap.tokens = newMap.tokens.map(t => t.id === payload.id ? { ...t, ...payload } : t);
-      } else if (action === 'open_sheet') {
-          // Intercept sheet opening to use the new Right Panel
-          handleOpenSheet(payload.tokenId || payload.id || payload);
-          return; // Don't sync UI state to cloud
-      } else if (action === 'toggle_chat') {
-          handleToggleChat();
-          return;
-      } else if (action === 'rename_map') {
-          // payload: { id, name }
-          newSavedMaps = newSavedMaps.map(m => m.id === payload.id ? { ...m, name: payload.name } : m);
-          if (currentMap.id === payload.id) {
-              newMap = { ...newMap, name: payload.name };
-          }
-      }
-      // END CHANGE
-      updateCloud({ ...data, campaign: { ...data.campaign, activeMap: newMap, savedMaps: newSavedMaps } });
   };
 
   const queryAiService = async (messages) => {
@@ -364,7 +278,6 @@ function DungeonMindApp() {
       // 4. Fallback
       return user?.email?.split('@')[0] || "User";
   };
-  // END CHANGE
 
   const sendChatMessage = async (content, type = 'chat-public', targetId = null) => {
       if (!content.trim()) return;
@@ -373,10 +286,6 @@ function DungeonMindApp() {
       const chatRef = collection(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'chat');
       await addDoc(chatRef, newMessage);
 
-      // START CHANGE: Removed automatic AI logic from here (moved to SessionView)
-      // Old logic deleted: if (type === 'ai-public' || type === 'ai-private') { ... }
-      // END CHANGE
-      // START CHANGE: Add Delete and Clear functions
       setIsLoading(false);
   };
 
@@ -394,7 +303,6 @@ function DungeonMindApp() {
       });
       await batch.commit();
   };
-  // END CHANGE
 
   const handleDiceRoll = (formula, modifier = 0, label = "Roll") => {
     // Legacy support for (d, silent) signature
@@ -449,13 +357,11 @@ function DungeonMindApp() {
                     mod: mod
                 }, ...prev]);
                 
-                // START CHANGE: Send global chat message instead of local log
                 if (!silent && effectiveRole !== 'dm') {
                     const modStr = mod >= 0 ? `+${mod}` : mod;
                     const html = `<div class="flex flex-col text-xs dice-roll-result" data-total="${total}"><span class="font-bold text-slate-400 uppercase mb-1">${lbl}</span><div class="flex items-baseline gap-1"><span class="text-base ${isCrit ? 'text-green-400 font-bold' : isFail ? 'text-red-400 font-bold' : 'text-white'}">d${sides} (${roll})</span>${mod !== 0 ? `<span class="text-slate-500 text-xs">${modStr}</span>` : ''}<span class="text-slate-500 text-xs">=</span><span class="text-xl font-bold text-amber-500">${total}</span></div></div>`;
                     sendChatMessage(html, 'roll-public');
                 }
-                // END CHANGE
 
                 resolve(total); 
             }, 1000);
@@ -469,7 +375,6 @@ function DungeonMindApp() {
       try { return JSON.parse(res.match(/\{[\s\S]*\}/)[0]); } catch(e) { return null; }
   };
 
-  // START CHANGE: Unified Context-Aware Forge (NPCs & PCs)
   const forgeEntity = async (name, type, instructions = "") => {
       const myCharId = data.assignments?.[user?.uid];
       const castList = buildCastList(data); // Option B: Identity Mapping
@@ -487,7 +392,6 @@ function DungeonMindApp() {
           castList
       );
 
-      // START CHANGE: Use the systemPrompt variable to send context to the AI
       const isPc = type === 'pc';
       
       // Define Schemas
@@ -510,7 +414,6 @@ function DungeonMindApp() {
       `;
 
       const res = await queryAiService([{ role: 'user', content: finalAIPrompt }]);
-      // END CHANGE
       
       try { 
           const rawJson = JSON.parse(res.match(/\{[\s\S]*\}/)[0]);
@@ -544,7 +447,6 @@ function DungeonMindApp() {
 
   const generateNpc = (name, ctx) => forgeEntity(name, 'npc', ctx);
   const generatePlayer = (name, ctx) => forgeEntity(name, 'pc', ctx);
-  // END CHANGE
 
   const handleHandoutSave = (h) => {
       const currentHandouts = data.handouts || [];
@@ -554,24 +456,23 @@ function DungeonMindApp() {
           ? currentHandouts.map(x => x.id === h.id ? { ...h, timestamp: Date.now() } : x)
           : [{ ...h, id: h.id || Date.now(), timestamp: Date.now() }, ...currentHandouts];
 
-      updateCloud({ 
-          ...data, 
+      updateCampaign({ 
           handouts: updatedHandouts, 
-          campaign: { ...data.campaign, activeHandout: h } 
+          'campaign.activeHandout': h 
       });
       setShowHandoutCreator(false);
   };
 
   const handleHandoutDelete = (id) => {
       const updatedHandouts = (data.handouts || []).filter(h => h.id !== id);
-      const updatedCampaign = { ...data.campaign };
-      if (updatedCampaign.activeHandout?.id === id) updatedCampaign.activeHandout = null;
-      updateCloud({ ...data, handouts: updatedHandouts, campaign: updatedCampaign });
+      
+      const changes = { handouts: updatedHandouts };
+      if (data.campaign?.activeHandout?.id === id) {
+          changes['campaign.activeHandout'] = null;
+      }
+      updateCampaign(changes);
   };
 
-  const handlePlaceTemplate = (spell) => { setActiveTemplate(spell); setCurrentView('map'); };
-
-  // START CHANGE: Token-aware Initiative Handler
   const handleInitiative = (charOrToken, roll = null) => {
       // 1. If no manual roll provided, perform the roll automatically
       if (roll === null) {
@@ -629,66 +530,6 @@ function DungeonMindApp() {
       }
   };
 
-  const autoRollNPCs = () => {
-      const tokens = data.campaign?.activeMap?.tokens || [];
-      const npcs = tokens.filter(t => t.type !== 'pc' && !t.isHidden);
-      
-      // Get current combatants or start fresh
-      const c = data.campaign?.combat;
-      const combatState = (c && c.active) ? c : { active: true, round: 1, turn: 0, combatants: [] };
-      let newCombatants = [...(combatState.combatants || [])];
-
-      npcs.forEach(token => {
-          // Calculate Dex Mod
-          const master = data.npcs?.find(n => n.id === token.characterId);
-          const dexMod = master ? Math.floor(((master.stats?.dex || 10) - 10) / 2) : 0;
-          const roll = Math.floor(Math.random() * 20) + 1;
-          const total = roll + dexMod;
-
-          // Create Entry
-          const entry = {
-              id: token.id, // Token ID is unique
-              characterId: token.characterId,
-              name: token.name,
-              init: total,
-              type: 'npc',
-              image: token.image || token.img
-          };
-
-          // Update or Push
-          const idx = newCombatants.findIndex(x => x.id === entry.id);
-          if (idx > -1) newCombatants[idx] = { ...newCombatants[idx], ...entry };
-          else newCombatants.push(entry);
-      });
-
-      // Sort and Save ONCE
-      newCombatants.sort((a,b) => (b.init || 0) - (a.init || 0));
-      updateCloud({ ...data, campaign: { ...data.campaign, combat: { ...combatState, combatants: newCombatants } } }, true);
-      toast(`Rolled initiative for ${npcs.length} monsters!`, "info");
-  };
-
-  const addManualCombatant = (entity) => {
-      const c = data.campaign?.combat || { active: true, round: 1, turn: 0, combatants: [] };
-      const combatants = [...(c.combatants || [])];
-      
-      if (combatants.find(x => x.id === entity.id)) {
-          toast(`${entity.name} is already in combat!`, "warning");
-          return;
-      }
-
-      const entry = {
-          id: entity.id,
-          characterId: entity.id,
-          name: entity.name,
-          init: null,
-          type: data.players?.find(p => p.id === entity.id) ? 'pc' : 'npc',
-          image: entity.image || entity.img
-      };
-
-      updateCloud({ ...data, campaign: { ...data.campaign, combat: { ...c, active: true, combatants: [...combatants, entry] } } }, true);
-      toast(`Added ${entity.name} to tracker.`, "success");
-  };
-
   const updateCombatant = (id, changes) => {
       const c = data.campaign?.combat;
       if (!c) return;
@@ -711,9 +552,7 @@ function DungeonMindApp() {
       
       updateCloud({ ...data, campaign: { ...data.campaign, combat: { ...c, combatants, turn: newTurn } } });
   };
-  // END CHANGE
 
-  // START CHANGE: Robust "Auto-Scribe" Recap
   const generateRecap = async (scope = 'recent') => {
       setIsLoading(true);
       
@@ -778,7 +617,6 @@ function DungeonMindApp() {
       setIsLoading(false);
       return summary;
   };
-  // END CHANGE
 
   // NEW: Upload Lore
   const uploadLore = async (volumes) => {
@@ -809,7 +647,6 @@ function DungeonMindApp() {
 
   if (!isAuthReady) return <div className="h-screen bg-slate-900 flex items-center justify-center text-amber-500 font-bold animate-pulse">Summoning DungeonMind...</div>;
   
-  // START CHANGE: enhanced Lobby logic to handle auto-join safely
   if (!gameParams) {
       // Check for auto-join only if we are authenticated and not currently in a game
       if (user) {
@@ -824,29 +661,28 @@ function DungeonMindApp() {
       return <Lobby fb={fb} user={user} onJoin={(c, r, u) => { localStorage.setItem('dm_last_code', c); joinCampaign(c, r, u, false); }} onOffline={() => joinCampaign('LOCAL', 'dm', 'admin', true)} />;
   }
 
+  if (!data) return <div className="h-screen bg-slate-900 flex items-center justify-center text-amber-500 font-bold animate-pulse">Loading Campaign Data...</div>;
+
 
   return (
     <div className="fixed inset-0 w-full h-full flex flex-col md:flex-row bg-slate-900 text-slate-200 font-sans overflow-hidden">
        <Sidebar view={currentView} setView={setCurrentView} onExit={() => { localStorage.removeItem('dm_last_code'); leaveCampaign(); }} />
        <main className="flex-1 flex flex-col overflow-hidden relative w-full h-full">
-           {currentView !== 'map' && (
-               <div className="shrink-0 bg-slate-900/95 backdrop-blur border-b border-slate-800 pt-safe z-50">
-                   <div className="h-14 flex items-center justify-between px-4">
-                       <div className="flex gap-2 items-center">
-                           <div className={`w-2 h-2 rounded-full shadow-[0_0_10px_rgba(34,197,94,0.5)] ${gameParams?.isOffline ? 'bg-slate-500' : 'bg-green-500'}`}></div>
-                           <span className="text-sm font-bold text-amber-500 truncate fantasy-font tracking-wide">{gameParams?.code} • {possessedNpcId ? "POSSESSING NPC" : data?.campaign?.location}</span>
-                       </div>
-                       <div className="flex gap-2">
-                           <button onClick={() => setShowHandoutCreator(true)} className="text-xs bg-amber-900/50 hover:bg-amber-800 px-3 py-1 rounded border border-amber-800 text-amber-200 flex items-center gap-2"><Icon name="scroll" size={14}/> <span>Handouts</span></button>
-                       </div>
+           <div className="shrink-0 bg-slate-900/95 backdrop-blur border-b border-slate-800 pt-safe z-50">
+               <div className="h-14 flex items-center justify-between px-4">
+                   <div className="flex gap-2 items-center">
+                       <div className={`w-2 h-2 rounded-full shadow-[0_0_10px_rgba(34,197,94,0.5)] ${gameParams?.isOffline ? 'bg-slate-500' : 'bg-green-500'}`}></div>
+                       <span className="text-sm font-bold text-amber-500 truncate fantasy-font tracking-wide">{gameParams?.code} • {possessedNpcId ? "POSSESSING NPC" : data?.campaign?.location}</span>
+                   </div>
+                   <div className="flex gap-2">
+                       <button onClick={() => setShowHandoutCreator(true)} className="text-xs bg-amber-900/50 hover:bg-amber-800 px-3 py-1 rounded border border-amber-800 text-amber-200 flex items-center gap-2"><Icon name="scroll" size={14}/> <span>Handouts</span></button>
                    </div>
                </div>
-           )}
+           </div>
 
            {/* UPDATED: Changed compact padding from 50px to 52px to match the new MobileNav height exactly */}
            <div className={`flex-1 overflow-hidden relative p-0 md:pb-0 ${data.config?.mobileCompact ? 'pb-[52px]' : 'pb-[70px]'}`}>
              {/* 1. CHAT (Session) */}
-              {/* START CHANGE: Connect deleteMessage and clearChat props */}
               {currentView === 'session' && <SessionView data={data} chatLog={data.chatLog} inputText={inputText} setInputText={setInputText} 
                   onSendMessage={sendChatMessage} 
                   onEditMessage={()=>{}} 
@@ -858,126 +694,23 @@ function DungeonMindApp() {
                   castList={buildCastList(data)}
                   myCharId={data.assignments?.[user?.uid]}
               />}
-              {/* END CHANGE */}
               
               {/* 2. JOURNAL */}
               {currentView === 'journal' && <JournalView 
                   data={data} 
                   role={effectiveRole} 
                   userId={user?.uid} 
-                  // START CHANGE: Pass Character ID for granular permissions
                   myCharId={data.assignments?.[user?.uid]}
-                  // END CHANGE
                   onSavePage={saveJournalEntry} 
                   onDeletePage={deleteJournalEntryFunc} 
                   aiHelper={queryAiService} 
               />}
               
-              {/* 3. TACTICAL (Map) */}
-              {currentView === 'map' && (
-                  // FORCE ABSOLUTE POSITIONING to prevent "Push Up" bug
-                  <div className="absolute inset-0 w-full h-full overflow-hidden bg-slate-900">
-                      <WorldView 
-                          data={data} 
-                          setData={setData} 
-                          role={effectiveRole} 
-                          updateCloud={updateCloud} 
-                          updateMapState={updateMapState} 
-                          onDiceRoll={handleDiceRoll} 
-                          user={user} 
-                          diceLog={diceLog}
-                          apiKey={apiKey} 
-                          savePlayer={savePlayer} 
-                          activeTemplate={activeTemplate} 
-                          onClearTemplate={() => setActiveTemplate(null)} 
-                          onInitiative={handleInitiative}
-                          updateCombatant={updateCombatant} 
-                          onClearRolls={handleClearRolls}
-                          removeCombatant={(id) => { 
-                              const c = data.campaign?.combat;
-                              const newCombatants = (c.combatants || []).filter(x => x.id !== id);
-                              updateCloud({ ...data, campaign: { ...data.campaign, combat: { ...c, combatants: newCombatants } } });
-                          }}
-                          onAutoRoll={autoRollNPCs}
-                          setShowHandoutCreator={setShowHandoutCreator}
-                          code={gameParams.code}
-                          addManualCombatant={addManualCombatant}
-                          players={data.players}
-                          npcs={data.npcs}
-                          sidebarMode={rightPanel.mode}
-                          sidebarIsOpen={rightPanel.mode !== 'closed'}
-                          onLogAction={(msg) => {
-                              if (effectiveRole !== 'dm') {
-                                  sendChatMessage(msg, 'chat-public');
-                              }
-                          }}
-                      />
-                      
-                      {/* SIDEBAR AS OVERLAY - DOES NOT AFFECT MAP GEOMETRY */}
-                      {rightPanel.mode !== 'closed' && (
-                          <div className="absolute top-0 right-0 bottom-0 w-full sm:w-96 bg-slate-950 border-l border-slate-700 shadow-2xl z-[80] animate-in slide-in-from-right duration-300 flex flex-col">
-                              {/* Header */}
-                              <div className="flex justify-between items-center p-3 bg-slate-900 border-b border-slate-800 shrink-0">
-                                  <span className="font-bold text-slate-200 ml-2 flex items-center gap-2">
-                                      <Icon name={rightPanel.mode === 'chat' ? 'message-square' : 'file-text'} size={18}/>
-                                      {rightPanel.mode === 'chat' ? 'Session Chat' : 'Character Sheet'}
-                                  </span>
-                                  <button onClick={handleClosePanel} className="p-1 hover:bg-slate-800 rounded text-slate-400"><Icon name="x" size={20}/></button>
-                              </div>
-
-                              {/* Content */}
-                              <div className="flex-1 overflow-hidden relative">
-                                  {rightPanel.mode === 'sheet' && (
-                                      <SheetContainer 
-                                          characterId={rightPanel.data} 
-                                          onSave={savePlayer} 
-                                          onDiceRoll={handleDiceRoll} 
-                                          role={effectiveRole}
-                                          isOwner={true}
-                                          diceLog={diceLog}
-                                          onLogAction={(html) => {
-                                              if (effectiveRole !== 'dm') {
-                                                  sendChatMessage(html, 'chat-public');
-                                              }
-                                          }}
-                                      />
-                                  )}
-                                  {rightPanel.mode === 'chat' && (
-                                      <SessionView 
-                                          data={data} 
-                                          chatLog={data.chatLog} 
-                                          inputText={inputText} 
-                                          setInputText={setInputText} 
-                                          onSendMessage={sendChatMessage} 
-                                          onEditMessage={()=>{}} 
-                                          onDeleteMessage={deleteMessage} 
-                                          clearChat={clearChat}
-                                          isLoading={isLoading} 
-                                          role={effectiveRole} 
-                                          user={user} 
-                                          showTools={showTools} 
-                                          setShowTools={setShowTools} 
-                                          diceLog={diceLog} 
-                                          handleDiceRoll={handleDiceRoll} 
-                                          onSavePage={saveJournalEntry} 
-                                          generateRecap={generateRecap} 
-                                          loreChunks={loreChunks} 
-                                          aiHelper={queryAiService}
-                                          players={data.players}
-                                          castList={buildCastList(data)}
-                                          myCharId={data.assignments?.[user?.uid]}
-                                          compact={true}
-                                      />
-                                  )}
-                              </div>
-                          </div>
-                      )}
-                  </div>
-              )}
-              {currentView === 'atlas' && <WorldCreator data={data} setData={setData} role={effectiveRole} updateCloud={updateCloud} updateMapState={updateMapState} aiHelper={queryAiService} apiKey={apiKey} />}
-
+              {/* 3. TACTICAL MAP */}
+              {currentView === 'map' && <TacticalMapView campaignCode={gameParams?.code} activeMapId={data.campaign?.activeMapId || 'test-map'} data={data} onOpenSheet={handleOpenSheet} role={effectiveRole} />}
+              
               {/* 4. PARTY (PCs) */}
-              {currentView === 'party' && <PartyView data={data} role={effectiveRole} activeChar={data.assignments?.[user?.uid]} updateCloud={updateCloud} savePlayer={savePlayer} deletePlayer={deletePlayer} setView={setCurrentView} user={user} aiHelper={queryAiService} onDiceRoll={handleDiceRoll} diceLog={diceLog} apiKey={apiKey} edition={data.config?.edition} onPlaceTemplate={handlePlaceTemplate} onInitiative={handleInitiative} 
+              {currentView === 'party' && <PartyView data={data} role={effectiveRole} activeChar={data.assignments?.[user?.uid]} updateCloud={updateCloud} savePlayer={savePlayer} deletePlayer={deletePlayer} setView={setCurrentView} user={user} aiHelper={queryAiService} onDiceRoll={handleDiceRoll} diceLog={diceLog} apiKey={apiKey} edition={data.config?.edition} onInitiative={handleInitiative} 
                   generatePlayer={generatePlayer} 
                   onLogAction={(msg) => {
                       if (effectiveRole !== 'dm') {
@@ -987,9 +720,8 @@ function DungeonMindApp() {
               />}
 
               {/* 5. BESTIARY (NPCs) */}
-              {currentView === 'npcs' && <NpcView data={data} setData={setData} role={effectiveRole} updateCloud={updateCloud} generateNpc={generateNpc} setChatInput={setInputText} setView={setCurrentView} onPossess={setPossessedNpcId} aiHelper={queryAiService} apiKey={apiKey} edition={data.config?.edition} onDiceRoll={handleDiceRoll} diceLog={diceLog} onPlaceTemplate={handlePlaceTemplate} onInitiative={handleInitiative} />}
+              {currentView === 'npcs' && <NpcView data={data} setData={setData} role={effectiveRole} updateCloud={updateCloud} generateNpc={generateNpc} setChatInput={setInputText} setView={setCurrentView} onPossess={setPossessedNpcId} aiHelper={queryAiService} apiKey={apiKey} edition={data.config?.edition} onDiceRoll={handleDiceRoll} diceLog={diceLog} onInitiative={handleInitiative} />}
               
-              {/* START CHANGE: Ensure 'sheet' view only renders when explicitly active and not overriding others */}
               {currentView === 'sheet' && (
                   <div className="flex-1 h-full overflow-hidden">
                       <SheetContainer 
@@ -1005,15 +737,12 @@ function DungeonMindApp() {
                       />
                   </div>
               )}
-              {/* END CHANGE */}
 
               {/* 6. LORE (Bible) */}
-              {currentView === 'lore' && <LoreView data={data} aiHelper={queryAiService} pdfChunks={loreChunks} setPdfChunks={setLoreChunks} onUploadLore={uploadLore} />}
               {currentView === 'lore' && <LoreView data={data} aiHelper={queryAiService} pdfChunks={loreChunks} setPdfChunks={setLoreChunks} onUploadLore={uploadLore} />}
               
               {/* 7. SETTINGS */}
               {currentView === 'settings' && <SettingsView 
-// --- CHANGES: Ensure correct props are passed ---
                   data={data} setData={setData} 
                   apiKey={apiKey} setApiKey={setApiKey} 
                   role={effectiveRole} updateCloud={updateCloud} 
@@ -1024,6 +753,28 @@ function DungeonMindApp() {
                   puterModel={puterModel} setPuterModel={setPuterModel} 
                   banPlayer={banPlayer} kickPlayer={kickPlayer} unbanPlayer={unbanPlayer} 
               />}
+
+              {/* SIDE PANELS */}
+              {rightPanel.mode === 'sheet' && rightPanel.data && (
+                  <SideSheet 
+                      characterId={rightPanel.data} 
+                      data={data} 
+                      onClose={handleClosePanel} 
+                      onSave={(char) => {
+                          // Determine if it is a PC or NPC to route the save properly
+                          const isPc = data.players?.some(p => String(p.id) === String(char.id));
+                          if (isPc) {
+                              savePlayer(char);
+                          } else {
+                              const newNpcs = (data.npcs || []).map(n => String(n.id) === String(char.id) ? char : n);
+                              updateCloud({ ...data, npcs: newNpcs }, true);
+                          }
+                      }}
+                      role={effectiveRole}
+                      onDiceRoll={handleDiceRoll}
+                      user={user}
+                  />
+              )}
             </div>
        </main>
        
@@ -1074,35 +825,26 @@ function DungeonMindApp() {
                        <Icon name="x" size={24}/>
                    </button>
                </div>
-               <DiceTray diceLog={diceLog} handleDiceRoll={handleDiceRoll} />
-           </div>
-       )}
-
-       {sidebarDragEntity && (
-           <div 
-               className="fixed z-[999999] pointer-events-none w-16 h-16 rounded-full border-2 border-amber-500 bg-slate-900 shadow-2xl overflow-hidden flex items-center justify-center animate-in zoom-in-50 duration-200"
-               style={{ 
-                   left: dragPosition.x, 
-                   top: dragPosition.y - 40, 
-                   transform: 'translate(-50%, -50%)' 
-               }}
-           >
-               {sidebarDragEntity.image ? (
-                   <img src={sidebarDragEntity.image} className="w-full h-full object-cover" />
-               ) : (
-                   <span className="text-white font-bold">{sidebarDragEntity.name[0]}</span>
-               )}
            </div>
        )}
 
        {/* UPDATED: Pass compact prop */}
        <MobileNav view={currentView} setView={setCurrentView} compact={data.config?.mobileCompact} />
-       {effectiveRole === 'dm' && !data.onboardingComplete && <OnboardingWizard onComplete={() => updateCloud({...data, onboardingComplete:true})} aiHelper={queryAiService} />}
+       {effectiveRole === 'dm' && !data.onboardingComplete && <OnboardingWizard onComplete={(wizData) => {
+           const updates = { onboardingComplete: true };
+           if (wizData) {
+               updates['campaign.genesis'] = {
+                   tone: wizData.tone || 'Heroic',
+                   conflict: wizData.conflict || '',
+                   campaignName: wizData.campaignName || 'New Campaign'
+               };
+           }
+           updateCampaign(updates);
+       }} aiHelper={queryAiService} />}
     </div>
   );
 }
 
-// START CHANGE: Export Wrapper with Providers
 export default function App() {
     return (
         <CampaignProvider>

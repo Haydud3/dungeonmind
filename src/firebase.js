@@ -40,6 +40,7 @@ export const db = getFirestore(app);
 export const storage = getStorage(app);
 // END CHANGE
 export const googleProvider = new GoogleAuthProvider();
+export const appId = 'dungeonmind'; // Added explicitly for mapService and App.jsx routing
 
 export { 
   signInWithPopup, 

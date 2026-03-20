@@ -1,13 +1,32 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useCharacterStore } from '../../../stores/useCharacterStore';
+import { uploadFile } from '../../../utils/storageUtils';
+import Icon from '../../Icon';
 
 const BioTab = () => {
     const { character, updateInfo } = useCharacterStore();
     const bio = character.bio || {};
+    const [isUploading, setIsUploading] = useState(false);
 
     const updateBio = (field, val) => {
         const newBio = { ...bio, [field]: val };
         updateInfo('bio', newBio);
+    };
+
+    const handleModelUpload = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        
+        setIsUploading(true);
+        const path = `models/${character.id}/${file.name}`;
+        try {
+            const url = await uploadFile(file, path);
+            updateInfo('modelUrl', url);
+        } catch (err) {
+            console.error("Error uploading model:", err);
+            alert("Model upload failed.");
+        }
+        setIsUploading(false);
     };
 
     return (
@@ -36,6 +55,30 @@ const BioTab = () => {
                         <p className="text-[10px] text-slate-500 mt-1">
                             The AI will know that "<b>{character.alias || '...'}</b>" refers to this character sheet.
                         </p>
+                    </div>
+                </div>
+            </div>
+
+            {/* 3D Model Upload */}
+            <div className="bg-slate-800 p-4 rounded-xl border border-slate-700">
+                <h4 className="text-sm font-bold text-slate-400 uppercase mb-3 border-b border-slate-700 pb-1">3D Token Model</h4>
+                <div className="flex items-center gap-4">
+                    <input type="file" accept=".glb" id="model-upload" className="hidden" onChange={handleModelUpload} disabled={isUploading} />
+                    <label htmlFor="model-upload" className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2 px-4 rounded cursor-pointer flex items-center gap-2">
+                        {isUploading ? <Icon name="loader" className="animate-spin" /> : <Icon name="upload-cloud" />}
+                        {isUploading ? 'Uploading...' : 'Upload .glb'}
+                    </label>
+                    <div className="text-xs text-slate-400 flex-1">
+                        {character.modelUrl ? (
+                            <div className="flex items-center justify-between">
+                                <span className="truncate">{(character.modelUrl.split('/').pop().split('?')[0] || 'model.glb').replace(/%2F/g, '/').split('/').pop()}</span>
+                                <button onClick={() => updateInfo('modelUrl', null)} className="text-red-500 hover:text-red-400 ml-2">
+                                    <Icon name="x" />
+                                </button>
+                            </div>
+                        ) : (
+                            <span>No custom model uploaded.</span>
+                        )}
                     </div>
                 </div>
             </div>
@@ -89,5 +132,3 @@ const BioTab = () => {
         </div>
     );
 };
-
-export default BioTab;

@@ -109,7 +109,7 @@ const SheetContainer = ({ characterId, tokenId, data, onSave, onDiceRoll, onLogA
     // END CHANGE
 
     return (
-        <div className="h-[100dvh] flex flex-col bg-slate-950 font-sans relative overflow-hidden pt-[env(safe-area-inset-top)]">
+        <div className="h-full flex flex-col bg-slate-950 font-sans relative overflow-hidden pt-[env(safe-area-inset-top)]">
             
             {/* Header */}
             <HeaderStats 
