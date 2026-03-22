@@ -1,12 +1,22 @@
 import React, { useState } from 'react';
 import { useCharacterStore } from '../../../stores/useCharacterStore';
-import { uploadFile } from '../../../utils/storageUtils';
+import { storeChunkedMap } from '../../../utils/storageUtils';
 import Icon from '../../Icon';
+import ModelViewer from '../../ModelViewer';
+
+const fileToBase64 = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = error => reject(error);
+});
 
 const BioTab = () => {
     const { character, updateInfo } = useCharacterStore();
     const bio = character.bio || {};
     const [isUploading, setIsUploading] = useState(false);
+    const [modelScale, setModelScale] = useState(character.modelScale || 1);
+    const [modelYOffset, setModelYOffset] = useState(character.modelYOffset || 0);
 
     const updateBio = (field, val) => {
         const newBio = { ...bio, [field]: val };
@@ -18,16 +28,28 @@ const BioTab = () => {
         if (!file) return;
         
         setIsUploading(true);
-        const path = `models/${character.id}/${file.name}`;
         try {
-            const url = await uploadFile(file, path);
-            updateInfo('modelUrl', url);
+            const base64 = await fileToBase64(file);
+            const chunkedId = await storeChunkedMap(base64, file.name);
+            updateInfo('modelUrl', chunkedId);
         } catch (err) {
             console.error("Error uploading model:", err);
             alert("Model upload failed.");
         }
         setIsUploading(false);
     };
+
+    const handleScaleChange = (e) => {
+        const scale = parseFloat(e.target.value);
+        setModelScale(scale);
+        updateInfo('modelScale', scale);
+    }
+
+    const handleYOffsetChange = (e) => {
+        const offset = parseFloat(e.target.value);
+        setModelYOffset(offset);
+        updateInfo('modelYOffset', offset);
+    }
 
     return (
         <div className="space-y-6 pb-24">
@@ -63,7 +85,7 @@ const BioTab = () => {
             <div className="bg-slate-800 p-4 rounded-xl border border-slate-700">
                 <h4 className="text-sm font-bold text-slate-400 uppercase mb-3 border-b border-slate-700 pb-1">3D Token Model</h4>
                 <div className="flex items-center gap-4">
-                    <input type="file" accept=".glb" id="model-upload" className="hidden" onChange={handleModelUpload} disabled={isUploading} />
+                    <input type="file" accept=".glb,.gltf" id="model-upload" className="hidden" onChange={handleModelUpload} disabled={isUploading} />
                     <label htmlFor="model-upload" className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2 px-4 rounded cursor-pointer flex items-center gap-2">
                         {isUploading ? <Icon name="loader" className="animate-spin" /> : <Icon name="upload-cloud" />}
                         {isUploading ? 'Uploading...' : 'Upload .glb'}
@@ -81,6 +103,45 @@ const BioTab = () => {
                         )}
                     </div>
                 </div>
+
+                <div className="relative w-full h-64 bg-slate-900 rounded-lg mt-4">
+                    {character.modelUrl ? (
+                        <ModelViewer modelUrl={character.modelUrl} scale={modelScale} yOffset={modelYOffset} />
+                    ) : (
+                        <div className="flex flex-col items-center justify-center h-full text-slate-500">
+                            <Icon name="swords" size={32} />
+                            <p className="mt-2 text-sm">No model uploaded</p>
+                        </div>
+                    )}
+                </div>
+                {character.modelUrl && (
+                    <div className="mt-2 grid grid-cols-2 gap-4">
+                        <div>
+                            <label className="text-xs text-slate-400">Scale</label>
+                            <input
+                                type="range"
+                                min="0.1"
+                                max="5"
+                                step="0.1"
+                                value={modelScale}
+                                onChange={handleScaleChange}
+                                className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer"
+                            />
+                        </div>
+                        <div>
+                            <label className="text-xs text-slate-400">Y-Offset</label>
+                            <input
+                                type="range"
+                                min="-2"
+                                max="2"
+                                step="0.1"
+                                value={modelYOffset}
+                                onChange={handleYOffsetChange}
+                                className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer"
+                            />
+                        </div>
+                    </div>
+                )}
             </div>
 
             {/* NEW: Appearance & Personality Grid */}
@@ -132,3 +193,5 @@ const BioTab = () => {
         </div>
     );
 };
+
+export default BioTab;

@@ -35,6 +35,8 @@ import { db, appId } from '../firebase';
  * @property {number} scale - Scale multiplier for the background image.
  * @property {Record<string, TokenData>} tokens - Dictionary of tokens on the map.
  * @property {Record<string, WallData>} walls - Dictionary of walls on the map.
+ * @property {string} [albedoUrl] - Flat texture map without baked shadows.
+ * @property {string} [depthMapUrl] - Grayscale heightmap for WebGL displacement.
  * @property {string} [heightmapUrl] - URL of the heightmap image.
  * @property {number} [heightScale] - Multiplier for the heightmap effect.
  */

@@ -3,6 +3,7 @@ import { collection, addDoc, getDocs, query, orderBy, serverTimestamp, doc, dele
 import { db, appId } from '../firebase';
 import { storeChunkedMap, deleteChunkedMap } from '../utils/storageUtils';
 import Icon from './Icon';
+import MapGenerator from './MapGenerator';
 
 // Helper to generate a lightweight thumbnail so the gallery loads instantly
 const generateThumbnail = (dataUrl) => {
@@ -24,10 +25,11 @@ const generateThumbnail = (dataUrl) => {
     });
 };
 
-const AssetManager = ({ campaignCode, onClose, onSetBackground, onSetHeightmap }) => {
+const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, onSetBackground, onSetHeightmap, onGenerateMap }) => {
     const [assets, setAssets] = useState([]);
     const [isUploading, setIsUploading] = useState(false);
     const fileInputRef = useRef(null);
+    const [activeTab, setActiveTab] = useState('settings');
 
     // Fetch all previously uploaded images from this campaign's folder
     const fetchAssets = async () => {
@@ -43,8 +45,10 @@ const AssetManager = ({ campaignCode, onClose, onSetBackground, onSetHeightmap }
     };
 
     useEffect(() => {
-        fetchAssets();
-    }, [campaignCode]);
+        if (activeTab === 'library') {
+            fetchAssets();
+        }
+    }, [campaignCode, activeTab]);
 
     const handleUpload = async (e) => {
         const file = e.target.files[0];
@@ -106,53 +110,131 @@ const AssetManager = ({ campaignCode, onClose, onSetBackground, onSetHeightmap }
     return (
         <div className="absolute top-0 right-0 bottom-0 w-80 bg-slate-900 border-l border-slate-700 shadow-2xl z-[80] flex flex-col animate-in slide-in-from-right duration-300">
             <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-950">
-                <h3 className="font-bold text-amber-500 flex items-center gap-2"><Icon name="image" size={18} /> Map Library</h3>
+                <h3 className="font-bold text-amber-500 flex items-center gap-2"><Icon name="map" size={18} /> Map Editor</h3>
                 <button onClick={onClose} className="text-slate-400 hover:text-white p-1"><Icon name="x" size={18} /></button>
             </div>
-            
-            <div className="p-4 border-b border-slate-800">
-                <button onClick={() => fileInputRef.current?.click()} disabled={isUploading} className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded flex items-center justify-center gap-2">
-                    {isUploading ? <Icon name="loader" size={16} className="animate-spin" /> : <Icon name="upload" size={16} />}
-                    {isUploading ? "Uploading..." : "Upload Asset"}
-                </button>
-                <input type="file" accept="image/*" className="hidden" ref={fileInputRef} onChange={handleUpload} />
-            </div>
 
-            <div className="flex-1 overflow-y-auto custom-scroll p-4 grid grid-cols-2 gap-2 content-start">
-                {assets.map((asset, i) => (
-                    <div key={i} draggable 
-                        onDragStart={(e) => {
-                            const payload = JSON.stringify({ format: 'dungeonmind-asset', url: asset.url });
-                            e.dataTransfer.setData('application/dungeonmind-asset', payload);
-                            e.dataTransfer.setData('text/plain', payload);
-                        }}
-                        className="aspect-square bg-slate-800 rounded border border-slate-700 overflow-hidden cursor-grab active:cursor-grabbing hover:border-amber-500 transition-colors relative group"
-                    >
-                        <img src={asset.thumbnail || asset.url} className="w-full h-full object-cover" alt={asset.name} draggable={false} />
-                        <div className="absolute inset-x-0 bottom-0 bg-black/60 text-[9px] text-white p-1 truncate opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">{asset.name}</div>
-                        <div className="absolute top-1 right-1 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                            {onSetBackground && (
-                               <button onClick={(e) => { e.stopPropagation(); onSetBackground(asset.url); }} className="bg-black/80 text-amber-500 hover:text-white p-1.5 rounded shadow-md" title="Set as Map Background">
-                                  <Icon name="map" size={14}/>
-                               </button>
-                            )}
-                            {onSetHeightmap && (
-                                <button onClick={(e) => { e.stopPropagation(); onSetHeightmap(asset.url); }} className="bg-black/80 text-blue-400 hover:text-white p-1.5 rounded shadow-md" title="Set as Heightmap">
-                                   <Icon name="mountain" size={14}/>
-                                </button>
-                            )}
-                            <button onClick={(e) => { e.stopPropagation(); handleDeleteAsset(asset); }} className="bg-black/80 text-red-500 hover:text-white p-1.5 rounded shadow-md" title="Delete Asset">
-                                <Icon name="trash" size={14}/>
-                            </button>
-                        </div>
-                    </div>
-                ))}
-                {assets.length === 0 && !isUploading && (
-                    <div className="col-span-2 text-center text-slate-500 text-sm mt-10 flex flex-col items-center"><Icon name="image" size={32} className="opacity-20 mb-2" /> No assets uploaded yet.</div>
-                )}
+            <div className="flex-none border-b border-slate-800 flex overflow-x-auto no-scrollbar">
+                <TabButton name="settings" activeTab={activeTab} onClick={setActiveTab} icon="sliders-horizontal">Settings</TabButton>
+                <TabButton name="library" activeTab={activeTab} onClick={setActiveTab} icon="library">Assets</TabButton>
+                <TabButton name="generate" activeTab={activeTab} onClick={setActiveTab} icon="sparkles">Generate</TabButton>
             </div>
+            
+            {activeTab === 'settings' && mapData && updateMap && (
+                <div className="flex-1 overflow-y-auto custom-scroll p-4 space-y-6">
+                    <div>
+                        <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Map Scale</label>
+                        <input 
+                            type="range" 
+                            min="5" 
+                            max="100" 
+                            step="1" 
+                            value={mapData.scale || 20} 
+                            onChange={(e) => updateMap(campaignCode, activeMapId, { scale: parseFloat(e.target.value) })}
+                            className="w-full accent-amber-500"
+                        />
+                        <div className="text-right text-xs text-slate-400 mt-1">{mapData.scale || 20} units</div>
+                    </div>
+                    
+                    <div>
+                        <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Grid Size</label>
+                        <input 
+                            type="range" 
+                            min="0.5" 
+                            max="5" 
+                            step="0.5" 
+                            value={mapData.gridSize || 1} 
+                            onChange={(e) => updateMap(campaignCode, activeMapId, { gridSize: parseFloat(e.target.value) })}
+                            className="w-full accent-amber-500"
+                        />
+                        <div className="text-right text-xs text-slate-400 mt-1">{mapData.gridSize || 1}x</div>
+                    </div>
+
+                    <div className="border-t border-slate-800 pt-4">
+                        <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">3D Heightmap Scale</label>
+                        <input 
+                            type="range" 
+                            min="0" 
+                            max="10" 
+                            step="0.1" 
+                            value={mapData?.heightScale || 1} 
+                            onChange={(e) => updateMap(campaignCode, activeMapId, { heightScale: parseFloat(e.target.value) })}
+                            className="w-full accent-blue-500"
+                        />
+                        <div className="text-right text-xs text-slate-400 mt-1">{mapData.heightScale || 1}x multiplier</div>
+                        
+                        <button onClick={() => updateMap(campaignCode, activeMapId, { heightmapUrl: null, heightScale: 1 })} className="w-full py-2 border border-red-900/50 rounded text-center text-xs font-bold text-red-400 hover:bg-red-900/20 hover:text-red-300 hover:border-red-500 mt-4 transition-colors">
+                            <Icon name="trash-2" size={14} className="inline mr-1" /> Remove Heightmap
+                        </button>
+                    </div>
+                </div>
+            )}
+            
+            {activeTab === 'settings' && (!mapData || !updateMap) && (
+                <div className="flex-1 p-4 text-center text-slate-500 text-sm mt-10">No map active.</div>
+            )}
+
+            {activeTab === 'library' && (
+                <>
+                    <div className="p-4 border-b border-slate-800">
+                        <button onClick={() => fileInputRef.current?.click()} disabled={isUploading} className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded flex items-center justify-center gap-2">
+                            {isUploading ? <Icon name="loader" size={16} className="animate-spin" /> : <Icon name="upload" size={16} />}
+                            {isUploading ? "Uploading..." : "Upload Asset"}
+                        </button>
+                        <input type="file" accept="image/*" className="hidden" ref={fileInputRef} onChange={handleUpload} />
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto custom-scroll p-4 grid grid-cols-2 gap-2 content-start">
+                        {assets.map((asset, i) => (
+                            <div key={i} draggable 
+                                onDragStart={(e) => {
+                                    const payload = JSON.stringify({ format: 'dungeonmind-asset', url: asset.url });
+                                    e.dataTransfer.setData('application/dungeonmind-asset', payload);
+                                    e.dataTransfer.setData('text/plain', payload);
+                                }}
+                                className="aspect-square bg-slate-800 rounded border border-slate-700 overflow-hidden cursor-grab active:cursor-grabbing hover:border-amber-500 transition-colors relative group"
+                            >
+                                <img src={asset.thumbnail || asset.url} className="w-full h-full object-cover" alt={asset.name} draggable={false} />
+                                <div className="absolute inset-x-0 bottom-0 bg-black/60 text-[9px] text-white p-1 truncate opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">{asset.name}</div>
+                                <div className="absolute top-1 right-1 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    {onSetBackground && (
+                                    <button onClick={(e) => { e.stopPropagation(); onSetBackground(asset.url); }} className="bg-black/80 text-amber-500 hover:text-white p-1.5 rounded shadow-md" title="Set as Map Background">
+                                        <Icon name="map" size={14}/>
+                                    </button>
+                                    )}
+                                    {onSetHeightmap && (
+                                        <button onClick={(e) => { e.stopPropagation(); onSetHeightmap(asset.url); }} className="bg-black/80 text-blue-400 hover:text-white p-1.5 rounded shadow-md" title="Set as Heightmap">
+                                        <Icon name="mountain" size={14}/>
+                                        </button>
+                                    )}
+                                    <button onClick={(e) => { e.stopPropagation(); handleDeleteAsset(asset); }} className="bg-black/80 text-red-500 hover:text-white p-1.5 rounded shadow-md" title="Delete Asset">
+                                        <Icon name="trash" size={14}/>
+                                    </button>
+                                </div>
+                            </div>
+                        ))}
+                        {assets.length === 0 && !isUploading && (
+                            <div className="col-span-2 text-center text-slate-500 text-sm mt-10 flex flex-col items-center"><Icon name="image" size={32} className="opacity-20 mb-2" /> No assets uploaded yet.</div>
+                        )}
+                    </div>
+                </>
+            )}
+
+            {activeTab === 'generate' && (
+                <MapGenerator onGenerateMap={onGenerateMap} />
+            )}
         </div>
     );
 };
+
+const TabButton = ({ name, activeTab, onClick, icon, children }) => (
+    <button
+        onClick={() => onClick(name)}
+        className={`flex-1 p-3 text-sm font-bold flex items-center justify-center gap-2 transition-colors ${activeTab === name ? 'bg-slate-800 text-amber-400' : 'text-slate-400 hover:bg-slate-800/50 hover:text-white'}`}
+    >
+        <Icon name={icon} size={16} />
+        {children}
+    </button>
+);
 
 export default AssetManager;
