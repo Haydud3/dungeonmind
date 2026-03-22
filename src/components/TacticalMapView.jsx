@@ -227,6 +227,16 @@ const WallDrawingController = ({ isEnabled, onDrawEnd, getTerrainHeight }) => {
     );
 };
 
+const TokenImage = ({ imageUrl, size }) => {
+    const texture = useTexture(imageUrl);
+    return (
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.03, 0]}>
+            <circleGeometry args={[size * 0.45, 32]} />
+            <meshBasicMaterial map={texture} transparent />
+        </mesh>
+    )
+}
+
 // Interactive 3D Token
 const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelect, onContextMenu, role, getTerrainHeight }) => {
   const meshRef = useRef();
@@ -235,6 +245,10 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
   const [resolvedImage, setResolvedImage] = useState(null);
   const [isTopDown, setIsTopDown] = useState(false);
   const polarAngleRef = useRef(0);
+
+  const rulerRef = useRef();
+  const rulerLabelRef = useRef();
+  const rulerTextRef = useRef();
 
   useFrame(() => {
     if (controls) {
@@ -246,12 +260,17 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
         }
     }
     
+    const isDragging = isLeftDragging.current;
+
+    if (rulerRef.current) rulerRef.current.visible = isDragging;
+    if (rulerLabelRef.current) rulerLabelRef.current.visible = isDragging;
+
     if (meshRef.current && getTerrainHeight && !isRightDragging.current) {
       const p = meshRef.current.position;
       const terrainY = getTerrainHeight(p.x, p.z);
       const targetY = terrainY + (token.elevationOffset || 0) + 0.025;
       
-      if (isLeftDragging.current) {
+      if (isDragging) {
         p.y = targetY;
         const start = dragStartPos.current;
         const end = p;
@@ -277,6 +296,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
             }
         } else {
             if (rulerRef.current) rulerRef.current.scale.y = 0.001;
+            if (rulerTextRef.current) rulerTextRef.current.innerText = '0 ft';
         }
 
         const frameDelta = p.clone().sub(previousPos.current);
@@ -318,9 +338,6 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
   const isLeftDragging = useRef(false);
   const startMouseY = useRef(0);
   const dragStartPos = useRef(new THREE.Vector3());
-  const rulerRef = useRef();
-  const rulerLabelRef = useRef();
-  const rulerTextRef = useRef();
   const velocity = useRef(new THREE.Vector3());
   const previousPos = useRef(new THREE.Vector3(token.x || 0, token.y || 0.025, token.z || 0));
   const targetRotationY = useRef(token.rotationY || 0);
@@ -379,7 +396,10 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
 
   useEffect(() => {
     const imgUrl = token.image || token.img;
-    if (!imgUrl) return;
+    if (!imgUrl) {
+        setResolvedImage(null);
+        return;
+    }
     if (imgUrl.startsWith('chunked:')) {
       let isActive = true;
       let objectUrl = null;
@@ -394,6 +414,11 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
       setResolvedImage(imgUrl);
     }
   }, [token.image, token.img]);
+
+  const nameplateY = useMemo(() => {
+    // Consistently position it below the token base.
+    return -size * 0.7;
+}, [size]);
 
   return (
     <group>
@@ -421,14 +446,10 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
           dragStartPos.current.copy(meshRef.current.position);
           previousPos.current.copy(meshRef.current.position);
           velocity.current.set(0, 0, 0);
-          if (rulerRef.current) rulerRef.current.visible = true;
-          if (rulerLabelRef.current) rulerLabelRef.current.visible = true;
         }}
         onDragEnd={() => {
           if (controls) controls.enabled = true;
           isLeftDragging.current = false;
-          if (rulerRef.current) rulerRef.current.visible = false;
-          if (rulerLabelRef.current) rulerLabelRef.current.visible = false;
           if (meshRef.current) {
             const p = meshRef.current.position;
             const snappedX = Math.round(p.x / gridSize) * gridSize;
@@ -471,27 +492,30 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
             </Suspense>
           )}
 
-          <Html position={[0, 0.1, 0]} center className="pointer-events-none select-none">
-            <div className="flex flex-col items-center drop-shadow-xl">
-              {!showModel && (
-                <>
-                  {resolvedImage ? (
-                    <img src={resolvedImage} className="w-12 h-12 rounded-full border-[3px] shadow-lg object-cover" style={{ borderColor: baseColor }} alt="" draggable={false} />
-                  ) : (
-                    <div className="w-12 h-12 rounded-full border-[3px] shadow-lg flex items-center justify-center font-bold text-lg bg-slate-800 text-white" style={{ borderColor: baseColor }}>
-                      {(token.name || "?").substring(0, 2).toUpperCase()}
-                    </div>
-                  )}
-                </>
-              )}
-              <div className="bg-slate-950/90 text-white text-[10px] px-2 py-0.5 rounded-full font-bold whitespace-nowrap mt-1 border border-white/20 shadow-lg flex items-center gap-1 justify-center">
+          {!showModel && (
+              <>
+                {resolvedImage ? (
+                    <Suspense fallback={null}>
+                        <TokenImage imageUrl={resolvedImage} size={size} />
+                    </Suspense>
+                ) : (
+                    <Html position={[0, 0.03, 0]} center>
+                        <div className="w-12 h-12 rounded-full border-[3px] shadow-lg flex items-center justify-center font-bold text-lg bg-slate-800 text-white" style={{ borderColor: baseColor }}>
+                            {(token.name || "?").substring(0, 2).toUpperCase()}
+                        </div>
+                    </Html>
+                )}
+              </>
+          )}
+
+          <Html position={[0, nameplateY, 0]} center occlude="raycast" className="pointer-events-none select-none">
+            <div className="bg-slate-950/90 text-white text-[10px] px-2 py-0.5 rounded-full font-bold whitespace-nowrap border border-white/20 shadow-lg flex items-center gap-1 justify-center">
                 <span>{token.name || "Unknown"}</span>
                 {Math.abs(token.elevationOffset || 0) > 0.1 && (
                   <span className="text-blue-400 drop-shadow-md">
                     {token.elevationOffset > 0 ? '+' : ''}{Math.round((token.elevationOffset || 0) * 5)}ft
                   </span>
                 )}
-              </div>
             </div>
           </Html>
           
@@ -610,10 +634,6 @@ export default function TacticalMapView({ campaignCode, activeMapId, data, onOpe
   const handleSelectToken = (tokenId) => {
     setSelectedTokenId(tokenId);
     setContextMenu(null);
-    const token = mapData?.tokens?.[tokenId];
-    if (token && token.characterId && onOpenSheet) {
-      onOpenSheet(token.characterId);
-    }
   };
 
   const handleContextMenu = (e, token) => {

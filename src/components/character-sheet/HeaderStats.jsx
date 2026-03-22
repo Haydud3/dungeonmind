@@ -156,12 +156,6 @@ const HeaderStats = ({ onDiceRoll, onLogAction, onBack, onPossess, isNpc, combat
                     >
                         {isDying ? "CRITICAL" : `${currentHP}/${maxHP}`}
                     </span>
-                       {(e) => {
-                           if (role === 'dm') {
-                               e.preventDefault();
-                               handleHitDiceEdit(e);
-                           }
-                       }}
                 </div>
                 
                 {isDying ? (

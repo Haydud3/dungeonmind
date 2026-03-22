@@ -306,18 +306,19 @@ const DieMesh = ({ dieType, result }) => {
 
 const DiceOverlay = ({ roll }) => {
     console.log("[DEBUG] DiceOverlay roll data:", roll);
-    if (!roll) return null;
 
     return (
-        <div className="fixed inset-0 z-[9999] pointer-events-none flex items-center justify-center w-screen h-screen">
-            <div className="absolute inset-0 bg-black/60 backdrop-blur-[2px] animate-in fade-in duration-300"></div>
+        <div className={`fixed inset-0 z-[9999] pointer-events-none flex items-center justify-center w-screen h-screen transition-opacity duration-500 ${roll ? 'opacity-100' : 'opacity-0'}`}>
+            {roll && (
+                <div className="absolute inset-0 bg-black/60 backdrop-blur-[2px] animate-in fade-in duration-300"></div>
+            )}
             <div className="w-full h-full relative z-10">
                 <Canvas dpr={[1, 1.5]} camera={{ position: [0, 10, 0], fov: 40 }} gl={{ antialias: false, powerPreference: "high-performance" }}>
                     <ambientLight intensity={3} />
                     <pointLight position={[10, 10, 10]} intensity={2} />
                     <pointLight position={[-10, 10, -10]} intensity={1} color="orange" />
                     
-                    <DieMesh dieType={roll.die || roll.sides || roll.formula} result={roll.total ?? roll.result ?? roll.value} />
+                    {roll && <DieMesh dieType={roll.die || roll.sides || roll.formula} result={roll.total ?? roll.result ?? roll.value} />}
                     
                     <ContactShadows position={[0, 0, 0]} opacity={0.5} scale={40} blur={2} far={10} color="#000" />
                 </Canvas>
