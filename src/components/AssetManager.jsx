@@ -25,7 +25,7 @@ const generateThumbnail = (dataUrl) => {
     });
 };
 
-const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, onSetBackground, onSetHeightmap, onGenerateMap }) => {
+const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, onSetBackground, onSetHeightmap, onGenerateMap, isSnapToGrid, setIsSnapToGrid }) => {
     const [assets, setAssets] = useState([]);
     const [isUploading, setIsUploading] = useState(false);
     const fileInputRef = useRef(null);
@@ -148,6 +148,17 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                             className="w-full accent-amber-500"
                         />
                         <div className="text-right text-xs text-slate-400 mt-1">{mapData.gridSize || 1}x</div>
+                    </div>
+
+                    <div>
+                        <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Token Snapping</label>
+                        <button
+                            onClick={() => setIsSnapToGrid(!isSnapToGrid)}
+                            className={`w-full py-2 border rounded text-center text-xs font-bold transition-colors flex items-center justify-center gap-2 ${isSnapToGrid ? 'border-green-500 bg-green-900/20 text-green-400' : 'border-slate-600 text-slate-300 hover:border-green-500'}`}
+                        >
+                            <Icon name="magnet" size={14} className="inline mr-1" />
+                            {isSnapToGrid ? 'Snap to Grid is ON' : 'Snap to Grid is OFF'}
+                        </button>
                     </div>
 
                     <div className="border-t border-slate-800 pt-4">

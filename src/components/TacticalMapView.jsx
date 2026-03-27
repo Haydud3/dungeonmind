@@ -3,10 +3,12 @@ import { Canvas, useThree, useFrame } from '@react-three/fiber';
 import { MapControls, Grid, useTexture, DragControls, Html, useCursor, Line } from '@react-three/drei';
 import * as THREE from 'three';
 import { subscribeToMap, updateMap } from '../utils/mapService';
+import { useCampaign } from '../contexts/CampaignContext';
 import AssetManager from './AssetManager';
 import Icon from './Icon';
 import { retrieveChunkedMap } from '../utils/storageUtils';
 import CharacterModel from './CharacterModel';
+import CameraController from '../utils/CameraController';
 
 const useResolvedUrl = (url) => {
     const [resolvedUrl, setResolvedUrl] = useState(null);
@@ -238,7 +240,7 @@ const TokenImage = ({ imageUrl, size }) => {
 }
 
 // Interactive 3D Token
-const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelect, onContextMenu, role, getTerrainHeight }) => {
+const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelect, onContextMenu, role, getTerrainHeight, isSnapToGrid, isTerrainReady, draggedTokenId, setDraggedTokenId }) => {
   const meshRef = useRef();
   const { controls } = useThree();
   const [hovered, setHover] = useState(false);
@@ -251,26 +253,13 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
   const rulerTextRef = useRef();
 
   useFrame(() => {
-    if (controls) {
-        const newAngle = controls.getPolarAngle();
-        if (Math.abs(newAngle - polarAngleRef.current) > 0.01) {
-            polarAngleRef.current = newAngle;
-            const topDownThreshold = 0.3; // ~17 degrees
-            setIsTopDown(newAngle < topDownThreshold);
-        }
-    }
-    
-    const isDragging = isLeftDragging.current;
-
-    if (rulerRef.current) rulerRef.current.visible = isDragging;
-    if (rulerLabelRef.current) rulerLabelRef.current.visible = isDragging;
-
+    // --- ADD DEBUG LOGGING HERE ---
     if (meshRef.current && getTerrainHeight && !isRightDragging.current) {
       const p = meshRef.current.position;
       const terrainY = getTerrainHeight(p.x, p.z);
       const targetY = terrainY + (token.elevationOffset || 0) + 0.025;
       
-      if (isDragging) {
+      if (isLeftDragging.current) {
         p.y = targetY;
         const start = dragStartPos.current;
         const end = p;
@@ -330,6 +319,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
   const isPc = token.type === 'pc' || token.characterId;
   const baseColor = isPc ? "#22c55e" : "#ef4444";
   const size = (token.size || 1) * gridSize;
+  const safeSize = !Number.isFinite(size) || size < 0.001 ? gridSize : size;
   const scale = hovered ? 1.1 : 1;
 
   const isRightDragging = useRef(false);
@@ -341,13 +331,84 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
   const velocity = useRef(new THREE.Vector3());
   const previousPos = useRef(new THREE.Vector3(token.x || 0, token.y || 0.025, token.z || 0));
   const targetRotationY = useRef(token.rotationY || 0);
+  const dragControlsRef = useRef();
+
+  // START CHANGE: Make token position reactive to props
+  useEffect(() => {
+    if (meshRef.current && !isLeftDragging.current) {
+        const targetPosition = new THREE.Vector3(token.x || 0, token.y || 0.025, token.z || 0);
+        // Directly check distance to avoid unnecessary updates for minor floating point differences
+        if (meshRef.current.position.distanceTo(targetPosition) > 0.001) {
+            // Do not lerp here, just set the target for the useFrame loop
+        }
+    }
+  }, [token.x, token.y, token.z]);
+
+  useFrame((state, delta) => {
+    // --- Main animation loop ---
+    if (meshRef.current && getTerrainHeight) {
+      const p = meshRef.current.position;
+
+      // If another user is dragging, smoothly move the token
+      if (!isLeftDragging.current) {
+          const targetPosition = new THREE.Vector3(token.x || 0, token.y || 0.025, token.z || 0);
+          p.lerp(targetPosition, 0.1);
+
+          // Update rotation smoothly as well
+          const targetRotY = token.rotationY || 0;
+          const diff = targetRotY - meshRef.current.rotation.y;
+          meshRef.current.rotation.y += Math.atan2(Math.sin(diff), Math.cos(diff)) * 0.15;
+          return; // Skip the rest of the logic if we're just observing
+      }
+      
+      // If the current user is dragging
+      const terrainY = getTerrainHeight(p.x, p.z);
+      const targetY = terrainY + (token.elevationOffset || 0) + 0.025;
+      
+      p.y = targetY; // Stick to terrain while dragging
+      
+      // --- Ruler and Velocity Logic (for local drag only) ---
+      const start = dragStartPos.current;
+      const end = p;
+      const distSq = end.clone().sub(start).lengthSq();
+      
+      if (distSq > 0.01) {
+          const dist = Math.sqrt(distSq);
+          if (rulerRef.current) {
+            // ... (ruler logic)
+          }
+          if (rulerLabelRef.current) {
+            // ... (ruler label logic)
+          }
+
+          const frameDelta = p.clone().sub(previousPos.current);
+          frameDelta.y = 0;
+          velocity.current.add(frameDelta);
+          velocity.current.multiplyScalar(0.8);
+          
+          if (velocity.current.lengthSq() > 0.0001) {
+              targetRotationY.current = Math.atan2(velocity.current.x, velocity.current.z);
+          }
+      } else {
+          if (rulerRef.current) rulerRef.current.scale.y = 0.001;
+          if (rulerTextRef.current) rulerTextRef.current.innerText = '0 ft';
+      }
+
+      previousPos.current.copy(p);
+      
+      // --- Rotation Lerping (for local drag only) ---
+      const diff = targetRotationY.current - meshRef.current.rotation.y;
+      meshRef.current.rotation.y += Math.atan2(Math.sin(diff), Math.cos(diff)) * 0.3;
+    }
+  });
+  // END CHANGE
 
   useEffect(() => {
     targetRotationY.current = token.rotationY || 0;
   }, [token.rotationY]);
 
   const handlePointerDown = (e) => {
-    if (e.button === 2) {
+    if (!isTerrainReady || e.button === 2) {
       e.stopPropagation();
       e.target.setPointerCapture(e.pointerId);
       isRightDragging.current = true;
@@ -378,16 +439,16 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
       
       if (hasDragged.current && meshRef.current) {
           const p = meshRef.current.position;
-          const snappedX = Math.round(p.x / gridSize) * gridSize;
-          const snappedZ = Math.round(p.z / gridSize) * gridSize;
-          const terrainY = getTerrainHeight ? getTerrainHeight(snappedX, snappedZ) : 0;
+          const x = isSnapToGrid ? Math.floor(p.x / gridSize) * gridSize + gridSize / 2 : p.x;
+          const z = isSnapToGrid ? Math.floor(p.z / gridSize) * gridSize + gridSize / 2 : p.z;
+          const terrainY = getTerrainHeight ? getTerrainHeight(x, z) : 0;
           const offset = p.y - terrainY - 0.025;
           const isFlying = Math.abs(offset) > 0.1;
           
           updateTokenPosition(token.id, { 
-              x: snappedX, 
+              x, 
               y: p.y, 
-              z: snappedZ,
+              z,
               elevationOffset: isFlying ? offset : 0
           });
       }
@@ -417,8 +478,8 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
 
   const nameplateY = useMemo(() => {
     // Consistently position it below the token base.
-    return -size * 0.7;
-}, [size]);
+    return -safeSize * 0.7;
+}, [safeSize]);
 
   return (
     <group>
@@ -439,31 +500,33 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
       </group>
 
       <DragControls
+        ref={dragControlsRef}
         axisLock="y"
+        enabled={isTerrainReady && (draggedTokenId === null || draggedTokenId === token.id)}
         onDragStart={() => {
           if (controls) controls.enabled = false;
           isLeftDragging.current = true;
           dragStartPos.current.copy(meshRef.current.position);
           previousPos.current.copy(meshRef.current.position);
           velocity.current.set(0, 0, 0);
+          setDraggedTokenId(token.id);
         }}
         onDragEnd={() => {
           if (controls) controls.enabled = true;
           isLeftDragging.current = false;
           if (meshRef.current) {
             const p = meshRef.current.position;
-            const snappedX = Math.round(p.x / gridSize) * gridSize;
-            const snappedZ = Math.round(p.z / gridSize) * gridSize;
-            const terrainY = getTerrainHeight ? getTerrainHeight(snappedX, snappedZ) : 0;
+            const terrainY = getTerrainHeight ? getTerrainHeight(p.x, p.z) : 0;
             const targetY = terrainY + (token.elevationOffset || 0) + 0.025;
             updateTokenPosition(token.id, { 
-              x: snappedX, 
+              x: p.x, 
               y: targetY, 
-              z: snappedZ,
+              z: p.z,
               elevationOffset: token.elevationOffset || 0,
               rotationY: targetRotationY.current
             });
           }
+          setDraggedTokenId(null);
         }}
       >
         <mesh 
@@ -473,9 +536,9 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
-          onPointerOver={(e) => { e.stopPropagation(); setHover(true); }}
-          onPointerOut={(e) => { setHover(false); }}
-          onClick={(e) => { e.stopPropagation(); onSelect(token.id); }}
+          onPointerOver={(e) => { e.stopPropagation(); if (isTerrainReady) setHover(true); }}
+          onPointerOut={(e) => { if (isTerrainReady) setHover(false); }}
+          onClick={(e) => { e.stopPropagation(); if (isTerrainReady) onSelect(token.id); }}
           onContextMenu={(e) => {
             e.stopPropagation();
             if (e.nativeEvent) e.nativeEvent.preventDefault();
@@ -496,7 +559,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
               <>
                 {resolvedImage ? (
                     <Suspense fallback={null}>
-                        <TokenImage imageUrl={resolvedImage} size={size} />
+                        <TokenImage imageUrl={resolvedImage} size={safeSize} />
                     </Suspense>
                 ) : (
                     <Html position={[0, 0.03, 0]} center>
@@ -519,17 +582,17 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
             </div>
           </Html>
           
-          <cylinderGeometry args={[size * 0.45, size * 0.45, 0.05, 32]} />
+          <cylinderGeometry args={[safeSize * 0.45, safeSize * 0.45, 0.05, 32]} />
           <meshStandardMaterial color={baseColor} roughness={0.5} metalness={0.2} emissive={baseColor} emissiveIntensity={hovered ? 0.5 : 0.1} transparent={true} opacity={opacity} />
 
-          <mesh position={[0, 0, size * 0.45]} rotation={[Math.PI / 2, 0, 0]}>
-            <coneGeometry args={[size * 0.15, size * 0.2, 3]} />
+          <mesh position={[0, 0, safeSize * 0.45]} rotation={[Math.PI / 2, 0, 0]}>
+            <coneGeometry args={[safeSize * 0.15, safeSize * 0.2, 3]} />
             <meshStandardMaterial color={baseColor} roughness={0.5} metalness={0.2} emissive={baseColor} emissiveIntensity={hovered ? 0.5 : 0.1} transparent={true} opacity={opacity} />
           </mesh>
 
           {isSelected && (
             <mesh position={[0, -0.01, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-              <ringGeometry args={[size * 0.5, size * 0.55, 32]} />
+              <ringGeometry args={[safeSize * 0.5, safeSize * 0.55, 32]} />
               <meshBasicMaterial color="#3b82f6" transparent opacity={0.8} />
             </mesh>
           )}
@@ -540,6 +603,8 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
 };
 
 export default function TacticalMapView({ campaignCode, activeMapId, data, onOpenSheet, role }) {
+  const { updateToken, addToken, deleteToken } = useCampaign();
+  const cameraControllerRef = useRef();
   const [mapData, setMapData] = useState(null);
   const [selectedTokenId, setSelectedTokenId] = useState(null);
   const [contextMenu, setContextMenu] = useState(null);
@@ -547,20 +612,32 @@ export default function TacticalMapView({ campaignCode, activeMapId, data, onOpe
   const [showTokenManager, setShowTokenManager] = useState(false);
   const [isDrawingWalls, setIsDrawingWalls] = useState(false);
   const [wallContextMenu, setWallContextMenu] = useState(null);
-  
+  const [isSnapToGrid, setIsSnapToGrid] = useState(true);
+  const [viewMode, setViewMode] = useState('isometric');
+  const [draggedTokenId, setDraggedTokenId] = useState(null);
+  const [remountKey, setRemountKey] = useState(0);
+
   // Setup CPU-side Terrain Matrix logic
   const [aspect, setAspect] = useState(1);
+  const [isAspectReady, setIsAspectReady] = useState(false);
   const [terrainData, setTerrainData] = useState(null);
 
   const resolvedBackgroundUrl = useResolvedUrl(mapData?.backgroundUrl);
   const resolvedHeightmapUrl = useResolvedUrl(mapData?.heightmapUrl);
 
   useEffect(() => {
-    if (!resolvedBackgroundUrl) return;
+    if (!resolvedBackgroundUrl) {
+        setIsAspectReady(!mapData?.backgroundUrl); // If no background, aspect is ready (defaults to 1)
+        return;
+    }
+    setIsAspectReady(false);
     const img = new Image();
-    img.onload = () => setAspect(img.width / img.height || 1);
+    img.onload = () => {
+        setAspect(img.width / img.height || 1);
+        setIsAspectReady(true);
+    }
     img.src = resolvedBackgroundUrl;
-  }, [resolvedBackgroundUrl]);
+  }, [resolvedBackgroundUrl, mapData?.backgroundUrl]);
 
   useEffect(() => {
     if (!resolvedHeightmapUrl) {
@@ -595,14 +672,18 @@ export default function TacticalMapView({ campaignCode, activeMapId, data, onOpe
   }, [resolvedHeightmapUrl]);
 
   const getTerrainHeight = useCallback((x, z) => {
-    if (!terrainData || !mapData || !mapData.heightmapUrl) return 0;
+    if (!terrainData || !mapData || !mapData.heightmapUrl) {
+      return 0;
+    }
     const scale = mapData.scale || 20;
     const heightScale = mapData.heightScale || 1;
     
     const u = (x / (scale * aspect)) + 0.5;
     const v = (z / scale) + 0.5;
 
-    if (u < 0 || u > 1 || v < 0 || v > 1) return 0;
+    if (u < 0 || u > 1 || v < 0 || v > 1) {
+      return 0;
+    }
 
     const pixelX = Math.floor(u * terrainData.width);
     const pixelY = Math.floor(v * terrainData.height);
@@ -611,9 +692,10 @@ export default function TacticalMapView({ campaignCode, activeMapId, data, onOpe
     const safeY = Math.max(0, Math.min(pixelY, terrainData.height - 1));
 
     const index = (safeY * terrainData.width + safeX) * 4;
-    const r = terrainData.data[index];
+    const r = terrainData.data[index]; // Red channel for height
 
-    return (r / 255.0) * heightScale;
+    const calculatedHeight = (r / 255.0) * heightScale;
+    return calculatedHeight;
   }, [terrainData, mapData, aspect]);
 
   // Subscribe to real-time map updates from Firebase
@@ -627,7 +709,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, data, onOpe
 
   const gridSize = mapData?.gridSize || 1;
   const showPlane = mapData?.backgroundUrl && mapData.backgroundUrl.trim() !== '';
-  const tokensList = Object.values(mapData?.tokens || {});
+  const tokensList = Object.values(data.campaign?.activeMap?.tokens_v2 || data.campaign?.activeMap?.tokens || {});
   const allCharacters = [...(data?.players || []), ...(data?.npcs || [])];
 
   // Handle clicking a token to both select it and open the side sheet
@@ -656,23 +738,12 @@ export default function TacticalMapView({ campaignCode, activeMapId, data, onOpe
   };
 
   // Handler triggered by Token3D when a drag ends
-  const handleUpdateTokenPosition = (tokenId, position) => {
-    const updates = {
-      [`tokens.${tokenId}.x`]: position.x,
-      [`tokens.${tokenId}.y`]: position.y,
-      [`tokens.${tokenId}.z`]: position.z,
-    };
-    if (position.elevationOffset !== undefined) {
-        updates[`tokens.${tokenId}.elevationOffset`] = position.elevationOffset;
-    }
-    if (position.rotationY !== undefined) {
-        updates[`tokens.${tokenId}.rotationY`] = position.rotationY;
-    }
-    updateMap(campaignCode, activeMapId, updates);
+  const handleUpdateTokenPosition = async (tokenId, position) => {
+    await updateToken(tokenId, position);
   };
 
   // Handle dragging an image from the AssetManager directly onto the map
-  const handleDrop = (e) => {
+  const handleDrop = async (e) => {
     e.preventDefault();
     
     let payload = null;
@@ -684,7 +755,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, data, onOpe
           const parsed = JSON.parse(plainText);
           if (parsed.format) payload = parsed;
        }
-    } catch(err) { /* Not JSON, ignore */ }
+    } catch(err) {  }
 
     // 2. Fallback to custom mime types
     if (!payload) {
@@ -692,50 +763,68 @@ export default function TacticalMapView({ campaignCode, activeMapId, data, onOpe
         const characterDataStr = e.dataTransfer.getData('application/dungeonmind-character');
         
         if (assetDataStr) {
-            payload = { format: 'dungeonmind-asset', ...JSON.parse(assetDataStr) };
+            try {
+                payload = { format: 'dungeonmind-asset', ...JSON.parse(assetDataStr) };
+            } catch(err) {  }
         } else if (characterDataStr) {
-            payload = { format: 'dungeonmind-character', ...JSON.parse(characterDataStr) };
+            try {
+                payload = { format: 'dungeonmind-character', ...JSON.parse(characterDataStr) };
+            } catch(err) {  }
         }
     }
 
-    if (!payload || !campaignCode || !activeMapId) return;
 
-    const newTokenId = `token_${Date.now()}`;
+    if (!payload || !campaignCode || !activeMapId) {
+        return;
+    }
+
+    const newTokenId = `token_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    let tokenData;
 
     if (payload.format === 'dungeonmind-asset' || payload.url) {
-        updateMap(campaignCode, activeMapId, {
-            [`tokens.${newTokenId}`]: {
-                id: newTokenId,
-                name: 'New Token',
-                type: 'npc',
-                x: 0, y: 0, z: 0,
-                image: payload.url || payload.image || '',
-                size: 1,
-                isHidden: false
-            }
-        });
+        tokenData = {
+            id: newTokenId,
+            name: 'New Token',
+            type: 'npc',
+            x: 0, y: 0, z: 0,
+            image: payload.url || payload.image || '',
+            size: 1,
+            isHidden: false
+        };
     } else if (payload.format === 'dungeonmind-character' || payload.characterId || payload.id) {
-        updateMap(campaignCode, activeMapId, {
-            [`tokens.${newTokenId}`]: {
-                id: newTokenId,
-                // Safe fallback to prevent undefined crashing Firestore
-                characterId: payload.id || null, 
-                name: payload.name || 'Unknown',
-                type: payload.type || 'npc',
-                x: 0, y: 0, z: 0,
-                image: payload.image || '',
-                size: payload.size || 1,
-                isHidden: false
-            }
-        });
+        tokenData = {
+            id: newTokenId,
+            characterId: payload.id || null, 
+            name: payload.name || 'Unknown',
+            type: payload.type || 'npc',
+            x: 0, y: 0, z: 0,
+            image: payload.image || '',
+            size: payload.size || 1,
+            isHidden: false
+        };
+    }
+
+    if (tokenData) {
+        await addToken(tokenData);
     }
   };
 
   return (
     <div className="w-full relative bg-slate-950" style={{ height: 'calc(100vh - 80px)', display: 'block' }} onDrop={handleDrop} onDragOver={(e) => e.preventDefault()}>
       <Canvas 
+        key={remountKey}
         camera={{ position: [0, 8, 8], fov: 50 }} 
         style={{ width: '100%', height: '100%' }}
+        onCreated={({ gl }) => {
+            gl.domElement.addEventListener('webglcontextlost', (event) => {
+                event.preventDefault();
+                console.warn('WebGL context lost. Attempting to restore...');
+            });
+            gl.domElement.addEventListener('webglcontextrestored', () => {
+                console.info('WebGL context restored. Re-initializing...');
+                setRemountKey(k => k + 1);
+            });
+        }}
         /* Clear selection and context menu when clicking the background void */
         onPointerMissed={(e) => {
           if (isDrawingWalls) return;
@@ -778,7 +867,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, data, onOpe
         />
 
         {/* Render all tokens on the map */}
-        {tokensList.map(token => {
+        {mapData && isAspectReady && (!mapData.heightmapUrl || terrainData) && tokensList.map(token => {
           // Find the linked character if one exists
           const character = allCharacters.find(c => String(c.id) === String(token.characterId));
           const displayToken = { ...token };
@@ -802,6 +891,10 @@ export default function TacticalMapView({ campaignCode, activeMapId, data, onOpe
               onContextMenu={handleContextMenu}
               role={role}
               getTerrainHeight={getTerrainHeight}
+              isSnapToGrid={isSnapToGrid}
+              isTerrainReady={!mapData.heightmapUrl || !!terrainData}
+              draggedTokenId={draggedTokenId}
+              setDraggedTokenId={setDraggedTokenId}
             />
           );
         })}
@@ -829,10 +922,30 @@ export default function TacticalMapView({ campaignCode, activeMapId, data, onOpe
           minDistance={3} // Limit max zoom in
           maxDistance={40} // Limit max zoom out
           enableDamping={true} // Smooth camera movements
+          enableRotate={false}
         />
+        <CameraController ref={cameraControllerRef} view={viewMode} />
       </Canvas>
 
       {/* Toolbar for Map */}
+      <div className="absolute top-4 left-4 z-10 flex gap-2">
+        <button
+          onClick={() => {
+            cameraControllerRef.current?.reset();
+          }}
+          className="bg-slate-800 border border-slate-600 hover:border-blue-500 text-white px-3 py-2 rounded-lg shadow-lg flex items-center gap-2 text-sm font-bold transition-colors"
+        >
+          <Icon name="camera" size={16} />
+          <span>Reset View</span>
+        </button>
+        <button
+          onClick={() => setViewMode(prev => prev === 'isometric' ? 'top-down' : 'isometric')}
+          className="bg-slate-800 border border-slate-600 hover:border-blue-500 text-white px-3 py-2 rounded-lg shadow-lg flex items-center gap-2 text-sm font-bold transition-colors"
+        >
+          <Icon name="layout-grid" size={16} />
+        </button>
+      </div>
+
       {role === 'dm' && (
         <div className="absolute top-4 right-4 z-10 flex gap-2">
             {isDrawingWalls && (
@@ -945,6 +1058,8 @@ export default function TacticalMapView({ campaignCode, activeMapId, data, onOpe
           onGenerateMap={({ backgroundUrl, heightmapUrl }) => {
               updateMap(campaignCode, activeMapId, { backgroundUrl, heightmapUrl });
           }}
+          isSnapToGrid={isSnapToGrid}
+          setIsSnapToGrid={setIsSnapToGrid}
         />
       )}
 
@@ -976,11 +1091,11 @@ export default function TacticalMapView({ campaignCode, activeMapId, data, onOpe
             )}
             
             {/* Reset Elevation is only visible if the token is currently flying */}
-            {Math.abs(mapData?.tokens?.[contextMenu.tokenId]?.elevationOffset || 0) > 0.01 && (
+            {Math.abs(data.campaign?.activeMap?.tokens?.[contextMenu.tokenId]?.elevationOffset || 0) > 0.01 && (
               <button 
                 className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors text-blue-400 font-bold"
                 onClick={() => {
-                  updateMap(campaignCode, activeMapId, { [`tokens.${contextMenu.tokenId}.elevationOffset`]: 0 });
+                  updateToken(contextMenu.tokenId, { elevationOffset: 0 });
                   setContextMenu(null);
                 }}
               >
@@ -993,20 +1108,18 @@ export default function TacticalMapView({ campaignCode, activeMapId, data, onOpe
                 <button 
                   className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors"
                   onClick={() => {
-                    const token = mapData?.tokens?.[contextMenu.tokenId];
-                    if (token) updateMap(campaignCode, activeMapId, { [`tokens.${contextMenu.tokenId}.isHidden`]: !token.isHidden });
+                    const token = data.campaign?.activeMap?.tokens?.[contextMenu.tokenId];
+                    if (token) updateToken(contextMenu.tokenId, { isHidden: !token.isHidden });
                     setContextMenu(null);
                   }}
                 >
-                  {mapData?.tokens?.[contextMenu.tokenId]?.isHidden ? "Reveal to Players" : "Hide from Players"}
+                  {data.campaign?.activeMap?.tokens?.[contextMenu.tokenId]?.isHidden ? "Reveal to Players" : "Hide from Players"}
                 </button>
                 
                 <button 
                   className="w-full text-left px-4 py-2 hover:bg-red-900/50 text-red-400 transition-colors"
                   onClick={() => {
-                    const newTokens = { ...mapData.tokens };
-                    delete newTokens[contextMenu.tokenId];
-                    updateMap(campaignCode, activeMapId, { tokens: newTokens });
+                    deleteToken(contextMenu.tokenId);
                     setContextMenu(null);
                   }}
                 >

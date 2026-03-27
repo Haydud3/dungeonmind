@@ -67,20 +67,6 @@ export const createMap = async (campaignCode, mapData) => {
 export const updateMap = async (campaignCode, mapId, updates) => {
     const ref = getMapRef(campaignCode, mapId);
     
-    // Sanitize token position updates to prevent bad data
-    for (const key in updates) {
-        if (key.endsWith('.x') || key.endsWith('.y') || key.endsWith('.z')) {
-            const numValue = Number(updates[key]);
-            if (isNaN(numValue)) {
-                console.warn(`Invalid value for ${key}. Expected number, got:`, updates[key]);
-                // Setting to 0 as a safe fallback, or you could delete the key
-                updates[key] = 0;
-            } else {
-                updates[key] = numValue;
-            }
-        }
-    }
-
     try {
         // Attempt to update the existing map
         await updateDoc(ref, updates);

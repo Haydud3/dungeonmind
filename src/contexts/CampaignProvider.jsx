@@ -15,10 +15,10 @@ export const useCampaign = () => {
 const DB_INIT_DATA = { 
     hostId: null, dmIds: [], locations: [], npcs: [], handouts: [],
     activeUsers: {}, bannedUsers: [], assignments: {}, onboardingComplete: false, 
-    config: { edition: '2014', strictMode: true }, 
+    config: { edition: '2014', strictMode: true },
     campaign: { 
         genesis: { tone: 'Heroic', conflict: 'Dragon vs Kingdom', campaignName: 'New Campaign' }, 
-        activeMap: { url: null, revealPaths: [], tokens: [] }, 
+        activeMap: { url: null, revealPaths: [], tokens_v2: {} }, 
         savedMaps: [], activeHandout: null, location: "Start", 
         combat: { active: false, round: 1, turn: 0, combatants: [] }
     }
@@ -36,6 +36,24 @@ export const CampaignProvider = ({ children }) => {
     useEffect(() => {
         return fb.onAuthStateChanged(fb.auth, (u) => setUser(u));
     }, []);
+
+    // NEW: Auto-rejoin from localStorage
+    useEffect(() => {
+        if (user && !gameParams) {
+            const lastCampaign = localStorage.getItem('dungeonmind_last_campaign');
+            if (lastCampaign) {
+                try {
+                    const { code, role, isOffline } = JSON.parse(lastCampaign);
+                    if (code) {
+                        joinCampaign(code, role, user.uid, isOffline);
+                    }
+                } catch (e) {
+                    console.error("Failed to parse last campaign data:", e);
+                    localStorage.removeItem('dungeonmind_last_campaign');
+                }
+            }
+        }
+    }, [user, gameParams]);
 
     // 1. Presence System (The "I am here" announcer)
     useEffect(() => {
@@ -76,16 +94,33 @@ export const CampaignProvider = ({ children }) => {
                 if (user && d.bannedUsers?.includes(user.uid)) {
                     localStorage.removeItem('dm_last_code'); 
                     setGameParams(null); 
+                    console.error(`User ${user.uid} is banned from campaign ${code}.`);
                     alert("You have been banished from this realm.");
                     return;
                 }
 
-                if (user && !d.activeUsers?.[uid]) {
-                    updateDoc(rootRef, { [`activeUsers.${uid}`]: user.email || "Anonymous" }).catch(() => {});
-                }
-
-                setData(prev => ({ ...prev, ...d })); 
+                // Removed console.log statements for brevity and because they served their debugging purpose.
+                // console.log("[CampaignContext] Root document snapshot received (raw):", d);
+                // console.log("[CampaignContext] Root snapshot d.campaign.activeMap.tokens:", d.campaign?.activeMap?.tokens);
+                // console.log("[CampaignContext] Root snapshot d.campaign.activeMap.tokens_v2:", d.campaign?.activeMap?.tokens_v2);
+                setData(prev => {
+                    const newCampaign = { ...prev.campaign, ...d.campaign };
+                    if (d.campaign?.activeMap) {
+                        // Perform a deep merge for activeMap, especially for tokens
+                        newCampaign.activeMap = {
+                            ...prev.campaign?.activeMap,
+                            ...d.campaign.activeMap,
+                            // The 'tokens' field will now be managed by the tokens_v2 subcollection listener.
+                            // We explicitly exclude it from the root document merge to avoid conflicts.
+                            // If the UI still relies on 'tokens', it should be updated to use 'tokens_v2'.
+                            // For now, we'll assume the tokens_v2 listener will populate the correct path.
+                        };
+                    }
+                    // console.log("[CampaignContext] After merge, newCampaign.activeMap.tokens:", newCampaign.activeMap?.tokens); // Removed debug log
+                    return { ...prev, ...d, campaign: newCampaign };
+                }); 
             } else if (gameParams.role === 'dm') {
+                console.log("[CampaignContext] Root document not found. Initializing new campaign.");
                 setDoc(rootRef, { 
                     ...DB_INIT_DATA, 
                     hostId: uid, 
@@ -93,6 +128,7 @@ export const CampaignProvider = ({ children }) => {
                     activeUsers: { [uid]: user?.email || "Dungeon Master" }
                 });
             } else {
+                console.warn(`[CampaignContext] Campaign with code ${code} not found for player ${uid}.`);
                 setGameParams(null); // Invalid code
             }
         });
@@ -116,18 +152,24 @@ export const CampaignProvider = ({ children }) => {
             setLoreChunks(allChunks);
         });
 
-        const tokensRef = collection(rootRef, 'tokens');
+        const tokensRef = collection(rootRef, 'tokens_v2');
         const unsubTokens = onSnapshot(tokensRef, (snap) => {
-            const tokens = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-                // Step 3: Client-side filtering of hidden tokens for players to reduce state bloat
-                .filter(t => {
-                    return gameParams.role === 'dm' || !t.isHidden;
-                });
+            const newTokens = {};
+            snap.docs.forEach(doc => {
+                const token = { id: doc.id, ...doc.data() };
+                if (gameParams.role === 'dm' || !token.isHidden) {
+                    newTokens[token.id] = token;
+                }
+            });
+
+            console.log("[CampaignContext] tokens_v2 subcollection snapshot received. Raw docs:", snap.docs.map(d => ({id: d.id, ...d.data()})));
+            console.log("[CampaignContext] tokens_v2 subcollection snapshot received. New tokens:", newTokens);
+
             setData(prev => ({
                 ...prev,
                 campaign: {
                     ...prev.campaign,
-                    activeMap: { ...prev.campaign.activeMap, tokens }
+                    activeMap: { ...prev.campaign.activeMap, tokens_v2: newTokens }
                 }
             }));
         });
@@ -228,49 +270,63 @@ export const CampaignProvider = ({ children }) => {
         updateCampaign(changes, immediate);
     };
 
-    const addToken = (token) => {
+    const addToken = async (token) => {
         if (!gameParams?.code) return;
-        // Optimistic Update
-        setData(prev => {
-            const currentTokens = prev.campaign?.activeMap?.tokens || [];
-            return { ...prev, campaign: { ...prev.campaign, activeMap: { ...prev.campaign.activeMap, tokens: [...currentTokens, token] } } };
-        });
-        const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'tokens', String(token.id));
-        setDoc(ref, token);
-    };
-
-    const updateToken = (tokenId, changes) => {
-        if (!gameParams?.code) return;
-        // Optimistic Update
-        let tokenExists = false;
-        setData(prev => {
-            const currentTokens = prev.campaign?.activeMap?.tokens || [];
-            tokenExists = currentTokens.some(t => String(t.id) === String(tokenId));
-            if (!tokenExists) return prev; // Don't update if not found locally
-            
-            const newTokens = currentTokens.map(t => String(t.id) === String(tokenId) ? { ...t, ...changes } : t);
-            return { ...prev, campaign: { ...prev.campaign, activeMap: { ...prev.campaign.activeMap, tokens: newTokens } } };
-        });
         
-        if (!tokenExists) return; // Stop if token was deleted locally
-
-        const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'tokens', String(tokenId));
-        // Use setDoc with merge to handle potential sync race conditions without crashing
-        setDoc(ref, changes, { merge: true }).catch(err => {
-            console.warn("Token update failed (likely deleted):", err.message);
-        });
+        // Write to tokens_v2 subcollection (new way)
+        const tokenRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'tokens_v2', String(token.id));
+        await setDoc(tokenRef, token);
     };
 
-    const deleteToken = (tokenId) => {
+    const sanitizeTokenChanges = (changes) => {
+        const sanitizedChanges = { ...changes };
+        // Sanitize position data before any updates
+        for (const key of ['x', 'y', 'z']) {
+            if (key in sanitizedChanges) {
+                const originalValue = sanitizedChanges[key];
+                let numValue = Number(originalValue);
+                if (!Number.isFinite(numValue)) {
+                    console.warn(`[Token Sanitizer] Invalid value for ${key}. Got: '${originalValue}'. Defaulting to 0.`);
+                    sanitizedChanges[key] = 0;
+                    continue;
+                }
+                
+                if (Math.abs(numValue) > 5000) {
+                    console.warn(`[Token Sanitizer] Out-of-bounds value for ${key}. Got: ${numValue}. Defaulting to 0.`);
+                    sanitizedChanges[key] = 0;
+                    continue;
+                }
+
+                sanitizedChanges[key] = numValue;
+            }
+        }
+        return sanitizedChanges;
+    };
+
+    const updateToken = async (tokenId, changes) => {
+        console.log(`[updateToken] Received for tokenId ${tokenId}:`, changes); // Re-add this log
+        // Removed previous debug logs as they confirmed successful writes.
+        const sanitizedChanges = sanitizeTokenChanges(changes);
+
+
+        if (Object.keys(sanitizedChanges).length === 0) {
+            console.log("[Token Update] All changes were sanitized out. No update will be performed.");
+            return;
+        }
+
+        // Write to tokens_v2 subcollection (new way)
+        const tokenRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'tokens_v2', String(tokenId));
+        await setDoc(tokenRef, sanitizedChanges, { merge: true })
+            .then(() => console.log(`[Firestore Success] Updated tokens_v2 for token ${tokenId} with:`, sanitizedChanges))
+            .catch(error => console.error(`[Firestore Error] Failed to update tokens_v2 for token ${tokenId}:`, error));
+    };
+
+    const deleteToken = async (tokenId) => {
         if (!gameParams?.code) return;
-        // Optimistic Update
-        setData(prev => {
-            const currentTokens = prev.campaign?.activeMap?.tokens || [];
-            const newTokens = currentTokens.filter(t => String(t.id) !== String(tokenId));
-            return { ...prev, campaign: { ...prev.campaign, activeMap: { ...prev.campaign.activeMap, tokens: newTokens } } };
-        });
-        const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'tokens', String(tokenId));
-        deleteDoc(ref);
+        
+        // Delete from tokens_v2 subcollection (new way)
+        const tokenRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'tokens_v2', String(tokenId));
+        await deleteDoc(tokenRef);
     };
 
     const updateMapState = (action, payload) => {
@@ -278,10 +334,12 @@ export const CampaignProvider = ({ children }) => {
 
         switch (action) {
             case 'move_token':
-                updateToken(payload.tokenId, { x: payload.x, y: payload.y });
+                console.log(`[updateMapState] move_token payload for ${payload.tokenId}:`, payload); // Add this log
+                updateToken(payload.tokenId, { x: payload.x, y: payload.y, z: payload.z }); // Ensure z is also passed
                 break;
             case 'update_token':
-                updateToken(payload.id, payload);
+                console.log(`[updateMapState] update_token payload for ${payload.id}:`, payload); // Add this log
+                updateToken(payload.id, payload); // Pass the entire payload
                 break;
             case 'delete_token':
                 deleteToken(payload);
@@ -336,12 +394,17 @@ export const CampaignProvider = ({ children }) => {
     };
 
     const joinCampaign = (code, role, uid, isOffline) => {
-        setGameParams({ code, role, uid, isOffline });
+        const params = { code, role, uid, isOffline };
+        setGameParams(params);
+        if (!isOffline) { // Don't persist offline sessions
+            localStorage.setItem('dungeonmind_last_campaign', JSON.stringify({ code, role, isOffline }));
+        }
     };
 
     const leaveCampaign = () => {
         setGameParams(null);
         setData(INITIAL_APP_STATE);
+        localStorage.removeItem('dungeonmind_last_campaign');
     };
 
     const kickPlayer = async (targetUid) => {

@@ -81,18 +81,12 @@ const DB_INIT_DATA = {
 const INITIAL_APP_STATE = { ...DB_INIT_DATA, players: [], journal_pages: {}, chatLog: [] };
 
 function DungeonMindApp() {
-  const [user, setUser] = useState(null);
-  const [isAuthReady, setIsAuthReady] = useState(false);
-
-  const { 
-    data, setData, gameParams, joinCampaign, leaveCampaign, 
-    updateCampaign, updateCloud, savePlayer, deletePlayer, loreChunks, setLoreChunks,
-    kickPlayer, banPlayer, unbanPlayer 
-  } = useCampaign();
-  useEffect(() => {
-    if (user !== undefined) setIsAuthReady(true);
-  }, [user]);
-  const toast = useToast(); 
+    const { 
+        data, setData, gameParams, joinCampaign, leaveCampaign, 
+        updateCampaign, updateCloud, savePlayer, deletePlayer, loreChunks, setLoreChunks,
+        kickPlayer, banPlayer, unbanPlayer, user, isConnected
+    } = useCampaign();
+    const toast = useToast();
 
   const BASE_PATH = '/dungeonmind';
   
@@ -167,21 +161,6 @@ function DungeonMindApp() {
 
   useEffect(() => { localStorage.setItem('dm_api_key', apiKey); }, [apiKey]);
   useEffect(() => { localStorage.setItem('dm_ai_provider', aiProvider); }, [aiProvider]);
-
-  // --- AUTH RESTORATION (CRITICAL FIX) ---
-  useEffect(() => {
-    const unsub = fb.onAuthStateChanged(fb.auth, (u) => {
-      setUser(u);
-      setIsAuthReady(true);
-      // Auto-join logic moved inside to prevent dependency cycles
-      const lastCode = localStorage.getItem('dm_last_code');
-      // Only auto-join if we aren't already in a game and have a code
-      if (u && lastCode && !window.location.pathname.includes(lastCode)) {
-           // We defer this check to the Lobby or separate logic to avoid loop
-      }
-    });
-    return () => unsub();
-  }, [gameParams]); 
 
   useEffect(() => {
       const h = localHandout || data.campaign?.activeHandout;
@@ -645,33 +624,27 @@ function DungeonMindApp() {
       }
   };
 
-  if (!isAuthReady) return <div className="h-screen bg-slate-900 flex items-center justify-center text-amber-500 font-bold animate-pulse">Summoning DungeonMind...</div>;
-  
-  if (!gameParams) {
-      // Check for auto-join only if we are authenticated and not currently in a game
-      if (user) {
-          const lastCode = localStorage.getItem('dm_last_code');
-          if (lastCode) {
-             // We return null briefly while we trigger the join, to avoid flashing the Lobby
-             // This is a side-effect in render, which is generally bad, but safe here if we strictly guard it
-             setTimeout(() => joinCampaign(lastCode, 'player', user.uid, false), 0);
-             return <div className="h-screen bg-slate-900 flex items-center justify-center text-amber-500 font-bold animate-pulse">Returning to Session...</div>;
-          }
-      }
-      return <Lobby fb={fb} user={user} onJoin={(c, r, u) => { localStorage.setItem('dm_last_code', c); joinCampaign(c, r, u, false); }} onOffline={() => joinCampaign('LOCAL', 'dm', 'admin', true)} />;
-  }
+    if (user === null) {
+        return <div className="h-screen bg-slate-900 flex items-center justify-center text-amber-500 font-bold animate-pulse">Summoning DungeonMind...</div>;
+    }
 
-  if (!data) return <div className="h-screen bg-slate-900 flex items-center justify-center text-amber-500 font-bold animate-pulse">Loading Campaign Data...</div>;
+    if (!gameParams) {
+        return <Lobby fb={fb} user={user} onJoin={joinCampaign} onOffline={() => joinCampaign('LOCAL', 'dm', 'admin', true)} />;
+    }
+
+    if (!data) {
+        return <div className="h-screen bg-slate-900 flex items-center justify-center text-amber-500 font-bold animate-pulse">Loading Campaign Data...</div>;
+    }
 
 
   return (
     <div className="fixed inset-0 w-full h-full flex flex-col md:flex-row bg-slate-900 text-slate-200 font-sans overflow-hidden">
-       <Sidebar view={currentView} setView={setCurrentView} onExit={() => { localStorage.removeItem('dm_last_code'); leaveCampaign(); }} />
+       <Sidebar view={currentView} setView={setCurrentView} onExit={leaveCampaign} />
        <main className="flex-1 flex flex-col overflow-hidden relative w-full h-full">
            <div className="shrink-0 bg-slate-900/95 backdrop-blur border-b border-slate-800 pt-safe z-50">
                <div className="h-14 flex items-center justify-between px-4">
                    <div className="flex gap-2 items-center">
-                       <div className={`w-2 h-2 rounded-full shadow-[0_0_10px_rgba(34,197,94,0.5)] ${gameParams?.isOffline ? 'bg-slate-500' : 'bg-green-500'}`}></div>
+                       <div className={`w-2 h-2 rounded-full shadow-[0_0_10px_rgba(34,197,94,0.5)] ${gameParams?.isOffline || !isConnected ? 'bg-slate-500' : 'bg-green-500'}`}></div>
                        <span className="text-sm font-bold text-amber-500 truncate fantasy-font tracking-wide">{gameParams?.code} • {possessedNpcId ? "POSSESSING NPC" : data?.campaign?.location}</span>
                    </div>
                    <div className="flex gap-2">
@@ -747,7 +720,7 @@ function DungeonMindApp() {
                   apiKey={apiKey} setApiKey={setApiKey} 
                   role={effectiveRole} updateCloud={updateCloud} 
                   code={gameParams.code} user={user} 
-                  onExit={() => { localStorage.removeItem('dm_last_code'); leaveCampaign(); }} 
+                  onExit={leaveCampaign} 
                   aiProvider={aiProvider} setAiProvider={setAiProvider} 
                   openAiModel={openAiModel} setOpenAiModel={setOpenAiModel} 
                   puterModel={puterModel} setPuterModel={setPuterModel} 

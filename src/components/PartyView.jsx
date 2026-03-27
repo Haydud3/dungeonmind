@@ -246,7 +246,7 @@ const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView,
                             </div>
                             <div className="p-4 relative -mt-8">
                                 <div className="flex justify-between items-end">
-                                    <div className="w-16 h-16 rounded-xl bg-slate-800 border-2 border-slate-600 shadow-2xl flex items-center justify-center overflow-hidden">
+                                    <div className="w-16 h-16 rounded-xl bg-slate-800 border-2 border-amber-500 shadow-2xl flex items-center justify-center overflow-hidden">
                                         {p.image ? <img src={p.image} className="w-full h-full object-cover" /> : <span className="text-2xl font-bold text-slate-500">{p.name?.[0]}</span>}
                                     </div>
                                     <div className="flex-1 ml-3 mb-1">
