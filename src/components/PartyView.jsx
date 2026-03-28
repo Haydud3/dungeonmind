@@ -6,8 +6,11 @@ import { useCharacterStore } from '../stores/useCharacterStore';
 import { parsePdf } from '../utils/dndBeyondParser.js';
 import { enrichCharacter } from '../utils/srdEnricher.js';
 
+import { useNewCampaign } from '../contexts/NewCampaignProvider';
+
 // START CHANGE: Add generatePlayer to props
-const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView, user, aiHelper, onDiceRoll, diceLog, onLogAction, edition, apiKey, generatePlayer }) => {
+const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, onLogAction, edition, apiKey, generatePlayer }) => {
+    const { updateCampaign } = useNewCampaign();
     const [showCreationMenu, setShowCreationMenu] = useState(false);
     // START CHANGE: Add Forge State
     const [showForge, setShowForge] = useState(false);
@@ -47,14 +50,9 @@ const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView,
         // Double check specifically for undefined here as a failsafe
         const cleanChar = JSON.parse(JSON.stringify(updatedChar, (k, v) => v === undefined ? null : v));
         
-        if (savePlayer) {
-            await savePlayer(cleanChar);
-        } else {
-            // Use dataRef.current to get the LATEST players list
-            const currentData = dataRef.current;
-            const newPlayers = (currentData.players || []).map(p => p.id === cleanChar.id ? cleanChar : p);
-            updateCloud({ ...currentData, players: newPlayers });
-        }
+        const currentData = dataRef.current;
+        const newPlayers = (currentData.players || []).map(p => p.id === cleanChar.id ? cleanChar : p);
+        updateCampaign({ players: newPlayers });
     };
 
     const openSheet = (character) => {
@@ -93,19 +91,15 @@ const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView,
         // Sanitization
         const cleanChar = JSON.parse(JSON.stringify(finalChar, (k, v) => v === undefined ? null : v));
         
-        if(savePlayer) {
-            savePlayer(cleanChar);
+        let newPlayers;
+        if (existingIndex !== -1) {
+            newPlayers = [...currentData.players];
+            newPlayers[existingIndex] = cleanChar;
+            alert(`Updated existing hero: ${cleanChar.name}`);
         } else {
-            let newPlayers;
-            if (existingIndex !== -1) {
-                newPlayers = [...currentData.players];
-                newPlayers[existingIndex] = cleanChar;
-                alert(`Updated existing hero: ${cleanChar.name}`);
-            } else {
-                newPlayers = [...(currentData.players || []), cleanChar];
-            }
-            updateCloud({ ...currentData, players: newPlayers }, true);
+            newPlayers = [...(currentData.players || []), cleanChar];
         }
+        updateCampaign({ players: newPlayers });
         // END CHANGE
 
         setShowForge(false);
@@ -175,12 +169,9 @@ const PartyView = ({ data, role, updateCloud, savePlayer, deletePlayer, setView,
     const handleDelete = (id, e) => {
         e.stopPropagation();
         if (!confirm("Delete this hero permanently?")) return;
-        if(deletePlayer) deletePlayer(id);
-        else {
-            const currentData = dataRef.current;
-            const newPlayers = currentData.players.filter(p => p.id !== id);
-            updateCloud({ ...currentData, players: newPlayers }, true);
-        }
+        const currentData = dataRef.current;
+        const newPlayers = currentData.players.filter(p => p.id !== id);
+        updateCampaign({ players: newPlayers });
     };
 
     if (viewingCharacterId) {

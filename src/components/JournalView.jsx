@@ -1,10 +1,13 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useNewCampaign } from '../contexts/NewCampaignProvider';
 // --- CHANGES: Import the new Editor and Icon ---
 import JournalPageEditor from './JournalPageEditor';
 import Icon from './Icon';
 // --- END OF CHANGES ---
 
-const JournalView = ({ data, role, userId, aiHelper, onSavePage, onDeletePage, onClose }) => {
+const JournalView = ({ role, userId, aiHelper, onClose }) => {
+    const { campaign, journal_pages, saveJournalPage, deleteJournalPage } = useNewCampaign();
+    const data = { ...campaign, journal_pages };
     const [activePageId, setActivePageId] = useState(null);
 
     // --- CHANGES: Keep filtering logic, but removed isEditing/Outline state ---
@@ -31,7 +34,7 @@ const JournalView = ({ data, role, userId, aiHelper, onSavePage, onDeletePage, o
             isPublic: false,
             created: Date.now()
         };
-        if (onSavePage) onSavePage(newId, newPage);
+        saveJournalPage(newId, newPage);
         setActivePageId(newId);
     };
 
@@ -44,9 +47,9 @@ const JournalView = ({ data, role, userId, aiHelper, onSavePage, onDeletePage, o
         return (
             <JournalPageEditor
                 page={activePage}
-                onSave={onSavePage}
+                onSave={saveJournalPage}
 // --- CHANGES: Pass players list to Editor for permission handling ---
-                onDelete={(id) => { onDeletePage(id); setActivePageId(null); }}
+                onDelete={(id) => { deleteJournalPage(id); setActivePageId(null); }}
                 onBack={() => setActivePageId(null)}
                 aiHelper={aiHelper}
                 players={data.players || []} 

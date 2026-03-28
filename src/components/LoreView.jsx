@@ -2,8 +2,10 @@ import React, { useState, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone'; 
 import { ingestPDF, packLore } from '../utils/loreEngine';
 import Icon from './Icon';
+import { useNewCampaign } from '../contexts/NewCampaignProvider';
 
-const LoreView = ({ data, aiHelper, pdfChunks, setPdfChunks, onUploadLore }) => {
+const LoreView = ({ aiHelper }) => {
+    const { campaign: data, loreChunks, uploadLore } = useNewCampaign();
     const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState([]);
     const [isProcessing, setIsProcessing] = useState(false);
@@ -24,11 +26,11 @@ const LoreView = ({ data, aiHelper, pdfChunks, setPdfChunks, onUploadLore }) => 
             const volumes = packLore(chunks);
             
             // 3. Upload (Using destructure, NOT props.onUploadLore)
-            if (onUploadLore) {
-                await onUploadLore(volumes);
+            if (uploadLore) {
+                await uploadLore(volumes);
                 alert(`Success! Assimilated ${file.name} (${chunks.length} pages).`);
             } else {
-                console.error("onUploadLore function is missing!");
+                console.error("uploadLore function is missing!");
                 alert("Error: Upload function not connected.");
             }
             
@@ -52,7 +54,7 @@ const LoreView = ({ data, aiHelper, pdfChunks, setPdfChunks, onUploadLore }) => 
     const handleSearch = () => {
         if (!searchQuery.trim()) { setSearchResults([]); return; }
         const lowerQ = searchQuery.toLowerCase();
-        const hits = (pdfChunks || []).filter(c => c.content.toLowerCase().includes(lowerQ)).slice(0, 10);
+        const hits = (loreChunks || []).filter(c => c.content.toLowerCase().includes(lowerQ)).slice(0, 10);
         setSearchResults(hits);
     };
 

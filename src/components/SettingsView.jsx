@@ -1,16 +1,17 @@
 import React, { useState } from 'react';
 import Icon from './Icon';
+import { useNewCampaign } from '../contexts/NewCampaignProvider';
 
 const SettingsView = ({ 
-    data, setData, 
     apiKey, setApiKey, 
-    role, updateCloud, 
+    role, 
     code, user, onExit, 
     aiProvider, setAiProvider, 
     openAiModel, setOpenAiModel, 
-    puterModel, setPuterModel, 
-    banPlayer, kickPlayer, unbanPlayer 
+    puterModel, setPuterModel
 }) => {
+    const { campaign, updateCampaign, kickPlayer, banPlayer, unbanPlayer } = useNewCampaign();
+    const data = campaign; // for compatibility
     const [activeTab, setActiveTab] = useState('general');
     
     // START CHANGE: Robust character detection (handles string/number mismatches)
@@ -41,16 +42,13 @@ const SettingsView = ({
             : p
         );
         
-        // Update local state AND cloud to ensure UI consistency
-        const newData = { ...data, players: updatedPlayers };
-        setData(newData);
-        updateCloud(newData);
+        updateCampaign({ players: updatedPlayers });
         alert("Character Integration Updated!");
     };
     // END CHANGE
 
     const handleBibleSave = () => {
-        updateCloud({ ...data, campaign: { ...data.campaign, genesis: bibleData } });
+        updateCampaign({ 'campaign.genesis': bibleData });
         alert("Campaign Bible Updated!");
     };
 
@@ -60,8 +58,7 @@ const SettingsView = ({
         const newAssignments = { ...data.assignments, [uid]: charId };
         // (Removed the 'delete' line so the empty value actually saves to the cloud)
         
-        setData(prev => ({ ...prev, assignments: newAssignments }));
-        updateCloud({ ...data, assignments: newAssignments }, true);
+        updateCampaign({ assignments: newAssignments });
         // END CHANGE
     };
 
@@ -83,7 +80,7 @@ const SettingsView = ({
             newDmIds.push(uid);
         }
 
-        updateCloud({ ...data, dmIds: newDmIds });
+        updateCampaign({ dmIds: newDmIds });
     };
 
     // START CHANGE: Safe Exit Handler to prevent Auto-Join loop
@@ -133,7 +130,7 @@ const SettingsView = ({
                                     <label className="block text-xs uppercase font-bold text-slate-500 mb-1">Edition / Ruleset</label>
                                     <select 
                                         value={data.config?.edition || '2014'} 
-                                        onChange={(e) => updateCloud({ ...data, config: { ...data.config, edition: e.target.value } })}
+                                        onChange={(e) => updateCampaign({ 'config.edition': e.target.value })}
                                         className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white focus:border-indigo-500 outline-none"
                                         disabled={role !== 'dm'}
                                     >
@@ -146,7 +143,7 @@ const SettingsView = ({
                                     <input 
                                         type="checkbox" 
                                         checked={data.config?.strictMode || false} 
-                                        onChange={(e) => updateCloud({ ...data, config: { ...data.config, strictMode: e.target.checked } })}
+                                        onChange={(e) => updateCampaign({ 'config.strictMode': e.target.checked })}
                                         disabled={role !== 'dm'}
                                         className="w-5 h-5 accent-indigo-500"
                                     />
@@ -161,7 +158,7 @@ const SettingsView = ({
                                     <input 
                                         type="checkbox" 
                                         checked={data.config?.mobileCompact || false} 
-                                        onChange={(e) => updateCloud({ ...data, config: { ...data.config, mobileCompact: e.target.checked } })}
+                                        onChange={(e) => updateCampaign({ 'config.mobileCompact': e.target.checked })}
                                         className="w-5 h-5 accent-indigo-500"
                                     />
                                     <div>

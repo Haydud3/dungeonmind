@@ -1,7 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import Icon from './Icon';
+import { useNewCampaign } from '../contexts/NewCampaignProvider';
+import * as fb from '../firebase';
 
-const Lobby = ({ fb, user, onJoin, onOffline }) => {
+const Lobby = ({ user }) => {
+    const { joinCampaign } = useNewCampaign();
     const [joinCode, setJoinCode] = useState("");
     const [isLoggingIn, setIsLoggingIn] = useState(false);
     const [recents, setRecents] = useState([]);
@@ -31,13 +34,13 @@ const Lobby = ({ fb, user, onJoin, onOffline }) => {
     const createNew = () => {
         const newCode = Math.random().toString(36).substring(2, 8).toUpperCase();
         addToRecents(newCode, 'dm');
-        onJoin(newCode, 'dm', user ? user.uid : 'anon');
+        joinCampaign(newCode, 'dm', user ? user.uid : 'anon');
     };
 
     const joinExisting = () => {
         if(!joinCode) return;
         addToRecents(joinCode.toUpperCase(), 'player');
-        onJoin(joinCode.toUpperCase(), 'player', user ? user.uid : 'anon');
+        joinCampaign(joinCode.toUpperCase(), 'player', user ? user.uid : 'anon');
     };
 
     const deleteCampaign = async (e, item) => {
@@ -90,7 +93,7 @@ const Lobby = ({ fb, user, onJoin, onOffline }) => {
                         <div className="text-xs uppercase font-bold text-slate-500 mb-2 ml-1">Recent Adventures</div>
                         <div className="space-y-2 max-h-48 overflow-y-auto custom-scroll">
                             {recents.map((r, i) => (
-                                <div key={i} onClick={() => onJoin(r.code, r.role, user ? user.uid : 'anon')} className="group flex items-center justify-between bg-slate-800/50 hover:bg-slate-700 border border-slate-700 hover:border-amber-500/30 p-3 rounded-lg cursor-pointer transition-all">
+                                <div key={i} onClick={() => joinCampaign(r.code, r.role, user ? user.uid : 'anon')} className="group flex items-center justify-between bg-slate-800/50 hover:bg-slate-700 border border-slate-700 hover:border-amber-500/30 p-3 rounded-lg cursor-pointer transition-all">
                                     <div className="flex flex-col"><span className="font-mono font-bold text-amber-500 tracking-wider">{r.code}</span><span className="text-[10px] text-slate-400 uppercase">{r.role}</span></div>
                                     <div className="flex items-center gap-2">
                                         <span className="text-[10px] text-slate-500 mr-2">{new Date(r.date).toLocaleDateString()}</span>
@@ -102,7 +105,7 @@ const Lobby = ({ fb, user, onJoin, onOffline }) => {
                     </div>
                 )}
                 
-                <button onClick={onOffline} className="w-full text-slate-500 hover:text-slate-300 text-xs mt-4 py-2">Continue Offline (Local Only)</button>
+                <button onClick={() => joinCampaign('LOCAL', 'dm', 'admin', true)} className="w-full text-slate-500 hover:text-slate-300 text-xs mt-4 py-2">Continue Offline (Local Only)</button>
             </div>
         </div>
     );

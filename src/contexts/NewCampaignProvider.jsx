@@ -1,65 +1,240 @@
-import React, { useState, useEffect, useContext } from 'react';
-import NewCampaignContext from './NewCampaignContext';
-import { useCampaign } from './CampaignProvider'; // For getting the campaign code
+import React, { createContext, useContext, useState, useEffect } from 'react';
 import * as fb from '../firebase';
-import { NEW_CAMPAIGN_STRUCTURE } from '../types/campaign';
+import { doc, onSnapshot, updateDoc, deleteField, arrayUnion, arrayRemove, setDoc, deleteDoc, collection, query, orderBy, addDoc, writeBatch, getDocs } from '../firebase';
 
-const NewCampaignProvider = ({ children }) => {
-    const { gameParams, user } = useCampaign();
-    const [campaignData, setCampaignData] = useState(NEW_CAMPAIGN_STRUCTURE);
-    const [isConnected, setIsConnected] = useState(true);
-
-    useEffect(() => {
-        if (!gameParams || gameParams.isOffline || !user) {
-            return;
-        }
-
-        const campaignRef = fb.doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code);
-
-        const unsubscribe = fb.onSnapshot(campaignRef, (doc) => {
-            if (doc.exists()) {
-                const data = doc.data();
-                // Here you would perform a migration from the old data structure to the new one.
-                // For now, we'll just set the data as is.
-                setCampaignData(data);
-                setIsConnected(!doc.metadata.fromCache);
-            } else {
-                // Handle case where campaign doesn't exist
-                if (gameParams.role === 'dm') {
-                    fb.setDoc(campaignRef, {
-                        ...NEW_CAMPAIGN_STRUCTURE,
-                        hostId: user.uid,
-                        dmIds: [user.uid],
-                        campaignInfo: {
-                            ...NEW_CAMPAIGN_STRUCTURE.campaignInfo,
-                            name: `${user.displayName}'s Campaign`,
-                        }
-                    });
-                }
-            }
-        });
-
-        return () => unsubscribe();
-    }, [gameParams, user]);
-
-    const value = {
-        campaignData,
-        isConnected,
-    };
-
-    return (
-        <NewCampaignContext.Provider value={value}>
-            {children}
-        </NewCampaignContext.Provider>
-    );
-};
+const NewCampaignContext = createContext(null);
 
 export const useNewCampaign = () => {
     const context = useContext(NewCampaignContext);
     if (!context) {
-        throw new Error('useNewCampaign must be used within a NewCampaignProvider');
+        throw new Error("useNewCampaign must be used within a NewCampaignProvider");
     }
     return context;
-}
+};
 
-export default NewCampaignProvider;
+export const NewCampaignProvider = ({ children }) => {
+    const [gameParams, setGameParams] = useState(null);
+    const [campaign, setCampaign] = useState(null);
+    const [chatLog, setChatLog] = useState([]);
+    const [journal_pages, setJournalPages] = useState({});
+    const [error, setError] = useState(null);
+    const [user, setUser] = useState(() => fb.auth.currentUser);
+
+    useEffect(() => {
+        const unsubscribe = fb.onAuthStateChanged(fb.auth, setUser);
+        return unsubscribe;
+    }, []);
+
+    useEffect(() => {
+        const lastCampaign = localStorage.getItem('dungeonmind_last_campaign');
+        if (lastCampaign) {
+            try {
+                const parsed = JSON.parse(lastCampaign);
+                if (parsed.code) {
+                    setGameParams(parsed);
+                }
+            } catch (e) {
+                console.error("Failed to parse last campaign data:", e);
+                localStorage.removeItem('dungeonmind_last_campaign');
+            }
+        }
+    }, []);
+
+    const [loreChunks, setLoreChunks] = useState([]);
+
+    useEffect(() => {
+        if (!gameParams || gameParams.isOffline) {
+            setCampaign(null);
+            setChatLog([]);
+            setJournalPages({});
+            setLoreChunks([]);
+            return;
+        }
+
+        const campaignRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code);
+
+        const unsubCampaign = onSnapshot(campaignRef, (doc) => {
+            if (doc.exists()) {
+                setCampaign(doc.data());
+                setError(null);
+            } else {
+                setError("Campaign not found.");
+                setCampaign(null);
+            }
+        }, (err) => {
+            console.error("Error listening to campaign:", err);
+            setError("Failed to listen to campaign updates.");
+            setCampaign(null);
+        });
+
+        const chatRef = query(collection(campaignRef, 'chat'), orderBy('timestamp', 'asc'));
+        const unsubChat = onSnapshot(chatRef, (snap) => {
+            setChatLog(snap.docs.map(d => ({...d.data(), id: d.id})));
+        });
+
+        const journalRef = query(collection(campaignRef, 'journal'), orderBy('created', 'desc'));
+        const unsubJournal = onSnapshot(journalRef, (snap) => {
+            const pages = {};
+            snap.docs.forEach(doc => {
+                pages[doc.id] = { id: doc.id, ...doc.data() };
+            });
+            setJournalPages(pages);
+        });
+
+        const loreRef = collection(campaignRef, 'lore');
+        const unsubLore = onSnapshot(loreRef, (snap) => {
+            let allChunks = [];
+            snap.docs.forEach(doc => { const v = doc.data(); if(v.chunks) allChunks = [...allChunks, ...v.chunks]; });
+            setLoreChunks(allChunks);
+        });
+
+        return () => {
+            unsubCampaign();
+            unsubChat();
+            unsubJournal();
+            unsubLore();
+        };
+    }, [gameParams]);
+
+    const updateCampaign = async (updates) => {
+        if (!gameParams || gameParams.isOffline) {
+            console.error("Cannot update campaign: no active campaign or in offline mode.");
+            return;
+        }
+        const campaignRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code);
+        try {
+            await updateDoc(campaignRef, updates);
+        } catch (err) {
+            console.error("Error updating campaign:", err);
+            setError("Failed to update campaign.");
+        }
+    };
+
+    const kickPlayer = async (targetUid) => {
+        if (!gameParams?.code || gameParams.isOffline) return;
+        const campaignRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code);
+        await updateDoc(campaignRef, { [`activeUsers.${targetUid}`]: deleteField() });
+    };
+
+    const banPlayer = async (targetUid) => {
+        if (!gameParams?.code || gameParams.isOffline) return;
+        const campaignRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code);
+        await updateDoc(campaignRef, { 
+            [`activeUsers.${targetUid}`]: deleteField(),
+            bannedUsers: arrayUnion(targetUid)
+        });
+    };
+
+    const unbanPlayer = async (targetUid) => {
+        if (!gameParams?.code || gameParams.isOffline) return;
+        const campaignRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code);
+        await updateDoc(campaignRef, { bannedUsers: arrayRemove(targetUid) });
+    };
+
+    const addToken = async (token) => {
+        if (!gameParams?.code) return;
+        const tokenRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'tokens_v2', String(token.id));
+        await setDoc(tokenRef, token);
+    };
+
+    const updateToken = async (tokenId, changes) => {
+        if (!gameParams?.code) return;
+        const tokenRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'tokens_v2', String(tokenId));
+        await setDoc(tokenRef, changes, { merge: true });
+    };
+
+    const deleteToken = async (tokenId) => {
+        if (!gameParams?.code) return;
+        const tokenRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'tokens_v2', String(tokenId));
+        await deleteDoc(tokenRef);
+    };
+
+    const sendMessage = async (message) => {
+        if (!gameParams?.code) return;
+        const chatRef = collection(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'chat');
+        await addDoc(chatRef, message);
+    };
+
+    const editMessage = async (messageId, newContent) => {
+        if (!gameParams?.code) return;
+        const messageRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'chat', messageId);
+        await updateDoc(messageRef, { content: newContent });
+    };
+
+    const deleteMessage = async (messageId) => {
+        if (!gameParams?.code) return;
+        const messageRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'chat', messageId);
+        await deleteDoc(messageRef);
+    };
+
+    const clearChat = async () => {
+        if (!gameParams?.code) return;
+        if (!confirm("Delete all chat history?")) return;
+
+        const chatRef = collection(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'chat');
+        const batch = writeBatch(fb.db);
+        const snapshot = await getDocs(chatRef);
+        snapshot.docs.forEach(doc => {
+            batch.delete(doc.ref);
+        });
+        await batch.commit();
+    };
+
+    const joinCampaign = (code, role, uid, isOffline) => {
+        const params = { code, role, uid, isOffline };
+        setGameParams(params);
+        if (!isOffline) { // Don't persist offline sessions
+            localStorage.setItem('dungeonmind_last_campaign', JSON.stringify({ code, role, isOffline }));
+        }
+    };
+
+    const leaveCampaign = () => {
+        setGameParams(null);
+        localStorage.removeItem('dungeonmind_last_campaign');
+    };
+
+    const saveJournalPage = async (pageId, pageData) => {
+        if (!gameParams?.code) return;
+        const pageRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'journal', pageId);
+        await setDoc(pageRef, pageData, { merge: true });
+    };
+
+    const deleteJournalPage = async (pageId) => {
+        if (!gameParams?.code) return;
+        const pageRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'journal', pageId);
+        await deleteDoc(pageRef);
+    };
+
+    const uploadLore = async (volumes) => {
+        if (!gameParams?.code) return;
+        
+        try {
+            // 1. Upload each volume (Using loop instead of batch to avoid size limits on large PDFs)
+            for (let i = 0; i < volumes.length; i++) {
+                const volId = `vol_${Date.now()}_${i}`;
+                const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'lore', volId);
+                await setDoc(ref, {
+                    id: volId,
+                    chunks: volumes[i],
+                    timestamp: Date.now(),
+                    type: 'pdf_volume'
+                });
+            }
+        } catch (e) {
+            console.error("Error uploading lore:", e);
+            alert("Failed to save to cloud. Check console.");
+        }
+    };
+
+    const deleteHandout = async (handoutId) => {
+        if (!gameParams?.code) return;
+        const newHandouts = campaign.handouts.filter(h => h.id !== handoutId);
+        await updateCampaign({ handouts: newHandouts });
+    };
+
+    return (
+        <NewCampaignContext.Provider value={{ user, campaign, chatLog, journal_pages, loreChunks, error, gameParams, joinCampaign, leaveCampaign, updateCampaign, kickPlayer, banPlayer, unbanPlayer, addToken, updateToken, deleteToken, sendMessage, editMessage, deleteMessage, clearChat, saveJournalPage, deleteJournalPage, uploadLore, deleteHandout }}>
+            {children}
+        </NewCampaignContext.Provider>
+    );
+};

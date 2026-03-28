@@ -2,8 +2,11 @@ import React, { useState } from 'react';
 import Icon from './Icon';
 import { uploadImage, imageElementToBlob } from '../utils/storageUtils';
 import { useToast } from './ToastProvider';
+import { useNewCampaign } from '../contexts/NewCampaignProvider';
 
-const WorldCreator = ({ data, role, updateCloud, updateMapState, aiHelper, apiKey }) => {
+const WorldCreator = ({ role, aiHelper, apiKey }) => {
+    const { campaign, updateCampaign } = useNewCampaign();
+    const data = campaign;
     const [generatingNode, setGeneratingNode] = useState(null); // The index being generated
     const [vibe, setVibe] = useState('');
     const toast = useToast();
@@ -50,7 +53,7 @@ const WorldCreator = ({ data, role, updateCloud, updateMapState, aiHelper, apiKe
             // 4. Save to Cloud
             const newLoc = { ...json, image: imageUrl, id: Date.now() };
             const newLocations = [...locations, newLoc];
-            updateCloud({ ...data, locations: newLocations });
+            updateCampaign({ locations: newLocations });
             
             toast(`Discovered: ${json.name}`, "success");
             setVibe("");
@@ -64,13 +67,12 @@ const WorldCreator = ({ data, role, updateCloud, updateMapState, aiHelper, apiKe
 
     const deleteLocation = (id) => {
         if (confirm("Destroy this location?")) {
-            updateCloud({ ...data, locations: locations.filter(l => l.id !== id) });
+            updateCampaign({ locations: locations.filter(l => l.id !== id) });
         }
     };
 
     const sendToTable = (loc) => {
-        updateMapState('set_image', loc.image);
-        updateCloud({ ...data, campaign: { ...data.campaign, location: loc.name } });
+        updateCampaign({ 'campaign.activeMap.url': loc.image, 'campaign.location': loc.name });
         toast(`Projecting ${loc.name} to Table`, "success");
     };
 

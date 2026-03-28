@@ -29,7 +29,12 @@ ChunkedImage.blotName = 'chunkedImage';
 ChunkedImage.tagName = 'img';
 Quill.register(ChunkedImage, true);
 
-const HandoutEditor = ({ onSave, onCancel, savedHandouts = [], onDelete, campaignCode, role, onLocalReveal }) => {
+import { useNewCampaign } from '../contexts/NewCampaignProvider';
+
+const HandoutEditor = ({ onCancel, onLocalReveal }) => {
+    const { campaign, updateCampaign, deleteHandout } = useNewCampaign();
+    const savedHandouts = campaign?.handouts || [];
+    const role = (campaign && campaign.dmIds?.includes(campaign.hostId)) ? 'dm' : 'player';
     const [activeTab, setActiveTab] = useState(role === 'dm' ? 'compose' : 'history');
     const toast = useToast();
     
@@ -91,17 +96,26 @@ const HandoutEditor = ({ onSave, onCancel, savedHandouts = [], onDelete, campaig
     const handleSubmit = (reveal = false) => {
         if (!title.trim()) return toast("Please title this document.", "error");
         
-        onSave({
+        const handout = {
             id: id || Date.now(),
             title,
             theme,
             imageUrl,
             content,
             timestamp: Date.now(),
-            // START CHANGE: Implement isDraft status
             isDraft: !reveal,
-            revealed: reveal // New flag to trigger auto-open for players
-            // END CHANGE
+            revealed: reveal
+        };
+
+        const isExisting = handout.id && savedHandouts.some(x => x.id === handout.id);
+      
+        const updatedHandouts = isExisting 
+            ? savedHandouts.map(x => x.id === handout.id ? handout : x)
+            : [handout, ...savedHandouts];
+
+        updateCampaign({ 
+            handouts: updatedHandouts, 
+            'campaign.activeHandout': handout 
         });
         toast(reveal ? "Saved & Revealed to Players!" : "Handout Saved (Draft)", "success");
     };
@@ -224,6 +238,8 @@ const HandoutEditor = ({ onSave, onCancel, savedHandouts = [], onDelete, campaig
                         </div>
                     )}
 
+
+
                     {/* HISTORY TAB */}
                     {activeTab === 'history' && (
                         <div className="space-y-8">
@@ -240,7 +256,7 @@ const HandoutEditor = ({ onSave, onCancel, savedHandouts = [], onDelete, campaig
                                             <div key={h.id} className="bg-slate-900 border border-slate-700 p-4 rounded-xl hover:border-amber-500 transition-all cursor-pointer group" onClick={() => loadHandout(h)}>
                                                 <div className="flex justify-between items-start mb-2">
                                                     <h4 className="font-bold text-white truncate">{h.title}</h4>
-                                                    <button onClick={(e) => { e.stopPropagation(); onDelete(h.id); }} className="text-slate-600 hover:text-red-500 opacity-0 group-hover:opacity-100"><Icon name="trash-2" size={16}/></button>
+                                                    <button onClick={(e) => { e.stopPropagation(); deleteHandout(h.id); }} className="text-slate-600 hover:text-red-500 opacity-0 group-hover:opacity-100"><Icon name="trash-2" size={16}/></button>
                                                 </div>
                                                 <p className="text-xs text-slate-500 mb-3">{new Date(h.timestamp).toLocaleDateString()}</p>
                                                 <div className={`h-24 rounded p-2 text-[10px] overflow-hidden opacity-80 ${h.theme === 'parchment' ? 'bg-[#f5e6c8] text-amber-900' : h.theme === 'stone' ? 'bg-[#1c1917] text-slate-400' : 'bg-white text-black'}`}>
@@ -271,7 +287,7 @@ const HandoutEditor = ({ onSave, onCancel, savedHandouts = [], onDelete, campaig
                                                     {h.title}
                                                     <Icon name="eye" size={12} className="text-blue-400 opacity-50"/>
                                                 </h4>
-                                                {role === 'dm' && <button onClick={(e) => { e.stopPropagation(); onDelete(h.id); }} className="text-slate-600 hover:text-red-500 opacity-0 group-hover:opacity-100"><Icon name="trash-2" size={16}/></button>}
+                                                {role === 'dm' && <button onClick={(e) => { e.stopPropagation(); deleteHandout(h.id); }} className="text-slate-600 hover:text-red-500 opacity-0 group-hover:opacity-100"><Icon name="trash-2" size={16}/></button>}
                                             </div>
                                             <p className="text-xs text-slate-500 mb-3">{new Date(h.timestamp).toLocaleDateString()}</p>
                                             <div className={`h-24 rounded p-2 text-[10px] overflow-hidden opacity-60 grayscale-[0.5] ${h.theme === 'parchment' ? 'bg-[#f5e6c8] text-amber-900' : h.theme === 'stone' ? 'bg-[#1c1917] text-slate-400' : 'bg-white text-black'}`}>

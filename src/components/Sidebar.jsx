@@ -1,7 +1,9 @@
 import React from 'react';
 import Icon from './Icon';
+import { useNewCampaign } from '../contexts/NewCampaignProvider';
 
-const Sidebar = ({ view, setView, onExit }) => {
+const Sidebar = ({ view, setView }) => {
+    const { leaveCampaign } = useNewCampaign();
     const navItems = [
         { id: 'session', icon: 'message-circle', label: 'Chat' },
         { id: 'journal', icon: 'book', label: 'Journal' },
@@ -36,7 +38,7 @@ const Sidebar = ({ view, setView, onExit }) => {
             </nav>
 
             <div className="p-4 flex flex-col gap-4 items-center">
-                <button onClick={onExit} className="w-10 h-10 rounded-full bg-red-900/20 text-red-500 hover:bg-red-900/50 flex items-center justify-center transition-colors">
+                <button onClick={leaveCampaign} className="w-10 h-10 rounded-full bg-red-900/20 text-red-500 hover:bg-red-900/50 flex items-center justify-center transition-colors">
                     <Icon name="log-out" size={20}/>
                 </button>
             </div>

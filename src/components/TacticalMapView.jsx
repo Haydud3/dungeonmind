@@ -3,7 +3,7 @@ import { Canvas, useThree, useFrame } from '@react-three/fiber';
 import { MapControls, Grid, useTexture, DragControls, Html, useCursor, Line } from '@react-three/drei';
 import * as THREE from 'three';
 import { subscribeToMap, updateMap } from '../utils/mapService';
-import { useCampaign } from '../contexts/CampaignContext';
+import { useNewCampaign } from '../contexts/NewCampaignProvider';
 import AssetManager from './AssetManager';
 import Icon from './Icon';
 import { retrieveChunkedMap } from '../utils/storageUtils';
@@ -602,8 +602,9 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
   );
 };
 
-export default function TacticalMapView({ campaignCode, activeMapId, data, onOpenSheet, role }) {
-  const { updateToken, addToken, deleteToken } = useCampaign();
+export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet, role }) {
+  const { campaign, updateToken, addToken, deleteToken } = useNewCampaign();
+  const data = campaign;
   const cameraControllerRef = useRef();
   const [mapData, setMapData] = useState(null);
   const [selectedTokenId, setSelectedTokenId] = useState(null);

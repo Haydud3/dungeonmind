@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef } from 'react';
 import * as fb from './firebase'; 
 import Icon from './components/Icon';
 import Sidebar from './components/Sidebar';
-import { CampaignProvider, useCampaign } from './contexts/CampaignContext';
 import { ToastProvider, useToast } from './components/ToastProvider';
 import MobileNav from './components/MobileNav';
 import Lobby from './components/Lobby';
@@ -80,12 +79,12 @@ const DB_INIT_DATA = {
 
 const INITIAL_APP_STATE = { ...DB_INIT_DATA, players: [], journal_pages: {}, chatLog: [] };
 
+import { useNewCampaign } from './contexts/NewCampaignProvider';
+
 function DungeonMindApp() {
     const { 
-        data, setData, gameParams, joinCampaign, leaveCampaign, 
-        updateCampaign, updateCloud, savePlayer, deletePlayer, loreChunks, setLoreChunks,
-        kickPlayer, banPlayer, unbanPlayer, user, isConnected
-    } = useCampaign();
+        campaign: data, gameParams, joinCampaign, leaveCampaign, user
+    } = useNewCampaign();
     const toast = useToast();
 
   const BASE_PATH = '/dungeonmind';
@@ -208,428 +207,27 @@ function DungeonMindApp() {
   const effectiveRole = (data && user && data.dmIds?.includes(user.uid)) ? 'dm' : 'player';
 
   // --- HELPER FUNCTIONS ---
-  const saveJournalEntry = async (pageId, pageData) => {
-      if (!gameParams?.isOffline) {
-        const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'journal', pageId.toString());
-        await setDoc(ref, pageData, { merge: true });
-      }
-  };
+  const handleDiceRoll = () => console.log('handleDiceRoll called');
+  const queryAiService = async () => console.log('queryAiService called');
+  const handleInitiative = () => console.log('handleInitiative called');
+  const generatePlayer = () => console.log('generatePlayer called');
+  const generateNpc = () => console.log('generateNpc called');
+  const savePlayer = () => console.log('savePlayer called');
+  const setLoreChunks = () => console.log('setLoreChunks called');
+  const uploadLore = () => console.log('uploadLore called');
+  const handleHandoutSave = () => console.log('handleHandoutSave called');
+  const handleHandoutDelete = () => console.log('handleHandoutDelete called');
+  const updateCloud = () => console.log('updateCloud called');
+  const sendChatMessage = () => console.log('sendChatMessage called');
+  const isConnected = true; // Placeholder for connection status
 
-  const deleteJournalEntryFunc = async (pageId) => {
-      const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'journal', pageId.toString());
-      await deleteDoc(ref);
-  };
-
-  const queryAiService = async (messages) => {
-      const hasKey = aiProvider === 'puter' || apiKey;
-      if (!hasKey) { toast("Error: No AI Provider set.", "error"); return "Config Error."; }
-      try {
-          if(aiProvider === 'puter') {
-              if (!window.puter) throw new Error("Puter.js not loaded");
-              if (!window.puter.auth.isSignedIn()) await window.puter.auth.signIn();
-              const response = await window.puter.ai.chat(messages, { model: puterModel });
-              return response?.message?.content;
-          } else if(aiProvider === 'gemini') {
-                const combined = messages.map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n');
-                const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({contents:[{parts:[{text:combined}]}]}) });
-                const j = await r.json();
-                return j.candidates?.[0]?.content?.parts?.[0]?.text;
-          } else {
-              const r = await fetch('https://api.openai.com/v1/chat/completions', { method:'POST', headers:{'Content-Type':'application/json', 'Authorization':`Bearer ${apiKey}`}, body:JSON.stringify({model: openAiModel, messages: messages}) });
-              const j = await r.json();
-              return j.choices?.[0]?.message?.content;
-          }
-      } catch(e) { console.error(e); return "AI Error"; }
-  };
-
-  const getSenderName = () => {
-      // 1. NPC Possession (Highest Priority)
-      if (possessedNpcId) return (data.npcs?.find(n => n.id === possessedNpcId)?.name || "Unknown NPC") + " (NPC)";
-      
-      // 2. DM Identity
-      if (effectiveRole === 'dm') return "Dungeon Master";
-      
-      // 3. Player Character Identity
-      const charId = data.assignments?.[user?.uid];
-      const character = data.players?.find(p => p.id === charId);
-      if (character) return character.name;
-      
-      // 4. Fallback
-      return user?.email?.split('@')[0] || "User";
-  };
-
-  const sendChatMessage = async (content, type = 'chat-public', targetId = null) => {
-      if (!content.trim()) return;
-      setIsLoading(true);
-      const newMessage = { id: Date.now(), role: 'user', content, timestamp: Date.now(), senderId: user?.uid, senderName: getSenderName(), type, targetId };
-      const chatRef = collection(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'chat');
-      await addDoc(chatRef, newMessage);
-
-      setIsLoading(false);
-  };
-
-  const deleteMessage = async (id) => {
-      const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'chat', id);
-      await deleteDoc(ref);
-  };
-
-  const clearChat = async () => {
-      if (!confirm("Delete all chat history?")) return;
-      const batch = fb.writeBatch(fb.db);
-      data.chatLog.forEach(msg => {
-          const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'chat', msg.id.toString());
-          batch.delete(ref);
-      });
-      await batch.commit();
-  };
-
-  const handleDiceRoll = (formula, modifier = 0, label = "Roll") => {
-    // Legacy support for (d, silent) signature
-    let silent = false;
-    let mod = 0;
-    let lbl = label;
-    let sides = 20;
-
-    // Handle options object (used by character sheet)
-    if (typeof modifier === 'object' && modifier !== null) {
-        mod = modifier.modifier || 0;
-        lbl = modifier.alias || modifier.flavor || label;
-        silent = modifier.silent || (modifier.chat === false);
-    } else if (typeof modifier === 'number') {
-        mod = modifier;
-    } else if (typeof modifier === 'boolean') {
-        silent = modifier;
-    }
-
-    // Robust parsing for formula (e.g. "1d20", "1d20 + 5", 20)
-    if (typeof formula === 'string') {
-        const match = formula.match(/(\d+)?d(\d+)(?:\s*([+-])\s*(\d+))?/i);
-        if (match) {
-            sides = parseInt(match[2]);
-            if (match[3] && match[4] && mod === 0) {
-                const val = parseInt(match[4]);
-                mod = match[3] === '+' ? val : -val;
-            }
-        } else {
-            sides = parseInt(formula) || 20;
-        }
-    } else {
-        sides = formula;
-    }
-
-    return new Promise((resolve) => {
-        setRollingDice(null);
-        setTimeout(() => {
-            const roll = Math.floor(Math.random() * sides) + 1;
-            const total = roll + mod;
-            const isCrit = sides === 20 && roll === 20;
-            const isFail = sides === 20 && roll === 1;
-
-            setRollingDice({ die: formula, result: roll, id: Date.now(), total });
-            setTimeout(() => {
-                setDiceLog(prev => [{
-                    id: Date.now(), 
-                    die: lbl !== "Roll" ? lbl : formula, 
-                    formulaDisplay: `d${sides}${mod !== 0 ? (mod > 0 ? `+${mod}` : mod) : ''}`,
-                    result: total, 
-                    natural: roll,
-                    mod: mod
-                }, ...prev]);
-                
-                if (!silent && effectiveRole !== 'dm') {
-                    const modStr = mod >= 0 ? `+${mod}` : mod;
-                    const html = `<div class="flex flex-col text-xs dice-roll-result" data-total="${total}"><span class="font-bold text-slate-400 uppercase mb-1">${lbl}</span><div class="flex items-baseline gap-1"><span class="text-base ${isCrit ? 'text-green-400 font-bold' : isFail ? 'text-red-400 font-bold' : 'text-white'}">d${sides} (${roll})</span>${mod !== 0 ? `<span class="text-slate-500 text-xs">${modStr}</span>` : ''}<span class="text-slate-500 text-xs">=</span><span class="text-xl font-bold text-amber-500">${total}</span></div></div>`;
-                    sendChatMessage(html, 'roll-public');
-                }
-
-                resolve(total); 
-            }, 1000);
-            setTimeout(() => { setRollingDice(null); }, 4000); 
-        }, 50);
-    });
-  };
-
-  const generateLoc = async (type, note) => {
-      const res = await queryAiService([{role:'user', content:`Create Location JSON {name, type, desc} for ${type} ${note}`}]);
-      try { return JSON.parse(res.match(/\{[\s\S]*\}/)[0]); } catch(e) { return null; }
-  };
-
-  const forgeEntity = async (name, type, instructions = "") => {
-      const myCharId = data.assignments?.[user?.uid];
-      const castList = buildCastList(data); // Option B: Identity Mapping
-
-      // 1. Search Lore (Option A: Character Sheets + Books + Journal)
-      const context = retrieveContext(name, loreChunks, data.journal_pages || {}, data.players, effectiveRole, myCharId);
-      
-      // 2. Build the System Prompt using the new engine logic
-      // Note: We are using buildPrompt here to wrap the schema and instructions
-      const systemPrompt = buildPrompt(
-          `Forge a D&D 5e ${type === 'pc' ? 'Player' : 'NPC'} for "${name}"`,
-          context,
-          "", // No chat history needed for forge
-          effectiveRole === 'player',
-          castList
-      );
-
-      const isPc = type === 'pc';
-      
-      // Define Schemas
-      const npcSchema = `{ name, race, class, cr, hp: { current, max }, ac, speed, stats: { STR, DEX, CON, INT, WIS, CHA }, senses: { darkvision, passivePerception }, customActions: [{ name, desc, type, hit, dmg }], features: [{ name, desc }], bio: { backstory, appearance } }`;
-      const pcSchema = `{ name, race, class, background, alignment, stats: { STR, DEX, CON, INT, WIS, CHA }, hp, ac, speed, senses, skills: [], features: [], equipment: [], image_prompt }`;
-
-      const finalAIPrompt = `
-      ${systemPrompt}
-      
-      TASK: Output valid JSON matching this schema: ${isPc ? pcSchema : npcSchema}
-      
-      CRITICAL NPC INSTRUCTION: The content in the [BOOK] and [PLAYER NOTES] sections is a STAT BLOCK OVERRIDE. 
-      - Use the provided AC, HP, Skill Mods, Spell Save DC, and Action/Spell usages (e.g., 1/day) LITERALLY. 
-      - DO NOT invent derived stats (like full Wizard spell slots) unless the source is completely silent and a required field is missing.
-      - For actions, prefer the customActions array for stat block entries.
-      - Preserve the flavor text exactly as given in the context.
-
-      ADDITIONAL USER INSTRUCTIONS: ${instructions}
-      JSON ONLY. NO MARKDOWN WRAPPERS.
-      `;
-
-      const res = await queryAiService([{ role: 'user', content: finalAIPrompt }]);
-      
-      try { 
-          const rawJson = JSON.parse(res.match(/\{[\s\S]*\}/)[0]);
-          
-          // 3. Sanitizer (The Safety Net)
-          // Fix capitalization or missing fields that break the UI
-          const sanitized = { ...rawJson };
-
-          // Fix HP if it came back as a number
-          if (typeof sanitized.hp === 'number') {
-              sanitized.hp = { current: sanitized.hp, max: sanitized.hp };
-          }
-          
-          // Fix Actions if they came back as 'actions' instead of 'customActions'
-          if (!sanitized.customActions && sanitized.actions) {
-              sanitized.customActions = sanitized.actions;
-          }
-
-          // Ensure basic strings exist
-          if (!sanitized.race && sanitized.Race) sanitized.race = sanitized.Race;
-          if (!sanitized.class && sanitized.Class) sanitized.class = sanitized.Class;
-          if (!sanitized.quirk) sanitized.quirk = "Forged by AI";
-
-          return sanitized;
-
-      } catch (e) { 
-          console.error("Forge Error:", e); 
-          return null; 
-      }
-  };
-
-  const generateNpc = (name, ctx) => forgeEntity(name, 'npc', ctx);
-  const generatePlayer = (name, ctx) => forgeEntity(name, 'pc', ctx);
-
-  const handleHandoutSave = (h) => {
-      const currentHandouts = data.handouts || [];
-      const isExisting = h.id && currentHandouts.some(x => x.id === h.id);
-      
-      const updatedHandouts = isExisting 
-          ? currentHandouts.map(x => x.id === h.id ? { ...h, timestamp: Date.now() } : x)
-          : [{ ...h, id: h.id || Date.now(), timestamp: Date.now() }, ...currentHandouts];
-
-      updateCampaign({ 
-          handouts: updatedHandouts, 
-          'campaign.activeHandout': h 
-      });
-      setShowHandoutCreator(false);
-  };
-
-  const handleHandoutDelete = (id) => {
-      const updatedHandouts = (data.handouts || []).filter(h => h.id !== id);
-      
-      const changes = { handouts: updatedHandouts };
-      if (data.campaign?.activeHandout?.id === id) {
-          changes['campaign.activeHandout'] = null;
-      }
-      updateCampaign(changes);
-  };
-
-  const handleInitiative = (charOrToken, roll = null) => {
-      // 1. If no manual roll provided, perform the roll automatically
-      if (roll === null) {
-          handleDiceRoll(20).then(result => {
-              // Calculate initiative using the character's stored modifier
-              const dex = charOrToken.stats?.dex || 10;
-              const dexMod = Math.floor((dex - 10) / 2);
-              const total = result + dexMod;
-              
-              // Recursive call with the final result
-              handleInitiative(charOrToken, total);
-          });
-          return;
-      }
-
-      // 2. Proceed with updating the combat tracker
-      const c = data.campaign?.combat;
-      const combatState = (c && c.active) ? c : { active: true, round: 1, turn: 0, combatants: [] };
-      
-      let combatants = [...(combatState.combatants || [])];
-      
-      const uniqueId = charOrToken.tokenId || charOrToken.id;
-      const idx = combatants.findIndex(x => x.id === uniqueId);
-
-      // Check for re-roll attempt by player (if they already have initiative)
-      if (effectiveRole === 'player' && idx > -1 && combatants[idx].init !== null && combatants[idx].init !== undefined) {
-          if (!confirm(`New roll of ${roll} detected. Replace existing score of ${combatants[idx].init}?`)) return;
-      }
-      
-      // FIX: Check if this ID belongs to a Player if type is not explicit
-      const isPlayer = data.players?.some(p => p.id === (charOrToken.characterId || charOrToken.id));
-      const finalType = charOrToken.type || (isPlayer ? 'pc' : 'npc');
-
-      const entry = { 
-          id: uniqueId, 
-          characterId: charOrToken.characterId || charOrToken.id,
-          name: charOrToken.name, 
-          init: roll, 
-          type: finalType, // Use the corrected type
-          image: charOrToken.image || charOrToken.img
-      };
-      
-      if (idx > -1) {
-          combatants[idx] = { ...combatants[idx], ...entry };
-      } else {
-          combatants.push(entry);
-      }
-      
-      combatants.sort((a,b) => (b.init || 0) - (a.init || 0));
-      updateCloud({ ...data, campaign: { ...data.campaign, combat: { ...combatState, combatants } } }, true);
-      
-      // Announce Initiative to Chat
-      if (effectiveRole !== 'dm') {
-          sendChatMessage(`rolled Initiative: <span class="text-amber-500 font-bold">${roll}</span>`, 'roll-public');
-      }
-  };
-
-  const updateCombatant = (id, changes) => {
-      const c = data.campaign?.combat;
-      if (!c) return;
-      let combatants = [...c.combatants];
-      let newTurn = c.turn;
-
-      if (id === 'reorder') {
-          // Identify who is currently taking their turn to prevent jumping
-          const activeCombatantId = combatants[c.turn]?.id;
-          combatants = changes;
-          
-          const newIdx = combatants.findIndex(x => x.id === activeCombatantId);
-          if (newIdx > -1) newTurn = newIdx;
-      } else {
-          const idx = combatants.findIndex(x => x.id === id);
-          if (idx > -1) {
-              combatants[idx] = { ...combatants[idx], ...changes };
-          }
-      }
-      
-      updateCloud({ ...data, campaign: { ...data.campaign, combat: { ...c, combatants, turn: newTurn } } });
-  };
-
-  const generateRecap = async (scope = 'recent') => {
-      setIsLoading(true);
-      
-      // 1. Filter Chat Log based on scope ('recent' = last 4h gap, 'full' = all)
-      const sessionThreshold = 4 * 60 * 60 * 1000; 
-      let relevantLogs = data.chatLog;
-      
-      if (scope === 'recent') {
-          let lastBreakIndex = 0;
-          for (let i = 1; i < data.chatLog.length; i++) {
-              if (data.chatLog[i].timestamp - data.chatLog[i-1].timestamp > sessionThreshold) {
-                  lastBreakIndex = i;
-              }
-          }
-          relevantLogs = data.chatLog.slice(lastBreakIndex);
-      }
-      
-      const logText = relevantLogs.map(m => `${m.senderName}: ${m.content}`).join('\n');
-
-      // 2. Build the Scribe Prompt
-      const prompt = `
-      You are the Campaign Scribe. Analyze this D&D session log and generate a structured summary.
-      
-      FORMAT AS HTML (Use <h3>, <ul>, <li>, <b>):
-      
-      <h3>⚔️ The Story So Far</h3>
-      (A dramatic, 2-paragraph narrative summary of the events)
-      
-      <h3>💰 The Ledger</h3>
-      <ul>
-         <li><b>Loot:</b> (List items found and who took them)</li>
-         <li><b>Gold:</b> (Total gp found)</li>
-         <li><b>Monsters:</b> (List defeated enemies)</li>
-      </ul>
-      
-      <h3>📜 Quest Log</h3>
-      <ul>
-         <li><b>Updates:</b> (New info on existing quests)</li>
-         <li><b>New Goals:</b> (Any new objectives started)</li>
-      </ul>
-
-      LOGS:
-      ${logText}
-      `;
-
-      // 3. Ask AI
-      const summary = await queryAiService([{ role: 'user', content: prompt }]);
-      
-      // 4. Create Journal Entry
-      const newPageId = Date.now().toString();
-      const newPage = {
-          id: newPageId,
-          title: `Session Recap - ${new Date().toLocaleDateString()}`,
-          content: summary,
-          timestamp: Date.now()
-      };
-      
-      await saveJournalEntry(newPageId, newPage);
-      
-      // 5. Open Journal
-      setCurrentView('journal');
-      setIsLoading(false);
-      return summary;
-  };
-
-  // NEW: Upload Lore
-  const uploadLore = async (volumes) => {
-      if (!gameParams?.code) return;
-      
-      try {
-          // 1. Upload each volume (Using loop instead of batch to avoid size limits on large PDFs)
-          for (let i = 0; i < volumes.length; i++) {
-              const volId = `vol_${Date.now()}_${i}`;
-              const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'lore', volId);
-              await setDoc(ref, {
-                  id: volId,
-                  chunks: volumes[i],
-                  timestamp: Date.now(),
-                  type: 'pdf_volume'
-              });
-          }
-          
-          // 2. Optimistic Update (Immediate access)
-          const allChunks = volumes.flat();
-          setLoreChunks(prev => [...prev, ...allChunks]);
-          
-      } catch (e) {
-          console.error("Error uploading lore:", e);
-          alert("Failed to save to cloud. Check console.");
-      }
-  };
 
     if (user === null) {
         return <div className="h-screen bg-slate-900 flex items-center justify-center text-amber-500 font-bold animate-pulse">Summoning DungeonMind...</div>;
     }
 
     if (!gameParams) {
-        return <Lobby fb={fb} user={user} onJoin={joinCampaign} onOffline={() => joinCampaign('LOCAL', 'dm', 'admin', true)} />;
+        return <Lobby user={user} />;
     }
 
     if (!data) {
@@ -656,34 +254,29 @@ function DungeonMindApp() {
            {/* UPDATED: Changed compact padding from 50px to 52px to match the new MobileNav height exactly */}
            <div className={`flex-1 overflow-hidden relative p-0 md:pb-0 ${data.config?.mobileCompact ? 'pb-[52px]' : 'pb-[70px]'}`}>
              {/* 1. CHAT (Session) */}
-              {currentView === 'session' && <SessionView data={data} chatLog={data.chatLog} inputText={inputText} setInputText={setInputText} 
-                  onSendMessage={sendChatMessage} 
-                  onEditMessage={()=>{}} 
-                  onDeleteMessage={deleteMessage} 
-                  clearChat={clearChat}
-                  isLoading={isLoading} role={effectiveRole} user={user} showTools={showTools} setShowTools={setShowTools} diceLog={diceLog} handleDiceRoll={handleDiceRoll} 
-                  onSavePage={saveJournalEntry} generateRecap={generateRecap} loreChunks={loreChunks} aiHelper={queryAiService}
-                  players={data.players}
-                  castList={buildCastList(data)}
-                  myCharId={data.assignments?.[user?.uid]}
+              {currentView === 'session' && <SessionView 
+                  inputText={inputText} setInputText={setInputText} 
+                  isLoading={isLoading} showTools={showTools} setShowTools={setShowTools} diceLog={diceLog} handleDiceRoll={handleDiceRoll} 
+                  aiHelper={queryAiService}
               />}
               
               {/* 2. JOURNAL */}
               {currentView === 'journal' && <JournalView 
-                  data={data} 
-                  role={effectiveRole} 
-                  userId={user?.uid} 
-                  myCharId={data.assignments?.[user?.uid]}
-                  onSavePage={saveJournalEntry} 
-                  onDeletePage={deleteJournalEntryFunc} 
                   aiHelper={queryAiService} 
               />}
               
               {/* 3. TACTICAL MAP */}
-              {currentView === 'map' && <TacticalMapView campaignCode={gameParams?.code} activeMapId={data.campaign?.activeMapId || 'test-map'} data={data} onOpenSheet={handleOpenSheet} role={effectiveRole} />}
+              {currentView === 'map' && <TacticalMapView campaignCode={gameParams?.code} activeMapId={data.activeMapId || 'test-map'} onOpenSheet={handleOpenSheet} />}
               
               {/* 4. PARTY (PCs) */}
-              {currentView === 'party' && <PartyView data={data} role={effectiveRole} activeChar={data.assignments?.[user?.uid]} updateCloud={updateCloud} savePlayer={savePlayer} deletePlayer={deletePlayer} setView={setCurrentView} user={user} aiHelper={queryAiService} onDiceRoll={handleDiceRoll} diceLog={diceLog} apiKey={apiKey} edition={data.config?.edition} onInitiative={handleInitiative} 
+              {currentView === 'party' && <PartyView 
+                  setView={setCurrentView} 
+                  aiHelper={queryAiService} 
+                  onDiceRoll={handleDiceRoll} 
+                  diceLog={diceLog} 
+                  apiKey={apiKey} 
+                  edition={data.config?.edition} 
+                  onInitiative={handleInitiative} 
                   generatePlayer={generatePlayer} 
                   onLogAction={(msg) => {
                       if (effectiveRole !== 'dm') {
@@ -693,7 +286,17 @@ function DungeonMindApp() {
               />}
 
               {/* 5. BESTIARY (NPCs) */}
-              {currentView === 'npcs' && <NpcView data={data} setData={setData} role={effectiveRole} updateCloud={updateCloud} generateNpc={generateNpc} setChatInput={setInputText} setView={setCurrentView} onPossess={setPossessedNpcId} aiHelper={queryAiService} apiKey={apiKey} edition={data.config?.edition} onDiceRoll={handleDiceRoll} diceLog={diceLog} onInitiative={handleInitiative} />}
+              {currentView === 'npcs' && <NpcView 
+                  generateNpc={generateNpc} 
+                  setChatInput={setInputText} 
+                  setView={setCurrentView} 
+                  aiHelper={queryAiService} 
+                  apiKey={apiKey} 
+                  edition={data.config?.edition} 
+                  onDiceRoll={handleDiceRoll} 
+                  diceLog={diceLog} 
+                  onInitiative={handleInitiative} 
+              />}
               
               {currentView === 'sheet' && (
                   <div className="flex-1 h-full overflow-hidden">
@@ -716,15 +319,12 @@ function DungeonMindApp() {
               
               {/* 7. SETTINGS */}
               {currentView === 'settings' && <SettingsView 
-                  data={data} setData={setData} 
                   apiKey={apiKey} setApiKey={setApiKey} 
-                  role={effectiveRole} updateCloud={updateCloud} 
-                  code={gameParams.code} user={user} 
+                  code={gameParams.code} 
                   onExit={leaveCampaign} 
                   aiProvider={aiProvider} setAiProvider={setAiProvider} 
                   openAiModel={openAiModel} setOpenAiModel={setOpenAiModel} 
                   puterModel={puterModel} setPuterModel={setPuterModel} 
-                  banPlayer={banPlayer} kickPlayer={kickPlayer} unbanPlayer={unbanPlayer} 
               />}
 
               {/* SIDE PANELS */}
@@ -818,12 +418,16 @@ function DungeonMindApp() {
   );
 }
 
-export default function App() {
+import { NewCampaignProvider } from './contexts/NewCampaignProvider';
+
+function App() {
     return (
-        <CampaignProvider>
+        <NewCampaignProvider>
             <ToastProvider>
                 <DungeonMindApp />
             </ToastProvider>
-        </CampaignProvider>
+        </NewCampaignProvider>
     );
 }
+
+export default App;

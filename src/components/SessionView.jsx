@@ -9,14 +9,35 @@ import { storeChunkedMap } from '../utils/storageUtils';
 // END CHANGE
 
 // START CHANGE: Add clearChat to destructured props
+import { useNewCampaign } from '../contexts/NewCampaignProvider';
+
 const SessionView = ({ 
-    data, chatLog, inputText, setInputText, 
-    onSendMessage, onEditMessage, onDeleteMessage, clearChat,
-    isLoading, role, user, generateRecap, saveMessageToJournal, 
+    inputText, setInputText, 
+    onSendMessage, onEditMessage, onDeleteMessage, 
     showTools, setShowTools, diceLog, handleDiceRoll,
-    possessedNpcId, onSavePage, loreChunks, aiHelper,
-    players, castList, myCharId, compact 
+    possessedNpcId, onSavePage, aiHelper,
+    compact 
 }) => {
+    const { campaign, chatLog, user, gameParams, sendMessage, editMessage, deleteMessage, clearChat, saveJournalPage } = useNewCampaign();
+    const data = campaign;
+    const loreChunks = campaign?.loreChunks || [];
+    const players = campaign?.players || [];
+    const castList = buildCastList(campaign || {}); // Guard against null campaign
+    const myCharId = campaign?.assignments?.[user?.uid];
+    const role = (campaign && user && campaign.dmIds?.includes(user.uid)) ? 'dm' : 'player';
+
+    const saveMessageToJournal = (content) => {
+        const newPageId = Date.now().toString();
+        const newPage = {
+            id: newPageId,
+            title: `Chat Log - ${new Date().toLocaleDateString()}`,
+            content: content,
+            timestamp: Date.now()
+        };
+        saveJournalPage(newPageId, newPage);
+    };
+
+    // ... (rest of the component)
 // END CHANGE
     const [sendMode, setSendMode] = useState('chat-public'); 
     const [targetUser, setTargetUser] = useState(''); 
@@ -132,21 +153,69 @@ const SessionView = ({
     };
 
     // START CHANGE: Logic for the Recap Button
-    const handleSmartRecap = async (scope) => {
-        if (!generateRecap) return;
-        
-        // 1. Show Feedback (Ghost Scribe)
-        setGhostMessage({
-            id: 'scribe-ghost', role: 'ai', senderName: 'DungeonMind Scribe',
-            content: '<span class="animate-pulse">Reading logs and writing journal entry...</span>',
-            timestamp: Date.now(), type: 'ai-private', isGhost: true
-        });
+    const [isLoading, setIsLoading] = useState(false);
 
-        // 2. Generate (App.jsx will handle the redirect to JournalView on success)
-        await generateRecap(scope);
+    const generateRecap = async (scope = 'recent') => {
+        setIsLoading(true);
         
-        // 3. Cleanup (If we haven't unmounted yet)
-        setGhostMessage(null);
+        // 1. Filter Chat Log based on scope ('recent' = last 4h gap, 'full' = all)
+        const sessionThreshold = 4 * 60 * 60 * 1000; 
+        let relevantLogs = chatLog;
+        
+        if (scope === 'recent') {
+            let lastBreakIndex = 0;
+            for (let i = 1; i < chatLog.length; i++) {
+                if (chatLog[i].timestamp - chatLog[i-1].timestamp > sessionThreshold) {
+                    lastBreakIndex = i;
+                }
+            }
+            relevantLogs = chatLog.slice(lastBreakIndex);
+        }
+        
+        const logText = relevantLogs.map(m => `${m.senderName}: ${m.content}`).join('\n');
+
+        // 2. Build the Scribe Prompt
+        const prompt = `
+        You are the Campaign Scribe. Analyze this D&D session log and generate a structured summary.
+        
+        FORMAT AS HTML (Use <h3>, <ul>, <li>, <b>):
+        
+        <h3>⚔️ The Story So Far</h3>
+        (A dramatic, 2-paragraph narrative summary of the events)
+        
+        <h3>💰 The Ledger</h3>
+        <ul>
+           <li><b>Loot:</b> (List items found and who took them)</li>
+           <li><b>Gold:</b> (Total gp found)</li>
+           <li><b>Monsters:</b> (List defeated enemies)</li>
+        </ul>
+        
+        <h3>📜 Quest Log</h3>
+        <ul>
+           <li><b>Updates:</b> (New info on existing quests)</li>
+           <li><b>New Goals:</b> (Any new objectives started)</li>
+        </ul>
+
+        LOGS:
+        ${logText}
+        `;
+
+        // 3. Ask AI
+        const summary = await aiHelper([{ role: 'user', content: prompt }]);
+        
+        // 4. Create Journal Entry
+        const newPageId = Date.now().toString();
+        const newPage = {
+            id: newPageId,
+            title: `Session Recap - ${new Date().toLocaleDateString()}`,
+            content: summary,
+            timestamp: Date.now()
+        };
+        
+        await saveJournalPage(newPageId, newPage);
+        
+        setIsLoading(false);
+        return summary;
     };
     // END CHANGE
 

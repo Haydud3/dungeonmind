@@ -6,8 +6,11 @@ import { useCharacterStore } from '../stores/useCharacterStore';
 import { parsePdf } from '../utils/dndBeyondParser.js';
 import { enrichCharacter } from '../utils/srdEnricher.js';
 
+import { useNewCampaign } from '../contexts/NewCampaignProvider';
+
 // START CHANGE: Add generateNpc to props
-const NpcView = ({ data, setData, role, updateCloud, setChatInput, setView, onPossess, aiHelper, apiKey, edition, onDiceRoll, diceLog, generateNpc }) => {
+const NpcView = ({ data, setData, role, setChatInput, setView, onPossess, aiHelper, apiKey, edition, onDiceRoll, diceLog, generateNpc }) => {
+    const { updateCampaign } = useNewCampaign();
     // View State
     const [viewingNpcId, setViewingNpcId] = useState(null);
 // END CHANGE
@@ -66,7 +69,7 @@ const NpcView = ({ data, setData, role, updateCloud, setChatInput, setView, onPo
         const newNpcs = currentNpcs.map(n => String(n.id) === String(updatedNpc.id) ? updatedNpc : n);
         
         // Force Cloud Save immediately
-        updateCloud({ ...currentData, npcs: newNpcs }, true);
+        updateCampaign({ npcs: newNpcs });
     };
 
     const handleNpcComplete = (npcData) => {
@@ -80,7 +83,7 @@ const NpcView = ({ data, setData, role, updateCloud, setChatInput, setView, onPo
         const currentNpcs = (currentData.npcs || []).filter(n => n && n.id);
         const newNpcs = [...currentNpcs, newNpc];
         
-        updateCloud({ ...currentData, npcs: newNpcs }, true);
+        updateCampaign({ npcs: newNpcs });
         
         setShowAiCreator(false);
         setShowCreationMenu(false);
@@ -249,7 +252,7 @@ const NpcView = ({ data, setData, role, updateCloud, setChatInput, setView, onPo
         const currentData = dataRef.current;
         const currentNpcs = (currentData.npcs || []).filter(n => n && n.id);
         const newNpcs = currentNpcs.filter(n => n.id !== id); 
-        updateCloud({ ...currentData, npcs: newNpcs }, true); 
+        updateCampaign({ npcs: newNpcs });
     };
 
     const toggleHidden = (npc, e) => {
@@ -258,7 +261,7 @@ const NpcView = ({ data, setData, role, updateCloud, setChatInput, setView, onPo
         const currentData = dataRef.current;
         const currentNpcs = (currentData.npcs || []).filter(n => n && n.id);
         const newNpcs = currentNpcs.map(n => n.id === npc.id ? updated : n);
-        updateCloud({ ...currentData, npcs: newNpcs }, true); 
+        updateCampaign({ npcs: newNpcs });
     };
 
     const openSheet = (npc) => {
