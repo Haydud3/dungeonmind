@@ -14,8 +14,8 @@ import RollToast from './widgets/RollToast';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import Icon from '../Icon';
 
-// START CHANGE: Add 'data' and 'tokenId' to props definition
-const SheetContainer = ({ characterId, tokenId, data, onSave, onDiceRoll, onLogAction, onBack, onClose, onPossess, isNpc, combatActive, onInitiative, onPlaceTemplate, isOwner = true, role }) => {
+// START CHANGE: Add 'data', 'tokenId', and 'onOpenModelPicker' to props definition
+const SheetContainer = ({ characterId, tokenId, data, onSave, onDiceRoll, onLogAction, onBack, onClose, onPossess, isNpc, combatActive, onInitiative, onPlaceTemplate, isOwner = true, role, onOpenModelPicker }) => {
 // END CHANGE
     const [activeTab, setActiveTab] = useState('actions');
     
@@ -149,7 +149,7 @@ const SheetContainer = ({ characterId, tokenId, data, onSave, onDiceRoll, onLogA
                         {activeTab === 'spells' && <SpellsTab onDiceRoll={onDiceRoll} onLogAction={handleLogAction} onPlaceTemplate={onPlaceTemplate} isOwner={isOwner} />}
                         {activeTab === 'inventory' && <InventoryTab onDiceRoll={onDiceRoll} onLogAction={handleLogAction} isOwner={isOwner} />}
                         {activeTab === 'features' && <FeaturesTab isOwner={isOwner} />}
-                        {activeTab === 'bio' && <BioTab isOwner={isOwner} />}
+                        {activeTab === 'bio' && <BioTab isOwner={isOwner} onOpenModelPicker={onOpenModelPicker} />}
                         
                         {/* DM NOTES LOGIC */}
                         {activeTab === 'dm-notes' && role === 'dm' && <DmNotesTab />}

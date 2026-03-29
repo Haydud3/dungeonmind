@@ -29,7 +29,10 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
     const [assets, setAssets] = useState([]);
     const [isUploading, setIsUploading] = useState(false);
     const fileInputRef = useRef(null);
-    const [activeTab, setActiveTab] = useState('settings');
+    const [activeTab, setActiveTab] = useState('library');
+
+    // Re-sync if the prop changes from parent clicks
+    // Removed useEffect
 
     // Fetch all previously uploaded images from this campaign's folder
     const fetchAssets = async () => {
@@ -117,11 +120,37 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
             <div className="flex-none border-b border-slate-800 flex overflow-x-auto no-scrollbar">
                 <TabButton name="settings" activeTab={activeTab} onClick={setActiveTab} icon="sliders-horizontal">Settings</TabButton>
                 <TabButton name="library" activeTab={activeTab} onClick={setActiveTab} icon="library">Assets</TabButton>
-                <TabButton name="generate" activeTab={activeTab} onClick={setActiveTab} icon="sparkles">Generate</TabButton>
             </div>
             
             {activeTab === 'settings' && mapData && updateMap && (
                 <div className="flex-1 overflow-y-auto custom-scroll p-4 space-y-6">
+                    <div>
+                        <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Environment & Lighting</label>
+                        <select 
+                            value={mapData?.environment || 'day'} 
+                            onChange={(e) => updateMap(campaignCode, activeMapId, { environment: e.target.value })}
+                            className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-xs outline-none focus:border-amber-500 mb-4"
+                        >
+                            <option value="day">Sunny Day</option>
+                            <option value="night">Midnight (Dark)</option>
+                            <option value="sunset">Sunset / Sunrise</option>
+                            <option value="fog">Thick Fog</option>
+                            <option value="rain">Dreary Rain</option>
+                        </select>
+                        
+                        <label className="block text-[10px] uppercase font-bold text-slate-500 mb-2 tracking-wider">Brightness Multiplier</label>
+                        <input 
+                            type="range" 
+                            min="0" 
+                            max="10" 
+                            step="0.05" 
+                            value={mapData?.lightingIntensity ?? 1} 
+                            onChange={(e) => updateMap(campaignCode, activeMapId, { lightingIntensity: parseFloat(e.target.value) })}
+                            className="w-full accent-amber-500"
+                        />
+                        <div className="text-right text-xs text-slate-400 mt-1">{mapData?.lightingIntensity ?? 1}x</div>
+                    </div>
+                    
                     <div>
                         <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Map Scale</label>
                         <input 
@@ -161,6 +190,28 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                         </button>
                     </div>
 
+                    <div>
+                        <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Nameplates</label>
+                        <button
+                            onClick={() => updateMap(campaignCode, activeMapId, { showNameplates: mapData?.showNameplates === false ? true : false })}
+                            className={`w-full py-2 border rounded text-center text-xs font-bold transition-colors flex items-center justify-center gap-2 ${mapData?.showNameplates !== false ? 'border-blue-500 bg-blue-900/20 text-blue-400' : 'border-slate-600 text-slate-300 hover:border-blue-500'}`}
+                        >
+                            <Icon name={mapData?.showNameplates !== false ? "eye" : "eye-off"} size={14} className="inline mr-1" />
+                            {mapData?.showNameplates !== false ? 'Nameplates Visible' : 'Nameplates Hidden'}
+                        </button>
+                    </div>
+
+                    <div>
+                        <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Fog of War (Vision)</label>
+                        <button
+                            onClick={() => updateMap(campaignCode, activeMapId, { fowEnabled: mapData?.fowEnabled === true ? false : true })}
+                            className={`w-full py-2 border rounded text-center text-xs font-bold transition-colors flex items-center justify-center gap-2 ${mapData?.fowEnabled ? 'border-indigo-500 bg-indigo-900/20 text-indigo-400' : 'border-slate-600 text-slate-300 hover:border-indigo-500'}`}
+                        >
+                            <Icon name={mapData?.fowEnabled ? "eye-off" : "eye"} size={14} className="inline mr-1" />
+                            {mapData?.fowEnabled ? 'Fog of War is ON' : 'Fog of War is OFF'}
+                        </button>
+                    </div>
+
                     <div className="border-t border-slate-800 pt-4">
                         <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">3D Heightmap Scale</label>
                         <input 
@@ -178,6 +229,15 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                             <Icon name="trash-2" size={14} className="inline mr-1" /> Remove Heightmap
                         </button>
                     </div>
+
+                    <MapGenerator onGenerateMap={({ backgroundUrl, heightmapUrl, features }) => {
+                        const updates = { backgroundUrl, heightmapUrl };
+                        if (features) {
+                            updates.walls = { ...mapData?.walls, ...features.walls };
+                            updates.lights = features.lights; // Overwrite lights, don't merge
+                        }
+                        updateMap(campaignCode, activeMapId, updates);
+                    }} />
                 </div>
             )}
             
@@ -213,9 +273,9 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                                         <Icon name="map" size={14}/>
                                     </button>
                                     )}
-                                    {onSetHeightmap && (
-                                        <button onClick={(e) => { e.stopPropagation(); onSetHeightmap(asset.url); }} className="bg-black/80 text-blue-400 hover:text-white p-1.5 rounded shadow-md" title="Set as Heightmap">
-                                        <Icon name="mountain" size={14}/>
+                                    {onSetBackground && (
+                                        <button onClick={(e) => { e.stopPropagation(); onSetBackground(asset.url); setActiveTab('settings'); }} className="bg-black/80 text-purple-400 hover:text-white p-1.5 rounded shadow-md" title="Generate Terrain">
+                                            <Icon name="mountain" size={14}/>
                                         </button>
                                     )}
                                     <button onClick={(e) => { e.stopPropagation(); handleDeleteAsset(asset); }} className="bg-black/80 text-red-500 hover:text-white p-1.5 rounded shadow-md" title="Delete Asset">
@@ -229,10 +289,6 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                         )}
                     </div>
                 </>
-            )}
-
-            {activeTab === 'generate' && (
-                <MapGenerator onGenerateMap={onGenerateMap} />
             )}
         </div>
     );

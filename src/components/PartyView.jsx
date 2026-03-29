@@ -11,7 +11,12 @@ import { useNewCampaign } from '../contexts/NewCampaignProvider';
 // START CHANGE: Add generatePlayer to props
 const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, onLogAction, edition, apiKey, generatePlayer }) => {
     const { updateCampaign } = useNewCampaign();
+    
+    // FIX: Add a safety check. If data is missing, use an empty array.
+    const playersList = data?.players || []; 
+
     const [showCreationMenu, setShowCreationMenu] = useState(false);
+    const [viewMode, setViewMode] = useState('grid');
     // START CHANGE: Add Forge State
     const [showForge, setShowForge] = useState(false);
     const [forgeName, setForgeName] = useState('');
@@ -61,21 +66,22 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
     };
 
     const handleNewCharacter = (newChar) => {
-        // Ensure ID is a string if your DB expects it, or number if you use Date.now()
-        // START CHANGE: Smart Overwrite Logic
-        const currentData = dataRef.current;
-        const existingIndex = (currentData.players || []).findIndex(p => p.name === newChar.name);
+        // FIX: Fallback to an empty object if data is missing
+        const currentData = dataRef.current || {};
+        const playersList = currentData.players || [];
+        
+        const existingIndex = playersList.findIndex(p => p.name === newChar.name);
         
         let finalChar;
 
         if (existingIndex !== -1) {
             // MERGE STRATEGY: Keep ID and Image, overwrite stats/inventory
-            const existing = currentData.players[existingIndex];
+            const existing = playersList[existingIndex];
             finalChar = {
                 ...newChar,
                 id: existing.id, // Keep original ID
                 image: existing.image || newChar.image, // Prefer existing image if set
-                ownerId: existing.ownerId,
+                ownerId: existing.ownerId || user?.uid,
                 // Preserve specific fields if needed
                 bio: { ...newChar.bio, notes: existing.bio?.notes || newChar.bio?.notes } 
             };
@@ -93,11 +99,11 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
         
         let newPlayers;
         if (existingIndex !== -1) {
-            newPlayers = [...currentData.players];
+            newPlayers = [...playersList];
             newPlayers[existingIndex] = cleanChar;
             alert(`Updated existing hero: ${cleanChar.name}`);
         } else {
-            newPlayers = [...(currentData.players || []), cleanChar];
+            newPlayers = [...playersList, cleanChar];
         }
         updateCampaign({ players: newPlayers });
         // END CHANGE
@@ -213,19 +219,24 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
                         <p className="text-slate-400 text-sm">Manage your party roster.</p>
                     </div>
                     
-                    <div className="flex flex-wrap gap-2 justify-center">
+                    <div className="flex flex-wrap gap-2 justify-center items-center">
                         <button 
                             onClick={() => setShowCreationMenu(true)} 
                             className="bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white px-6 py-2 rounded-lg font-bold shadow-lg flex items-center gap-2 transform transition-all hover:scale-105"
                         >
                             <Icon name="plus-circle" size={20}/> <span>Create New Hero</span>
                         </button>
+                        <div className="flex bg-slate-800 rounded p-1 border border-slate-700 ml-2">
+                            <button onClick={() => setViewMode('grid')} className={`p-1.5 rounded ${viewMode === 'grid' ? 'bg-slate-700 text-indigo-400' : 'text-slate-500 hover:text-slate-300'}`}><Icon name="layout-grid" size={16}/></button>
+                            <button onClick={() => setViewMode('list')} className={`p-1.5 rounded ${viewMode === 'list' ? 'bg-slate-700 text-indigo-400' : 'text-slate-500 hover:text-slate-300'}`}><Icon name="list" size={16}/></button>
+                        </div>
                     </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {(data.players || []).map(p => (
-                        <div key={p.id} 
+                <div className={viewMode === 'grid' ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" : "space-y-3"}>
+                    {playersList.map(p => (
+                        viewMode === 'grid' ? (
+                            <div key={p.id} 
                             // START CHANGE: Use Privacy Lock Handler
                             onClick={() => handleCharacterClick(p)}
                             // END CHANGE
@@ -248,6 +259,24 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
                             </div>
                             {role === 'dm' && <button onClick={(e) => handleDelete(p.id, e)} className="absolute top-2 left-2 p-2 bg-red-900/80 text-white rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-700"><Icon name="trash-2" size={14}/></button>}
                         </div>
+                        ) : (
+                            <div key={p.id} onClick={() => handleCharacterClick(p)} className="group bg-slate-800 border border-slate-700 hover:border-indigo-500/50 rounded-xl p-3 flex items-center gap-4 cursor-pointer shadow-lg transition-all hover:-translate-y-0.5">
+                                <div className="w-12 h-12 rounded-lg bg-slate-700 border border-slate-600 overflow-hidden shrink-0 relative">
+                                    {p.image ? <img src={p.image} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center font-bold text-slate-500 text-xl">{p.name?.[0]}</div>}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <h3 className="font-bold text-slate-100 group-hover:text-amber-400 truncate">{p.name}</h3>
+                                    <div className="flex items-center gap-2 mt-0.5">
+                                        <p className="text-xs text-indigo-400 font-bold uppercase tracking-wider truncate">{p.race} {p.class} • LVL {p.level || 1}</p>
+                                    </div>
+                                </div>
+                                {role === 'dm' && (
+                                    <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <button onClick={(e) => { e.stopPropagation(); handleDelete(p.id, e); }} className="p-2 bg-red-900/50 text-red-400 rounded hover:bg-red-700 hover:text-white transition-colors" title="Delete"><Icon name="trash-2" size={16}/></button>
+                                    </div>
+                                )}
+                            </div>
+                        )
                     ))}
                 </div>
             </div>

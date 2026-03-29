@@ -53,8 +53,10 @@ const Model = ({ modelUrl, scale }) => {
 const ModelViewer = ({ modelUrl, scale = 1, yOffset = 0 }) => {
     return (
         <Canvas camera={{ position: [0, 2, 4], fov: 50 }}>
-            <ambientLight intensity={0.8} />
-            <spotLight intensity={0.5} angle={0.1} penumbra={1} position={[10, 15, 10]} castShadow />
+            <ambientLight intensity={0.6} color="#ffffff" />
+            <directionalLight position={[5, 10, 5]} intensity={1.2} castShadow />
+            <directionalLight position={[-5, 5, -5]} intensity={0.5} color="#90b0d0" />
+            <directionalLight position={[0, 5, -10]} intensity={0.3} color="#ffe0b2" />
             <Suspense fallback={null}>
                 <group position={[0, yOffset, 0]}>
                     <Model modelUrl={modelUrl} scale={scale} />

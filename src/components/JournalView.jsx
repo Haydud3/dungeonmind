@@ -14,13 +14,16 @@ const JournalView = ({ role, userId, aiHelper, onClose }) => {
     const allPages = Object.values(data.journal_pages || {}).sort((a,b) => b.created - a.created);
     
     const visiblePages = allPages.filter(p => {
-        // DM sees all
+        // 1. DMs see everything
         if (role === 'dm') return true;
-        // Owners see their own
-        if (p.ownerId === userId) return true;
-        // Public pages
+        
+        // 2. Owners see their own (Ensure both are strings for comparison)
+        if (String(p.ownerId) === String(userId)) return true;
+        
+        // 3. Public pages
         if (p.isPublic) return true;
-        // Shared with specific user
+        
+        // 4. Specifically shared pages
         return p.visibleTo?.includes(userId);
     });
 
@@ -28,13 +31,18 @@ const JournalView = ({ role, userId, aiHelper, onClose }) => {
         const newId = Date.now().toString();
         const newPage = {
             id: newId,
-            title: '', // Empty title triggers placeholder in Editor
+            title: 'New Entry', // Give it a default title so it's clickable
             content: '',
-            ownerId: userId,
+            ownerId: userId || 'anon', // Fallback to 'anon' if userId is missing
             isPublic: false,
-            created: Date.now()
+            created: Date.now(),
+            visibleTo: [] // Initialize as empty array to avoid undefined errors
         };
+        
+        // 1. Save to Firebase
         saveJournalPage(newId, newPage);
+        
+        // 2. Open the editor immediately
         setActivePageId(newId);
     };
 

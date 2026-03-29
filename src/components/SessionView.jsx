@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Icon from './Icon';
-import { retrieveContext, buildPrompt } from '../utils/loreEngine';
+import { retrieveContext, buildPrompt, buildCastList } from '../utils/loreEngine';
 // START CHANGE: Import Character Store for Targeting
 import { useCharacterStore } from '../stores/useCharacterStore';
 import ResolvedImage from './ResolvedImage';
@@ -16,15 +16,17 @@ const SessionView = ({
     onSendMessage, onEditMessage, onDeleteMessage, 
     showTools, setShowTools, diceLog, handleDiceRoll,
     possessedNpcId, onSavePage, aiHelper,
-    compact 
+    compact, role
 }) => {
-    const { campaign, chatLog, user, gameParams, sendMessage, editMessage, deleteMessage, clearChat, saveJournalPage } = useNewCampaign();
+    const context = useNewCampaign();
+    if (!context) return null;
+
+    const { campaign, chatLog, user, gameParams, sendMessage, editMessage, deleteMessage, clearChat, saveJournalPage } = context;
     const data = campaign;
     const loreChunks = campaign?.loreChunks || [];
     const players = campaign?.players || [];
     const castList = buildCastList(campaign || {}); // Guard against null campaign
     const myCharId = campaign?.assignments?.[user?.uid];
-    const role = (campaign && user && campaign.dmIds?.includes(user.uid)) ? 'dm' : 'player';
 
     const saveMessageToJournal = (content) => {
         const newPageId = Date.now().toString();
@@ -132,10 +134,10 @@ const SessionView = ({
             
             // START CHANGE: Pass the 'players' and 'castList' variables into the functions
             // 'players' is the 4th argument, 'castList' is the 5th argument of buildPrompt
-            const context = retrieveContext(query, loreChunks || [], data.journal_pages || {}, players, role, myCharId);
+            const aiContext = retrieveContext(query, loreChunks || [], data?.journal_pages || {}, players, role, myCharId);
             
             const isPublic = (type === 'ai-public');
-            const prompt = buildPrompt(query, context, recentChat, isPublic, castList);
+            const prompt = buildPrompt(query, aiContext, recentChat, isPublic, castList);
             // END CHANGE
 
             // START CHANGE: Debug logging to verify the AI's "Brain"

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import Icon from './Icon';
+import Icon from './Icon'; 
 import CharacterCreator from './ai-wizard/CharacterCreator';
 import SheetContainer from './character-sheet/SheetContainer'; 
 import { useCharacterStore } from '../stores/useCharacterStore';
@@ -7,6 +7,7 @@ import { parsePdf } from '../utils/dndBeyondParser.js';
 import { enrichCharacter } from '../utils/srdEnricher.js';
 
 import { useNewCampaign } from '../contexts/NewCampaignProvider';
+import { searchGithubModels } from '../utils/miniManifest';
 
 // START CHANGE: Add generateNpc to props
 const NpcView = ({ data, setData, role, setChatInput, setView, onPossess, aiHelper, apiKey, edition, onDiceRoll, diceLog, generateNpc }) => {
@@ -16,6 +17,7 @@ const NpcView = ({ data, setData, role, setChatInput, setView, onPossess, aiHelp
 // END CHANGE
     const [showCreationMenu, setShowCreationMenu] = useState(false);
     const [showAiCreator, setShowAiCreator] = useState(false);
+    const [viewMode, setViewMode] = useState('grid');
     // START CHANGE: Add Forge State
     const [showForge, setShowForge] = useState(false);
     const [forgeName, setForgeName] = useState('');
@@ -27,10 +29,26 @@ const NpcView = ({ data, setData, role, setChatInput, setView, onPossess, aiHelp
     const [compendiumSearch, setCompendiumSearch] = useState("");
     const [compendiumResults, setCompendiumResults] = useState([]);
     const [isLoadingCompendium, setIsLoadingCompendium] = useState(false);
+    const [npcForModelSelection, setNpcForModelSelection] = useState(null);
+    const [isNewNpc, setIsNewNpc] = useState(false);
+    const [showModelPicker, setShowModelPicker] = useState(false);
+    const [availableModels, setAvailableModels] = useState([]);
     // Debug & Tools State
     const [showDebug, setShowDebug] = useState(false);
     const [debugOutput, setDebugOutput] = useState("");
     const [isProcessing, setIsProcessing] = useState(false);
+    const [miniSearchQuery, setMiniSearchQuery] = useState("");
+    const [isSearchingMinis, setIsSearchingMinis] = useState(false);
+
+    const handleMiniSearch = async (overrideQuery, typeFallback) => {
+        const q = overrideQuery !== undefined ? overrideQuery : miniSearchQuery;
+        if (!q) return;
+        setIsSearchingMinis(true);
+        let results = await searchGithubModels(q);
+        if (results.length === 0 && typeFallback) results = await searchGithubModels(typeFallback);
+        setAvailableModels(results);
+        setIsSearchingMinis(false);
+    };
 
     const fileInputRef = useRef(null);
     const debugInputRef = useRef(null); 
@@ -192,14 +210,55 @@ const NpcView = ({ data, setData, role, setChatInput, setView, onPossess, aiHelp
                 legendaryActions: (m.legendary_actions || []).map(l => ({ name: l.name, desc: l.desc }))
             };
 
-            handleNpcComplete(newNpc);
-            alert(`Imported ${newNpc.name} from SRD!`);
+            setNpcForModelSelection(newNpc);
+            setAvailableModels([]);
+            setIsNewNpc(true);
+            setShowCompendium(false);
+            setShowModelPicker(true);
+            setMiniSearchQuery(m.name);
+            handleMiniSearch(m.name, m.type);
 
         } catch (e) {
             console.error(e);
             alert("Failed to import monster details. Check console.");
         }
         setIsLoadingCompendium(false);
+    };
+
+    const openModelPickerForExisting = (npcId) => {
+        const npc = (data?.npcs || []).find(n => String(n.id) === String(npcId));
+        if (!npc) return;
+        setNpcForModelSelection(npc);
+        setIsNewNpc(false);
+        setAvailableModels([]);
+        setShowModelPicker(true);
+        setMiniSearchQuery(npc.name);
+        handleMiniSearch(npc.name, npc.race);
+    };
+
+    const handleModelSelect = (model) => {
+        const finalNpc = { ...npcForModelSelection };
+        if (model) {
+            finalNpc.modelUrl = model.url;
+            finalNpc.modelScale = model.scale;
+            finalNpc.modelYOffset = model.yOffset;
+        } else {
+            delete finalNpc.modelUrl;
+            delete finalNpc.modelScale;
+            delete finalNpc.modelYOffset;
+        }
+        if (isNewNpc) {
+            handleNpcComplete(finalNpc);
+            alert(`Imported ${finalNpc.name} from SRD!`);
+        } else {
+            handleSheetSave(finalNpc);
+            alert(`Updated 3D model for ${finalNpc.name}!`);
+            if (viewingNpcId === finalNpc.id) {
+                useCharacterStore.getState().loadCharacter(finalNpc);
+            }
+        }
+        setNpcForModelSelection(null);
+        setShowModelPicker(false);
     };
 
     const createManualNpc = () => {
@@ -271,7 +330,7 @@ const NpcView = ({ data, setData, role, setChatInput, setView, onPossess, aiHelp
 
     if (viewingNpcId) {
         return (
-            <div className="fixed inset-0 z-[9999] bg-slate-950 flex flex-col h-full w-full">
+            <div className="fixed inset-0 z-[9999] bg-slate-950 flex flex-col h-full w-full animate-in fade-in">
                 <SheetContainer 
                     characterId={viewingNpcId} 
                     onSave={handleSheetSave} 
@@ -294,7 +353,63 @@ const NpcView = ({ data, setData, role, setChatInput, setView, onPossess, aiHelp
                     // --- FIX: PASS ROLE HERE ---
                     role={role}
                     // ---------------------------
+                    onOpenModelPicker={() => openModelPickerForExisting(viewingNpcId)}
                 />
+                {showModelPicker && npcForModelSelection && (
+                    <div className="fixed inset-0 z-[10000] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
+                        <div className="max-w-2xl w-full bg-slate-900 rounded-xl border border-slate-700 shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
+                            <div className="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-800">
+                                <h3 className="font-bold text-white flex items-center gap-2"><Icon name="box" size={18}/> Select 3D Mini: {npcForModelSelection.name}</h3>
+                                <button onClick={() => { setNpcForModelSelection(null); setShowModelPicker(false); }} className="text-slate-400 hover:text-white"><Icon name="x" size={20}/></button>
+                            </div>
+                            <div className="p-4 border-b border-slate-700 bg-slate-900 flex gap-2">
+                                <input 
+                                    autoFocus
+                                    value={miniSearchQuery} 
+                                    onChange={e => setMiniSearchQuery(e.target.value)} 
+                                    onKeyDown={e => e.key === 'Enter' && handleMiniSearch()}
+                                    placeholder="Search 3D Models (e.g. Dragon, Goblin)..." 
+                                    className="flex-1 bg-slate-950 border border-slate-600 rounded px-3 py-2 text-white outline-none focus:border-amber-500"
+                                />
+                                <button 
+                                    onClick={() => handleMiniSearch()} 
+                                    disabled={isSearchingMinis} 
+                                    className="bg-amber-600 hover:bg-amber-500 px-4 rounded text-white font-bold flex items-center justify-center"
+                                >
+                                    {isSearchingMinis ? <Icon name="loader" size={18} className="animate-spin"/> : <Icon name="search" size={18}/>}
+                                </button>
+                            </div>
+                            <div className="p-6 overflow-y-auto custom-scroll bg-slate-950 flex-1">
+                                {isSearchingMinis ? (
+                                    <div className="text-center py-10 text-amber-500"><Icon name="loader" size={32} className="animate-spin mx-auto mb-2"/> Searching the Repository...</div>
+                                ) : (
+                                    <>
+                                        <p className="text-slate-400 mb-4 text-sm">We found {availableModels.length} compatible 3D models.</p>
+                                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                                    {availableModels.map((model, i) => (
+                                        <div key={i} onClick={() => handleModelSelect(model)} className="bg-slate-800 border border-slate-700 rounded-lg p-2 cursor-pointer hover:border-amber-500 hover:bg-slate-700 transition-all group">
+                                            <div className="aspect-square bg-slate-900 rounded-md mb-2 overflow-hidden border border-slate-700 group-hover:border-amber-500/50 relative">
+                                                {model.thumb ? <img src={model.thumb} className="w-full h-full object-cover" /> : <Icon name="box" size={32} className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-slate-600"/>}
+                                            </div>
+                                            <div className="font-bold text-sm text-slate-200 group-hover:text-amber-400 truncate">{model.name}</div>
+                                            <div className="text-[10px] text-slate-500 truncate">Scale: {model.scale}x</div>
+                                        </div>
+                                    ))}
+                                    
+                                    <div onClick={() => handleModelSelect(null)} className="bg-slate-800 border border-slate-700 border-dashed rounded-lg p-2 cursor-pointer hover:border-blue-500 hover:bg-slate-700 transition-all group flex flex-col items-center justify-center">
+                                        <div className="w-16 h-16 bg-slate-900 rounded-full mb-2 flex items-center justify-center border border-slate-700 group-hover:border-blue-500/50">
+                                            <Icon name="image" size={24} className="text-slate-500 group-hover:text-blue-400"/>
+                                        </div>
+                                        <div className="font-bold text-sm text-slate-200 group-hover:text-blue-400 text-center">2D Token Only</div>
+                                        <div className="text-[10px] text-slate-500 text-center">Skip 3D Model</div>
+                                    </div>
+                                </div>
+                                    </>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                )}
             </div>
         );
     }
@@ -313,18 +428,26 @@ const NpcView = ({ data, setData, role, setChatInput, setView, onPossess, aiHelp
     
     {/* RESTRICTION APPLIED HERE */}
     {role === 'dm' && (
-        <div className="flex flex-wrap gap-2 justify-center">
-            <button onClick={() => setShowCreationMenu(true)} className="...">
+        <div className="flex flex-wrap gap-2 justify-center items-center">
+            <button onClick={() => setShowCompendium(true)} className="bg-slate-800 hover:bg-slate-700 text-blue-400 px-4 py-2 rounded-lg font-bold shadow-lg flex items-center gap-2 transition-all border border-blue-900/50">
+                <Icon name="book" size={20}/> <span className="hidden md:inline">5e API</span>
+            </button>
+            <button onClick={() => setShowCreationMenu(true)} className="bg-gradient-to-r from-red-800 to-red-600 hover:from-red-700 hover:to-red-500 text-white px-4 py-2 rounded-lg font-bold shadow-lg flex items-center gap-2 transform transition-all hover:scale-105">
                 <Icon name="plus-circle" size={20}/> <span>Summon Entity</span>
             </button>
+            <div className="flex bg-slate-800 rounded p-1 border border-slate-700 ml-2">
+                <button onClick={() => setViewMode('grid')} className={`p-1.5 rounded ${viewMode === 'grid' ? 'bg-slate-700 text-red-400' : 'text-slate-500 hover:text-slate-300'}`}><Icon name="layout-grid" size={16}/></button>
+                <button onClick={() => setViewMode('list')} className={`p-1.5 rounded ${viewMode === 'list' ? 'bg-slate-700 text-red-400' : 'text-slate-500 hover:text-slate-300'}`}><Icon name="list" size={16}/></button>
+            </div>
         </div>
     )}
 </div>
 
                 {/* GRID LAYOUT */}
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div className={viewMode === 'grid' ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" : "space-y-3"}>
                     {visibleNpcs.map(npc => (
-                        <div key={npc.id} onClick={() => openSheet(npc)} className={`group relative bg-slate-800 rounded-xl overflow-hidden border transition-all hover:-translate-y-1 cursor-pointer shadow-lg ${npc.isHidden ? 'border-dashed border-slate-600 opacity-75' : 'border-slate-700 hover:border-amber-500/50'}`}>
+                        viewMode === 'grid' ? (
+                            <div key={npc.id} onClick={() => openSheet(npc)} className={`group relative bg-slate-800 rounded-xl overflow-hidden border transition-all hover:-translate-y-1 cursor-pointer shadow-lg ${npc.isHidden ? 'border-dashed border-slate-600 opacity-75' : 'border-slate-700 hover:border-amber-500/50'}`}>
                             <div className="h-32 bg-slate-700 relative overflow-hidden">
                                 {npc.image ? <img src={npc.image} className="w-full h-full object-cover opacity-60 group-hover:opacity-80 transition-opacity" alt={npc.name} /> : <div className="w-full h-full flex items-center justify-center bg-slate-700 opacity-20"><Icon name="skull" size={64}/></div>}
                                 <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-transparent to-transparent"></div>
@@ -353,7 +476,28 @@ const NpcView = ({ data, setData, role, setChatInput, setView, onPossess, aiHelp
                                     <button onClick={(e) => toggleHidden(npc, e)} className="p-2 bg-slate-700/80 text-white rounded hover:bg-slate-600 shadow-lg" title={npc.isHidden ? "Reveal to Players" : "Hide from Players"}><Icon name={npc.isHidden ? "eye" : "eye-off"} size={14}/></button>
                                 </div>
                             )}
-                        </div>
+                            </div>
+                        ) : (
+                            <div key={npc.id} onClick={() => openSheet(npc)} className={`group bg-slate-800 border rounded-xl p-3 flex items-center gap-4 cursor-pointer shadow-lg transition-all hover:-translate-y-0.5 ${npc.isHidden ? 'border-dashed border-slate-600 opacity-75' : 'border-slate-700 hover:border-amber-500/50'}`}>
+                                <div className="w-12 h-12 rounded-lg bg-slate-700 border border-slate-600 overflow-hidden shrink-0 relative">
+                                    {npc.image ? <img src={npc.image} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center font-bold text-slate-500 text-xl">{npc.name?.[0]}</div>}
+                                    {npc.isHidden && <div className="absolute inset-0 bg-black/50 flex items-center justify-center"><Icon name="eye-off" size={16} className="text-slate-300"/></div>}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <h3 className="font-bold text-slate-100 group-hover:text-amber-400 truncate">{npc.name}</h3>
+                                    <div className="flex items-center gap-2 mt-0.5">
+                                        <p className="text-xs text-amber-600 font-bold uppercase tracking-wider truncate">{npc.race} {npc.class}</p>
+                                        <span className="text-[9px] bg-indigo-500/20 text-indigo-400 px-1 rounded border border-indigo-500/30 font-mono">MASTER</span>
+                                    </div>
+                                </div>
+                                {role === 'dm' && (
+                                    <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <button onClick={(e) => { e.stopPropagation(); toggleHidden(npc, e); }} className="p-2 bg-slate-700 text-slate-300 rounded hover:bg-slate-600 transition-colors" title={npc.isHidden ? "Reveal to Players" : "Hide from Players"}><Icon name={npc.isHidden ? "eye" : "eye-off"} size={16}/></button>
+                                        <button onClick={(e) => { e.stopPropagation(); deleteNpc(npc.id, e); }} className="p-2 bg-red-900/50 text-red-400 rounded hover:bg-red-700 hover:text-white transition-colors" title="Delete"><Icon name="trash-2" size={16}/></button>
+                                    </div>
+                                )}
+                            </div>
+                        )
                     ))}
                     {visibleNpcs.length === 0 && <div className="col-span-full py-12 text-center border-2 border-dashed border-slate-700 rounded-xl"><Icon name="ghost" size={48} className="mx-auto text-slate-600 mb-4"/><p className="text-slate-500">No entities found.</p></div>}
                 </div>
@@ -488,6 +632,62 @@ const NpcView = ({ data, setData, role, setChatInput, setView, onPossess, aiHelp
                                 <button onClick={handleForgeSubmit} disabled={!forgeName.trim()} className="w-full bg-red-800 hover:bg-red-700 text-white font-bold py-3 rounded flex justify-center items-center gap-2 mt-4"><Icon name="hammer" size={18}/> Forge Monster</button>
                             </div>
                         )}
+                    </div>
+                </div>
+            )}
+            
+            {showModelPicker && npcForModelSelection && (
+                <div className="fixed inset-0 z-[110] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
+                    <div className="max-w-2xl w-full bg-slate-900 rounded-xl border border-slate-700 shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
+                        <div className="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-800">
+                            <h3 className="font-bold text-white flex items-center gap-2"><Icon name="box" size={18}/> Select 3D Mini: {npcForModelSelection.name}</h3>
+                            <button onClick={() => { setNpcForModelSelection(null); setShowModelPicker(false); }} className="text-slate-400 hover:text-white"><Icon name="x" size={20}/></button>
+                        </div>
+                        <div className="p-4 border-b border-slate-700 bg-slate-900 flex gap-2">
+                            <input 
+                                autoFocus
+                                value={miniSearchQuery} 
+                                onChange={e => setMiniSearchQuery(e.target.value)} 
+                                onKeyDown={e => e.key === 'Enter' && handleMiniSearch()}
+                                placeholder="Search 3D Models (e.g. Dragon, Goblin)..." 
+                                className="flex-1 bg-slate-950 border border-slate-600 rounded px-3 py-2 text-white outline-none focus:border-amber-500"
+                            />
+                            <button 
+                                onClick={() => handleMiniSearch()} 
+                                disabled={isSearchingMinis} 
+                                className="bg-amber-600 hover:bg-amber-500 px-4 rounded text-white font-bold flex items-center justify-center"
+                            >
+                                {isSearchingMinis ? <Icon name="loader" size={18} className="animate-spin"/> : <Icon name="search" size={18}/>}
+                            </button>
+                        </div>
+                        <div className="p-6 overflow-y-auto custom-scroll bg-slate-950 flex-1">
+                            {isSearchingMinis ? (
+                                <div className="text-center py-10 text-amber-500"><Icon name="loader" size={32} className="animate-spin mx-auto mb-2"/> Searching the Repository...</div>
+                            ) : (
+                                <>
+                                    <p className="text-slate-400 mb-4 text-sm">We found {availableModels.length} compatible 3D models.</p>
+                            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                                {availableModels.map((model, i) => (
+                                    <div key={i} onClick={() => handleModelSelect(model)} className="bg-slate-800 border border-slate-700 rounded-lg p-2 cursor-pointer hover:border-amber-500 hover:bg-slate-700 transition-all group">
+                                        <div className="aspect-square bg-slate-900 rounded-md mb-2 overflow-hidden border border-slate-700 group-hover:border-amber-500/50 relative">
+                                            {model.thumb ? <img src={model.thumb} className="w-full h-full object-cover" /> : <Icon name="box" size={32} className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-slate-600"/>}
+                                        </div>
+                                        <div className="font-bold text-sm text-slate-200 group-hover:text-amber-400 truncate">{model.name}</div>
+                                        <div className="text-[10px] text-slate-500 truncate">Scale: {model.scale}x</div>
+                                    </div>
+                                ))}
+                                
+                                <div onClick={() => handleModelSelect(null)} className="bg-slate-800 border border-slate-700 border-dashed rounded-lg p-2 cursor-pointer hover:border-blue-500 hover:bg-slate-700 transition-all group flex flex-col items-center justify-center">
+                                    <div className="w-16 h-16 bg-slate-900 rounded-full mb-2 flex items-center justify-center border border-slate-700 group-hover:border-blue-500/50">
+                                        <Icon name="image" size={24} className="text-slate-500 group-hover:text-blue-400"/>
+                                    </div>
+                                    <div className="font-bold text-sm text-slate-200 group-hover:text-blue-400 text-center">2D Token Only</div>
+                                    <div className="text-[10px] text-slate-500 text-center">Skip 3D Model</div>
+                                </div>
+                            </div>
+                                </>
+                            )}
+                        </div>
                     </div>
                 </div>
             )}

@@ -11,7 +11,7 @@ const fileToBase64 = (file) => new Promise((resolve, reject) => {
     reader.onerror = error => reject(error);
 });
 
-const BioTab = () => {
+const BioTab = ({ onOpenModelPicker }) => {
     const { character, updateInfo } = useCharacterStore();
     const bio = character.bio || {};
     const [isUploading, setIsUploading] = useState(false);
@@ -90,6 +90,12 @@ const BioTab = () => {
                         {isUploading ? <Icon name="loader" className="animate-spin" /> : <Icon name="upload-cloud" />}
                         {isUploading ? 'Uploading...' : 'Upload .glb'}
                     </label>
+                    {onOpenModelPicker && (
+                        <button onClick={onOpenModelPicker} className="bg-slate-700 hover:bg-slate-600 text-amber-400 font-bold py-2 px-4 rounded cursor-pointer flex items-center gap-2">
+                            <Icon name="search" />
+                            Search Minis
+                        </button>
+                    )}
                     <div className="text-xs text-slate-400 flex-1">
                         {character.modelUrl ? (
                             <div className="flex items-center justify-between">
@@ -117,19 +123,19 @@ const BioTab = () => {
                 {character.modelUrl && (
                     <div className="mt-2 grid grid-cols-2 gap-4">
                         <div>
-                            <label className="text-xs text-slate-400">Scale</label>
+                            <label className="text-xs text-slate-400">Scale ({modelScale}x)</label>
                             <input
                                 type="range"
-                                min="0.1"
+                                min="0.001"
                                 max="5"
-                                step="0.1"
+                                step="0.001"
                                 value={modelScale}
                                 onChange={handleScaleChange}
                                 className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer"
                             />
                         </div>
                         <div>
-                            <label className="text-xs text-slate-400">Y-Offset</label>
+                            <label className="text-xs text-slate-400">Y-Offset ({modelYOffset})</label>
                             <input
                                 type="range"
                                 min="-2"

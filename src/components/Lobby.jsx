@@ -31,10 +31,19 @@ const Lobby = ({ user }) => {
         localStorage.setItem('dm_recents', JSON.stringify(newRecents));
     };
 
-    const createNew = () => {
+    const createNew = async () => {
+        if (!user) {
+            alert("You must be logged in to Forge a new Realm.");
+            return;
+        }
+        
         const newCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+        
+        // 1. Add to local history
         addToRecents(newCode, 'dm');
-        joinCampaign(newCode, 'dm', user ? user.uid : 'anon');
+        
+        // 2. IMPORTANT: We pass a 'true' flag to tell the provider to WAIT for creation
+        await joinCampaign(newCode, 'dm', user ? user.uid : 'anon', true);
     };
 
     const joinExisting = () => {

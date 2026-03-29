@@ -82,9 +82,18 @@ const INITIAL_APP_STATE = { ...DB_INIT_DATA, players: [], journal_pages: {}, cha
 import { useNewCampaign } from './contexts/NewCampaignProvider';
 
 function DungeonMindApp() {
+    const context = useNewCampaign();
+    
+    // Safety guard: If context is not yet initialized, show loader
+    if (!context) {
+        return <div className="h-screen bg-slate-900 flex items-center justify-center text-amber-500 font-bold animate-pulse">Initializing Context...</div>;
+    }
+
     const { 
-        campaign: data, gameParams, joinCampaign, leaveCampaign, user
-    } = useNewCampaign();
+        campaign: data, gameParams, joinCampaign, leaveCampaign, user,
+        updateCampaign, updateToken,
+        sendMessage, editMessage, deleteMessage
+    } = context;
     const toast = useToast();
 
   const BASE_PATH = '/dungeonmind';
@@ -143,6 +152,7 @@ function DungeonMindApp() {
   const addLogEntry = useCharacterStore((state) => state.addLogEntry);
 
   const [rightPanel, setRightPanel] = useState({ mode: 'closed', data: null });
+  const [vttSidebar, setVttSidebar] = useState(null); // 'chat' | 'journal' | null
   
   const handleOpenSheet = (id) => setRightPanel({ mode: 'sheet', data: id });
   const handleToggleChat = () => setRightPanel(prev => prev.mode === 'chat' ? { mode: 'closed', data: null } : { mode: 'chat', data: null });
@@ -162,7 +172,7 @@ function DungeonMindApp() {
   useEffect(() => { localStorage.setItem('dm_ai_provider', aiProvider); }, [aiProvider]);
 
   useEffect(() => {
-      const h = localHandout || data.campaign?.activeHandout;
+      const h = localHandout || data?.activeHandout;
       if (!h) {
           setActiveHandoutImageUrl('');
           setActiveHandoutBlocks([]);
@@ -202,9 +212,19 @@ function DungeonMindApp() {
           }
       };
       resolveAndShow();
-  }, [data.campaign?.activeHandout, localHandout]);
+  }, [data?.activeHandout, localHandout]);
 
-  const effectiveRole = (data && user && data.dmIds?.includes(user.uid)) ? 'dm' : 'player';
+  // Add a debug log right above it to see what's happening
+  console.log("DEBUG ROLE:", { 
+      myId: user?.uid, 
+      dmList: data?.dmIds, 
+      isMatch: data?.dmIds?.includes(user?.uid) 
+  });
+
+  const effectiveRole = (
+    gameParams?.role === 'dm' || 
+    (data?.dmIds && user?.uid && data.dmIds.map(id => String(id)).includes(String(user.uid)))
+) ? 'dm' : 'player';
 
   // --- HELPER FUNCTIONS ---
   const handleDiceRoll = () => console.log('handleDiceRoll called');
@@ -218,20 +238,77 @@ function DungeonMindApp() {
   const handleHandoutSave = () => console.log('handleHandoutSave called');
   const handleHandoutDelete = () => console.log('handleHandoutDelete called');
   const updateCloud = () => console.log('updateCloud called');
-  const sendChatMessage = () => console.log('sendChatMessage called');
+  
+  const sendChatMessage = (content, type = 'chat-public', targetId = null) => {
+      const isDm = data?.dmIds?.includes(user?.uid);
+      const myChar = data?.players?.find(p => p.ownerId === user?.uid);
+      sendMessage({
+          content,
+          type,
+          role: type.includes('ai') ? 'user' : (isDm ? 'dm' : 'player'),
+          senderId: user?.uid || 'anon',
+          senderName: possessedNpcId ? data?.npcs?.find(n=>n.id===possessedNpcId)?.name : (isDm ? 'Dungeon Master' : (myChar?.name || user?.email?.split('@')[0] || 'Player')),
+          targetId: targetId || null,
+          timestamp: Date.now()
+      });
+  };
+
   const isConnected = true; // Placeholder for connection status
 
 
-    if (user === null) {
-        return <div className="h-screen bg-slate-900 flex items-center justify-center text-amber-500 font-bold animate-pulse">Summoning DungeonMind...</div>;
+    // 1. If we are still checking if a user is logged in (Initial load)
+    if (user === undefined) { 
+        return (
+            <div className="h-screen bg-slate-900 flex flex-col items-center justify-center text-amber-500 font-bold">
+                <div className="animate-pulse">Summoning DungeonMind...</div>
+                <div className="text-[10px] text-slate-600 mt-2 font-mono">Checking Authentication</div>
+            </div>
+        );
     }
 
+    // 2. If NO game is active (We are at the Lobby)
     if (!gameParams) {
+        // Note: user might be null here if not logged in; Lobby handles the login button
         return <Lobby user={user} />;
     }
 
+    // 3. If a game is active but no DATA has arrived from Firestore yet
     if (!data) {
-        return <div className="h-screen bg-slate-900 flex items-center justify-center text-amber-500 font-bold animate-pulse">Loading Campaign Data...</div>;
+        return (
+            <div className="h-screen bg-slate-900 flex flex-col items-center justify-center p-4">
+                <div className="flex flex-col items-center gap-4 bg-slate-800 p-8 rounded-2xl border border-slate-700 shadow-2xl">
+                    <div className="w-12 h-12 border-4 border-amber-500 border-t-transparent rounded-full animate-spin"></div>
+                    <div className="text-center">
+                        <h2 className="text-amber-500 font-bold text-xl">Entering Realm {gameParams?.code}</h2>
+                        <p className="text-slate-500 text-xs mt-1 font-mono">Status: Awaiting Archive Data...</p>
+                    </div>
+
+                    {/* SAFETY VALVE 1: If it hangs for more than 3 seconds, show these */}
+                    <div className="flex flex-col gap-3 w-full mt-4">
+                        {gameParams?.role === 'dm' && (
+                            <button 
+                                onClick={() => updateCampaign({
+                                    hostId: user.uid,
+                                    dmIds: [user.uid],
+                                    onboardingComplete: false,
+                                    campaign: { genesis: { campaignName: 'New Adventure' } }
+                                })}
+                                className="w-full px-6 py-2 bg-amber-600 text-white rounded font-bold hover:bg-amber-500 transition-all"
+                            >
+                                Force Forge Realm
+                            </button>
+                        )}
+                        
+                        <button 
+                            onClick={leaveCampaign}
+                            className="w-full px-6 py-2 bg-slate-700 text-slate-300 rounded font-bold hover:bg-slate-600 transition-all flex items-center justify-center gap-2"
+                        >
+                            <Icon name="arrow-left" size={16}/> Return to Lobby
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
     }
 
 
@@ -239,37 +316,67 @@ function DungeonMindApp() {
     <div className="fixed inset-0 w-full h-full flex flex-col md:flex-row bg-slate-900 text-slate-200 font-sans overflow-hidden">
        <Sidebar view={currentView} setView={setCurrentView} onExit={leaveCampaign} />
        <main className="flex-1 flex flex-col overflow-hidden relative w-full h-full">
-           <div className="shrink-0 bg-slate-900/95 backdrop-blur border-b border-slate-800 pt-safe z-50">
-               <div className="h-14 flex items-center justify-between px-4">
-                   <div className="flex gap-2 items-center">
-                       <div className={`w-2 h-2 rounded-full shadow-[0_0_10px_rgba(34,197,94,0.5)] ${gameParams?.isOffline || !isConnected ? 'bg-slate-500' : 'bg-green-500'}`}></div>
-                       <span className="text-sm font-bold text-amber-500 truncate fantasy-font tracking-wide">{gameParams?.code} • {possessedNpcId ? "POSSESSING NPC" : data?.campaign?.location}</span>
-                   </div>
-                   <div className="flex gap-2">
-                       <button onClick={() => setShowHandoutCreator(true)} className="text-xs bg-amber-900/50 hover:bg-amber-800 px-3 py-1 rounded border border-amber-800 text-amber-200 flex items-center gap-2"><Icon name="scroll" size={14}/> <span>Handouts</span></button>
+           {currentView !== 'map' && (
+               <div className="shrink-0 bg-slate-900/95 backdrop-blur border-b border-slate-800 pt-safe z-50">
+                   <div className="h-14 flex items-center justify-between px-4">
+                       <div className="flex gap-2 items-center">
+                           <div className={`w-2 h-2 rounded-full shadow-[0_0_10px_rgba(34,197,94,0.5)] ${gameParams?.isOffline || !isConnected ? 'bg-slate-500' : 'bg-green-500'}`}></div>
+                           <span className="text-sm font-bold text-amber-500 truncate fantasy-font tracking-wide">{gameParams?.code} • {possessedNpcId ? "POSSESSING NPC" : data?.campaign?.location}</span>
+                       </div>
+                       <div className="flex gap-2">
+                           <button onClick={() => setShowHandoutCreator(true)} className="text-xs bg-amber-900/50 hover:bg-amber-800 px-3 py-1 rounded border border-amber-800 text-amber-200 flex items-center gap-2"><Icon name="scroll" size={14}/> <span>Handouts</span></button>
+                       </div>
                    </div>
                </div>
-           </div>
+           )}
 
            {/* UPDATED: Changed compact padding from 50px to 52px to match the new MobileNav height exactly */}
            <div className={`flex-1 overflow-hidden relative p-0 md:pb-0 ${data.config?.mobileCompact ? 'pb-[52px]' : 'pb-[70px]'}`}>
              {/* 1. CHAT (Session) */}
-              {currentView === 'session' && <SessionView 
-                  inputText={inputText} setInputText={setInputText} 
-                  isLoading={isLoading} showTools={showTools} setShowTools={setShowTools} diceLog={diceLog} handleDiceRoll={handleDiceRoll} 
-                  aiHelper={queryAiService}
-              />}
+              {currentView === 'session' && (
+                  <SessionView 
+                      inputText={inputText} 
+                      setInputText={setInputText} 
+                      onSendMessage={sendChatMessage} 
+                      onEditMessage={editMessage}
+                      onDeleteMessage={deleteMessage}
+                      isLoading={isLoading} 
+                      showTools={showTools} 
+                      setShowTools={setShowTools} 
+                      diceLog={diceLog} 
+                      handleDiceRoll={handleDiceRoll} 
+                      aiHelper={queryAiService}
+                      role={effectiveRole}
+                  />
+              )}
               
               {/* 2. JOURNAL */}
-              {currentView === 'journal' && <JournalView 
-                  aiHelper={queryAiService} 
-              />}
+              {currentView === 'journal' && (
+                  <JournalView 
+                      role={effectiveRole}
+                      userId={user?.uid}
+                      aiHelper={queryAiService} 
+                  />
+              )}
               
               {/* 3. TACTICAL MAP */}
-              {currentView === 'map' && <TacticalMapView campaignCode={gameParams?.code} activeMapId={data.activeMapId || 'test-map'} onOpenSheet={handleOpenSheet} />}
+              {currentView === 'map' && (
+                  <TacticalMapView 
+                      campaignCode={gameParams?.code} 
+                      activeMapId={data.activeMapId || 'test-map'} 
+                      onOpenSheet={handleOpenSheet} 
+                      role={effectiveRole} 
+                      onOpenHandouts={() => setShowHandoutCreator(true)}
+                      onOpenChat={() => setVttSidebar('chat')}
+                      onOpenJournal={() => setVttSidebar('journal')}
+                  />
+              )}
               
               {/* 4. PARTY (PCs) */}
               {currentView === 'party' && <PartyView 
+                  data={data}
+                  user={user}
+                  role={effectiveRole}
                   setView={setCurrentView} 
                   aiHelper={queryAiService} 
                   onDiceRoll={handleDiceRoll} 
@@ -287,6 +394,8 @@ function DungeonMindApp() {
 
               {/* 5. BESTIARY (NPCs) */}
               {currentView === 'npcs' && <NpcView 
+                  data={data}
+                  role={effectiveRole}
                   generateNpc={generateNpc} 
                   setChatInput={setInputText} 
                   setView={setCurrentView} 
@@ -320,6 +429,8 @@ function DungeonMindApp() {
               {/* 7. SETTINGS */}
               {currentView === 'settings' && <SettingsView 
                   apiKey={apiKey} setApiKey={setApiKey} 
+                  role={effectiveRole}
+                  user={user}
                   code={gameParams.code} 
                   onExit={leaveCampaign} 
                   aiProvider={aiProvider} setAiProvider={setAiProvider} 
@@ -348,6 +459,39 @@ function DungeonMindApp() {
                       user={user}
                   />
               )}
+
+              {/* VTT SIDEBARS */}
+              {vttSidebar === 'chat' && currentView === 'map' && (
+                  <div className="absolute top-0 right-0 bottom-0 w-[350px] bg-slate-900 border-l border-slate-700 shadow-2xl z-[80] flex flex-col animate-in slide-in-from-right duration-300">
+                      <div className="p-3 border-b border-slate-800 flex justify-between items-center bg-slate-950 shrink-0">
+                          <h3 className="font-bold text-indigo-500 flex items-center gap-2"><Icon name="message-circle" size={18}/> Chat</h3>
+                          <button onClick={() => setVttSidebar(null)} className="text-slate-400 hover:text-white"><Icon name="x" size={20}/></button>
+                      </div>
+                      <div className="flex-1 relative overflow-hidden">
+                          <SessionView 
+                              inputText={inputText} 
+                              setInputText={setInputText} 
+                              onSendMessage={sendChatMessage} 
+                              onEditMessage={editMessage}
+                              onDeleteMessage={deleteMessage}
+                              isLoading={isLoading} 
+                              showTools={showTools} 
+                              setShowTools={setShowTools} 
+                              diceLog={diceLog} 
+                              handleDiceRoll={handleDiceRoll} 
+                              aiHelper={queryAiService}
+                              role={effectiveRole}
+                              compact={true}
+                          />
+                      </div>
+                  </div>
+              )}
+
+              {vttSidebar === 'journal' && currentView === 'map' && (
+                  <div className="absolute top-0 right-0 bottom-0 w-[500px] max-w-full bg-slate-900 border-l border-slate-700 shadow-2xl z-[80] flex flex-col animate-in slide-in-from-right duration-300">
+                      <JournalView role={effectiveRole} userId={user?.uid} aiHelper={queryAiService} onClose={() => setVttSidebar(null)} />
+                  </div>
+              )}
             </div>
        </main>
        
@@ -368,7 +512,7 @@ function DungeonMindApp() {
                        </div>
                    )}
                    <div className="flex-1 overflow-y-auto custom-scroll p-8">
-                       <h2 className="fantasy-font text-3xl mb-6 border-b border-current/20 pb-2">{(localHandout || data.campaign.activeHandout).title}</h2>
+                       <h2 className="fantasy-font text-3xl mb-6 border-b border-current/20 pb-2">{(localHandout || data?.activeHandout)?.title}</h2>
                        {activeHandoutBlocks.length === 0 ? (
                            <div className="py-20 text-center animate-pulse italic opacity-50 font-bold">DECIPHERING SCRIPT...</div>
                        ) : (
@@ -403,17 +547,22 @@ function DungeonMindApp() {
 
        {/* UPDATED: Pass compact prop */}
        <MobileNav view={currentView} setView={setCurrentView} compact={data.config?.mobileCompact} />
-       {effectiveRole === 'dm' && !data.onboardingComplete && <OnboardingWizard onComplete={(wizData) => {
-           const updates = { onboardingComplete: true };
-           if (wizData) {
-               updates['campaign.genesis'] = {
-                   tone: wizData.tone || 'Heroic',
-                   conflict: wizData.conflict || '',
-                   campaignName: wizData.campaignName || 'New Campaign'
-               };
-           }
-           updateCampaign(updates);
-       }} aiHelper={queryAiService} />}
+       {effectiveRole === 'dm' && !data.onboardingComplete && (
+           <OnboardingWizard 
+               onComplete={(wizData) => {
+                   // This is the signal that turns off the wizard and starts the game
+                   updateCampaign({ 
+                       onboardingComplete: true,
+                       'campaign.genesis': {
+                           tone: wizData?.tone || 'Heroic',
+                           conflict: wizData?.conflict || 'Evil Arising',
+                           campaignName: wizData?.campaignName || 'New Campaign'
+                       }
+                   });
+               }} 
+               aiHelper={queryAiService} 
+           />
+       )}
     </div>
   );
 }

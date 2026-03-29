@@ -1,6 +1,6 @@
 import React, { useState, useEffect, Suspense, useRef, useCallback, useMemo } from 'react';
 import { Canvas, useThree, useFrame } from '@react-three/fiber';
-import { MapControls, Grid, useTexture, DragControls, Html, useCursor, Line } from '@react-three/drei';
+import { MapControls, Grid, useTexture, DragControls, Html, useCursor, Line, Text } from '@react-three/drei';
 import * as THREE from 'three';
 import { subscribeToMap, updateMap } from '../utils/mapService';
 import { useNewCampaign } from '../contexts/NewCampaignProvider';
@@ -9,6 +9,42 @@ import Icon from './Icon';
 import { retrieveChunkedMap } from '../utils/storageUtils';
 import CharacterModel from './CharacterModel';
 import CameraController from '../utils/CameraController';
+import { collection, onSnapshot } from 'firebase/firestore';
+import { db, appId } from '../firebase';
+import { searchGithubModels } from '../utils/miniManifest';
+
+const ENV_SETTINGS = {
+    day: {
+        ambient: { color: '#ffffff', intensity: 0.8 },
+        dir: { color: '#fffaed', intensity: 1.5, position: [10, 20, 10] },
+        bg: '#1a1a2e',
+        fog: null
+    },
+    night: {
+        ambient: { color: '#4a4a65', intensity: 0.15 },
+        dir: { color: '#a0a0ff', intensity: 0.3, position: [5, 10, 5] },
+        bg: '#050510',
+        fog: null
+    },
+    sunset: {
+        ambient: { color: '#ffb380', intensity: 0.4 },
+        dir: { color: '#ff7b00', intensity: 1.2, position: [-15, 5, 10] },
+        bg: '#2d1b19',
+        fog: { color: '#ffb380', near: 15, far: 60 }
+    },
+    fog: {
+        ambient: { color: '#888899', intensity: 0.5 },
+        dir: { color: '#aaaaaa', intensity: 0.5, position: [0, 10, 0] },
+        bg: '#888899',
+        fog: { color: '#888899', near: 5, far: 30 }
+    },
+    rain: {
+        ambient: { color: '#555566', intensity: 0.4 },
+        dir: { color: '#777788', intensity: 0.6, position: [0, 15, 0] },
+        bg: '#1a1a22',
+        fog: { color: '#555566', near: 10, far: 45 }
+    }
+};
 
 const useResolvedUrl = (url) => {
     const [resolvedUrl, setResolvedUrl] = useState(null);
@@ -39,9 +75,16 @@ const useResolvedUrl = (url) => {
 };
 
 const MapPlaneContent = ({ backgroundUrl, scale = 20 }) => {
-  const texture = useTexture(backgroundUrl);
-  
-  const aspect = texture.image ? texture.image.width / texture.image.height : 1;
+  const [aspect, setAspect] = useState(1);
+  const texture = useMemo(() => {
+      if (!backgroundUrl) return null;
+      const loader = new THREE.TextureLoader();
+      return loader.load(backgroundUrl, (tex) => {
+          if (tex.image) {
+              setAspect(tex.image.width / tex.image.height);
+          }
+      });
+  }, [backgroundUrl]);
 
   return (
     <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.01, 0]}>
@@ -58,13 +101,128 @@ const MapPlane = ({ backgroundUrl, scale = 20 }) => {
   return <MapPlaneContent backgroundUrl={resolvedUrl} scale={scale} />;
 };
 
+const MarqueeSelector = ({ tokens, onSelectTokens }) => {
+    const { camera, size, gl, controls } = useThree();
+
+    useEffect(() => {
+        const container = gl.domElement.parentNode;
+        let isSelecting = false;
+        let startPos = { x: 0, y: 0 };
+        let boxOverlay = null;
+
+        const onPointerDown = (e) => {
+            // Button 2 is Right-Click
+            if (e.button === 2) {
+                isSelecting = true;
+                startPos = { x: e.clientX, y: e.clientY };
+                
+                if (controls) controls.enabled = false;
+
+                boxOverlay = document.createElement('div');
+                boxOverlay.style.position = 'fixed';
+                boxOverlay.style.backgroundColor = 'rgba(59, 130, 246, 0.2)';
+                boxOverlay.style.border = '1px solid rgba(59, 130, 246, 0.8)';
+                boxOverlay.style.pointerEvents = 'none';
+                boxOverlay.style.zIndex = '9999';
+                boxOverlay.style.left = `${startPos.x}px`;
+                boxOverlay.style.top = `${startPos.y}px`;
+                boxOverlay.style.width = '0px';
+                boxOverlay.style.height = '0px';
+                document.body.appendChild(boxOverlay);
+            }
+        };
+
+        const onPointerMove = (e) => {
+            if (isSelecting && boxOverlay) {
+                const minX = Math.min(startPos.x, e.clientX);
+                const minY = Math.min(startPos.y, e.clientY);
+                const width = Math.abs(startPos.x - e.clientX);
+                const height = Math.abs(startPos.y - e.clientY);
+
+                boxOverlay.style.left = `${minX}px`;
+                boxOverlay.style.top = `${minY}px`;
+                boxOverlay.style.width = `${width}px`;
+                boxOverlay.style.height = `${height}px`;
+            }
+        };
+
+        const onPointerUp = (e) => {
+            if (isSelecting) {
+                isSelecting = false;
+                if (controls) controls.enabled = true;
+                if (boxOverlay && document.body.contains(boxOverlay)) {
+                    document.body.removeChild(boxOverlay);
+                    boxOverlay = null;
+                }
+
+                const endPos = { x: e.clientX, y: e.clientY };
+                const minX = Math.min(startPos.x, endPos.x);
+                const maxX = Math.max(startPos.x, endPos.x);
+                const minY = Math.min(startPos.y, endPos.y);
+                const maxY = Math.max(startPos.y, endPos.y);
+
+                // If the box is tiny, treat it as a normal click and ignore
+                if (maxX - minX < 5 && maxY - minY < 5) return;
+
+                const rect = gl.domElement.getBoundingClientRect();
+                const selected = [];
+
+                tokens.forEach(token => {
+                    const vec = new THREE.Vector3(token.x || 0, token.y || 0, token.z || 0);
+                    vec.project(camera);
+
+                    // Map 3D projection to 2D screen pixels
+                    const screenX = rect.left + (vec.x + 1) / 2 * size.width;
+                    const screenY = rect.top + (-vec.y + 1) / 2 * size.height;
+
+                    if (
+                        screenX >= minX && screenX <= maxX &&
+                        screenY >= minY && screenY <= maxY
+                    ) {
+                        selected.push(token.id);
+                    }
+                });
+
+                onSelectTokens(prev => {
+                    // If holding shift, append to current selection. Otherwise, replace.
+                    return e.shiftKey ? [...new Set([...prev, ...selected])] : selected;
+                });
+            }
+        };
+
+        container.addEventListener('pointerdown', onPointerDown);
+        window.addEventListener('pointermove', onPointerMove);
+        window.addEventListener('pointerup', onPointerUp);
+
+        return () => {
+            container.removeEventListener('pointerdown', onPointerDown);
+            window.removeEventListener('pointermove', onPointerMove);
+            window.removeEventListener('pointerup', onPointerUp);
+            if (boxOverlay && document.body.contains(boxOverlay)) {
+                document.body.removeChild(boxOverlay);
+            }
+        };
+    }, [camera, size, gl, controls, tokens, onSelectTokens]);
+
+    return null;
+};
+
 const HeightmapContent = ({ resolvedHeightmapUrl, resolvedBackgroundUrl, heightScale, scale }) => {
-    const heightmapTexture = useTexture(resolvedHeightmapUrl);
-    const backgroundTexture = useTexture(resolvedBackgroundUrl);
-    
-    const aspect = backgroundTexture.image ? backgroundTexture.image.width / backgroundTexture.image.height : 1;
-    
-    backgroundTexture.wrapS = backgroundTexture.wrapT = THREE.RepeatWrapping;
+    const [aspect, setAspect] = useState(1);
+
+    const backgroundTexture = useMemo(() => {
+        if (!resolvedBackgroundUrl) return null;
+        const tex = new THREE.TextureLoader().load(resolvedBackgroundUrl, (t) => {
+             if (t.image) setAspect(t.image.width / t.image.height);
+        });
+        tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+        return tex;
+    }, [resolvedBackgroundUrl]);
+
+    const heightmapTexture = useMemo(() => {
+        if (!resolvedHeightmapUrl) return null;
+        return new THREE.TextureLoader().load(resolvedHeightmapUrl);
+    }, [resolvedHeightmapUrl]);
 
     return (
         <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]}>
@@ -94,7 +252,7 @@ const Heightmap = ({ heightmapUrl, backgroundUrl, heightScale, scale = 20 }) => 
     />
 };
 
-const WallSegment = ({ start, end, onContextMenu, wallId }) => {
+const WallSegment = ({ start, end, onContextMenu, onToggleDoor, wall }) => {
     const vec = useMemo(() => new THREE.Vector3().subVectors(end, start), [start, end]);
     const midpoint = useMemo(() => new THREE.Vector3().addVectors(start, end).multiplyScalar(0.5), [start, end]);
     const quat = useMemo(() => {
@@ -110,19 +268,27 @@ const WallSegment = ({ start, end, onContextMenu, wallId }) => {
         <mesh 
             position={midpoint} 
             quaternion={quat}
+            onClick={(e) => {
+                if (wall.type === 'door') {
+                    e.stopPropagation();
+                    if (onToggleDoor) onToggleDoor(e, wall.id);
+                }
+            }}
             onContextMenu={(e) => {
                 e.stopPropagation();
-                onContextMenu(e, wallId);
+                if (onContextMenu) onContextMenu(e, wall.id);
             }}
         >
-            <cylinderGeometry args={[0.2, 0.2, length, 8]} />
+            <cylinderGeometry args={[0.4, 0.4, length, 8]} />
             <meshBasicMaterial visible={false} />
         </mesh>
     );
 };
 
-const Wall = ({ wall, onContextMenu }) => {
+const Wall = ({ wall, onContextMenu, onToggleDoor }) => {
     const points = wall.points.map(p => new THREE.Vector3(p.x, p.y, p.z));
+    const type = wall.type || 'wall';
+    const color = type === 'door' ? '#3b82f6' : type === 'window' ? '#06b6d4' : '#ef4444';
 
     const segments = [];
     if (onContextMenu) {
@@ -133,7 +299,8 @@ const Wall = ({ wall, onContextMenu }) => {
                     start={points[i]} 
                     end={points[i+1]} 
                     onContextMenu={onContextMenu}
-                    wallId={wall.id}
+                    onToggleDoor={onToggleDoor}
+                    wall={wall}
                 />
             );
         }
@@ -141,23 +308,772 @@ const Wall = ({ wall, onContextMenu }) => {
     
     return (
         <group>
-            <Line points={points} color={'#ff00ff'} lineWidth={5} />
+            <Line 
+                points={points} 
+                color={color} 
+                lineWidth={type === 'door' ? 8 : 5} 
+                dashed={wall.isOpen}
+                dashScale={wall.isOpen ? 2 : 1}
+                transparent={true}
+                opacity={wall.isOpen ? 0.3 : 1}
+            />
             {segments}
         </group>
     );
 };
 
-const Walls = ({ walls, onWallContextMenu }) => {
+const Walls = ({ walls, onWallContextMenu, onToggleDoor }) => {
     if (!walls) return null;
     return (
         <group>
             {Object.values(walls).map(wall => (
-                <Wall key={wall.id} wall={wall} onContextMenu={onWallContextMenu} />
+                <Wall key={wall.id} wall={wall} onContextMenu={onWallContextMenu} onToggleDoor={onToggleDoor} />
             ))}
         </group>
     );
 };
 
+const CombatRibbon = ({ combat, tokens, role }) => {
+    if (role === 'dm' || !combat?.active || !combat?.combatants?.length) return null;
+
+    const combatants = combat.combatants;
+    const turn = combat.turn || 0;
+    const activeIndex = turn % combatants.length;
+    
+    // Build the display order (Active first, then the rest wrapping around)
+    const displayOrder = [
+        combatants[activeIndex],
+        ...combatants.slice(activeIndex + 1),
+        ...combatants.slice(0, activeIndex)
+    ];
+
+    return (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[60] flex items-center gap-4 bg-slate-900/90 backdrop-blur border border-slate-700 p-2 rounded-2xl shadow-2xl">
+
+            <div className="flex items-center gap-2 overflow-hidden max-w-[60vw]">
+                {displayOrder.map((c, i) => {
+                    const t = tokens.find(t => t.id === c.tokenId);
+                    const isActive = i === 0;
+                    
+                    return (
+                        <div 
+                            key={c.tokenId + i} 
+                            className={`relative flex items-center gap-2 rounded-xl border p-1 transition-all ${isActive ? 'bg-slate-800 border-amber-500 scale-100 shadow-[0_0_15px_rgba(245,158,11,0.3)]' : 'bg-slate-800 border-slate-600 scale-90 opacity-80 hover:opacity-100'}`}
+                        >
+                            <div className="w-10 h-10 rounded-lg overflow-hidden bg-slate-900 border border-slate-700 shrink-0">
+                                {t?.image || t?.img ? <img src={t.image || t.img} className="w-full h-full object-cover"/> : <div className="w-full h-full flex items-center justify-center font-bold text-slate-500">{t?.name?.[0] || c.name[0] || '?'}</div>}
+                            </div>
+                            {isActive && (
+                                <div className="flex flex-col pr-3">
+                                    <span className="text-sm font-bold text-white whitespace-nowrap">{t?.name || c.name}</span>
+                                    <span className="text-[10px] text-amber-500 font-bold uppercase tracking-wider">Init: {c.initiative}</span>
+                                </div>
+                            )}
+                            {!isActive && (
+                                <div className="absolute -top-2 -right-2 bg-slate-700 text-white text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center border border-slate-500 shadow-md">
+                                    {c.initiative}
+                                </div>
+                            )}
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
+};
+
+const EditableHP = ({ currentHp, maxHp, onSave }) => {
+    const [val, setVal] = useState(currentHp);
+    useEffect(() => setVal(currentHp), [currentHp]);
+    
+    return (
+        <div className="flex items-center bg-slate-900 border border-slate-600 rounded overflow-hidden">
+            <input 
+                className="w-10 bg-transparent text-center text-xs font-bold text-green-400 outline-none py-1"
+                value={val}
+                onChange={(e) => setVal(e.target.value)}
+                onBlur={() => {
+                    const num = parseInt(val, 10);
+                    if (!isNaN(num) && num !== currentHp) onSave(num);
+                    else setVal(currentHp);
+                }}
+                onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); }}
+                onFocus={(e) => e.target.select()}
+            />
+            <span className="text-[10px] text-slate-500 px-1.5 border-l border-slate-700 bg-slate-800 leading-none flex items-center h-full">/ {maxHp}</span>
+        </div>
+    );
+};
+
+const CombatTrackerSidebar = ({ combat, updateCampaign, updateToken, tokens, role, campaignData, allCharacters, onOpenSheet, data }) => {
+    if (role !== 'dm' || !combat?.active || !combat?.combatants?.length) return null;
+
+    const combatants = combat.combatants;
+    const turn = combat.turn || 0;
+    const activeIndex = turn % combatants.length;
+    
+    // Display all combatants from highest to lowest initiative
+    const sortedCombatants = [...combatants].sort((a,b) => b.initiative - a.initiative);
+    const activeCombatant = combatants[activeIndex];
+
+    const handleNext = () => updateCampaign({ campaign: { ...campaignData, combat: { ...combat, turn: turn + 1 } } });
+    const handlePrev = () => updateCampaign({ campaign: { ...campaignData, combat: { ...combat, turn: Math.max(0, turn - 1) } } });
+    const handleEnd = () => {
+        if (window.confirm("End combat and clear initiative tracker?")) {
+            updateCampaign({ campaign: { ...campaignData, combat: { ...combat, active: false, combatants: [], turn: 0 } } });
+        }
+    };
+
+    const editInit = (tokenId, currentInit) => {
+        if (role !== 'dm') return;
+        const newVal = window.prompt("Set new initiative:", currentInit);
+        if (!newVal || isNaN(newVal)) return;
+        
+        const newCombatants = [...combatants];
+        const idx = newCombatants.findIndex(c => c.tokenId === tokenId);
+        if (idx !== -1) {
+            newCombatants[idx].initiative = Number(newVal);
+            updateCampaign({ campaign: { ...campaignData, combat: { ...combat, combatants: newCombatants } } });
+        }
+    };
+
+    const updateCharHp = (tokenId, charId, isNpc, newHp) => {
+        if (isNpc) {
+            const token = tokens.find(t => t.id === tokenId);
+            if (token) {
+                const oldHp = token.hp || allCharacters.find(ch => String(ch.id) === String(charId))?.hp || {};
+                updateToken(tokenId, { hp: { ...oldHp, current: newHp } });
+            } else {
+                const newNpcs = (data?.npcs || []).map(n => String(n.id) === String(charId) ? { ...n, hp: { ...n.hp, current: newHp } } : n);
+                updateCampaign({ npcs: newNpcs });
+            }
+        } else {
+            const newPlayers = (data?.players || []).map(p => String(p.id) === String(charId) ? { ...p, hp: { ...p.hp, current: newHp } } : p);
+            updateCampaign({ players: newPlayers });
+        }
+    };
+
+    return (
+        <div className="absolute top-44 left-4 bottom-24 w-72 bg-slate-900/95 backdrop-blur border border-slate-700 shadow-2xl rounded-xl z-[60] flex flex-col overflow-hidden transition-all">
+            <div className="p-3 bg-slate-800 border-b border-slate-700 flex justify-between items-center shrink-0">
+                <h3 className="font-bold text-amber-500 flex items-center gap-2"><Icon name="sword" size={16}/> Initiative</h3>
+                {role === 'dm' && (
+                    <div className="flex gap-1">
+                        <button onClick={handlePrev} className="p-1.5 hover:bg-slate-600 rounded text-slate-400 hover:text-white" title="Previous Turn"><Icon name="chevron-left" size={14}/></button>
+                        <button onClick={handleNext} className="p-1.5 hover:bg-slate-600 rounded text-slate-400 hover:text-white" title="Next Turn"><Icon name="chevron-right" size={14}/></button>
+                        <button onClick={handleEnd} className="p-1.5 hover:bg-red-900/50 rounded text-red-500 hover:text-red-400 ml-1" title="End Combat"><Icon name="x" size={14}/></button>
+                    </div>
+                )}
+            </div>
+            
+            <div className="flex-1 overflow-y-auto custom-scroll p-2 space-y-2">
+                {sortedCombatants.map((c, i) => {
+                    const t = tokens.find(tok => tok.id === c.tokenId);
+                    const char = allCharacters.find(ch => String(ch.id) === String(t?.characterId || c.characterId || c.tokenId));
+                    const isActive = activeCombatant?.tokenId === c.tokenId;
+                    
+                    const isNpc = c.isNpc;
+                    const hp = isNpc ? (t?.hp?.current ?? char?.hp?.current ?? '-') : (char?.hp?.current ?? '-');
+                    const maxHp = isNpc ? (t?.hp?.max ?? char?.hp?.max ?? '-') : (char?.hp?.max ?? '-');
+                    const ac = char?.ac ?? '-';
+                    
+                    const displayName = t?.name || char?.name || c.name;
+                    const displayImage = t?.image || t?.img || char?.image;
+                    const charIdForSheet = t?.characterId || char?.id;
+                    
+                    return (
+                        <div key={c.tokenId} className={`relative flex flex-col rounded-lg border p-2 transition-all ${isActive ? 'bg-slate-800 border-amber-500 shadow-[0_0_10px_rgba(245,158,11,0.2)]' : 'bg-slate-800/50 border-slate-700'}`}>
+                            <div className="flex items-center gap-3">
+                                {/* Avatar (Click to open sheet) */}
+                                <div 
+                                    className="w-10 h-10 rounded bg-slate-900 border border-slate-600 shrink-0 overflow-hidden cursor-pointer hover:border-amber-400 transition-colors"
+                                    onClick={() => {
+                                        if (charIdForSheet && onOpenSheet) {
+                                            const tokenHp = t?.hp?.current ?? char?.hp?.current;
+                                            const tokenMaxHp = t?.hp?.max ?? char?.hp?.max;
+                                            onOpenSheet({ isToken: true, tokenId: c.tokenId, characterId: charIdForSheet, hp: tokenHp, maxHp: tokenMaxHp });
+                                        }
+                                    }}
+                                    title={`Open ${displayName}'s Sheet`}
+                                >
+                                    {displayImage ? <img src={displayImage} className="w-full h-full object-cover"/> : <div className="w-full h-full flex items-center justify-center font-bold text-slate-500 text-lg">{displayName?.[0] || '?'}</div>}
+                                </div>
+                                
+                                {/* Info */}
+                                <div className="flex-1 min-w-0 flex flex-col">
+                                    <div className="font-bold text-sm text-white truncate pr-5">{displayName}</div>
+                                    <div className="flex items-center gap-3 mt-1">
+                                        {/* Init */}
+                                        <div 
+                                            className={`flex items-center gap-1 text-[10px] uppercase font-bold cursor-pointer hover:text-amber-400 ${isActive ? 'text-amber-500' : 'text-slate-400'}`}
+                                            onClick={() => editInit(c.tokenId, c.initiative)}
+                                            title="Edit Initiative"
+                                        >
+                                            <Icon name="clock" size={10}/> {c.initiative}
+                                        </div>
+                                        {/* AC */}
+                                        <div className="flex items-center gap-1 text-[10px] uppercase font-bold text-blue-400" title="Armor Class">
+                                            <Icon name="shield" size={10}/> {ac}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* HP (Editable) */}
+                                {char && (role === 'dm' || !isNpc) && (
+                                    <div className="shrink-0 flex flex-col items-end">
+                                        <div className="text-[9px] text-slate-500 font-bold uppercase mb-0.5">HP</div>
+                                        {role === 'dm' ? (
+                                            <EditableHP currentHp={hp} maxHp={maxHp} onSave={(val) => updateCharHp(c.tokenId, charIdForSheet, isNpc, val)} />
+                                        ) : (
+                                            <div className="text-xs font-bold text-green-400">{hp} <span className="text-slate-500 text-[10px]">/ {maxHp}</span></div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                            
+                            {role === 'dm' && (
+                                <button 
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        const newCombatants = combatants.filter(x => x.tokenId !== c.tokenId);
+                                        updateCampaign({ campaign: { ...campaignData, combat: { ...combat, combatants: newCombatants, active: newCombatants.length > 0 } } });
+                                    }}
+                                    className="absolute top-1 right-1 text-slate-600 hover:text-red-500 transition-colors p-1"
+                                    title="Remove from Combat"
+                                >
+                                    <Icon name="x" size={12} />
+                                </button>
+                            )}
+                        </div>
+                    );
+                })}
+            </div>
+            {role === 'dm' && (
+                <div className="p-2 bg-slate-900 border-t border-slate-700">
+                    <button onClick={handleNext} className="w-full bg-amber-600 hover:bg-amber-500 text-white py-2 rounded-lg font-bold shadow-lg flex items-center justify-center gap-2 transition-all">
+                        Next Turn <Icon name="arrow-right" size={16}/>
+                    </button>
+                </div>
+            )}
+        </div>
+    );
+};
+
+const CombatCameraDirector = ({ activeTokenId, tokensList }) => {
+    const { camera, controls } = useThree();
+    const [targetData, setTargetData] = useState(null);
+    const prevActiveId = useRef(null); // Init as null so it pans on first load if combat is active
+
+    useEffect(() => {
+        if (activeTokenId && activeTokenId !== prevActiveId.current) {
+            const t = tokensList.find(x => x.id === activeTokenId);
+            if (t && controls) {
+                const newTarget = new THREE.Vector3(t.x || 0, t.y || 0, t.z || 0);
+                const delta = new THREE.Vector3().subVectors(newTarget, controls.target);
+                const newCamPos = camera.position.clone().add(delta);
+                setTargetData({ target: newTarget, camPos: newCamPos });
+            }
+        }
+        prevActiveId.current = activeTokenId;
+    }, [activeTokenId, tokensList, camera, controls]);
+
+    useEffect(() => {
+        if (!controls) return;
+        const cancelPan = () => setTargetData(null);
+        controls.addEventListener('start', cancelPan); // Yield to user if they touch the map
+        return () => controls.removeEventListener('start', cancelPan);
+    }, [controls]);
+
+    useFrame(() => {
+        if (targetData && controls) {
+            controls.target.lerp(targetData.target, 0.08);
+            camera.position.lerp(targetData.camPos, 0.08);
+            if (controls.target.distanceTo(targetData.target) < 0.05) setTargetData(null);
+        }
+    });
+    return null;
+};
+
+const ArchitectPenController = ({ isEnabled, onCommitSegment, getTerrainHeight }) => {
+    const { controls } = useThree();
+    const [nodes, setNodes] = useState([]);
+    const [cursorPos, setCursorPos] = useState(null);
+
+    useEffect(() => {
+        if (controls) controls.enabled = !isEnabled;
+        if (!isEnabled) { setNodes([]); setCursorPos(null); }
+    }, [isEnabled, controls]);
+
+    const applySnap = (pt, lastNode) => {
+        const dx = pt.x - lastNode.x;
+        const dz = pt.z - lastNode.z;
+        const angle = Math.atan2(dz, dx);
+        const snappedAngle = Math.round(angle / (Math.PI / 4)) * (Math.PI / 4);
+        const dist = Math.sqrt(dx*dx + dz*dz);
+        pt.x = lastNode.x + Math.cos(snappedAngle) * dist;
+        pt.z = lastNode.z + Math.sin(snappedAngle) * dist;
+        return pt;
+    };
+
+    const handlePointerDown = (e) => {
+        if (!isEnabled || e.button !== 0) return;
+        e.stopPropagation();
+        let pt = e.point.clone();
+        pt.y = getTerrainHeight(pt.x, pt.z) + 0.1;
+
+        if (e.shiftKey && nodes.length > 0) pt = applySnap(pt, nodes[nodes.length - 1]);
+
+        const newNodes = [...nodes, pt];
+        setNodes(newNodes);
+
+        if (newNodes.length >= 2) {
+            onCommitSegment(newNodes[newNodes.length - 2], newNodes[newNodes.length - 1]);
+            setNodes([newNodes[newNodes.length - 1]]); // Chain the next segment
+        }
+    };
+
+    const handlePointerMove = (e) => {
+        if (!isEnabled) return;
+        e.stopPropagation();
+        let pt = e.point.clone();
+        pt.y = getTerrainHeight(pt.x, pt.z) + 0.1;
+
+        if (e.shiftKey && nodes.length > 0) pt = applySnap(pt, nodes[nodes.length - 1]);
+        setCursorPos(pt);
+    };
+
+    const handleContextMenu = (e) => {
+        if (!isEnabled) return;
+        e.stopPropagation();
+        setNodes([]); // Break the chain
+    };
+
+    useEffect(() => {
+        const handleKeyDown = (e) => { if (e.key === 'Escape') setNodes([]); };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, []);
+
+    if (!isEnabled) return null;
+
+    return (
+        <group>
+            {nodes.length > 0 && cursorPos && (
+                <Line points={[nodes[nodes.length - 1], cursorPos]} color="#ef4444" lineWidth={3} dashed dashScale={10} />
+            )}
+            {nodes.map((n, i) => (
+                <mesh key={i} position={n}>
+                    <sphereGeometry args={[0.2]} />
+                    <meshBasicMaterial color="#ef4444" />
+                </mesh>
+            ))}
+            <mesh onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onContextMenu={handleContextMenu} rotation={[-Math.PI / 2, 0, 0]} visible={false}>
+                <planeGeometry args={[1000, 1000]} />
+                <meshBasicMaterial />
+            </mesh>
+        </group>
+    );
+};
+
+const LightPlacementController = ({ isEnabled, onPlaceLight, getTerrainHeight }) => {
+    const { controls } = useThree();
+    const [cursorPos, setCursorPos] = useState(null);
+
+    useEffect(() => {
+        if (controls) controls.enabled = !isEnabled;
+        if (!isEnabled) setCursorPos(null);
+    }, [isEnabled, controls]);
+
+    const handlePointerDown = (e) => {
+        if (!isEnabled || e.button !== 0) return;
+        e.stopPropagation();
+        let pt = e.point.clone();
+        pt.y = getTerrainHeight(pt.x, pt.z) + 0.1;
+        onPlaceLight(pt);
+    };
+
+    const handlePointerMove = (e) => {
+        if (!isEnabled) return;
+        e.stopPropagation();
+        let pt = e.point.clone();
+        pt.y = getTerrainHeight(pt.x, pt.z) + 0.1;
+        setCursorPos(pt);
+    };
+
+    if (!isEnabled) return null;
+
+    return (
+        <group>
+            {cursorPos && (
+                <mesh position={cursorPos} raycast={() => null}>
+                    <sphereGeometry args={[0.5]} />
+                    <meshBasicMaterial color="#fef08a" transparent opacity={0.5} />
+                </mesh>
+            )}
+            <mesh onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} rotation={[-Math.PI / 2, 0, 0]} visible={false}>
+                <planeGeometry args={[1000, 1000]} />
+                <meshBasicMaterial />
+            </mesh>
+        </group>
+    );
+};
+
+const MapLights = ({ lights, onContextMenu, role }) => {
+    if (!lights) return null;
+    return (
+        <group>
+            {Object.values(lights).map(light => (
+                <mesh 
+                    key={light.id} 
+                    position={[light.position.x, light.position.y || 1, light.position.z]}
+                    onContextMenu={(e) => {
+                        if (role === 'dm') {
+                            e.stopPropagation();
+                            if (onContextMenu) onContextMenu(e, light.id);
+                        }
+                    }}
+                >
+                    <sphereGeometry args={[0.3]} />
+                    <meshBasicMaterial color={light.color || "#fef08a"} transparent opacity={role === 'dm' ? 0.8 : 0} />
+                </mesh>
+            ))}
+        </group>
+    );
+};
+
+// --- 2D RAYCASTER MATH FOR SHADOW CASTING ---
+function getIntersection(ray, segment) {
+    const r_px = ray.origin.x, r_py = ray.origin.y;
+    const r_dx = ray.dir.x, r_dy = ray.dir.y;
+    const s_px = segment.start.x, s_py = segment.start.y;
+    const s_dx = segment.end.x - segment.start.x;
+    const s_dy = segment.end.y - segment.start.y;
+
+    const r_mag = Math.sqrt(r_dx * r_dx + r_dy * r_dy);
+    if (r_mag === 0) return null;
+
+    const T2 = r_dx * s_dy - r_dy * s_dx;
+    if (T2 === 0) return null; // Parallel
+
+    const T1 = (s_px - r_px) * s_dy - (s_py - r_py) * s_dx;
+    const U = (s_px - r_px) * r_dy - (s_py - r_py) * r_dx;
+
+    const t1 = T1 / T2;
+    const t2 = U / T2;
+
+    // t1 is magnitude along ray, t2 is magnitude along segment (0 to 1)
+    // FIX: Added floating point epsilon to t2 to perfectly seal wall corners
+    if (t1 > 0.0001 && t2 >= -0.0001 && t2 <= 1.0001) {
+        return { x: r_px + r_dx * t1, y: r_py + r_dy * t1, param: t1 };
+    }
+    return null;
+}
+
+function hasLineOfSight(p1, p2, segments) {
+    const dx = p2.x - p1.x;
+    const dy = p2.y - p1.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist === 0) return true;
+
+    const ray = { origin: p1, dir: { x: dx / dist, y: dy / dist } };
+
+    for (let i = 0; i < segments.length; i++) {
+        const int = getIntersection(ray, segments[i]);
+        // If intersection occurs strictly between the two points (accounting for floating point errors)
+        if (int && int.param > 0.05 && int.param < dist - 0.05) {
+            return false;
+        }
+    }
+    return true;
+}
+
+const computeVisibilityPolygon = (origin, segments) => {
+    // 1. Spatial Filter: Only check walls that might actually intersect the vision radius
+    const localSegments = segments.filter(seg => {
+        if (!origin.radius || origin.radius === Infinity) return true;
+        const minX = Math.min(seg.start.x, seg.end.x);
+        const maxX = Math.max(seg.start.x, seg.end.x);
+        const minY = Math.min(seg.start.y, seg.end.y);
+        const maxY = Math.max(seg.start.y, seg.end.y);
+        
+        const buffer = 1; // Small overlap margin
+        if (minX > origin.x + origin.radius + buffer || maxX < origin.x - origin.radius - buffer) return false;
+        if (minY > origin.y + origin.radius + buffer || maxY < origin.y - origin.radius - buffer) return false;
+        return true;
+    });
+
+    const uniqueAngles = [];
+    localSegments.forEach(seg => {
+        const a1 = Math.atan2(seg.start.y - origin.y, seg.start.x - origin.x);
+        const a2 = Math.atan2(seg.end.y - origin.y, seg.end.x - origin.x);
+        uniqueAngles.push(a1 - 0.00001, a1, a1 + 0.00001);
+        uniqueAngles.push(a2 - 0.00001, a2, a2 + 0.00001);
+    });
+
+    // Add fixed angles to approximate the vision radius circle smoothly
+    if (origin.radius && origin.radius !== Infinity) {
+        // Dynamic ray count based on radius for max performance vs smoothness
+        const rayCount = Math.max(32, Math.min(120, Math.floor(origin.radius * 4)));
+        const step = (Math.PI * 2) / rayCount;
+        for (let i = 0; i < rayCount; i++) {
+            uniqueAngles.push(i * step);
+        }
+    } else {
+        // For unlimited vision, just give a baseline circle
+        for (let i = 0; i < 36; i++) {
+            uniqueAngles.push((i * 10) * Math.PI / 180);
+        }
+    }
+
+    const intersects = [];
+    uniqueAngles.forEach(angle => {
+        const ray = { origin, dir: { x: Math.cos(angle), y: Math.sin(angle) } };
+        let closest = null;
+        let minDist = origin.radius || Infinity;
+
+        localSegments.forEach(seg => {
+            const int = getIntersection(ray, seg);
+            if (int && int.param < minDist) {
+                minDist = int.param;
+                closest = { ...int, angle };
+            }
+        });
+
+        if (!closest && minDist !== Infinity) {
+            closest = { 
+                x: origin.x + Math.cos(angle) * minDist, 
+                y: origin.y + Math.sin(angle) * minDist, 
+                param: minDist, 
+                angle 
+            };
+        }
+
+        if (closest) intersects.push(closest);
+    });
+
+    intersects.sort((a, b) => a.angle - b.angle);
+    return intersects;
+};
+
+const FogOfWar = ({ enabled, tokens, walls, lights, role, user, assignments, allCharacters, gridSize }) => {
+    const [exploredHoles, setExploredHoles] = useState([]);
+
+    const segments = useMemo(() => {
+        const size = 150; // Max map boundary
+        const segs = [
+            { start: { x: -size, y: -size }, end: { x: size, y: -size } },
+            { start: { x: size, y: -size }, end: { x: size, y: size } },
+            { start: { x: size, y: size }, end: { x: -size, y: size } },
+            { start: { x: -size, y: size }, end: { x: -size, y: -size } }
+        ];
+        if (walls) {
+            Object.values(walls).forEach(wall => {
+                if (wall.type === 'window') return; // Windows don't block vision
+                if (wall.type === 'door' && wall.isOpen) return; // Open doors don't block vision
+
+                if (wall.points && wall.points.length > 1) {
+                    for (let i = 0; i < wall.points.length - 1; i++) {
+                        segs.push({
+                            start: { x: wall.points[i].x, y: -(wall.points[i].z || 0) },
+                            end: { x: wall.points[i+1].x, y: -(wall.points[i+1].z || 0) }
+                        });
+                    }
+                }
+            });
+        }
+        return segs;
+    }, [walls]);
+
+    const sources = useMemo(() => {
+        if (!enabled) return [];
+        const myCharId = assignments?.[user?.uid];
+        let myTokens = role === 'dm' 
+            ? tokens.filter(t => t.type === 'pc') // DM sees what the players see
+            : tokens.filter(t => String(t.characterId) === String(myCharId) || String(t.ownerId) === String(user?.uid));
+        
+        const srcs = myTokens.map(t => {
+            const char = allCharacters.find(c => String(c.id) === String(t.characterId));
+            let radius = Infinity; // Default to daylight (Infinity)
+            
+            if (char?.senses?.darkvision) {
+                const match = String(char.senses.darkvision).match(/(\d+)/);
+                if (match) radius = (parseInt(match[1]) / 5) * gridSize;
+            } else if (char) {
+                // Human or race without darkvision in a dark environment.
+                // Default to 1 square so the screen isn't pitch black.
+                radius = 1 * gridSize; 
+            }
+            
+            return { x: t.x || 0, y: -(t.z || 0), radius };
+        });
+
+        const myTokenPositions = myTokens.map(t => ({ x: t.x || 0, y: -(t.z || 0) }));
+
+        // Add static map lights as vision sources
+        if (lights) {
+            Object.values(lights).forEach(l => {
+                if (l.position) {
+                    const lx = l.position.x;
+                    const ly = -(l.position.z || 0);
+                    
+                    let isVisible = role === 'dm';
+                    if (!isVisible) {
+                        const lightRadius = l.radius || (6 * gridSize);
+                        const pointsToTest = [
+                            { x: lx, y: ly },
+                            { x: lx + lightRadius, y: ly },
+                            { x: lx - lightRadius, y: ly },
+                            { x: lx, y: ly + lightRadius },
+                            { x: lx, y: ly - lightRadius }
+                        ];
+                        isVisible = myTokenPositions.some(tokenPos => 
+                            pointsToTest.some(testPoint => hasLineOfSight(tokenPos, testPoint, segments))
+                        );
+                    }
+
+                    if (isVisible) {
+                        srcs.push({ x: lx, y: ly, radius: l.radius || (6 * gridSize) });
+                    }
+                }
+            });
+        }
+        return srcs;
+    }, [enabled, tokens, role, user, assignments, lights, allCharacters, gridSize, segments]);
+
+    const currentHoles = useMemo(() => {
+        if (!enabled) return [];
+        const holes = [];
+        sources.forEach(src => {
+            const poly = computeVisibilityPolygon(src, segments);
+            if (poly.length > 0) {
+                const hole = new THREE.Path();
+                hole.moveTo(poly[0].x, poly[0].y);
+                for (let i = 1; i < poly.length; i++) hole.lineTo(poly[i].x, poly[i].y);
+                hole.lineTo(poly[0].x, poly[0].y);
+                holes.push(hole);
+            }
+        });
+        return holes;
+    }, [enabled, sources, segments]);
+
+    useEffect(() => {
+        if (!enabled) {
+            setExploredHoles([]);
+            return;
+        }
+        setExploredHoles(prev => {
+            const next = [...prev, ...currentHoles];
+            // Prevent infinite array growth by keeping the last N holes.
+            return next.length > 200 ? next.slice(next.length - 200) : next;
+        });
+    }, [currentHoles, enabled]);
+
+    const { shapeCurrent, shapeExplored } = useMemo(() => {
+        if (!enabled) return { shapeCurrent: null, shapeExplored: null };
+
+        const sCurrent = new THREE.Shape();
+        const sExplored = new THREE.Shape();
+        const size = 150;
+        
+        sCurrent.moveTo(-size, -size); sCurrent.lineTo(size, -size); sCurrent.lineTo(size, size); sCurrent.lineTo(-size, size); sCurrent.lineTo(-size, -size);
+        sCurrent.holes.push(...currentHoles);
+
+        sExplored.moveTo(-size, -size); sExplored.lineTo(size, -size); sExplored.lineTo(size, size); sExplored.lineTo(-size, size); sExplored.lineTo(-size, -size);
+        // Include both explored and current holes in the explored mask to prevent 1-frame flicker
+        sExplored.holes.push(...exploredHoles, ...currentHoles);
+
+        return { shapeCurrent: sCurrent, shapeExplored: sExplored };
+    }, [enabled, currentHoles, exploredHoles]);
+
+    if (!enabled || !shapeCurrent) return null;
+
+    return (
+        <group position={[0, 0.01, 0]} renderOrder={100}>
+            {/* Explored Layer: Persistent dark mask over everywhere not explored */}
+            <mesh rotation={[-Math.PI / 2, 0, 0]} raycast={() => null}>
+                <shapeGeometry args={[shapeExplored]} />
+                <meshBasicMaterial color="#000000" transparent opacity={role === 'dm' ? 0.4 : 0.98} depthWrite={false} depthTest={false} />
+            </mesh>
+
+            {/* Current Layer: Semi-transparent mask over explored areas that are currently not visible */}
+            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.001, 0]} raycast={() => null}>
+                <shapeGeometry args={[shapeCurrent]} />
+                <meshBasicMaterial color="#000000" transparent opacity={role === 'dm' ? 0.3 : 0.6} depthWrite={false} depthTest={false} />
+            </mesh>
+        </group>
+    );
+};
+
+const ZoomHandler = ({ zoomRef }) => {
+    const { camera, controls } = useThree();
+    const targetDistance = useRef(null);
+
+    useEffect(() => {
+        if (zoomRef) {
+            zoomRef.current = {
+                zoomIn: () => {
+                    if (!controls) return;
+                    if (camera.isOrthographicCamera) {
+                        const z = targetDistance.current || camera.zoom;
+                        targetDistance.current = Math.min(controls.maxZoom || 10, z * 1.3);
+                    } else {
+                        const dist = targetDistance.current || camera.position.distanceTo(controls.target);
+                        targetDistance.current = Math.max(controls.minDistance || 3, dist * 0.7);
+                    }
+                },
+                zoomOut: () => {
+                    if (!controls) return;
+                    if (camera.isOrthographicCamera) {
+                        const z = targetDistance.current || camera.zoom;
+                        targetDistance.current = Math.max(controls.minZoom || 0.1, z * 0.7);
+                    } else {
+                        const dist = targetDistance.current || camera.position.distanceTo(controls.target);
+                        targetDistance.current = Math.min(controls.maxDistance || 40, dist * 1.4);
+                    }
+                }
+            };
+        }
+    }, [camera, controls, zoomRef]);
+
+    useEffect(() => {
+        if (!controls) return;
+        const cancelZoom = () => { targetDistance.current = null; };
+        controls.addEventListener('start', cancelZoom); // User started dragging map
+        if (controls.domElement) controls.domElement.addEventListener('wheel', cancelZoom); // User scrolled wheel
+        return () => {
+            controls.removeEventListener('start', cancelZoom);
+            if (controls.domElement) controls.domElement.removeEventListener('wheel', cancelZoom);
+        };
+    }, [controls]);
+
+    useFrame(() => {
+        if (controls && targetDistance.current !== null) {
+            if (camera.isOrthographicCamera) {
+                const currentZoom = camera.zoom;
+                const diff = targetDistance.current - currentZoom;
+                if (Math.abs(diff) < 0.05) {
+                    targetDistance.current = null;
+                } else {
+                    camera.zoom = currentZoom + diff * 0.15;
+                    camera.updateProjectionMatrix();
+                    controls.update();
+                }
+            } else {
+                const currentDist = camera.position.distanceTo(controls.target);
+                const diff = targetDistance.current - currentDist;
+                if (Math.abs(diff) < 0.1) {
+                    targetDistance.current = null;
+                } else {
+                    const dir = camera.position.clone().sub(controls.target).normalize();
+                    camera.position.copy(controls.target).add(dir.multiplyScalar(currentDist + diff * 0.15));
+                    controls.update();
+                }
+            }
+        }
+    });
+
+    return null;
+};
 
 const WallDrawingController = ({ isEnabled, onDrawEnd, getTerrainHeight }) => {
     const { controls } = useThree();
@@ -230,7 +1146,10 @@ const WallDrawingController = ({ isEnabled, onDrawEnd, getTerrainHeight }) => {
 };
 
 const TokenImage = ({ imageUrl, size }) => {
-    const texture = useTexture(imageUrl);
+    const texture = useMemo(() => {
+        if (!imageUrl) return null;
+        return new THREE.TextureLoader().load(imageUrl);
+    }, [imageUrl]);
     return (
         <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.03, 0]}>
             <circleGeometry args={[size * 0.45, 32]} />
@@ -240,76 +1159,21 @@ const TokenImage = ({ imageUrl, size }) => {
 }
 
 // Interactive 3D Token
-const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelect, onContextMenu, role, getTerrainHeight, isSnapToGrid, isTerrainReady, draggedTokenId, setDraggedTokenId }) => {
+const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelect, onContextMenu, role, getTerrainHeight, isSnapToGrid, isTerrainReady, draggedTokenId, setDraggedTokenId, viewMode, showNameplates, selectedTokenIds, groupDragData, onGroupDragEnd, isActiveTurn, canControl }) => {
   const meshRef = useRef();
+  const visualsRef = useRef();
   const { controls } = useThree();
   const [hovered, setHover] = useState(false);
   const [resolvedImage, setResolvedImage] = useState(null);
-  const [isTopDown, setIsTopDown] = useState(false);
   const polarAngleRef = useRef(0);
+  const [saveStatus, setSaveStatus] = useState(null); // 'saving' | 'saved' | null
 
   const rulerRef = useRef();
   const rulerLabelRef = useRef();
   const rulerTextRef = useRef();
 
-  useFrame(() => {
-    // --- ADD DEBUG LOGGING HERE ---
-    if (meshRef.current && getTerrainHeight && !isRightDragging.current) {
-      const p = meshRef.current.position;
-      const terrainY = getTerrainHeight(p.x, p.z);
-      const targetY = terrainY + (token.elevationOffset || 0) + 0.025;
-      
-      if (isLeftDragging.current) {
-        p.y = targetY;
-        const start = dragStartPos.current;
-        const end = p;
-        const deltaX = end.x - start.x;
-        const deltaZ = end.z - start.z;
-        const distSq = deltaX * deltaX + deltaZ * deltaZ;
-        
-        if (distSq > 0.01) {
-            const dist = Math.sqrt(distSq);
-            if (rulerRef.current) {
-                rulerRef.current.scale.y = dist;
-                rulerRef.current.position.copy(start).lerp(end, 0.5);
-                rulerRef.current.position.y = Math.max(start.y, end.y) + 0.1;
-                const dir = end.clone().sub(start).normalize();
-                rulerRef.current.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
-            }
-            if (rulerLabelRef.current) {
-                rulerLabelRef.current.position.copy(start).lerp(end, 0.5);
-                rulerLabelRef.current.position.y = Math.max(start.y, end.y) + 0.4;
-                if (rulerTextRef.current) {
-                    rulerTextRef.current.innerText = `${Math.round((dist / gridSize) * 5)} ft`;
-                }
-            }
-        } else {
-            if (rulerRef.current) rulerRef.current.scale.y = 0.001;
-            if (rulerTextRef.current) rulerTextRef.current.innerText = '0 ft';
-        }
-
-        const frameDelta = p.clone().sub(previousPos.current);
-        frameDelta.y = 0;
-        velocity.current.add(frameDelta);
-        velocity.current.multiplyScalar(0.8);
-        
-        if (velocity.current.lengthSq() > 0.0001) {
-            targetRotationY.current = Math.atan2(velocity.current.x, velocity.current.z);
-        }
-
-        previousPos.current.copy(p);
-      } else {
-        p.y = THREE.MathUtils.lerp(p.y, targetY, 0.2);
-        previousPos.current.copy(p);
-        velocity.current.set(0, 0, 0);
-      }
-
-      const diff = targetRotationY.current - meshRef.current.rotation.y;
-      meshRef.current.rotation.y += Math.atan2(Math.sin(diff), Math.cos(diff)) * 0.3;
-    }
-  });
-
-  const showModel = !!token.modelUrl && !isTopDown;
+  const isTopDownView = viewMode === 'top-down';
+  const showModel = !!token.modelUrl && !isTopDownView;
 
   if (token.isHidden && role !== 'dm') return null;
   const opacity = token.isHidden ? 0.4 : 1;
@@ -332,6 +1196,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
   const previousPos = useRef(new THREE.Vector3(token.x || 0, token.y || 0.025, token.z || 0));
   const targetRotationY = useRef(token.rotationY || 0);
   const dragControlsRef = useRef();
+  const pulseRef = useRef();
 
   // START CHANGE: Make token position reactive to props
   useEffect(() => {
@@ -345,43 +1210,77 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
   }, [token.x, token.y, token.z]);
 
   useFrame((state, delta) => {
+    if (isActiveTurn && pulseRef.current) {
+        pulseRef.current.opacity = 0.5 + Math.sin(state.clock.elapsedTime * 5) * 0.3;
+        pulseRef.current.scale.setScalar(1 + Math.sin(state.clock.elapsedTime * 3) * 0.05);
+    }
+
     // --- Main animation loop ---
-    if (meshRef.current && getTerrainHeight) {
-      const p = meshRef.current.position;
+    if (meshRef.current && visualsRef.current && getTerrainHeight) {
 
       // If another user is dragging, smoothly move the token
       if (!isLeftDragging.current) {
-          const targetPosition = new THREE.Vector3(token.x || 0, token.y || 0.025, token.z || 0);
-          p.lerp(targetPosition, 0.1);
+          if (rulerRef.current) rulerRef.current.visible = false;
+          if (rulerLabelRef.current) rulerLabelRef.current.visible = false;
+              if (rulerTextRef.current) rulerTextRef.current.style.display = 'none';
+
+          let targetPosition = new THREE.Vector3(token.x || 0, token.y || 0.025, token.z || 0);
+
+          if (isSelected && groupDragData?.current?.activeTokenId && groupDragData.current.activeTokenId !== token.id) {
+              targetPosition.add(groupDragData.current.delta);
+              const terrainY = getTerrainHeight ? getTerrainHeight(targetPosition.x, targetPosition.z) : 0;
+              targetPosition.y = terrainY + (token.elevationOffset || 0) + 0.025;
+          }
+
+          const p = meshRef.current.position;
+          p.lerp(targetPosition, 0.3); // Follow smoothly but tightly
 
           // Update rotation smoothly as well
           const targetRotY = token.rotationY || 0;
-          const diff = targetRotY - meshRef.current.rotation.y;
-          meshRef.current.rotation.y += Math.atan2(Math.sin(diff), Math.cos(diff)) * 0.15;
+          const diff = targetRotY - visualsRef.current.rotation.y;
+          visualsRef.current.rotation.y += Math.atan2(Math.sin(diff), Math.cos(diff)) * 0.15;
           return; // Skip the rest of the logic if we're just observing
       }
       
       // If the current user is dragging
-      const terrainY = getTerrainHeight(p.x, p.z);
+      const worldPos = new THREE.Vector3();
+      meshRef.current.getWorldPosition(worldPos);
+      
+      if (groupDragData?.current?.activeTokenId === token.id) {
+          groupDragData.current.delta.subVectors(worldPos, dragStartPos.current);
+      }
+
+      const terrainY = getTerrainHeight(worldPos.x, worldPos.z);
       const targetY = terrainY + (token.elevationOffset || 0) + 0.025;
       
-      p.y = targetY; // Stick to terrain while dragging
+      meshRef.current.position.y = targetY; // Stick to terrain locally
       
       // --- Ruler and Velocity Logic (for local drag only) ---
       const start = dragStartPos.current;
-      const end = p;
+      const end = worldPos;
       const distSq = end.clone().sub(start).lengthSq();
       
       if (distSq > 0.01) {
           const dist = Math.sqrt(distSq);
           if (rulerRef.current) {
-            // ... (ruler logic)
+              rulerRef.current.scale.y = dist;
+              rulerRef.current.position.copy(start).lerp(end, 0.5);
+              rulerRef.current.position.y = Math.max(start.y, end.y) + 0.1;
+              const dir = end.clone().sub(start).normalize();
+              rulerRef.current.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+              rulerRef.current.visible = true;
           }
           if (rulerLabelRef.current) {
-            // ... (ruler label logic)
+              rulerLabelRef.current.position.copy(start).lerp(end, 0.5);
+              rulerLabelRef.current.position.y = Math.max(start.y, end.y) + 0.4;
+              rulerLabelRef.current.visible = true;
+              if (rulerTextRef.current) {
+                  rulerTextRef.current.innerText = `${Math.round((dist / gridSize) * 5)} ft`;
+              rulerTextRef.current.style.display = 'block';
+              }
           }
 
-          const frameDelta = p.clone().sub(previousPos.current);
+          const frameDelta = worldPos.clone().sub(previousPos.current);
           frameDelta.y = 0;
           velocity.current.add(frameDelta);
           velocity.current.multiplyScalar(0.8);
@@ -390,15 +1289,15 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
               targetRotationY.current = Math.atan2(velocity.current.x, velocity.current.z);
           }
       } else {
-          if (rulerRef.current) rulerRef.current.scale.y = 0.001;
-          if (rulerTextRef.current) rulerTextRef.current.innerText = '0 ft';
+          if (rulerRef.current) rulerRef.current.visible = false;
+          if (rulerLabelRef.current) rulerLabelRef.current.visible = false;
       }
 
-      previousPos.current.copy(p);
+      previousPos.current.copy(worldPos);
       
       // --- Rotation Lerping (for local drag only) ---
-      const diff = targetRotationY.current - meshRef.current.rotation.y;
-      meshRef.current.rotation.y += Math.atan2(Math.sin(diff), Math.cos(diff)) * 0.3;
+      const diff = targetRotationY.current - visualsRef.current.rotation.y;
+      visualsRef.current.rotation.y += Math.atan2(Math.sin(diff), Math.cos(diff)) * 0.3;
     }
   });
   // END CHANGE
@@ -410,6 +1309,10 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
   const handlePointerDown = (e) => {
     if (!isTerrainReady || e.button === 2) {
       e.stopPropagation();
+      // Stop the native event so the MarqueeSelector doesn't accidentally trigger
+      // when you are right-clicking a token to change its elevation.
+      if (e.nativeEvent) e.nativeEvent.stopPropagation();
+      if (!canControl) return; // Prevent elevation change if not controllable
       e.target.setPointerCapture(e.pointerId);
       isRightDragging.current = true;
       hasDragged.current = false;
@@ -445,11 +1348,21 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
           const offset = p.y - terrainY - 0.025;
           const isFlying = Math.abs(offset) > 0.1;
           
-          updateTokenPosition(token.id, { 
+          setSaveStatus('saving');
+          const updates = { 
               x, 
               y: p.y, 
               z,
               elevationOffset: isFlying ? offset : 0
+          };
+          console.log("[Token3D] Right-drag ended, requesting position update:", updates);
+          updateTokenPosition(token.id, updates).then(() => {
+              console.log("[Token3D] Right-drag position update successful!");
+              setSaveStatus('saved');
+              setTimeout(() => setSaveStatus(null), 2000);
+          }).catch(err => {
+              console.error("[Token3D] Right-drag position update failed:", err);
+              setSaveStatus(null);
           });
       }
     }
@@ -476,10 +1389,117 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
     }
   }, [token.image, token.img]);
 
-  const nameplateY = useMemo(() => {
-    // Consistently position it below the token base.
-    return -safeSize * 0.7;
-}, [safeSize]);
+  const nameplatePos = useMemo(() => {
+      // In Top-Down, the camera looks straight down the Y axis, so Z controls vertical screen space.
+      // In Isometric, the camera is angled, so -Y controls vertical screen space.
+      return viewMode === 'top-down' 
+          ? [0, 0, safeSize * 0.6] 
+          : [0, -safeSize * 0.7, 0];
+  }, [safeSize, viewMode]);
+
+  const initials = useMemo(() => {
+      const name = token.name || "Unknown";
+      const parts = name.split(/[\s-]+/).filter(p => p.length > 0);
+      if (parts.length >= 2) {
+          return (parts[0][0] + parts[1][0]).toUpperCase();
+      }
+      return name.substring(0, 2).toUpperCase();
+  }, [token.name]);
+
+  const tokenContent = (
+    <group 
+      ref={meshRef} 
+      position={[token.x || 0, token.y || 0.025, token.z || 0]}
+      scale={[scale, scale, scale]}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerOver={(e) => { e.stopPropagation(); if (isTerrainReady) setHover(true); }}
+      onPointerOut={(e) => { if (isTerrainReady) setHover(false); }}
+      onClick={(e) => { e.stopPropagation(); if (isTerrainReady) onSelect(token.id, e.shiftKey); }}
+      onContextMenu={(e) => {
+        e.stopPropagation();
+        if (e.nativeEvent) e.nativeEvent.preventDefault();
+        if (canControl && !hasDragged.current) {
+            if (onContextMenu) onContextMenu(e, token);
+        }
+      }}
+    >
+      <group ref={visualsRef}>
+        {showModel && (
+          <Suspense fallback={null}>
+            <group position={[0, token.modelYOffset || 0, 0]}>
+              <CharacterModel modelUrl={token.modelUrl} scale={token.modelScale || 1} />
+            </group>
+          </Suspense>
+        )}
+
+        {!showModel && (
+            <>
+              {resolvedImage ? (
+                  <Suspense fallback={null}>
+                      <TokenImage imageUrl={resolvedImage} size={safeSize} />
+                  </Suspense>
+              ) : (
+                <mesh position={[0, 0.03, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+                    <circleGeometry args={[safeSize * 0.45, 32]} />
+                    <meshStandardMaterial color="#1e293b" />
+                    <Text
+                        position={[0, 0, 0.01]}
+                        fontSize={safeSize * 0.35}
+                        color={baseColor}
+                        anchorX="center"
+                        anchorY="middle"
+                        fontWeight="bold"
+                    >
+                        {initials}
+                    </Text>
+                </mesh>
+              )}
+            </>
+        )}
+
+        <mesh>
+          <cylinderGeometry args={[safeSize * 0.45, safeSize * 0.45, 0.05, 32]} />
+          <meshStandardMaterial color={baseColor} roughness={0.5} metalness={0.2} emissive={baseColor} emissiveIntensity={hovered ? 0.5 : 0.1} transparent={true} opacity={opacity} />
+        </mesh>
+
+        <mesh position={[0, 0, safeSize * 0.45]} rotation={[Math.PI / 2, 0, 0]}>
+          <coneGeometry args={[safeSize * 0.15, safeSize * 0.2, 3]} />
+          <meshStandardMaterial color={baseColor} roughness={0.5} metalness={0.2} emissive={baseColor} emissiveIntensity={hovered ? 0.5 : 0.1} transparent={true} opacity={opacity} />
+        </mesh>
+
+        {isSelected && (
+          <mesh position={[0, -0.01, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+            <ringGeometry args={[safeSize * 0.5, safeSize * 0.55, 32]} />
+            <meshBasicMaterial color="#3b82f6" transparent opacity={0.8} />
+          </mesh>
+        )}
+      </group>
+
+      <Html position={nameplatePos} center occlude="raycast" className="pointer-events-none select-none z-50" distanceFactor={4}>
+        <div className="flex flex-col items-center gap-1">
+            {showNameplates && (
+                <div className="bg-slate-900/95 text-slate-100 text-[9px] px-2 py-0.5 rounded shadow-[0_5px_10px_rgba(0,0,0,0.6)] font-bold whitespace-nowrap border border-slate-700 flex items-center gap-1 justify-center relative min-w-[40px]">
+                    <div className="absolute top-0 left-0 right-0 h-[2px]" style={{ backgroundColor: baseColor }}></div>
+                    <span className="truncate max-w-[100px]">{token.name || "Unknown"}</span>
+                    {Math.abs(token.elevationOffset || 0) > 0.1 && (
+                      <span className="text-blue-400 drop-shadow-md ml-1">
+                        {token.elevationOffset > 0 ? '+' : ''}{Math.round((token.elevationOffset || 0) * 5)}ft
+                      </span>
+                    )}
+                </div>
+            )}
+            {saveStatus && (
+                <div className={`px-2 py-0.5 rounded text-[8px] font-bold flex items-center gap-1 shadow-lg ${saveStatus === 'saving' ? 'bg-amber-500/90 text-white' : 'bg-green-500/90 text-white'}`}>
+                    {saveStatus === 'saving' ? <Icon name="loader" size={8} className="animate-spin" /> : <Icon name="check" size={8} />}
+                    {saveStatus === 'saving' ? 'Saving' : 'Saved'}
+                </div>
+            )}
+        </div>
+      </Html>
+    </group>
+  );
 
   return (
     <group>
@@ -489,134 +1509,213 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
       </mesh>
       
       <group ref={rulerLabelRef} visible={false}>
-        <Html center className="pointer-events-none select-none z-50">
+        <Html center className="pointer-events-none select-none z-50" distanceFactor={8}>
           <div 
             ref={rulerTextRef} 
             className="bg-amber-600/90 text-white border border-amber-400 text-[10px] font-bold px-2 py-0.5 rounded shadow-lg whitespace-nowrap"
+            style={{ display: 'none' }}
           >
             0 ft
           </div>
         </Html>
       </group>
 
-      <DragControls
-        ref={dragControlsRef}
-        axisLock="y"
-        enabled={isTerrainReady && (draggedTokenId === null || draggedTokenId === token.id)}
-        onDragStart={() => {
-          if (controls) controls.enabled = false;
-          isLeftDragging.current = true;
-          dragStartPos.current.copy(meshRef.current.position);
-          previousPos.current.copy(meshRef.current.position);
-          velocity.current.set(0, 0, 0);
-          setDraggedTokenId(token.id);
-        }}
-        onDragEnd={() => {
-          if (controls) controls.enabled = true;
-          isLeftDragging.current = false;
-          if (meshRef.current) {
-            const p = meshRef.current.position;
-            const terrainY = getTerrainHeight ? getTerrainHeight(p.x, p.z) : 0;
-            const targetY = terrainY + (token.elevationOffset || 0) + 0.025;
-            updateTokenPosition(token.id, { 
-              x: p.x, 
-              y: targetY, 
-              z: p.z,
-              elevationOffset: token.elevationOffset || 0,
-              rotationY: targetRotationY.current
-            });
-          }
-          setDraggedTokenId(null);
-        }}
-      >
-        <mesh 
-          ref={meshRef} 
-          position={[token.x || 0, token.y || 0.025, token.z || 0]}
-          scale={[scale, scale, scale]}
-          onPointerDown={handlePointerDown}
-          onPointerMove={handlePointerMove}
-          onPointerUp={handlePointerUp}
-          onPointerOver={(e) => { e.stopPropagation(); if (isTerrainReady) setHover(true); }}
-          onPointerOut={(e) => { if (isTerrainReady) setHover(false); }}
-          onClick={(e) => { e.stopPropagation(); if (isTerrainReady) onSelect(token.id); }}
-          onContextMenu={(e) => {
-            e.stopPropagation();
-            if (e.nativeEvent) e.nativeEvent.preventDefault();
-            if (!hasDragged.current) {
-                if (onContextMenu) onContextMenu(e, token);
+      {canControl ? (
+        <DragControls
+          ref={dragControlsRef}
+          axisLock="y"
+          enabled={isTerrainReady && (draggedTokenId === null || draggedTokenId === token.id)}
+          onDragStart={() => {
+            if (controls) controls.enabled = false;
+            isLeftDragging.current = true;
+            
+            const worldPos = new THREE.Vector3();
+            if (meshRef.current) meshRef.current.getWorldPosition(worldPos);
+            
+            dragStartPos.current.copy(worldPos);
+            previousPos.current.copy(worldPos);
+            velocity.current.set(0, 0, 0);
+            setDraggedTokenId(token.id);
+
+            if (selectedTokenIds && selectedTokenIds.includes(token.id) && selectedTokenIds.length > 1) {
+                if (groupDragData) {
+                    groupDragData.current.activeTokenId = token.id;
+                    groupDragData.current.delta.set(0, 0, 0);
+                }
+            } else {
+                if (groupDragData) groupDragData.current.activeTokenId = null;
             }
           }}
+          onDragEnd={() => {
+            console.log("[Token3D] onDragEnd triggered for", token.id);
+            if (controls) controls.enabled = true;
+            isLeftDragging.current = false;
+            
+            if (rulerRef.current) rulerRef.current.visible = false;
+            if (rulerLabelRef.current) rulerLabelRef.current.visible = false;
+            if (rulerTextRef.current) rulerTextRef.current.style.display = 'none';
+            
+            if (meshRef.current && dragControlsRef.current) {
+              const worldPos = new THREE.Vector3();
+              meshRef.current.getWorldPosition(worldPos);
+              
+              dragControlsRef.current.position.set(0, 0, 0);
+              dragControlsRef.current.matrix.identity();
+              dragControlsRef.current.updateMatrixWorld();
+              
+              const snapX = isSnapToGrid ? Math.floor(worldPos.x / gridSize) * gridSize + gridSize / 2 : worldPos.x;
+              const snapZ = isSnapToGrid ? Math.floor(worldPos.z / gridSize) * gridSize + gridSize / 2 : worldPos.z;
+              
+              if (groupDragData?.current?.activeTokenId === token.id) {
+                  const snappedDelta = new THREE.Vector3(snapX - dragStartPos.current.x, 0, snapZ - dragStartPos.current.z);
+                  if (onGroupDragEnd) onGroupDragEnd(token.id, snappedDelta);
+                  groupDragData.current.activeTokenId = null;
+                  groupDragData.current.delta.set(0, 0, 0);
+              }
+
+              const terrainY = getTerrainHeight ? getTerrainHeight(snapX, snapZ) : 0;
+              const targetY = terrainY + (token.elevationOffset || 0) + 0.025;
+              
+              meshRef.current.position.set(snapX, targetY, snapZ);
+              
+              setSaveStatus('saving');
+              const updates = { 
+                x: snapX, 
+                y: targetY, 
+                z: snapZ,
+                elevationOffset: token.elevationOffset || 0,
+                rotationY: targetRotationY.current
+              };
+              console.log("[Token3D] Requesting position update with:", updates);
+              updateTokenPosition(token.id, updates).then(() => {
+                  console.log("[Token3D] Position update successful!");
+                  setSaveStatus('saved');
+                  setTimeout(() => setSaveStatus(null), 2000);
+              }).catch(err => {
+                  console.error("[Token3D] Position update failed:", err);
+                  setSaveStatus(null);
+              });
+            }
+            setDraggedTokenId(null);
+          }}
         >
-          {showModel && (
-            <Suspense fallback={null}>
-              <group position={[0, token.modelYOffset || 0, 0]}>
-                <CharacterModel modelUrl={token.modelUrl} scale={token.modelScale || 1} />
-              </group>
-            </Suspense>
-          )}
-
-          {!showModel && (
-              <>
-                {resolvedImage ? (
-                    <Suspense fallback={null}>
-                        <TokenImage imageUrl={resolvedImage} size={safeSize} />
-                    </Suspense>
-                ) : (
-                    <Html position={[0, 0.03, 0]} center>
-                        <div className="w-12 h-12 rounded-full border-[3px] shadow-lg flex items-center justify-center font-bold text-lg bg-slate-800 text-white" style={{ borderColor: baseColor }}>
-                            {(token.name || "?").substring(0, 2).toUpperCase()}
-                        </div>
-                    </Html>
-                )}
-              </>
-          )}
-
-          <Html position={[0, nameplateY, 0]} center occlude="raycast" className="pointer-events-none select-none">
-            <div className="bg-slate-950/90 text-white text-[10px] px-2 py-0.5 rounded-full font-bold whitespace-nowrap border border-white/20 shadow-lg flex items-center gap-1 justify-center">
-                <span>{token.name || "Unknown"}</span>
-                {Math.abs(token.elevationOffset || 0) > 0.1 && (
-                  <span className="text-blue-400 drop-shadow-md">
-                    {token.elevationOffset > 0 ? '+' : ''}{Math.round((token.elevationOffset || 0) * 5)}ft
-                  </span>
-                )}
-            </div>
-          </Html>
-          
-          <cylinderGeometry args={[safeSize * 0.45, safeSize * 0.45, 0.05, 32]} />
-          <meshStandardMaterial color={baseColor} roughness={0.5} metalness={0.2} emissive={baseColor} emissiveIntensity={hovered ? 0.5 : 0.1} transparent={true} opacity={opacity} />
-
-          <mesh position={[0, 0, safeSize * 0.45]} rotation={[Math.PI / 2, 0, 0]}>
-            <coneGeometry args={[safeSize * 0.15, safeSize * 0.2, 3]} />
-            <meshStandardMaterial color={baseColor} roughness={0.5} metalness={0.2} emissive={baseColor} emissiveIntensity={hovered ? 0.5 : 0.1} transparent={true} opacity={opacity} />
-          </mesh>
-
-          {isSelected && (
-            <mesh position={[0, -0.01, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-              <ringGeometry args={[safeSize * 0.5, safeSize * 0.55, 32]} />
-              <meshBasicMaterial color="#3b82f6" transparent opacity={0.8} />
-            </mesh>
-          )}
-        </mesh>
-      </DragControls>
+          {tokenContent}
+        </DragControls>
+      ) : (
+        tokenContent
+      )}
     </group>
   );
 };
 
-export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet, role }) {
-  const { campaign, updateToken, addToken, deleteToken } = useNewCampaign();
+const DropZone = ({ onMapDrop }) => {
+    const { camera, gl } = useThree();
+    const onMapDropRef = useRef(onMapDrop);
+
+    useEffect(() => {
+        onMapDropRef.current = onMapDrop;
+    }, [onMapDrop]);
+
+    useEffect(() => {
+        const handleDrop = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const rect = gl.domElement.getBoundingClientRect();
+            const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+            const y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+            const raycaster = new THREE.Raycaster();
+            raycaster.setFromCamera(new THREE.Vector2(x, y), camera);
+
+            const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+            const target = new THREE.Vector3();
+            const intersect = raycaster.ray.intersectPlane(plane, target);
+
+            if (onMapDropRef.current) {
+                onMapDropRef.current(e, intersect || new THREE.Vector3(0, 0, 0));
+            }
+        };
+        const handleDragOver = (e) => { 
+            e.preventDefault(); 
+            e.stopPropagation();
+            e.dataTransfer.dropEffect = 'copy'; 
+        };
+
+        const container = gl.domElement.parentElement;
+        if (container) {
+            container.addEventListener('drop', handleDrop);
+            container.addEventListener('dragover', handleDragOver);
+            return () => { container.removeEventListener('drop', handleDrop); container.removeEventListener('dragover', handleDragOver); };
+        }
+    }, [camera, gl]);
+
+    return null;
+};
+
+export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet, role, onOpenHandouts, onOpenChat, onOpenJournal }) {
+  const { campaign, updateCampaign, updateToken, addToken, deleteToken, user } = useNewCampaign();
   const data = campaign;
   const cameraControllerRef = useRef();
+  const zoomRef = useRef();
   const [mapData, setMapData] = useState(null);
-  const [selectedTokenId, setSelectedTokenId] = useState(null);
+  const [selectedTokenIds, setSelectedTokenIds] = useState([]);
   const [contextMenu, setContextMenu] = useState(null);
   const [showAssetManager, setShowAssetManager] = useState(false);
   const [showTokenManager, setShowTokenManager] = useState(false);
   const [isDrawingWalls, setIsDrawingWalls] = useState(false);
+  const [isArchitectMode, setIsArchitectMode] = useState(false);
+  const [isPlacingLights, setIsPlacingLights] = useState(false);
   const [wallContextMenu, setWallContextMenu] = useState(null);
+  const [lightContextMenu, setLightContextMenu] = useState(null);
   const [isSnapToGrid, setIsSnapToGrid] = useState(true);
   const [viewMode, setViewMode] = useState('isometric');
   const [draggedTokenId, setDraggedTokenId] = useState(null);
   const [remountKey, setRemountKey] = useState(0);
+  const [assetTab, setAssetTab] = useState('library');
+
+  // Added States for List View and 5e API
+  const [actorViewMode, setActorViewMode] = useState('grid');
+  const [showCompendium, setShowCompendium] = useState(false);
+  const [compendiumSearch, setCompendiumSearch] = useState("");
+  const [compendiumResults, setCompendiumResults] = useState([]);
+  const [isLoadingCompendium, setIsLoadingCompendium] = useState(false);
+
+  const [pendingNpc, setPendingNpc] = useState(null);
+  const [showModelPicker, setShowModelPicker] = useState(false);
+  const [availableModels, setAvailableModels] = useState([]);
+  const [miniSearchQuery, setMiniSearchQuery] = useState("");
+  const [isSearchingMinis, setIsSearchingMinis] = useState(false);
+
+  const handleMiniSearch = async (overrideQuery, typeFallback) => {
+      const q = overrideQuery !== undefined ? overrideQuery : miniSearchQuery;
+      if (!q) return;
+      setIsSearchingMinis(true);
+      let results = await searchGithubModels(q);
+      if (results.length === 0 && typeFallback) results = await searchGithubModels(typeFallback);
+      setAvailableModels(results);
+      setIsSearchingMinis(false);
+  };
+
+  // --- FIX: Listen directly to the tokens_v2 subcollection ---
+  const [liveTokens, setLiveTokens] = useState({});
+  useEffect(() => {
+      if (!campaignCode) return;
+      const tokensRef = collection(db, 'artifacts', appId || 'dungeonmind', 'public', 'data', 'campaigns', campaignCode, 'tokens_v2');
+      const unsub = onSnapshot(tokensRef, (snap) => {
+          const t = {};
+          snap.docs.forEach(doc => { t[doc.id] = doc.data(); });
+          setLiveTokens(t);
+      });
+      return () => unsub();
+  }, [campaignCode]);
+
+  // Helper to open manager to a specific tab
+  const openAssets = (tab) => {
+    setAssetTab(tab);
+    setShowAssetManager(true);
+    setShowTokenManager(false);
+    setIsDrawingWalls(false);
+  };
 
   // Setup CPU-side Terrain Matrix logic
   const [aspect, setAspect] = useState(1);
@@ -710,13 +1809,253 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
 
   const gridSize = mapData?.gridSize || 1;
   const showPlane = mapData?.backgroundUrl && mapData.backgroundUrl.trim() !== '';
-  const tokensList = Object.values(data.campaign?.activeMap?.tokens_v2 || data.campaign?.activeMap?.tokens || {});
+  const legacyTokens = data?.campaign?.activeMap?.tokens || {};
+  const showNameplates = mapData?.showNameplates !== false;
+  
+  // Safely merge legacy map tokens with the realtime token updates so they aren't overwritten
+  const mergedTokens = useMemo(() => {
+      const result = {};
+      
+      // 1. Ensure legacy tokens are mapped by their actual ID, not an array index
+      const legacyArray = Array.isArray(legacyTokens) ? legacyTokens : Object.values(legacyTokens || {});
+      legacyArray.forEach(t => {
+          if (t && t.id) result[t.id] = { ...t };
+      });
+      // 2. Merge realtime Firestore tokens over them
+      for (const tId in liveTokens) {
+          const liveT = liveTokens[tId];
+          if (liveT && liveT.id) {
+              if (result[liveT.id]) result[liveT.id] = { ...result[liveT.id], ...liveT };
+              else result[liveT.id] = liveT;
+          }
+      }
+      return result;
+  }, [legacyTokens, liveTokens]);
+  
+  const latestTokensRef = useRef({});
+  useEffect(() => {
+      latestTokensRef.current = mergedTokens;
+  }, [mergedTokens]);
+
+  const groupDragData = useRef({ activeTokenId: null, delta: new THREE.Vector3() });
+
+  const handleGroupDragEnd = useCallback((leaderId, delta) => {
+      selectedTokenIds.forEach(id => {
+          if (id === leaderId) return;
+          const t = latestTokensRef.current[id];
+          if (!t) return;
+
+          if (role !== 'dm') {
+              const character = allCharacters.find(c => String(c.id) === String(t.characterId));
+              const isOwner = (character?.ownerId && String(character.ownerId) === String(user?.uid)) || 
+                              (t.ownerId && String(t.ownerId) === String(user?.uid));
+              const myCharId = data?.assignments?.[user?.uid];
+              const myCharAssigned = myCharId && String(t.characterId) === String(myCharId);
+              const canControl = isOwner || myCharAssigned || t.isSharedControl;
+              if (!canControl) return;
+          }
+
+          const newX = (t.x || 0) + delta.x;
+          const newZ = (t.z || 0) + delta.z;
+
+          const finalX = isSnapToGrid ? Math.floor(newX / gridSize) * gridSize + gridSize / 2 : newX;
+          const finalZ = isSnapToGrid ? Math.floor(newZ / gridSize) * gridSize + gridSize / 2 : newZ;
+
+          const terrainY = getTerrainHeight ? getTerrainHeight(finalX, finalZ) : 0;
+          const finalY = terrainY + (t.elevationOffset || 0) + 0.025;
+
+          updateToken(id, { x: finalX, y: finalY, z: finalZ, elevationOffset: t.elevationOffset || 0 });
+      });
+  }, [selectedTokenIds, isSnapToGrid, gridSize, getTerrainHeight, updateToken]);
+
+  const tokensList = Object.values(mergedTokens);
   const allCharacters = [...(data?.players || []), ...(data?.npcs || [])];
 
+  // Extract active combatant early so the Camera Director can hook into it
+  const activeCombatantId = mapData && data?.campaign?.combat?.active && data?.campaign?.combat?.combatants?.length 
+      ? data.campaign.combat.combatants[(data.campaign.combat.turn || 0) % data.campaign.combat.combatants.length].tokenId 
+      : null;
+
   // Handle clicking a token to both select it and open the side sheet
-  const handleSelectToken = (tokenId) => {
-    setSelectedTokenId(tokenId);
+  const handleSelectToken = (tokenId, isMulti) => {
+    if (isMulti) {
+        setSelectedTokenIds(prev => prev.includes(tokenId) ? prev.filter(id => id !== tokenId) : [...prev, tokenId]);
+    } else {
+        setSelectedTokenIds([tokenId]);
+    }
     setContextMenu(null);
+  };
+
+  // Group Initiative Roller
+  const rollGroupInitiative = (tokenIds) => {
+      const currentCombat = data?.campaign?.combat || { active: false, round: 1, turn: 0, combatants: [] };
+      const currentCombatants = currentCombat.combatants || [];
+      
+      const newEntries = tokenIds.map(tId => {
+          const token = tokensList.find(t => t.id === tId);
+          const char = allCharacters.find(c => String(c.id) === String(token?.characterId));
+          const dex = char?.stats?.dex || 10;
+          const mod = Math.floor((dex - 10) / 2);
+          const roll = Math.floor(Math.random() * 20) + 1;
+          const isNpc = !data?.players?.some(p => String(p.id) === String(token?.characterId));
+          return { 
+              tokenId: tId, 
+              initiative: roll + mod,
+              name: token?.name || char?.name || 'Unknown',
+              isNpc: isNpc
+          };
+      });
+
+      const merged = [...currentCombatants];
+      newEntries.forEach(ne => {
+          const existingIdx = merged.findIndex(m => m.tokenId === ne.tokenId);
+          if (existingIdx >= 0) merged[existingIdx] = ne;
+          else merged.push(ne);
+      });
+      merged.sort((a,b) => b.initiative - a.initiative);
+
+      updateCampaign({ campaign: { ...(data?.campaign || {}), combat: { ...currentCombat, active: true, combatants: merged } } });
+  };
+
+  // Handler to add a single character directly from the Actors Tab into combat
+  const handleAddActorToCombat = (actor, isNpc) => {
+      const currentCombat = data?.campaign?.combat || { active: false, round: 1, turn: 0, combatants: [] };
+      const combatants = currentCombat.combatants || [];
+      
+      const dex = actor?.stats?.dex || 10;
+      const mod = Math.floor((dex - 10) / 2);
+      const roll = Math.floor(Math.random() * 20) + 1;
+      
+      const newCombatant = {
+          tokenId: `tracker_${actor.id}_${Date.now()}`,
+          characterId: actor.id,
+          initiative: roll + mod,
+          name: actor.name || 'Unknown',
+          isNpc: isNpc
+      };
+      
+      const newCombatants = [...combatants, newCombatant].sort((a,b) => b.initiative - a.initiative);
+      updateCampaign({ campaign: { ...(data?.campaign || {}), combat: { ...currentCombat, active: true, combatants: newCombatants } } });
+  };
+
+  const searchCompendium = async () => {
+      if (!compendiumSearch.trim()) return;
+      setIsLoadingCompendium(true);
+      try {
+          const res = await fetch('https://www.dnd5eapi.co/api/monsters?name=' + compendiumSearch);
+          const apiData = await res.json();
+          if (apiData.count === 0) {
+              alert("No monsters found in the SRD with that name.");
+              setCompendiumResults([]);
+          } else {
+              setCompendiumResults(apiData.results.slice(0, 20));
+          }
+      } catch (e) {
+          console.error(e);
+          alert("Could not connect to D&D 5e API.");
+      }
+      setIsLoadingCompendium(false);
+  };
+
+  const importFromApi = async (monsterIndexUrl) => {
+      setIsLoadingCompendium(true);
+      try {
+          const res = await fetch(`https://www.dnd5eapi.co${monsterIndexUrl}`);
+          const m = await res.json();
+          let imageUrl = "";
+          if (m.image) {
+              imageUrl = `https://www.dnd5eapi.co${m.image}`;
+          } else if (window.puter) {
+              try {
+                  const imgEl = await window.puter.ai.txt2img(`fantasy rpg token portrait of a ${m.name} ${m.type}, white background, high quality`);
+                  const response = await fetch(imgEl.src);
+                  const blob = await response.blob();
+                  imageUrl = await new Promise((resolve) => {
+                      const reader = new FileReader();
+                      reader.onloadend = () => resolve(reader.result);
+                      reader.readAsDataURL(blob);
+                  });
+              } catch (e) { console.error("Image gen failed", e); }
+          }
+          const acVal = Array.isArray(m.armor_class) ? m.armor_class[0].value : m.armor_class;
+          const speedStr = typeof m.speed === 'object' ? Object.entries(m.speed).map(([k,v]) => `${k} ${v}`).join(', ') : m.speed;
+          const sensesObj = {
+              darkvision: m.senses?.darkvision || "",
+              passivePerception: m.senses?.passive_perception || 10,
+              blindsight: m.senses?.blindsight || "",
+              tremorsense: m.senses?.tremorsense || "",
+              truesight: m.senses?.truesight || ""
+          };
+          const newNpc = {
+              id: Date.now(),
+              isHidden: true,
+              name: m.name,
+              race: `${m.size} ${m.type} (${m.alignment})`,
+              class: "Monster",
+              level: m.challenge_rating,
+              hp: { current: m.hit_points, max: m.hit_points },
+              ac: acVal,
+              speed: speedStr,
+              stats: { str: m.strength, dex: m.dexterity, con: m.constitution, int: m.intelligence, wis: m.wisdom, cha: m.charisma },
+              senses: sensesObj,
+              image: imageUrl,
+              quirk: "SRD Import",
+              bio: { backstory: `Imported from D&D 5e API.\nXP: ${m.xp}\nLanguages: ${m.languages}`, appearance: `A ${m.size} ${m.type}.` },
+              customActions: (m.actions || []).map(a => {
+                  let dmgString = "";
+                  if (a.damage && a.damage[0] && a.damage[0].damage_dice) {
+                      dmgString = a.damage[0].damage_dice;
+                      if(a.damage[0].damage_type?.name) dmgString += ` ${a.damage[0].damage_type.name}`;
+                  }
+                  return { name: a.name, desc: a.desc, type: "Action", hit: a.attack_bonus ? `+${a.attack_bonus}` : "", dmg: dmgString };
+              }),
+              features: (m.special_abilities || []).map(f => ({ name: f.name, desc: f.desc, source: "Trait" })),
+              legendaryActions: (m.legendary_actions || []).map(l => ({ name: l.name, desc: l.desc }))
+          };
+          
+          setPendingNpc(newNpc);
+          setAvailableModels([]);
+          setShowCompendium(false);
+          setShowModelPicker(true);
+          setMiniSearchQuery(m.name);
+          handleMiniSearch(m.name, m.type);
+      } catch (e) {
+          console.error(e);
+          alert("Failed to import monster details.");
+      }
+      setIsLoadingCompendium(false);
+  };
+
+  const handleModelSelect = async (model) => {
+      const finalNpc = { ...pendingNpc };
+      if (model) {
+          finalNpc.modelUrl = model.url;
+          finalNpc.modelScale = model.scale;
+          finalNpc.modelYOffset = model.yOffset;
+      }
+      
+      updateCampaign({ npcs: [...(data?.npcs || []), finalNpc] });
+      
+      const dropX = 0;
+      const dropZ = 0;
+      const terrainY = getTerrainHeight ? getTerrainHeight(dropX, dropZ) : 0;
+      
+      const newTokenId = `token_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      await addToken({
+          id: newTokenId,
+          characterId: finalNpc.id,
+          name: finalNpc.name,
+          type: 'npc',
+          x: dropX,
+          y: terrainY + 0.025,
+          z: dropZ,
+          image: finalNpc.image || '',
+          size: finalNpc.size || 1,
+          hp: finalNpc.hp
+      });
+      
+      setPendingNpc(null);
+      setShowModelPicker(false);
   };
 
   const handleContextMenu = (e, token) => {
@@ -724,7 +2063,10 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
       x: e.clientX,
       y: e.clientY,
       tokenId: token.id,
-      characterId: token.characterId
+      characterId: token.characterId,
+      elevationOffset: token.elevationOffset,
+      isHidden: token.isHidden,
+      isSharedControl: token.isSharedControl
     });
   };
 
@@ -738,15 +2080,41 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
     });
   };
 
+  const handleLightContextMenu = (e, lightId) => {
+      e.stopPropagation();
+      setContextMenu(null);
+      setWallContextMenu(null);
+      setLightContextMenu({
+          x: e.clientX,
+          y: e.clientY,
+          lightId: lightId
+      });
+  };
+
+  const handleToggleDoor = (e, wallId) => {
+      e.stopPropagation();
+      const wall = mapData?.walls?.[wallId];
+      if (wall && wall.type === 'door') {
+          updateMap(campaignCode, activeMapId, { [`walls.${wallId}.isOpen`]: !wall.isOpen });
+      }
+  };
+
   // Handler triggered by Token3D when a drag ends
   const handleUpdateTokenPosition = async (tokenId, position) => {
-    await updateToken(tokenId, position);
+    console.log("[TacticalMapView] handleUpdateTokenPosition called for", tokenId, "with", position);
+    try {
+      await updateToken(tokenId, position);
+      console.log("[TacticalMapView] Successfully pushed updateToken to Firestore");
+    } catch (e) {
+      console.error("[TacticalMapView] Failed to updateToken in Firestore:", e);
+      throw e;
+    }
   };
 
   // Handle dragging an image from the AssetManager directly onto the map
-  const handleDrop = async (e) => {
-    e.preventDefault();
-    
+  const handleDrop = async (e, position) => {
+    if (!position) return;
+
     let payload = null;
     
     try {
@@ -779,6 +2147,11 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
         return;
     }
 
+    // Calculate grid snapping and elevation
+    const dropX = isSnapToGrid ? Math.floor(position.x / gridSize) * gridSize + gridSize / 2 : position.x;
+    const dropZ = isSnapToGrid ? Math.floor(position.z / gridSize) * gridSize + gridSize / 2 : position.z;
+    const terrainY = getTerrainHeight ? getTerrainHeight(dropX, dropZ) : 0;
+
     const newTokenId = `token_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     let tokenData;
 
@@ -787,7 +2160,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
             id: newTokenId,
             name: 'New Token',
             type: 'npc',
-            x: 0, y: 0, z: 0,
+            x: dropX, y: terrainY + 0.025, z: dropZ,
             image: payload.url || payload.image || '',
             size: 1,
             isHidden: false
@@ -798,11 +2171,14 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
             characterId: payload.id || null, 
             name: payload.name || 'Unknown',
             type: payload.type || 'npc',
-            x: 0, y: 0, z: 0,
+            x: dropX, y: terrainY + 0.025, z: dropZ,
             image: payload.image || '',
             size: payload.size || 1,
-            isHidden: false
         };
+        
+        if (payload.hp !== undefined) {
+            tokenData.hp = payload.hp;
+        }
     }
 
     if (tokenData) {
@@ -810,8 +2186,67 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
     }
   };
 
+  // --- Keyboard Shortcuts ---
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      // Ignore shortcuts if the user is typing in a text field
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target?.tagName)) return;
+
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+          if (selectedTokenIds.length > 0) {
+              if (role === 'dm') {
+                  selectedTokenIds.forEach(id => deleteToken(id));
+                  setSelectedTokenIds([]);
+              } else {
+                  const tokensToDelete = [];
+                  selectedTokenIds.forEach(id => {
+                      const t = latestTokensRef.current[id];
+                      if (!t) return;
+                      const allChars = [...(data?.players || []), ...(data?.npcs || [])];
+                      const character = allChars.find(c => String(c.id) === String(t.characterId));
+                      const isOwner = (character?.ownerId && String(character.ownerId) === String(user?.uid)) || (t.ownerId && String(t.ownerId) === String(user?.uid));
+                      if (isOwner) tokensToDelete.push(id);
+                  });
+                  tokensToDelete.forEach(id => deleteToken(id));
+                  setSelectedTokenIds(prev => prev.filter(id => !tokensToDelete.includes(id)));
+              }
+          }
+          return;
+      }
+
+      if (e.key === 'Escape') {
+          setSelectedTokenIds([]); setContextMenu(null); setWallContextMenu(null); setLightContextMenu(null);
+          if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); }
+          return;
+      }
+
+      if (e.key.toLowerCase() === 'v') { setViewMode(prev => prev === 'isometric' ? 'top-down' : 'isometric'); return; }
+
+      if (role === 'dm') {
+          switch(e.key.toLowerCase()) {
+              case 'a': setShowAssetManager(false); setShowTokenManager(false); setIsDrawingWalls(false); setIsPlacingLights(false); setIsArchitectMode(p => !p); break;
+              case 'd': setShowAssetManager(false); setShowTokenManager(false); setIsArchitectMode(false); setIsPlacingLights(false); setIsDrawingWalls(p => !p); break;
+              case 'l': setShowAssetManager(false); setShowTokenManager(false); setIsArchitectMode(false); setIsDrawingWalls(false); setIsPlacingLights(p => !p); break;
+              case 't': setShowAssetManager(false); setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); setShowTokenManager(p => !p); break;
+              case 'm': setShowTokenManager(false); setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); setShowAssetManager(p => !p); break;
+          }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [role, selectedTokenIds, deleteToken, data, user]);
+
+  const envSetting = ENV_SETTINGS[mapData?.environment || 'day'] || ENV_SETTINGS.day;
+  const lightingMultiplier = mapData?.lightingIntensity ?? 1.0;
+
   return (
-    <div className="w-full relative bg-slate-950" style={{ height: 'calc(100vh - 80px)', display: 'block' }} onDrop={handleDrop} onDragOver={(e) => e.preventDefault()}>
+    <div 
+      className="w-full h-full relative bg-slate-950" 
+      style={{ display: 'block' }}
+      onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; }}
+      onDrop={(e) => e.preventDefault()}
+    >
       <Canvas 
         key={remountKey}
         camera={{ position: [0, 8, 8], fov: 50 }} 
@@ -828,20 +2263,24 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
         }}
         /* Clear selection and context menu when clicking the background void */
         onPointerMissed={(e) => {
-          if (isDrawingWalls) return;
+          if (isDrawingWalls || isArchitectMode || isPlacingLights) return;
           if (e.target.tagName !== 'CANVAS') return;
-          setSelectedTokenId(null);
+          if (e.button === 2) return; // Don't clear selection on right-click so Marquee can work
+          setSelectedTokenIds([]);
           setContextMenu(null);
           setWallContextMenu(null);
+          setLightContextMenu(null);
         }}
-        onContextMenu={(e) => setWallContextMenu(null)}
+        onContextMenu={(e) => { e.preventDefault(); setWallContextMenu(null); setLightContextMenu(null); }}
       >
+        <DropZone onMapDrop={handleDrop} />
         {/* Explicitly set the 3D scene background color */}
-        <color attach="background" args={['#1a1a2e']} />
+        <color attach="background" args={[envSetting.bg]} />
+        {envSetting.fog && <fog attach="fog" args={[envSetting.fog.color, envSetting.fog.near, envSetting.fog.far]} />}
         
         {/* Lighting setup */}
-        <ambientLight intensity={0.5} />
-        <directionalLight position={[10, 10, 5]} intensity={1.5} />
+        <ambientLight color={envSetting.ambient.color} intensity={envSetting.ambient.intensity * lightingMultiplier} />
+        <directionalLight color={envSetting.dir.color} position={envSetting.dir.position} intensity={envSetting.dir.intensity * lightingMultiplier} />
         
         {/* Suspense is required when using useTexture to catch the loading state */}
         <Suspense fallback={null}>
@@ -857,6 +2296,8 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
             )}
         </Suspense>
 
+        <MarqueeSelector tokens={tokensList} onSelectTokens={setSelectedTokenIds} />
+
         {/* A visual grid to represent the tactical tabletop surface */}
         <Grid 
           infiniteGrid 
@@ -867,53 +2308,108 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
           sectionSize={gridSize}
         />
 
+        {/* Active Combat Tracker Integration */}
+        <CombatCameraDirector activeTokenId={activeCombatantId} tokensList={tokensList} />
+        
         {/* Render all tokens on the map */}
         {mapData && isAspectReady && (!mapData.heightmapUrl || terrainData) && tokensList.map(token => {
-          // Find the linked character if one exists
-          const character = allCharacters.find(c => String(c.id) === String(token.characterId));
-          const displayToken = { ...token };
-          
-          if (character) {
-            displayToken.name = character.name || token.name;
-            displayToken.image = character.image || token.image || token.img;
-            displayToken.type = data?.players?.some(p => String(p.id) === String(character.id)) ? 'pc' : 'npc';
-            displayToken.modelUrl = character.modelUrl;
-            displayToken.modelScale = character.modelScale;
-            displayToken.modelYOffset = character.modelYOffset;
-          }
-          return (
-            <Token3D 
-              key={token.id} 
-              token={displayToken} 
-              updateTokenPosition={handleUpdateTokenPosition}
-              gridSize={gridSize}
-              isSelected={selectedTokenId === token.id}
-              onSelect={handleSelectToken}
-              onContextMenu={handleContextMenu}
-              role={role}
-              getTerrainHeight={getTerrainHeight}
-              isSnapToGrid={isSnapToGrid}
-              isTerrainReady={!mapData.heightmapUrl || !!terrainData}
-              draggedTokenId={draggedTokenId}
-              setDraggedTokenId={setDraggedTokenId}
-            />
-          );
+            // Find the linked character if one exists
+            const character = allCharacters.find(c => String(c.id) === String(token.characterId));
+            const displayToken = { ...token };
+            
+            if (character) {
+                displayToken.name = character.name || token.name;
+                displayToken.image = character.image || token.image || token.img;
+                displayToken.type = data?.players?.some(p => String(p.id) === String(character.id)) ? 'pc' : 'npc';
+                displayToken.modelUrl = character.modelUrl;
+                displayToken.modelScale = character.modelScale;
+                displayToken.modelYOffset = character.modelYOffset;
+            }
+            
+            const isOwner = (character?.ownerId && String(character.ownerId) === String(user?.uid)) || 
+                            (token.ownerId && String(token.ownerId) === String(user?.uid));
+            const myCharId = data?.assignments?.[user?.uid];
+            const myCharAssigned = myCharId && String(token.characterId) === String(myCharId);
+            const canControl = role === 'dm' || isOwner || myCharAssigned || token.isSharedControl;
+            
+            return (
+                <Token3D 
+                    key={token.id} 
+                    token={displayToken} 
+                    updateTokenPosition={handleUpdateTokenPosition}
+                    gridSize={gridSize}
+                    isSelected={selectedTokenIds.includes(token.id)}
+                    onSelect={handleSelectToken}
+                    onContextMenu={handleContextMenu}
+                    role={role}
+                    getTerrainHeight={getTerrainHeight}
+                    isSnapToGrid={isSnapToGrid}
+                    isTerrainReady={!mapData.heightmapUrl || !!terrainData}
+                    draggedTokenId={draggedTokenId}
+                    setDraggedTokenId={setDraggedTokenId}
+                    viewMode={viewMode}
+                    showNameplates={showNameplates}
+                    selectedTokenIds={selectedTokenIds}
+                    groupDragData={groupDragData}
+                    onGroupDragEnd={handleGroupDragEnd}
+                    isActiveTurn={activeCombatantId === token.id}
+                    canControl={canControl}
+                />
+            );
         })}
 
-        <Walls walls={mapData?.walls} onWallContextMenu={handleWallContextMenu} />
+        <Walls walls={mapData?.walls} onWallContextMenu={handleWallContextMenu} onToggleDoor={handleToggleDoor} />
+
+        {/* The Dynamic Fog of War layer */}
+        <FogOfWar 
+            enabled={mapData?.fowEnabled} 
+            tokens={tokensList} 
+            walls={mapData?.walls} 
+            lights={mapData?.lights}
+            role={role} 
+            user={user} 
+            assignments={data?.assignments} 
+            allCharacters={allCharacters}
+            gridSize={gridSize}
+        />
 
         {role === 'dm' && (
-            <WallDrawingController
-                isEnabled={isDrawingWalls}
-                getTerrainHeight={getTerrainHeight}
-                onDrawEnd={(points) => {
-                    const wallId = `wall_${Date.now()}`;
-                    const storablePoints = points.map(p => ({ x: p.x, y: p.y, z: p.z }));
-                    updateMap(campaignCode, activeMapId, {
-                        [`walls.${wallId}`]: { id: wallId, points: storablePoints }
-                    });
-                }}
-            />
+            <>
+                <WallDrawingController
+                    isEnabled={isDrawingWalls}
+                    getTerrainHeight={getTerrainHeight}
+                    onDrawEnd={(points) => {
+                        const wallId = `wall_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+                        const storablePoints = points.map(p => ({ x: p.x, y: p.y, z: p.z }));
+                        updateMap(campaignCode, activeMapId, { [`walls.${wallId}`]: { id: wallId, type: 'wall', points: storablePoints } });
+                    }}
+                />
+                <ArchitectPenController 
+                    isEnabled={isArchitectMode}
+                    getTerrainHeight={getTerrainHeight}
+                    onCommitSegment={(start, end) => {
+                        const wallId = `wall_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+                        const storablePoints = [{ x: start.x, y: start.y, z: start.z }, { x: end.x, y: end.y, z: end.z }];
+                        updateMap(campaignCode, activeMapId, { [`walls.${wallId}`]: { id: wallId, type: 'wall', points: storablePoints } });
+                    }}
+                />
+                <LightPlacementController 
+                    isEnabled={isPlacingLights}
+                    getTerrainHeight={getTerrainHeight}
+                    onPlaceLight={(pt) => {
+                        const lightId = `light_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+                        updateMap(campaignCode, activeMapId, { 
+                            [`lights.${lightId}`]: { 
+                                id: lightId, 
+                                position: { x: pt.x, y: pt.y, z: pt.z }, 
+                                color: '#fef08a', 
+                                radius: 6 * gridSize, 
+                                intensity: 1.5 
+                            } 
+                        });
+                    }}
+                />
+            </>
         )}
 
         {/* MapControls maps left-click to pan, right-click to rotate, scroll to zoom */}
@@ -926,29 +2422,77 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
           enableRotate={false}
         />
         <CameraController ref={cameraControllerRef} view={viewMode} />
+        <ZoomHandler zoomRef={zoomRef} />
       </Canvas>
 
       {/* Toolbar for Map */}
-      <div className="absolute top-4 left-4 z-10 flex gap-2">
-        <button
-          onClick={() => {
-            cameraControllerRef.current?.reset();
-          }}
-          className="bg-slate-800 border border-slate-600 hover:border-blue-500 text-white px-3 py-2 rounded-lg shadow-lg flex items-center gap-2 text-sm font-bold transition-colors"
-        >
-          <Icon name="camera" size={16} />
-          <span>Reset View</span>
-        </button>
-        <button
-          onClick={() => setViewMode(prev => prev === 'isometric' ? 'top-down' : 'isometric')}
-          className="bg-slate-800 border border-slate-600 hover:border-blue-500 text-white px-3 py-2 rounded-lg shadow-lg flex items-center gap-2 text-sm font-bold transition-colors"
-        >
-          <Icon name="layout-grid" size={16} />
-        </button>
+      <div className="absolute top-4 left-4 z-[70] flex flex-col items-start gap-2">
+        <div className="h-10 px-3 bg-slate-900/80 backdrop-blur border border-slate-700 rounded-lg shadow-lg flex items-center gap-2 cursor-help" title={`Connected to Realm: ${campaignCode}`}>
+            <div className="w-2 h-2 rounded-full shadow-[0_0_10px_rgba(34,197,94,0.5)] bg-green-500"></div>
+            <span className="text-sm font-bold text-amber-500 fantasy-font tracking-widest">{campaignCode}</span>
+        </div>
+        <div className="flex gap-2">
+            <button
+              onClick={() => {
+                cameraControllerRef.current?.reset();
+              }}
+              className="w-10 h-10 bg-slate-900/80 backdrop-blur border border-slate-700 hover:border-blue-500 hover:bg-slate-800 text-white rounded-lg shadow-lg flex items-center justify-center transition-all"
+              title="Reset View"
+            >
+              <Icon name="camera" size={18} />
+            </button>
+            <button
+              onClick={() => setViewMode(prev => prev === 'isometric' ? 'top-down' : 'isometric')}
+              className="w-10 h-10 bg-slate-900/80 backdrop-blur border border-slate-700 hover:border-blue-500 hover:bg-slate-800 text-white rounded-lg shadow-lg flex items-center justify-center transition-all"
+              title={viewMode === 'isometric' ? 'Switch to Top-Down (V)' : 'Switch to Isometric (V)'}
+            >
+              <Icon name={viewMode === 'isometric' ? 'layout-grid' : 'box'} size={18} />
+            </button>
+        </div>
+        <div className="flex gap-2">
+            <button
+              onClick={() => zoomRef.current?.zoomIn()}
+              className="w-10 h-10 bg-slate-900/80 backdrop-blur border border-slate-700 hover:border-blue-500 hover:bg-slate-800 text-white rounded-lg shadow-lg flex items-center justify-center transition-all"
+              title="Zoom In"
+            >
+              <Icon name="zoom-in" size={18} />
+            </button>
+            <button
+              onClick={() => zoomRef.current?.zoomOut()}
+              className="w-10 h-10 bg-slate-900/80 backdrop-blur border border-slate-700 hover:border-blue-500 hover:bg-slate-800 text-white rounded-lg shadow-lg flex items-center justify-center transition-all"
+              title="Zoom Out"
+            >
+              <Icon name="zoom-out" size={18} />
+            </button>
+        </div>
       </div>
 
-      {role === 'dm' && (
-        <div className="absolute top-4 right-4 z-10 flex gap-2">
+      {/* Combat Ribbon HUD Overlay (Visible to everyone) */}
+      <CombatRibbon 
+          combat={data?.campaign?.combat} 
+          updateCampaign={updateCampaign} 
+          tokens={tokensList} 
+          role={role} 
+          campaignData={data?.campaign}
+      />
+
+      {/* Combat Tracker Sidebar HUD Overlay (DM Only) */}
+      <CombatTrackerSidebar 
+          combat={data?.campaign?.combat} 
+          updateCampaign={updateCampaign} 
+          tokens={tokensList} 
+          role={role} 
+          campaignData={data?.campaign}
+          allCharacters={allCharacters}
+          data={data}
+          onOpenSheet={onOpenSheet}
+          updateToken={updateToken}
+      />
+
+      {/* Top-Right: Tools Dock */}
+      <div className="absolute top-4 right-4 z-[70] flex flex-col gap-2">
+        {role === 'dm' && (
+          <>
             {isDrawingWalls && (
                 <button 
                     onClick={() => {
@@ -956,88 +2500,206 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
                             updateMap(campaignCode, activeMapId, { walls: null });
                         }
                     }}
-                    className="bg-slate-800 border border-red-500 text-red-400 hover:bg-red-500 hover:text-white px-3 py-2 rounded-lg shadow-lg flex items-center gap-2 text-sm font-bold transition-colors"
+                    className="w-10 h-10 bg-red-900/80 backdrop-blur border border-red-500 text-red-200 hover:bg-red-700 hover:text-white rounded-xl shadow-2xl flex items-center justify-center transition-all"
+                    title="Clear All Walls"
                 >
-                    <Icon name="trash-2" size={16} /> Clear Walls
+                    <Icon name="trash-2" size={18} />
                 </button>
             )}
-           <button 
-            onClick={() => { 
-                setShowAssetManager(false); 
-                setShowTokenManager(false);
-                setIsDrawingWalls(!isDrawingWalls);
-            }}
-            className={`bg-slate-800 border ${isDrawingWalls ? 'border-blue-500 text-blue-400' : 'border-slate-600 hover:border-blue-500 text-white'} px-3 py-2 rounded-lg shadow-lg flex items-center gap-2 text-sm font-bold transition-colors`}
-          >
-            <Icon name="pencil" size={16} /> Draw
-          </button>
+            {isPlacingLights && (
+                <button 
+                    onClick={() => {
+                        if (window.confirm('Are you sure you want to clear all lights?')) {
+                            updateMap(campaignCode, activeMapId, { lights: null });
+                        }
+                    }}
+                    className="w-10 h-10 bg-red-900/80 backdrop-blur border border-red-500 text-red-200 hover:bg-red-700 hover:text-white rounded-xl shadow-2xl flex items-center justify-center transition-all"
+                    title="Clear All Lights"
+                >
+                    <Icon name="trash-2" size={18} />
+                </button>
+            )}
+            
+            <button 
+              onClick={() => { setShowAssetManager(false); setShowTokenManager(false); setIsDrawingWalls(false); setIsPlacingLights(false); setIsArchitectMode(!isArchitectMode); }}
+              className={`w-10 h-10 backdrop-blur rounded-xl border shadow-2xl flex items-center justify-center transition-all hover:scale-105 ${isArchitectMode ? 'bg-red-900/80 border-red-500 text-red-300' : 'bg-slate-900/80 border-slate-700 text-slate-300 hover:border-red-500 hover:bg-slate-800'}`}
+              title={isArchitectMode ? "Stop Architect (A)" : "Architect Pen Tool (A)"}
+            >
+              <Icon name="pen-tool" size={18} />
+            </button>
+
+            <button 
+              onClick={() => { setShowAssetManager(false); setShowTokenManager(false); setIsArchitectMode(false); setIsPlacingLights(false); setIsDrawingWalls(!isDrawingWalls); }}
+              className={`w-10 h-10 backdrop-blur rounded-xl border shadow-2xl flex items-center justify-center transition-all hover:scale-105 ${isDrawingWalls ? 'bg-blue-900/80 border-blue-500 text-blue-300' : 'bg-slate-900/80 border-slate-700 text-slate-300 hover:border-blue-500 hover:bg-slate-800'}`}
+              title={isDrawingWalls ? "Stop Drawing (D)" : "Freehand Draw Tool (D)"}
+            >
+              <Icon name="pencil" size={18} />
+            </button>
+
+            <button 
+              onClick={() => { setShowAssetManager(false); setShowTokenManager(false); setIsArchitectMode(false); setIsDrawingWalls(false); setIsPlacingLights(!isPlacingLights); }}
+              className={`w-10 h-10 backdrop-blur rounded-xl border shadow-2xl flex items-center justify-center transition-all hover:scale-105 ${isPlacingLights ? 'bg-yellow-900/80 border-yellow-500 text-yellow-300' : 'bg-slate-900/80 border-slate-700 text-slate-300 hover:border-yellow-500 hover:bg-slate-800'}`}
+              title={isPlacingLights ? "Stop Placing Lights (L)" : "Place Light Source (L)"}
+            >
+              <Icon name="lightbulb" size={18} />
+            </button>
+
+            <button 
+              onClick={() => { setShowAssetManager(false); setShowTokenManager(!showTokenManager); setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); }}
+              className={`w-10 h-10 backdrop-blur rounded-xl border shadow-2xl flex items-center justify-center transition-all hover:scale-105 ${showTokenManager ? 'bg-indigo-900/80 border-indigo-500 text-indigo-300' : 'bg-slate-900/80 border-slate-700 text-slate-300 hover:border-indigo-500 hover:bg-slate-800'}`}
+              title="Actors & Tokens (T)"
+            >
+              <Icon name="users" size={18} />
+            </button>
+
+            <div className="w-6 h-px bg-slate-700/50 my-1 mx-auto rounded-full"></div>
+
+            <button 
+              onClick={() => { setShowTokenManager(false); setShowAssetManager(!showAssetManager); setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); }}
+              className={`w-10 h-10 backdrop-blur rounded-xl border shadow-2xl flex items-center justify-center transition-all hover:scale-105 ${showAssetManager ? 'bg-amber-900/80 border-amber-500 text-amber-300' : 'bg-slate-900/80 border-slate-700 text-slate-300 hover:border-amber-500 hover:bg-slate-800'}`}
+              title="Map Editor (M)"
+            >
+              <Icon name="map" size={18} />
+            </button>
+
+            <div className="w-6 h-px bg-slate-700/50 my-1 mx-auto rounded-full"></div>
+          </>
+        )}
+
+        {onOpenHandouts && (
           <button 
-            onClick={() => { setShowAssetManager(false); setShowTokenManager(!showTokenManager); setIsDrawingWalls(false); }}
-            className={`bg-slate-800 border ${showTokenManager ? 'border-indigo-500 text-indigo-400' : 'border-slate-600 hover:border-indigo-500 text-white'} px-3 py-2 rounded-lg shadow-lg flex items-center gap-2 text-sm font-bold transition-colors`}
+            onClick={onOpenHandouts}
+            className="w-10 h-10 bg-amber-900/60 backdrop-blur border border-amber-700 hover:border-amber-500 hover:bg-amber-800 text-amber-200 rounded-xl shadow-2xl flex items-center justify-center transition-all hover:scale-105"
+            title="Handouts"
           >
-            <Icon name="users" size={16} /> Actors
+            <Icon name="scroll" size={18} />
           </button>
+        )}
+
+        {(onOpenChat || onOpenJournal) && (
+          <div className="w-6 h-px bg-slate-700/50 my-1 mx-auto rounded-full"></div>
+        )}
+
+        {onOpenChat && (
           <button 
-            onClick={() => { setShowTokenManager(false); setShowAssetManager(!showAssetManager); setIsDrawingWalls(false); }}
-            className={`bg-slate-800 border ${showAssetManager ? 'border-amber-500 text-amber-400' : 'border-slate-600 hover:border-amber-500 text-white'} px-3 py-2 rounded-lg shadow-lg flex items-center gap-2 text-sm font-bold transition-colors`}
+            onClick={onOpenChat}
+            className="w-10 h-10 bg-indigo-900/60 backdrop-blur border border-indigo-700 hover:border-indigo-500 hover:bg-indigo-800 text-indigo-200 rounded-xl shadow-2xl flex items-center justify-center transition-all hover:scale-105"
+            title="Chat & Dice"
           >
-            <Icon name="map" size={16} /> Map Editor
+            <Icon name="message-circle" size={18} />
           </button>
-        </div>
-      )}
+        )}
+
+        {onOpenJournal && (
+          <button 
+            onClick={onOpenJournal}
+            className="w-10 h-10 bg-emerald-900/60 backdrop-blur border border-emerald-700 hover:border-emerald-500 hover:bg-emerald-800 text-emerald-200 rounded-xl shadow-2xl flex items-center justify-center transition-all hover:scale-105"
+            title="Journal"
+          >
+            <Icon name="book" size={18} />
+          </button>
+        )}
+      </div>
 
       {/* Actors Manager Drawer */}
       {showTokenManager && role === 'dm' && (
         <div className="absolute top-0 right-0 bottom-0 w-80 bg-slate-900 border-l border-slate-700 shadow-2xl z-[80] flex flex-col animate-in slide-in-from-right duration-300">
             <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-950">
                 <h3 className="font-bold text-indigo-500 flex items-center gap-2"><Icon name="users" size={18} /> Actors</h3>
-                <button onClick={() => setShowTokenManager(false)} className="text-slate-400 hover:text-white p-1"><Icon name="x" size={18} /></button>
+                <div className="flex items-center gap-2">
+                    <div className="flex bg-slate-800 rounded p-1 border border-slate-700">
+                        <button onClick={() => setActorViewMode('grid')} className={`p-1 rounded ${actorViewMode === 'grid' ? 'bg-slate-700 text-indigo-400' : 'text-slate-500 hover:text-slate-300'}`}><Icon name="layout-grid" size={14}/></button>
+                        <button onClick={() => setActorViewMode('list')} className={`p-1 rounded ${actorViewMode === 'list' ? 'bg-slate-700 text-indigo-400' : 'text-slate-500 hover:text-slate-300'}`}><Icon name="list" size={14}/></button>
+                    </div>
+                    <button onClick={() => setShowTokenManager(false)} className="text-slate-400 hover:text-white p-1"><Icon name="x" size={18} /></button>
+                </div>
             </div>
             
             <div className="flex-1 overflow-y-auto custom-scroll p-4 space-y-6">
                 <div>
                   <h4 className="text-xs uppercase font-bold text-slate-500 mb-3 tracking-wider">Party</h4>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className={actorViewMode === 'grid' ? "grid grid-cols-2 gap-3" : "flex flex-col gap-2"}>
                       {data?.players?.map((p, i) => (
-                          <div key={`pc-${i}`} draggable 
-                              onDragStart={(e) => {
-                                  const payload = JSON.stringify({ format: 'dungeonmind-character', id: p.id, name: p.name, type: 'pc', image: p.image });
-                                  e.dataTransfer.setData('application/dungeonmind-character', payload);
-                                  e.dataTransfer.setData('text/plain', payload);
-                              }}
-                              className="aspect-square bg-slate-800 rounded-lg border border-slate-700 overflow-hidden cursor-grab active:cursor-grabbing hover:border-green-500 transition-colors relative group shadow-lg"
-                          >
-                              {p.image ? (
-                                <img src={p.image} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" alt={p.name} draggable={false} />
-                              ) : (
-                                <div className="w-full h-full flex items-center justify-center font-bold text-3xl text-slate-600 bg-slate-700 opacity-80 group-hover:opacity-100 transition-opacity">{p.name[0]}</div>
-                              )}
-                              <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 to-transparent pt-4 pb-1 px-2 text-[10px] font-bold text-white truncate pointer-events-none text-center shadow-black drop-shadow-md">{p.name}</div>
-                          </div>
+                          actorViewMode === 'grid' ? (
+                              <div key={`pc-${i}`} draggable 
+                                  onDragStart={(e) => {
+                                      const payload = JSON.stringify({ format: 'dungeonmind-character', id: p.id, name: p.name, type: 'pc', image: p.image });
+                                      e.dataTransfer.setData('application/dungeonmind-character', payload);
+                                      e.dataTransfer.setData('text/plain', payload);
+                                  }}
+                                  className="aspect-square bg-slate-800 rounded-lg border border-slate-700 overflow-hidden cursor-grab active:cursor-grabbing hover:border-green-500 transition-colors relative group shadow-lg"
+                              >
+                                  {p.image ? (
+                                    <img src={p.image} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" alt={p.name} draggable={false} />
+                                  ) : (
+                                    <div className="w-full h-full flex items-center justify-center font-bold text-3xl text-slate-600 bg-slate-700 opacity-80 group-hover:opacity-100 transition-opacity">{p.name?.[0] || '?'}</div>
+                                  )}
+                                  <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 to-transparent pt-4 pb-1 px-2 text-[10px] font-bold text-white truncate pointer-events-none text-center shadow-black drop-shadow-md">{p.name}</div>
+                                  <button onClick={(e) => { e.stopPropagation(); handleAddActorToCombat(p, false); }} className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 p-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-md shadow-lg transition-all z-10" title="Add to Initiative Tracker"><Icon name="plus" size={14}/></button>
+                              </div>
+                          ) : (
+                              <div key={`pc-${i}`} draggable 
+                                  onDragStart={(e) => {
+                                      const payload = JSON.stringify({ format: 'dungeonmind-character', id: p.id, name: p.name, type: 'pc', image: p.image });
+                                      e.dataTransfer.setData('application/dungeonmind-character', payload);
+                                      e.dataTransfer.setData('text/plain', payload);
+                                  }}
+                                  className="flex items-center gap-3 bg-slate-800 rounded-lg border border-slate-700 p-2 cursor-grab active:cursor-grabbing hover:border-green-500 transition-colors group shadow-lg"
+                              >
+                                  <div className="w-10 h-10 rounded bg-slate-700 shrink-0 overflow-hidden relative">
+                                      {p.image ? <img src={p.image} className="w-full h-full object-cover" draggable={false} /> : <div className="w-full h-full flex items-center justify-center font-bold text-slate-500">{p.name?.[0] || '?'}</div>}
+                                  </div>
+                                  <div className="flex-1 min-w-0 font-bold text-sm text-slate-200 truncate">{p.name}</div>
+                                  <button onClick={(e) => { e.stopPropagation(); handleAddActorToCombat(p, false); }} className="opacity-0 group-hover:opacity-100 p-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded shadow-lg transition-all" title="Add to Initiative Tracker"><Icon name="plus" size={14}/></button>
+                              </div>
+                          )
                       ))}
                       {(!data?.players || data.players.length === 0) && <div className="col-span-2 text-slate-500 text-xs text-center italic">No players found.</div>}
                   </div>
                 </div>
 
                 <div>
-                  <h4 className="text-xs uppercase font-bold text-slate-500 mb-3 tracking-wider">Bestiary</h4>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="flex justify-between items-center mb-3">
+                      <h4 className="text-xs uppercase font-bold text-slate-500 tracking-wider">Bestiary</h4>
+                      <button onClick={() => setShowCompendium(true)} className="text-[10px] bg-blue-900/40 text-blue-400 hover:text-blue-300 hover:bg-blue-900/60 border border-blue-800/50 px-2 py-0.5 rounded flex items-center gap-1 transition-colors">
+                          <Icon name="book" size={12}/> 5e API
+                      </button>
+                  </div>
+                  <div className={actorViewMode === 'grid' ? "grid grid-cols-2 gap-3" : "flex flex-col gap-2"}>
                       {data?.npcs?.map((n, i) => (
-                          <div key={`npc-${i}`} draggable 
-                              onDragStart={(e) => {
-                                  const payload = JSON.stringify({ format: 'dungeonmind-character', id: n.id, name: n.name, type: 'npc', image: n.image, size: n.size || 1 });
-                                  e.dataTransfer.setData('application/dungeonmind-character', payload);
-                                  e.dataTransfer.setData('text/plain', payload);
-                              }}
-                              className="aspect-square bg-slate-800 rounded-lg border border-slate-700 overflow-hidden cursor-grab active:cursor-grabbing hover:border-red-500 transition-colors relative group shadow-lg"
-                          >
-                              {n.image ? (
-                                <img src={n.image} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" alt={n.name} draggable={false} />
-                              ) : (
-                                <div className="w-full h-full flex items-center justify-center font-bold text-3xl text-slate-600 bg-slate-700 opacity-80 group-hover:opacity-100 transition-opacity">{n.name[0]}</div>
-                              )}
-                              <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 to-transparent pt-4 pb-1 px-2 text-[10px] font-bold text-white truncate pointer-events-none text-center shadow-black drop-shadow-md">{n.name}</div>
-                          </div>
+                          actorViewMode === 'grid' ? (
+                              <div key={`npc-${i}`} draggable 
+                                  onDragStart={(e) => {
+                                      const payload = JSON.stringify({ format: 'dungeonmind-character', id: n.id, name: n.name, type: 'npc', image: n.image, size: n.size || 1, hp: n.hp });
+                                      e.dataTransfer.setData('application/dungeonmind-character', payload);
+                                      e.dataTransfer.setData('text/plain', payload);
+                                  }}
+                                  className="aspect-square bg-slate-800 rounded-lg border border-slate-700 overflow-hidden cursor-grab active:cursor-grabbing hover:border-red-500 transition-colors relative group shadow-lg"
+                              >
+                                  {n.image ? (
+                                    <img src={n.image} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" alt={n.name} draggable={false} />
+                                  ) : (
+                                    <div className="w-full h-full flex items-center justify-center font-bold text-3xl text-slate-600 bg-slate-700 opacity-80 group-hover:opacity-100 transition-opacity">{n.name?.[0] || '?'}</div>
+                                  )}
+                                  <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 to-transparent pt-4 pb-1 px-2 text-[10px] font-bold text-white truncate pointer-events-none text-center shadow-black drop-shadow-md">{n.name}</div>
+                                  <button onClick={(e) => { e.stopPropagation(); handleAddActorToCombat(n, true); }} className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 p-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-md shadow-lg transition-all z-10" title="Add to Initiative Tracker"><Icon name="plus" size={14}/></button>
+                              </div>
+                          ) : (
+                              <div key={`npc-${i}`} draggable 
+                                  onDragStart={(e) => {
+                                      const payload = JSON.stringify({ format: 'dungeonmind-character', id: n.id, name: n.name, type: 'npc', image: n.image, size: n.size || 1, hp: n.hp });
+                                      e.dataTransfer.setData('application/dungeonmind-character', payload);
+                                      e.dataTransfer.setData('text/plain', payload);
+                                  }}
+                                  className="flex items-center gap-3 bg-slate-800 rounded-lg border border-slate-700 p-2 cursor-grab active:cursor-grabbing hover:border-red-500 transition-colors group shadow-lg"
+                              >
+                                  <div className="w-10 h-10 rounded bg-slate-700 shrink-0 overflow-hidden relative">
+                                      {n.image ? <img src={n.image} className="w-full h-full object-cover" draggable={false} /> : <div className="w-full h-full flex items-center justify-center font-bold text-slate-500">{n.name?.[0] || '?'}</div>}
+                                  </div>
+                                  <div className="flex-1 min-w-0 font-bold text-sm text-slate-200 truncate">{n.name}</div>
+                                  <button onClick={(e) => { e.stopPropagation(); handleAddActorToCombat(n, true); }} className="opacity-0 group-hover:opacity-100 p-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded shadow-lg transition-all" title="Add to Initiative Tracker"><Icon name="plus" size={14}/></button>
+                              </div>
+                          )
                       ))}
                       {(!data?.npcs || data.npcs.length === 0) && <div className="col-span-2 text-slate-500 text-xs text-center italic">No enemies found.</div>}
                   </div>
@@ -1083,7 +2745,13 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
               <button 
                 className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors"
                 onClick={() => {
-                  if (onOpenSheet) onOpenSheet(contextMenu.characterId);
+                  if (onOpenSheet) {
+                      const token = tokensList.find(t => t.id === contextMenu.tokenId);
+                      const char = allCharacters.find(c => String(c.id) === String(contextMenu.characterId));
+                      const hp = token?.hp?.current ?? char?.hp?.current ?? null;
+                      const maxHp = token?.hp?.max ?? char?.hp?.max ?? null;
+                      onOpenSheet({ isToken: true, tokenId: contextMenu.tokenId, characterId: contextMenu.characterId, hp, maxHp });
+                  }
                   setContextMenu(null);
                 }}
               >
@@ -1092,7 +2760,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
             )}
             
             {/* Reset Elevation is only visible if the token is currently flying */}
-            {Math.abs(data.campaign?.activeMap?.tokens?.[contextMenu.tokenId]?.elevationOffset || 0) > 0.01 && (
+            {Math.abs(contextMenu.elevationOffset || 0) > 0.01 && (
               <button 
                 className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors text-blue-400 font-bold"
                 onClick={() => {
@@ -1106,25 +2774,60 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
 
             {role === 'dm' && (
               <>
+                <div className="border-t border-slate-700 my-1"></div>
                 <button 
-                  className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors"
+                  className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors text-green-400 font-bold"
                   onClick={() => {
-                    const token = data.campaign?.activeMap?.tokens?.[contextMenu.tokenId];
-                    if (token) updateToken(contextMenu.tokenId, { isHidden: !token.isHidden });
+                    const idsToToggle = selectedTokenIds.includes(contextMenu.tokenId) && selectedTokenIds.length > 1 
+                        ? selectedTokenIds 
+                        : [contextMenu.tokenId];
+                    idsToToggle.forEach(id => {
+                        updateToken(id, { isSharedControl: !contextMenu.isSharedControl });
+                    });
                     setContextMenu(null);
                   }}
                 >
-                  {data.campaign?.activeMap?.tokens?.[contextMenu.tokenId]?.isHidden ? "Reveal to Players" : "Hide from Players"}
+                  <Icon name="unlock" size={14} className="inline mr-2"/>
+                  {contextMenu.isSharedControl ? "Revoke Shared Control" : "Allow Shared Control"}
+                </button>
+                <div className="border-t border-slate-700 my-1"></div>
+                <button 
+                  className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors text-amber-400 font-bold"
+                  onClick={() => {
+                    const idsToRoll = selectedTokenIds.includes(contextMenu.tokenId) && selectedTokenIds.length > 1 
+                        ? selectedTokenIds 
+                        : [contextMenu.tokenId];
+                    rollGroupInitiative(idsToRoll);
+                    setContextMenu(null);
+                  }}
+                >
+                  <Icon name="sword" size={14} className="inline mr-2"/>
+                  {selectedTokenIds.includes(contextMenu.tokenId) && selectedTokenIds.length > 1 ? "Roll Group Initiative" : "Roll Initiative"}
+                </button>
+                <div className="border-t border-slate-700 my-1"></div>
+                <button 
+                  className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors"
+                  onClick={() => {
+                    updateToken(contextMenu.tokenId, { isHidden: !contextMenu.isHidden });
+                    setContextMenu(null);
+                  }}
+                >
+                  {contextMenu.isHidden ? "Reveal to Players" : "Hide from Players"}
                 </button>
                 
                 <button 
                   className="w-full text-left px-4 py-2 hover:bg-red-900/50 text-red-400 transition-colors"
                   onClick={() => {
-                    deleteToken(contextMenu.tokenId);
+                    if (selectedTokenIds.includes(contextMenu.tokenId) && selectedTokenIds.length > 1) {
+                        selectedTokenIds.forEach(id => deleteToken(id));
+                        setSelectedTokenIds([]);
+                    } else {
+                        deleteToken(contextMenu.tokenId);
+                    }
                     setContextMenu(null);
                   }}
                 >
-                  Delete Token
+                  {selectedTokenIds.includes(contextMenu.tokenId) && selectedTokenIds.length > 1 ? `Delete Selected (${selectedTokenIds.length})` : "Delete Token"}
                 </button>
               </>
             )}
@@ -1144,6 +2847,35 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
                 style={{ top: wallContextMenu.y, left: wallContextMenu.x }}
                 onContextMenu={(e) => e.preventDefault()}
             >
+                <div className="text-xs uppercase font-bold text-slate-500 px-4 py-1">Set Type</div>
+                <button 
+                    className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors text-red-400"
+                    onClick={() => {
+                        updateMap(campaignCode, activeMapId, { [`walls.${wallContextMenu.wallId}.type`]: 'wall' });
+                        setWallContextMenu(null);
+                    }}
+                >
+                    Make Wall
+                </button>
+                <button 
+                    className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors text-blue-400"
+                    onClick={() => {
+                        updateMap(campaignCode, activeMapId, { [`walls.${wallContextMenu.wallId}.type`]: 'door' });
+                        setWallContextMenu(null);
+                    }}
+                >
+                    Make Door
+                </button>
+                <button 
+                    className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors text-cyan-400"
+                    onClick={() => {
+                        updateMap(campaignCode, activeMapId, { [`walls.${wallContextMenu.wallId}.type`]: 'window' });
+                        setWallContextMenu(null);
+                    }}
+                >
+                    Make Window
+                </button>
+                <div className="border-t border-slate-700 my-1"></div>
                 <button 
                     className="w-full text-left px-4 py-2 hover:bg-red-900/50 text-red-400 transition-colors"
                     onClick={() => {
@@ -1157,6 +2889,132 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
                 </button>
             </div>
         </>
+      )}
+
+      {lightContextMenu && (
+        <>
+            <div 
+                className="fixed inset-0 z-40" 
+                onClick={() => setLightContextMenu(null)} 
+                onContextMenu={(e) => { e.preventDefault(); setLightContextMenu(null); }}
+            ></div>
+            <div 
+                className="fixed z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-2xl py-1 text-sm text-slate-200 min-w-[150px] overflow-hidden"
+                style={{ top: lightContextMenu.y, left: lightContextMenu.x }}
+                onContextMenu={(e) => e.preventDefault()}
+            >
+                <div className="text-xs uppercase font-bold text-slate-500 px-4 py-1">Light Source</div>
+                <div className="border-t border-slate-700 my-1"></div>
+                <button 
+                    className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors text-amber-400"
+                    onClick={() => {
+                        const light = mapData.lights[lightContextMenu.lightId];
+                        const currentRadiusFt = Math.round(((light?.radius || (6 * gridSize)) / gridSize) * 5);
+                        const newRadius = window.prompt("Enter new light radius in feet:", currentRadiusFt);
+                        if (newRadius && !isNaN(newRadius)) {
+                            const radiusInSquares = (Number(newRadius) / 5) * gridSize;
+                            updateMap(campaignCode, activeMapId, { [`lights.${lightContextMenu.lightId}.radius`]: radiusInSquares });
+                        }
+                        setLightContextMenu(null);
+                    }}
+                >
+                    Change Radius
+                </button>
+                <button 
+                    className="w-full text-left px-4 py-2 hover:bg-red-900/50 text-red-400 transition-colors"
+                    onClick={() => {
+                        const newLights = { ...mapData.lights };
+                        delete newLights[lightContextMenu.lightId];
+                        updateMap(campaignCode, activeMapId, { lights: newLights });
+                        setLightContextMenu(null);
+                    }}
+                >
+                    Delete Light
+                </button>
+            </div>
+        </>
+      )}
+
+      {showCompendium && (
+          <div className="fixed inset-0 z-[100] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
+              <div className="max-w-xl w-full bg-slate-900 rounded-xl border border-slate-700 shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
+                  <div className="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-800">
+                      <h3 className="font-bold text-white flex items-center gap-2"><Icon name="globe" size={18}/> D&D 5e API Search</h3>
+                      <button onClick={() => setShowCompendium(false)} className="text-slate-400 hover:text-white"><Icon name="x" size={20}/></button>
+                  </div>
+                  <div className="p-4 border-b border-slate-700">
+                      <div className="flex gap-2">
+                          <input autoFocus value={compendiumSearch} onChange={(e) => setCompendiumSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && searchCompendium()} placeholder="Search (e.g. Owlbear, Lich)..." className="flex-1 bg-slate-950 border border-slate-600 rounded px-3 py-2 text-white outline-none focus:border-blue-500"/>
+                          <button onClick={searchCompendium} disabled={isLoadingCompendium} className="bg-blue-600 hover:bg-blue-500 px-4 rounded text-white font-bold">{isLoadingCompendium ? <Icon name="loader" size={18} className="animate-spin"/> : <Icon name="search" size={18}/>}</button>
+                      </div>
+                  </div>
+                  <div className="flex-1 overflow-y-auto p-2 space-y-2 bg-slate-900 custom-scroll">
+                      {compendiumResults.map(r => (
+                          <div key={r.index} onClick={() => importFromApi(r.url)} className="p-3 bg-slate-800 border border-slate-700 rounded hover:border-blue-500 cursor-pointer flex justify-between items-center group">
+                              <div className="font-bold text-white group-hover:text-blue-400 capitalize">{r.name}</div>
+                              <div className="text-xs text-slate-500 flex items-center gap-1 group-hover:text-blue-300">Import <Icon name="download" size={14}/></div>
+                          </div>
+                      ))}
+                      {compendiumResults.length === 0 && !isLoadingCompendium && <div className="text-center text-slate-500 py-8 italic">Search for a creature to begin.</div>}
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {showModelPicker && pendingNpc && (
+          <div className="fixed inset-0 z-[110] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
+              <div className="max-w-2xl w-full bg-slate-900 rounded-xl border border-slate-700 shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
+                  <div className="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-800">
+                      <h3 className="font-bold text-white flex items-center gap-2"><Icon name="box" size={18}/> Select 3D Mini: {pendingNpc.name}</h3>
+                      <button onClick={() => { setPendingNpc(null); setShowModelPicker(false); }} className="text-slate-400 hover:text-white"><Icon name="x" size={20}/></button>
+                  </div>
+                  <div className="p-4 border-b border-slate-700 bg-slate-900 flex gap-2">
+                      <input 
+                          autoFocus
+                          value={miniSearchQuery} 
+                          onChange={e => setMiniSearchQuery(e.target.value)} 
+                          onKeyDown={e => e.key === 'Enter' && handleMiniSearch()}
+                          placeholder="Search 3D Models (e.g. Dragon, Goblin)..." 
+                          className="flex-1 bg-slate-950 border border-slate-600 rounded px-3 py-2 text-white outline-none focus:border-amber-500"
+                      />
+                      <button 
+                          onClick={() => handleMiniSearch()} 
+                          disabled={isSearchingMinis} 
+                          className="bg-amber-600 hover:bg-amber-500 px-4 rounded text-white font-bold flex items-center justify-center"
+                      >
+                          {isSearchingMinis ? <Icon name="loader" size={18} className="animate-spin"/> : <Icon name="search" size={18}/>}
+                      </button>
+                  </div>
+                  <div className="p-6 overflow-y-auto custom-scroll bg-slate-950 flex-1">
+                      {isSearchingMinis ? (
+                          <div className="text-center py-10 text-amber-500"><Icon name="loader" size={32} className="animate-spin mx-auto mb-2"/> Searching the Repository...</div>
+                      ) : (
+                          <>
+                              <p className="text-slate-400 mb-4 text-sm">We found {availableModels.length} compatible 3D models.</p>
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                          {availableModels.map((model, i) => (
+                              <div key={i} onClick={() => handleModelSelect(model)} className="bg-slate-800 border border-slate-700 rounded-lg p-2 cursor-pointer hover:border-amber-500 hover:bg-slate-700 transition-all group">
+                                  <div className="aspect-square bg-slate-900 rounded-md mb-2 overflow-hidden border border-slate-700 group-hover:border-amber-500/50 relative">
+                                      {model.thumb ? <img src={model.thumb} className="w-full h-full object-cover" /> : <Icon name="box" size={32} className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-slate-600"/>}
+                                  </div>
+                                  <div className="font-bold text-sm text-slate-200 group-hover:text-amber-400 truncate">{model.name}</div>
+                                  <div className="text-[10px] text-slate-500 truncate">Scale: {model.scale}x</div>
+                              </div>
+                          ))}
+                          
+                          <div onClick={() => handleModelSelect(null)} className="bg-slate-800 border border-slate-700 border-dashed rounded-lg p-2 cursor-pointer hover:border-blue-500 hover:bg-slate-700 transition-all group flex flex-col items-center justify-center">
+                              <div className="w-16 h-16 bg-slate-900 rounded-full mb-2 flex items-center justify-center border border-slate-700 group-hover:border-blue-500/50">
+                                  <Icon name="image" size={24} className="text-slate-500 group-hover:text-blue-400"/>
+                              </div>
+                              <div className="font-bold text-sm text-slate-200 group-hover:text-blue-400 text-center">2D Token Only</div>
+                              <div className="text-[10px] text-slate-500 text-center">Skip 3D Model</div>
+                          </div>
+                      </div>
+                          </>
+                      )}
+                  </div>
+              </div>
+          </div>
       )}
     </div>
   );

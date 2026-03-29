@@ -2,6 +2,9 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import * as fb from '../firebase';
 import { doc, onSnapshot, updateDoc, deleteField, arrayUnion, arrayRemove, setDoc, deleteDoc, collection, query, orderBy, addDoc, writeBatch, getDocs } from '../firebase';
 
+// Add this helper at the top of the file
+const sanitize = (obj) => JSON.parse(JSON.stringify(obj, (k, v) => v === undefined ? null : v));
+
 const NewCampaignContext = createContext(null);
 
 export const useNewCampaign = () => {
@@ -18,7 +21,7 @@ export const NewCampaignProvider = ({ children }) => {
     const [chatLog, setChatLog] = useState([]);
     const [journal_pages, setJournalPages] = useState({});
     const [error, setError] = useState(null);
-    const [user, setUser] = useState(() => fb.auth.currentUser);
+    const [user, setUser] = useState(undefined);
 
     useEffect(() => {
         const unsubscribe = fb.onAuthStateChanged(fb.auth, setUser);
@@ -26,16 +29,26 @@ export const NewCampaignProvider = ({ children }) => {
     }, []);
 
     useEffect(() => {
-        const lastCampaign = localStorage.getItem('dungeonmind_last_campaign');
-        if (lastCampaign) {
-            try {
-                const parsed = JSON.parse(lastCampaign);
-                if (parsed.code) {
-                    setGameParams(parsed);
+        const code = localStorage.getItem('dm_last_code');
+        const role = localStorage.getItem('dm_last_role');
+        
+        if (code) {
+            setGameParams({ code, role: role || 'player' });
+        } else {
+            // Fallback to older session keys
+            const lastCampaign = localStorage.getItem('dungeonmind_last_campaign');
+            if (lastCampaign) {
+                try {
+                    const parsed = JSON.parse(lastCampaign);
+                    if (parsed.code) {
+                        setGameParams(parsed);
+                        localStorage.setItem('dm_last_code', parsed.code);
+                        localStorage.setItem('dm_last_role', parsed.role || 'player');
+                    }
+                } catch (e) {
+                    console.error("Failed to parse last campaign data:", e);
+                    localStorage.removeItem('dungeonmind_last_campaign');
                 }
-            } catch (e) {
-                console.error("Failed to parse last campaign data:", e);
-                localStorage.removeItem('dungeonmind_last_campaign');
             }
         }
     }, []);
@@ -103,10 +116,12 @@ export const NewCampaignProvider = ({ children }) => {
         }
         const campaignRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code);
         try {
-            await updateDoc(campaignRef, updates);
+            // FIX: Wrap 'updates' in sanitize()
+            await setDoc(campaignRef, sanitize(updates), { merge: true });
+            console.log("Successfully Forged/Updated Campaign:", gameParams.code);
         } catch (err) {
-            console.error("Error updating campaign:", err);
-            setError("Failed to update campaign.");
+            console.error("FIREBASE ERROR:", err);
+            alert("Database Error: Check your Firestore Rules in the Firebase Console!");
         }
     };
 
@@ -180,12 +195,41 @@ export const NewCampaignProvider = ({ children }) => {
         await batch.commit();
     };
 
-    const joinCampaign = (code, role, uid, isOffline) => {
-        const params = { code, role, uid, isOffline };
-        setGameParams(params);
-        if (!isOffline) { // Don't persist offline sessions
-            localStorage.setItem('dungeonmind_last_campaign', JSON.stringify({ code, role, isOffline }));
+    const joinCampaign = async (code, role, uid, isNew = false) => {
+        // Path: artifacts -> dungeonmind -> public -> data -> campaigns -> CODE
+        const campaignRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', code);
+
+        if (isNew && role === 'dm') {
+            try {
+                await setDoc(campaignRef, {
+                    hostId: uid,
+                    dmIds: [uid],
+                    onboardingComplete: false,
+                    createdAt: Date.now(),
+                    players: [],
+                    npcs: [],
+                    journal_pages: {},
+                    activeUsers: { [uid]: user?.email || 'DM' }
+                }, { merge: true });
+                console.log("Database initialized for", code);
+            } catch (e) {
+                console.error("Initialization failed:", e);
+            }
+        } else if (uid && uid !== 'anon') {
+            // Register player presence in the activeUsers map so they show up in DM Settings
+            try {
+                await setDoc(campaignRef, {
+                    activeUsers: { [uid]: user?.email || 'Player' }
+                }, { merge: true });
+            } catch (e) {
+                console.error("Failed to register player presence:", e);
+            }
         }
+
+        // Now set params to trigger the switch to the game view
+        setGameParams({ code, role, uid });
+        localStorage.setItem('dm_last_code', code);
+        localStorage.setItem('dm_last_role', role);
     };
 
     const leaveCampaign = () => {
@@ -196,7 +240,13 @@ export const NewCampaignProvider = ({ children }) => {
     const saveJournalPage = async (pageId, pageData) => {
         if (!gameParams?.code) return;
         const pageRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'journal', pageId);
-        await setDoc(pageRef, pageData, { merge: true });
+        
+        try {
+            await setDoc(pageRef, sanitize(pageData), { merge: true });
+            console.log("Journal Page Saved!");
+        } catch (err) {
+            console.error("Error saving journal page:", err);
+        }
     };
 
     const deleteJournalPage = async (pageId) => {
