@@ -50,105 +50,208 @@ const scanFeatures = (architectUrl, illuminationUrl, scale = 20) => {
             const lights = {};
 
             // Downsample scan resolution to avoid millions of 3D objects
-            const stepX = Math.max(1, Math.floor(canvas.width / 100));
-            const stepY = Math.max(1, Math.floor(canvas.height / 100));
+            const stepX = Math.max(1, Math.floor(canvas.width / 150));
+            const stepY = Math.max(1, Math.floor(canvas.height / 150));
+            
+            // FIX 1: Aspect Ratio Scaling
+            const aspect = canvas.width / canvas.height || 1;
 
             const get3DCoord = (px, py) => ({
-                x: (px / canvas.width - 0.5) * scale,
+                x: (px / canvas.width - 0.5) * (scale * aspect),
                 y: 0,
                 z: (py / canvas.height - 0.5) * scale
             });
 
-            // 1. Run-Length Encoding for Horizontal Walls
-            for (let y = 0; y < canvas.height; y += stepY) {
-                let wallStart = null;
-                for (let x = 0; x < canvas.width; x += stepX) {
-                    const i = (y * canvas.width + x) * 4;
-                    const ar = archData[i], ag = archData[i+1], ab = archData[i+2];
-                    const isWall = ar > 200 && ag < 50 && ab < 50;
+            // Tolerant Color Classifier to handle AI anti-aliasing & compression
+            const getPixelType = (r, g, b) => {
+                if (r > 150 && g < 100 && b < 100) return 'wall';   // Red
+                if (r < 100 && g < 100 && b > 150) return 'door';   // Blue
+                if (r < 100 && g > 150 && b > 150) return 'window'; // Cyan
+                return null;
+            };
 
-                    if (isWall) {
-                        if (wallStart === null) wallStart = x;
-                    } else {
-                        if (wallStart !== null) {
-                            if (x - wallStart > stepX * 2) {
-                                const id = `wall_h_${wallStart}_${y}`;
-                                walls[id] = { id, type: 'wall', points: [get3DCoord(wallStart, y), get3DCoord(x, y)] };
-                            }
-                            wallStart = null;
-                        }
-                    }
-                }
-                if (wallStart !== null && canvas.width - wallStart > stepX * 2) {
-                    const id = `wall_h_${wallStart}_${y}`;
-                    walls[id] = { id, type: 'wall', points: [get3DCoord(wallStart, y), get3DCoord(canvas.width, y)] };
+            // 1. Contour Tracing (Marching Squares) for Features (Walls, Doors, Windows)
+            // This traces the OUTSIDE edges of AI-generated thick lines so we can capture
+            // curves, diagonals, and organic shapes perfectly without cross-hatching inside.
+            const cols = Math.ceil(canvas.width / stepX);
+            const rows = Math.ceil(canvas.height / stepY);
+            const grid = Array(rows).fill(null).map(() => Array(cols).fill(null));
+
+            for (let gy = 0; gy < rows; gy++) {
+                for (let gx = 0; gx < cols; gx++) {
+                    const x = Math.min(gx * stepX, canvas.width - 1);
+                    const y = Math.min(gy * stepY, canvas.height - 1);
+                    const i = (y * canvas.width + x) * 4;
+                    grid[gy][gx] = getPixelType(archData[i], archData[i+1], archData[i+2]);
                 }
             }
 
-            // 2. Run-Length Encoding for Vertical Walls
-            for (let x = 0; x < canvas.width; x += stepX) {
-                let wallStart = null;
-                for (let y = 0; y < canvas.height; y += stepY) {
-                    const i = (y * canvas.width + x) * 4;
-                    const ar = archData[i], ag = archData[i+1], ab = archData[i+2];
-                    const isWall = ar > 200 && ag < 50 && ab < 50;
+            let wallCounter = 0;
+            const addSegment = (type, x1, y1, x2, y2) => {
+                if (x1 === x2 && y1 === y2) return;
+                const id = `${type}_gen_${wallCounter++}`;
+                const px1 = Math.min(x1 * stepX, canvas.width);
+                const py1 = Math.min(y1 * stepY, canvas.height);
+                const px2 = Math.min(x2 * stepX, canvas.width);
+                const py2 = Math.min(y2 * stepY, canvas.height);
+                walls[id] = { id, type, points: [get3DCoord(px1, py1), get3DCoord(px2, py2)] };
+                if (type === 'door') walls[id].isOpen = false;
+            };
 
-                    if (isWall) {
-                        if (wallStart === null) wallStart = y;
-                    } else {
-                        if (wallStart !== null) {
-                            if (y - wallStart > stepY * 2) {
-                                const id = `wall_v_${x}_${wallStart}`;
-                                walls[id] = { id, type: 'wall', points: [get3DCoord(x, wallStart), get3DCoord(x, y)] };
+            const getType = (x, y) => (x >= 0 && x < cols && y >= 0 && y < rows) ? grid[y][x] : null;
+            const featureTypes = ['wall', 'door', 'window'];
+
+            for (const t of featureTypes) {
+                // Horizontal boundaries
+                for (let gy = 0; gy <= rows; gy++) {
+                    let startX = null;
+                    let currentDir = null; // 1 for top boundary, -1 for bottom boundary
+
+                    const commit = (x) => {
+                        if (startX !== null) addSegment(t, startX, gy, x, gy);
+                        startX = null;
+                        currentDir = null;
+                    };
+
+                    for (let gx = 0; gx <= cols; gx++) {
+                        const isTBelow = getType(gx, gy) === t;
+                        const isTAbove = getType(gx, gy - 1) === t;
+                        
+                        let edgeDir = null;
+                        if (isTBelow && !isTAbove) edgeDir = 1;
+                        else if (isTAbove && !isTBelow) edgeDir = -1;
+
+                        if (edgeDir !== currentDir) {
+                            commit(gx);
+                            if (edgeDir) {
+                                startX = gx;
+                                currentDir = edgeDir;
                             }
-                            wallStart = null;
                         }
                     }
+                    commit(cols);
                 }
-                if (wallStart !== null && canvas.height - wallStart > stepY * 2) {
-                    const id = `wall_v_${x}_${wallStart}`;
-                    walls[id] = { id, type: 'wall', points: [get3DCoord(x, wallStart), get3DCoord(x, canvas.height)] };
+
+                // Vertical boundaries
+                for (let gx = 0; gx <= cols; gx++) {
+                    let startY = null;
+                    let currentDir = null;
+
+                    const commit = (y) => {
+                        if (startY !== null) addSegment(t, gx, startY, gx, y);
+                        startY = null;
+                        currentDir = null;
+                    };
+
+                    for (let gy = 0; gy <= rows; gy++) {
+                        const isTRight = getType(gx, gy) === t;
+                        const isTLeft = getType(gx - 1, gy) === t;
+
+                        let edgeDir = null;
+                        if (isTRight && !isTLeft) edgeDir = 1;
+                        else if (isTLeft && !isTRight) edgeDir = -1;
+
+                        if (edgeDir !== currentDir) {
+                            commit(gy);
+                            if (edgeDir) {
+                                startY = gy;
+                                currentDir = edgeDir;
+                            }
+                        }
+                    }
+                    commit(rows);
                 }
             }
 
-            // 3. Scan for Doors, Windows, and Lights
-            for (let y = 0; y < canvas.height; y += stepY) {
-                for (let x = 0; x < canvas.width; x += stepX) {
+            // 3. Scan for Light Sources (Center of Mass Blob Detection)
+            const gridW = Math.ceil(canvas.width / stepX);
+            const gridH = Math.ceil(canvas.height / stepY);
+            const isLight = new Array(gridW * gridH).fill(false);
+            const visited = new Array(gridW * gridH).fill(false);
+
+            // Pass 1: Build downsampled boolean grid of light pixels
+            for (let gy = 0; gy < gridH; gy++) {
+                for (let gx = 0; gx < gridW; gx++) {
+                    const x = Math.min(gx * stepX, canvas.width - 1);
+                    const y = Math.min(gy * stepY, canvas.height - 1);
                     const i = (y * canvas.width + x) * 4;
-                    const ar = archData[i], ag = archData[i+1], ab = archData[i+2];
-                    const ir = illData[i], ig = illData[i+1], ib = illData[i+2];
-
-                    const coord = get3DCoord(x, y);
-                    const id = `node_${x}_${y}`;
-
-                    if (ar < 50 && ag < 50 && ab > 200) {
-                        walls[`door_${id}`] = { id: `door_${id}`, type: 'door', isOpen: false, points: [coord, { ...coord, x: coord.x + 1, z: coord.z + 1 }] };
-                    } else if (ar < 50 && ag > 200 && ab > 200) {
-                        walls[`window_${id}`] = { id: `window_${id}`, type: 'window', points: [coord, { ...coord, x: coord.x + 1, z: coord.z + 1 }] };
+                    if (illData[i] > 150 && illData[i+1] > 150 && illData[i+2] < 100) {
+                        isLight[gy * gridW + gx] = true;
                     }
+                }
+            }
 
-                    if (ir > 200 && ig > 200 && ib < 50) {
-                        const gridX = Math.floor(coord.x / 4) * 4;
-                        const gridZ = Math.floor(coord.z / 4) * 4;
-                        const lightId = `light_${gridX}_${gridZ}`;
-                        if (!lights[lightId]) lights[lightId] = { id: lightId, position: { x: gridX, y: 1, z: gridZ }, color: '#fef08a', radius: 15, intensity: 1.5 };
+            // Pass 2: Flood Fill (BFS) to find connected blobs
+            let lightCounter = 0;
+            for (let gy = 0; gy < gridH; gy++) {
+                for (let gx = 0; gx < gridW; gx++) {
+                    const idx = gy * gridW + gx;
+                    if (isLight[idx] && !visited[idx]) {
+                        const queue = [[gx, gy]];
+                        visited[idx] = true;
+
+                        let sumX = 0, sumY = 0, count = 0;
+                        let minX = gx, maxX = gx, minY = gy, maxY = gy;
+
+                        while (queue.length > 0) {
+                            const [cx, cy] = queue.shift();
+                            sumX += cx; sumY += cy; count++;
+                            minX = Math.min(minX, cx); maxX = Math.max(maxX, cx);
+                            minY = Math.min(minY, cy); maxY = Math.max(maxY, cy);
+
+                            // Check 8-way neighbors
+                            for (let dy = -1; dy <= 1; dy++) {
+                                for (let dx = -1; dx <= 1; dx++) {
+                                    if (dx === 0 && dy === 0) continue;
+                                    const nx = cx + dx, ny = cy + dy;
+                                    if (nx >= 0 && nx < gridW && ny >= 0 && ny < gridH) {
+                                        const nIdx = ny * gridW + nx;
+                                        if (isLight[nIdx] && !visited[nIdx]) {
+                                            visited[nIdx] = true;
+                                            queue.push([nx, ny]);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Ignore tiny noise artifacts (e.g., 1-2 stray pixels)
+                        if (count > 2) {
+                            const px = (sumX / count) * stepX;
+                            const py = (sumY / count) * stepY;
+                            const coord = get3DCoord(px, py);
+
+                            // Dynamic Radius: Calculate size in map units, multiply by 5 for feet
+                            const avgDiameterPx = ((maxX - minX) * stepX + (maxY - minY) * stepY) / 2;
+                            const mapUnitsDiameter = avgDiameterPx / (canvas.height / scale);
+                            const radiusFt = Math.max(10, Math.min(100, Math.round((mapUnitsDiameter / 2) * 5)));
+
+                            const lightId = `light_gen_${lightCounter++}`;
+                            lights[lightId] = { 
+                                id: lightId, 
+                                position: { x: coord.x, y: 1, z: coord.z }, 
+                                color: '#fef08a', 
+                                radius: radiusFt, 
+                                intensity: 1.5 
+                            };
+                        }
                     }
                 }
             }
             
-            resolve({ walls, doors: {}, lights: Object.values(lights) });
+            resolve({ walls, lights: Object.values(lights) });
         };
         archImg.onload = processPixels; illImg.onload = processPixels;
         archImg.src = architectUrl; illImg.src = illuminationUrl;
     });
 };
 
-const MapGenerator = ({ onGenerateMap }) => {
+const MapGenerator = ({ onGenerateMap, mapData }) => {
     const [panels, setPanels] = useState([]);
     const [isProcessing, setIsProcessing] = useState(false);
     const [copied, setCopied] = useState(false);
 
-    const promptText = "System Role: You are the DungeonMind Architect Engine. Analyze the provided map and generate a single 2x2 grid image (Master Sheet) with NO text or labels.\nTop-Left: 1:1 Reference of the original map.\nTop-Right: Grayscale topographical heightmap. White is highest elevation, black is lowest.\nBottom-Left (Architect Mask): Black background. Pure Red (#FF0000) for Walls. Pure Blue (#0000FF) for Doors. Pure Cyan (#00FFFF) for Windows.\nBottom-Right (Illumination): Black background. Pure Yellow (#FFFF00) circular blobs for all static light sources.\nConstraint: All pixels must align perfectly across quadrants. Use only 3-pixel wide lines for walls.";
+    const promptText = "System Role: You are the DungeonMind Architect Engine. Generate a single 2x2 grid image (Master Sheet) representing a tactical TTRPG battlemap. NO text or labels.\nTop-Left: Detailed top-down reference map.\nTop-Right: Grayscale topographical heightmap (White=high, Black=low).\nBottom-Left (Architect Mask): Pure Black background. Use THICK, SOLID, UN-ALIASED strokes for features: Pure Red (#FF0000) for impassable Walls. Pure Blue (#0000FF) for Doors. Pure Cyan (#00FFFF) for Windows. Do NOT use gradients or soft edges here!\nBottom-Right (Illumination): Pure Black background. Pure Yellow (#FFFF00) solid circles representing light source origins (e.g., torches, lanterns, campfires, glowing crystals).\nConstraints: All 4 quadrants must be exactly the same size and perfectly aligned.";
 
     const handleCopy = () => {
         navigator.clipboard.writeText(promptText);
@@ -192,7 +295,8 @@ const MapGenerator = ({ onGenerateMap }) => {
             const illuminationPanel = panels.find(p => p.name === "Illumination Data");
 
             // Pass to Pixel Scanner to extract vectors
-            const features = await scanFeatures(architectPanel.dataUrl, illuminationPanel.dataUrl, 20);
+            const scale = mapData?.scale || 20;
+            const features = await scanFeatures(architectPanel.dataUrl, illuminationPanel.dataUrl, scale);
 
             const mapId = await storeChunkedMap(mapPanel.dataUrl, "generated_map.png");
             const heightId = await storeChunkedMap(heightPanel.dataUrl, "generated_heightmap.png");

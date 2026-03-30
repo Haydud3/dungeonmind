@@ -180,6 +180,17 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                     </div>
 
                     <div>
+                        <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Grid Visibility</label>
+                        <button
+                            onClick={() => updateMap(campaignCode, activeMapId, { showGrid: mapData?.showGrid === false ? true : false })}
+                            className={`w-full py-2 border rounded text-center text-xs font-bold transition-colors flex items-center justify-center gap-2 ${mapData?.showGrid !== false ? 'border-cyan-500 bg-cyan-900/20 text-cyan-400' : 'border-slate-600 text-slate-300 hover:border-cyan-500'}`}
+                        >
+                            <Icon name={mapData?.showGrid !== false ? "grid" : "layout-grid"} size={14} className="inline mr-1" />
+                            {mapData?.showGrid !== false ? 'Grid is VISIBLE' : 'Grid is HIDDEN'}
+                        </button>
+                    </div>
+
+                    <div>
                         <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Token Snapping</label>
                         <button
                             onClick={() => setIsSnapToGrid(!isSnapToGrid)}
@@ -230,7 +241,7 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                         </button>
                     </div>
 
-                    <MapGenerator onGenerateMap={({ backgroundUrl, heightmapUrl, features }) => {
+                    <MapGenerator mapData={mapData} onGenerateMap={({ backgroundUrl, heightmapUrl, features }) => {
                         const updates = { backgroundUrl, heightmapUrl };
                         if (features) {
                             updates.walls = { ...mapData?.walls, ...features.walls };

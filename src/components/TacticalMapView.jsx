@@ -1,6 +1,6 @@
 import React, { useState, useEffect, Suspense, useRef, useCallback, useMemo } from 'react';
 import { Canvas, useThree, useFrame } from '@react-three/fiber';
-import { MapControls, Grid, useTexture, DragControls, Html, useCursor, Line, Text } from '@react-three/drei';
+import { MapControls, Grid, useTexture, DragControls, Html, useCursor, Line, Text, RoundedBox, Billboard } from '@react-three/drei';
 import * as THREE from 'three';
 import { subscribeToMap, updateMap } from '../utils/mapService';
 import { useNewCampaign } from '../contexts/NewCampaignProvider';
@@ -44,6 +44,26 @@ const ENV_SETTINGS = {
         bg: '#1a1a22',
         fog: { color: '#555566', near: 10, far: 45 }
     }
+};
+
+const segmentsIntersect = (p1, p2, p3, p4) => {
+    const d1 = (p2.x - p1.x) * (p4.z - p3.z) - (p2.z - p1.z) * (p4.x - p3.x);
+    if (Math.abs(d1) < 1e-6) return false; // Prevent division by absolute zero and parallel artifacts
+    const uA = ((p4.x - p3.x) * (p1.z - p3.z) - (p4.z - p3.z) * (p1.x - p3.x)) / d1;
+    const uB = ((p2.x - p1.x) * (p1.z - p3.z) - (p2.z - p1.z) * (p1.x - p3.x)) / d1;
+    // Tiny epsilon buffer ensures perfect grid-snapped edges are caught as line-of-sight blockers
+    return uA >= -1e-5 && uA <= 1 + 1e-5 && uB >= -1e-5 && uB <= 1 + 1e-5;
+};
+
+const checkLineOfSight = (srcPt, targetPt, walls) => {
+    if (!walls) return true;
+    for (const wall of Object.values(walls)) {
+        if (wall.isOpen || !wall.points || wall.points.length < 2) continue;
+        for (let i = 0; i < wall.points.length - 1; i++) {
+            if (segmentsIntersect(srcPt, targetPt, wall.points[i], wall.points[i+1])) return false;
+        }
+    }
+    return true;
 };
 
 const useResolvedUrl = (url) => {
@@ -209,6 +229,8 @@ const MarqueeSelector = ({ tokens, onSelectTokens }) => {
 
 const HeightmapContent = ({ resolvedHeightmapUrl, resolvedBackgroundUrl, heightScale, scale }) => {
     const [aspect, setAspect] = useState(1);
+    const isLowPerf = localStorage.getItem('vtt_low_performance') === 'true';
+    const subdivisions = isLowPerf ? 128 : 256;
 
     const backgroundTexture = useMemo(() => {
         if (!resolvedBackgroundUrl) return null;
@@ -226,7 +248,7 @@ const HeightmapContent = ({ resolvedHeightmapUrl, resolvedBackgroundUrl, heightS
 
     return (
         <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]}>
-            <planeGeometry args={[scale * aspect, scale, 256, 256]} />
+            <planeGeometry args={[scale * aspect, scale, subdivisions, subdivisions]} />
             <meshStandardMaterial
                 map={backgroundTexture}
                 displacementMap={heightmapTexture}
@@ -268,6 +290,7 @@ const WallSegment = ({ start, end, onContextMenu, onToggleDoor, wall }) => {
         <mesh 
             position={midpoint} 
             quaternion={quat}
+            renderOrder={200}
             onClick={(e) => {
                 if (wall.type === 'door') {
                     e.stopPropagation();
@@ -285,10 +308,14 @@ const WallSegment = ({ start, end, onContextMenu, onToggleDoor, wall }) => {
     );
 };
 
-const Wall = ({ wall, onContextMenu, onToggleDoor }) => {
+const Wall = ({ wall, onContextMenu, onToggleDoor, showWalls, role }) => {
     const points = wall.points.map(p => new THREE.Vector3(p.x, p.y, p.z));
     const type = wall.type || 'wall';
     const color = type === 'door' ? '#3b82f6' : type === 'window' ? '#06b6d4' : '#ef4444';
+
+    // Hide structural walls unless editing (doors and windows stay visible)
+    const isVisible = type === 'wall' ? showWalls : true;
+    if (!isVisible) return null;
 
     const segments = [];
     if (onContextMenu) {
@@ -316,18 +343,20 @@ const Wall = ({ wall, onContextMenu, onToggleDoor }) => {
                 dashScale={wall.isOpen ? 2 : 1}
                 transparent={true}
                 opacity={wall.isOpen ? 0.3 : 1}
+                renderOrder={200}
+                depthTest={false}
             />
             {segments}
         </group>
     );
 };
 
-const Walls = ({ walls, onWallContextMenu, onToggleDoor }) => {
+const Walls = ({ walls, onWallContextMenu, onToggleDoor, showWalls, role }) => {
     if (!walls) return null;
     return (
         <group>
             {Object.values(walls).map(wall => (
-                <Wall key={wall.id} wall={wall} onContextMenu={onWallContextMenu} onToggleDoor={onToggleDoor} />
+                <Wall key={wall.id} wall={wall} onContextMenu={onWallContextMenu} onToggleDoor={onToggleDoor} showWalls={showWalls} role={role} />
             ))}
         </group>
     );
@@ -659,12 +688,12 @@ const ArchitectPenController = ({ isEnabled, onCommitSegment, getTerrainHeight }
     return (
         <group>
             {nodes.length > 0 && cursorPos && (
-                <Line points={[nodes[nodes.length - 1], cursorPos]} color="#ef4444" lineWidth={3} dashed dashScale={10} />
+                <Line points={[nodes[nodes.length - 1], cursorPos]} color="#ef4444" lineWidth={3} dashed dashScale={10} renderOrder={200} depthTest={false} />
             )}
             {nodes.map((n, i) => (
-                <mesh key={i} position={n}>
+                <mesh key={i} position={n} renderOrder={200}>
                     <sphereGeometry args={[0.2]} />
-                    <meshBasicMaterial color="#ef4444" />
+                    <meshBasicMaterial color="#ef4444" depthTest={false} />
                 </mesh>
             ))}
             <mesh onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onContextMenu={handleContextMenu} rotation={[-Math.PI / 2, 0, 0]} visible={false}>
@@ -705,9 +734,9 @@ const LightPlacementController = ({ isEnabled, onPlaceLight, getTerrainHeight })
     return (
         <group>
             {cursorPos && (
-                <mesh position={cursorPos} raycast={() => null}>
+                <mesh position={cursorPos} raycast={() => null} renderOrder={200}>
                     <sphereGeometry args={[0.5]} />
-                    <meshBasicMaterial color="#fef08a" transparent opacity={0.5} />
+                    <meshBasicMaterial color="#fef08a" transparent opacity={0.5} depthTest={false} />
                 </mesh>
             )}
             <mesh onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} rotation={[-Math.PI / 2, 0, 0]} visible={false}>
@@ -718,287 +747,285 @@ const LightPlacementController = ({ isEnabled, onPlaceLight, getTerrainHeight })
     );
 };
 
-const MapLights = ({ lights, onContextMenu, role }) => {
-    if (!lights) return null;
+const MapLights = ({ lights, onContextMenu, role, gridSize = 1, showLightRadius }) => {
+    if (!lights || role !== 'dm') return null;
     return (
         <group>
-            {Object.values(lights).map(light => (
-                <mesh 
-                    key={light.id} 
-                    position={[light.position.x, light.position.y || 1, light.position.z]}
-                    onContextMenu={(e) => {
-                        if (role === 'dm') {
-                            e.stopPropagation();
-                            if (onContextMenu) onContextMenu(e, light.id);
-                        }
-                    }}
-                >
-                    <sphereGeometry args={[0.3]} />
-                    <meshBasicMaterial color={light.color || "#fef08a"} transparent opacity={role === 'dm' ? 0.8 : 0} />
-                </mesh>
-            ))}
+            {Object.values(lights).map(light => {
+                const radiusInMapUnits = (light.radius || 15) / 5 * gridSize; 
+                return (
+                    <group key={light.id} position={[light.position.x, light.position.y || 1, light.position.z]}>
+                        <mesh 
+                            renderOrder={200}
+                            onContextMenu={(e) => {
+                                e.stopPropagation();
+                                if (onContextMenu) onContextMenu(e, light.id);
+                            }}
+                        >
+                            <sphereGeometry args={[0.4]} />
+                            <meshBasicMaterial color={light.color || "#fef08a"} transparent opacity={0.8} depthTest={false} />
+                        </mesh>
+                        {showLightRadius && (
+                            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.9, 0]} renderOrder={200}>
+                                <ringGeometry args={[Math.max(0.1, radiusInMapUnits - 0.1), radiusInMapUnits, 32]} />
+                                <meshBasicMaterial color={light.color || "#fef08a"} transparent opacity={0.3} depthTest={false} />
+                            </mesh>
+                        )}
+                    </group>
+                );
+            })}
         </group>
     );
 };
 
-// --- 2D RAYCASTER MATH FOR SHADOW CASTING ---
-function getIntersection(ray, segment) {
-    const r_px = ray.origin.x, r_py = ray.origin.y;
-    const r_dx = ray.dir.x, r_dy = ray.dir.y;
-    const s_px = segment.start.x, s_py = segment.start.y;
-    const s_dx = segment.end.x - segment.start.x;
-    const s_dy = segment.end.y - segment.start.y;
+const GpuFogOfWar = ({ enabled, walls, lights, gridSize, mapData, aspect, resolvedHeightmapUrl, playerVisionSources, role }) => {
+    const { gl } = useThree();
+    const scale = mapData?.scale || 20;
+    const width = scale * aspect;
+    const height = scale;
 
-    const r_mag = Math.sqrt(r_dx * r_dx + r_dy * r_dy);
-    if (r_mag === 0) return null;
+    const isLowPerf = localStorage.getItem('vtt_low_performance') === 'true';
+    const subdivisions = isLowPerf ? 128 : 256;
 
-    const T2 = r_dx * s_dy - r_dy * s_dx;
-    if (T2 === 0) return null; // Parallel
+    const heightmapTexture = useMemo(() => {
+        if (!resolvedHeightmapUrl) return null;
+        return new THREE.TextureLoader().load(resolvedHeightmapUrl);
+    }, [resolvedHeightmapUrl]);
 
-    const T1 = (s_px - r_px) * s_dy - (s_py - r_py) * s_dx;
-    const U = (s_px - r_px) * r_dy - (s_py - r_py) * r_dx;
+    const fowScene = useMemo(() => new THREE.Scene(), []);
+    const fowCamera = useMemo(() => {
+        if (!width || !height || isNaN(width) || isNaN(height)) return null;
+        const cam = new THREE.OrthographicCamera(-width / 2, width / 2, height / 2, -height / 2, 0.1, 1000);
+        cam.position.z = 5;
+        return cam;
+    }, [width, height]);
+    
+    const fowTarget = useMemo(() => {
+        const rt = new THREE.WebGLRenderTarget(1024, 1024, { stencilBuffer: true });
+        rt.texture.generateMipmaps = false;
+        rt.texture.minFilter = THREE.LinearFilter;
+        rt.texture.magFilter = THREE.LinearFilter;
+        return rt;
+    }, []);
+    const exploredTarget = useMemo(() => {
+        const rt = new THREE.WebGLRenderTarget(1024, 1024);
+        rt.texture.generateMipmaps = false;
+        rt.texture.minFilter = THREE.LinearFilter;
+        rt.texture.magFilter = THREE.LinearFilter;
+        return rt;
+    }, []);
+    const hasClearedExplored = useRef(false);
 
-    const t1 = T1 / T2;
-    const t2 = U / T2;
+    // Reset exploration memory if the map changes or FOW is toggled off/on
+    useEffect(() => {
+        hasClearedExplored.current = false;
+    }, [width, height, enabled]);
 
-    // t1 is magnitude along ray, t2 is magnitude along segment (0 to 1)
-    // FIX: Added floating point epsilon to t2 to perfectly seal wall corners
-    if (t1 > 0.0001 && t2 >= -0.0001 && t2 <= 1.0001) {
-        return { x: r_px + r_dx * t1, y: r_py + r_dy * t1, param: t1 };
-    }
-    return null;
-}
-
-function hasLineOfSight(p1, p2, segments) {
-    const dx = p2.x - p1.x;
-    const dy = p2.y - p1.y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-    if (dist === 0) return true;
-
-    const ray = { origin: p1, dir: { x: dx / dist, y: dy / dist } };
-
-    for (let i = 0; i < segments.length; i++) {
-        const int = getIntersection(ray, segments[i]);
-        // If intersection occurs strictly between the two points (accounting for floating point errors)
-        if (int && int.param > 0.05 && int.param < dist - 0.05) {
-            return false;
-        }
-    }
-    return true;
-}
-
-const computeVisibilityPolygon = (origin, segments) => {
-    // 1. Spatial Filter: Only check walls that might actually intersect the vision radius
-    const localSegments = segments.filter(seg => {
-        if (!origin.radius || origin.radius === Infinity) return true;
-        const minX = Math.min(seg.start.x, seg.end.x);
-        const maxX = Math.max(seg.start.x, seg.end.x);
-        const minY = Math.min(seg.start.y, seg.end.y);
-        const maxY = Math.max(seg.start.y, seg.end.y);
-        
-        const buffer = 1; // Small overlap margin
-        if (minX > origin.x + origin.radius + buffer || maxX < origin.x - origin.radius - buffer) return false;
-        if (minY > origin.y + origin.radius + buffer || maxY < origin.y - origin.radius - buffer) return false;
-        return true;
-    });
-
-    const uniqueAngles = [];
-    localSegments.forEach(seg => {
-        const a1 = Math.atan2(seg.start.y - origin.y, seg.start.x - origin.x);
-        const a2 = Math.atan2(seg.end.y - origin.y, seg.end.x - origin.x);
-        uniqueAngles.push(a1 - 0.00001, a1, a1 + 0.00001);
-        uniqueAngles.push(a2 - 0.00001, a2, a2 + 0.00001);
-    });
-
-    // Add fixed angles to approximate the vision radius circle smoothly
-    if (origin.radius && origin.radius !== Infinity) {
-        // Dynamic ray count based on radius for max performance vs smoothness
-        const rayCount = Math.max(32, Math.min(120, Math.floor(origin.radius * 4)));
-        const step = (Math.PI * 2) / rayCount;
-        for (let i = 0; i < rayCount; i++) {
-            uniqueAngles.push(i * step);
-        }
-    } else {
-        // For unlimited vision, just give a baseline circle
-        for (let i = 0; i < 36; i++) {
-            uniqueAngles.push((i * 10) * Math.PI / 180);
-        }
-    }
-
-    const intersects = [];
-    uniqueAngles.forEach(angle => {
-        const ray = { origin, dir: { x: Math.cos(angle), y: Math.sin(angle) } };
-        let closest = null;
-        let minDist = origin.radius || Infinity;
-
-        localSegments.forEach(seg => {
-            const int = getIntersection(ray, seg);
-            if (int && int.param < minDist) {
-                minDist = int.param;
-                closest = { ...int, angle };
-            }
-        });
-
-        if (!closest && minDist !== Infinity) {
-            closest = { 
-                x: origin.x + Math.cos(angle) * minDist, 
-                y: origin.y + Math.sin(angle) * minDist, 
-                param: minDist, 
-                angle 
-            };
-        }
-
-        if (closest) intersects.push(closest);
-    });
-
-    intersects.sort((a, b) => a.angle - b.angle);
-    return intersects;
-};
-
-const FogOfWar = ({ enabled, tokens, walls, lights, role, user, assignments, allCharacters, gridSize }) => {
-    const [exploredHoles, setExploredHoles] = useState([]);
-
-    const segments = useMemo(() => {
-        const size = 150; // Max map boundary
-        const segs = [
-            { start: { x: -size, y: -size }, end: { x: size, y: -size } },
-            { start: { x: size, y: -size }, end: { x: size, y: size } },
-            { start: { x: size, y: size }, end: { x: -size, y: size } },
-            { start: { x: -size, y: size }, end: { x: -size, y: -size } }
-        ];
-        if (walls) {
-            Object.values(walls).forEach(wall => {
-                if (wall.type === 'window') return; // Windows don't block vision
-                if (wall.type === 'door' && wall.isOpen) return; // Open doors don't block vision
-
-                if (wall.points && wall.points.length > 1) {
-                    for (let i = 0; i < wall.points.length - 1; i++) {
-                        segs.push({
-                            start: { x: wall.points[i].x, y: -(wall.points[i].z || 0) },
-                            end: { x: wall.points[i+1].x, y: -(wall.points[i+1].z || 0) }
-                        });
-                    }
-                }
-            });
-        }
-        return segs;
-    }, [walls]);
-
-    const sources = useMemo(() => {
-        if (!enabled) return [];
-        const myCharId = assignments?.[user?.uid];
-        let myTokens = role === 'dm' 
-            ? tokens.filter(t => t.type === 'pc') // DM sees what the players see
-            : tokens.filter(t => String(t.characterId) === String(myCharId) || String(t.ownerId) === String(user?.uid));
-        
-        const srcs = myTokens.map(t => {
-            const char = allCharacters.find(c => String(c.id) === String(t.characterId));
-            let radius = Infinity; // Default to daylight (Infinity)
-            
-            if (char?.senses?.darkvision) {
-                const match = String(char.senses.darkvision).match(/(\d+)/);
-                if (match) radius = (parseInt(match[1]) / 5) * gridSize;
-            } else if (char) {
-                // Human or race without darkvision in a dark environment.
-                // Default to 1 square so the screen isn't pitch black.
-                radius = 1 * gridSize; 
-            }
-            
-            return { x: t.x || 0, y: -(t.z || 0), radius };
-        });
-
-        const myTokenPositions = myTokens.map(t => ({ x: t.x || 0, y: -(t.z || 0) }));
-
-        // Add static map lights as vision sources
-        if (lights) {
-            Object.values(lights).forEach(l => {
-                if (l.position) {
-                    const lx = l.position.x;
-                    const ly = -(l.position.z || 0);
-                    
-                    let isVisible = role === 'dm';
-                    if (!isVisible) {
-                        const lightRadius = l.radius || (6 * gridSize);
-                        const pointsToTest = [
-                            { x: lx, y: ly },
-                            { x: lx + lightRadius, y: ly },
-                            { x: lx - lightRadius, y: ly },
-                            { x: lx, y: ly + lightRadius },
-                            { x: lx, y: ly - lightRadius }
-                        ];
-                        isVisible = myTokenPositions.some(tokenPos => 
-                            pointsToTest.some(testPoint => hasLineOfSight(tokenPos, testPoint, segments))
-                        );
-                    }
-
-                    if (isVisible) {
-                        srcs.push({ x: lx, y: ly, radius: l.radius || (6 * gridSize) });
-                    }
-                }
-            });
-        }
-        return srcs;
-    }, [enabled, tokens, role, user, assignments, lights, allCharacters, gridSize, segments]);
-
-    const currentHoles = useMemo(() => {
-        if (!enabled) return [];
-        const holes = [];
-        sources.forEach(src => {
-            const poly = computeVisibilityPolygon(src, segments);
-            if (poly.length > 0) {
-                const hole = new THREE.Path();
-                hole.moveTo(poly[0].x, poly[0].y);
-                for (let i = 1; i < poly.length; i++) hole.lineTo(poly[i].x, poly[i].y);
-                hole.lineTo(poly[0].x, poly[0].y);
-                holes.push(hole);
-            }
-        });
-        return holes;
-    }, [enabled, sources, segments]);
+    const accumulatorScene = useMemo(() => new THREE.Scene(), []);
+    const accumulatorCamera = useMemo(() => new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1), []);
+    const accumulatorMaterial = useMemo(() => new THREE.MeshBasicMaterial({
+        map: fowTarget.texture,
+        blending: THREE.MultiplyBlending,
+        transparent: true,
+        depthTest: false,
+        depthWrite: false,
+    }), [fowTarget]);
 
     useEffect(() => {
-        if (!enabled) {
-            setExploredHoles([]);
-            return;
+        const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), accumulatorMaterial);
+        accumulatorScene.add(quad);
+        return () => { accumulatorScene.remove(quad); quad.geometry.dispose(); };
+    }, [accumulatorScene, accumulatorMaterial]);
+    
+    const visionGeometry = useMemo(() => new THREE.CircleGeometry(1, 32), []); // Unit circle
+
+    const visionMaterial = useMemo(() => new THREE.MeshBasicMaterial({ 
+        color: 0x000000, depthTest: false, depthWrite: false,
+        stencilWrite: true,
+        stencilRef: 0,
+        stencilFunc: THREE.EqualStencilFunc,
+        stencilFail: THREE.KeepStencilOp,
+        stencilZFail: THREE.KeepStencilOp,
+        stencilZPass: THREE.KeepStencilOp
+    }), []);
+
+    // Material for shadow polygons to write to stencil buffer without touching color
+    const shadowMaterial = useMemo(() => new THREE.MeshBasicMaterial({ 
+        color: 0xffffff, depthTest: false, depthWrite: false, colorWrite: false,
+        stencilWrite: true,
+        stencilRef: 1,
+        stencilFunc: THREE.AlwaysStencilFunc,
+        stencilFail: THREE.ReplaceStencilOp,
+        stencilZFail: THREE.ReplaceStencilOp,
+        stencilZPass: THREE.ReplaceStencilOp,
+        side: THREE.DoubleSide
+    }), []);
+
+    useFrame((state, delta) => {
+        if (!fowCamera) return;
+
+        const oldColor = gl.getClearColor(new THREE.Color());
+        const oldAlpha = gl.getClearAlpha();
+
+        const oldAutoClear = gl.autoClear;
+        gl.autoClear = false;
+
+        gl.setRenderTarget(fowTarget);
+        gl.setClearColor(0xffffff, 1); // 1. Clear to white (fully fogged)
+        gl.clear(true, true, true); // color, depth, stencil
+
+        const allSources = [...playerVisionSources];
+        // Only factor in lights if FOW is actually enabled.
+        if (enabled && lights) {
+            Object.values(lights).forEach(light => {
+                // FIX: Use light.radius, not light.range. The value is in feet.
+                const lightRangeInMapUnits = (light.radius || 15) / 5 * gridSize; 
+                
+                let isVisibleToPlayers = role === 'dm';
+                if (!isVisibleToPlayers && playerVisionSources.length > 0) {
+                    const lightPt = { x: light.position.x, z: light.position.z };
+                    for (const src of playerVisionSources) {
+                        if (checkLineOfSight(src, lightPt, walls)) {
+                            isVisibleToPlayers = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (isVisibleToPlayers) {
+                    allSources.push({
+                        x: light.position.x,
+                        z: light.position.z,
+                        range: lightRangeInMapUnits
+                    });
+                }
+            });
         }
-        setExploredHoles(prev => {
-            const next = [...prev, ...currentHoles];
-            // Prevent infinite array growth by keeping the last N holes.
-            return next.length > 200 ? next.slice(next.length - 200) : next;
+
+        allSources.forEach(source => {
+            gl.clear(false, false, true); // Clear stencil buffer to 0 for this light
+            fowScene.clear();
+
+            let shadowGeo = null;
+            if (walls) {
+                const vertices = [];
+                Object.values(walls).forEach(wall => {
+                    if (wall.isOpen || !wall.points || wall.points.length < 2) return;
+                    for (let i = 0; i < wall.points.length - 1; i++) {
+                        const p1 = wall.points[i];
+                        const p2 = wall.points[i+1];
+                        const A = new THREE.Vector2(p1.x, -p1.z);
+                        const B = new THREE.Vector2(p2.x, -p2.z);
+                        const S = new THREE.Vector2(source.x, -source.z);
+
+                        const SA = new THREE.Vector2().subVectors(A, S);
+                        const SB = new THREE.Vector2().subVectors(B, S);
+                        
+                        const far = 1000;
+                        const A_far = new THREE.Vector2().copy(A).add(SA.clone().multiplyScalar(far));
+                        const B_far = new THREE.Vector2().copy(B).add(SB.clone().multiplyScalar(far));
+
+                        // Create 2 triangles to form the occlusion quad
+                        vertices.push(
+                            A.x, A.y, 0,
+                            B.x, B.y, 0,
+                            B_far.x, B_far.y, 0,
+                            A.x, A.y, 0,
+                            B_far.x, B_far.y, 0,
+                            A_far.x, A_far.y, 0
+                        );
+                    }
+                });
+
+                if (vertices.length > 0) {
+                    shadowGeo = new THREE.BufferGeometry();
+                    shadowGeo.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+                    const shadowMesh = new THREE.Mesh(shadowGeo, shadowMaterial);
+                    shadowMesh.renderOrder = 1;
+                    fowScene.add(shadowMesh);
+                }
+            }
+
+            const visionMesh = new THREE.Mesh(visionGeometry, visionMaterial);
+            visionMesh.scale.set(source.range, source.range, 1);
+            visionMesh.position.set(source.x, -source.z, 0); // INVERT Z
+            visionMesh.renderOrder = 2;
+            fowScene.add(visionMesh);
+
+            gl.render(fowScene, fowCamera);
+            if (shadowGeo) shadowGeo.dispose(); // Prevent Memory leaks
         });
-    }, [currentHoles, enabled]);
 
-    const { shapeCurrent, shapeExplored } = useMemo(() => {
-        if (!enabled) return { shapeCurrent: null, shapeExplored: null };
-
-        const sCurrent = new THREE.Shape();
-        const sExplored = new THREE.Shape();
-        const size = 150;
+        gl.setRenderTarget(exploredTarget);
+        if (!hasClearedExplored.current) {
+            gl.setClearColor(0xffffff, 1);
+            gl.clear(true, true, true);
+            hasClearedExplored.current = true;
+        }
+        gl.render(accumulatorScene, accumulatorCamera);
         
-        sCurrent.moveTo(-size, -size); sCurrent.lineTo(size, -size); sCurrent.lineTo(size, size); sCurrent.lineTo(-size, size); sCurrent.lineTo(-size, -size);
-        sCurrent.holes.push(...currentHoles);
+        gl.autoClear = oldAutoClear;
 
-        sExplored.moveTo(-size, -size); sExplored.lineTo(size, -size); sExplored.lineTo(size, size); sExplored.lineTo(-size, size); sExplored.lineTo(-size, -size);
-        // Include both explored and current holes in the explored mask to prevent 1-frame flicker
-        sExplored.holes.push(...exploredHoles, ...currentHoles);
+        gl.setRenderTarget(null);
+        gl.setClearColor(oldColor, oldAlpha); // Restore map background color
+    });
 
-        return { shapeCurrent: sCurrent, shapeExplored: sExplored };
-    }, [enabled, currentHoles, exploredHoles]);
-
-    if (!enabled || !shapeCurrent) return null;
+    if (!width || !height || isNaN(width) || isNaN(height)) {
+        return null;
+    }
 
     return (
-        <group position={[0, 0.01, 0]} renderOrder={100}>
-            {/* Explored Layer: Persistent dark mask over everywhere not explored */}
-            <mesh rotation={[-Math.PI / 2, 0, 0]} raycast={() => null}>
-                <shapeGeometry args={[shapeExplored]} />
-                <meshBasicMaterial color="#000000" transparent opacity={role === 'dm' ? 0.4 : 0.98} depthWrite={false} depthTest={false} />
+        <group>
+            {/* Shroud: Permanent Memory of Explored Areas (Pitch Black) */}
+            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.014, 0]} renderOrder={99}>
+                <planeGeometry args={[width, height, resolvedHeightmapUrl ? subdivisions : 1, resolvedHeightmapUrl ? subdivisions : 1]} />
+                {resolvedHeightmapUrl ? (
+                    <meshStandardMaterial
+                        color={0x000000}
+                        roughness={1}
+                        metalness={0}
+                        alphaMap={exploredTarget.texture}
+                        transparent
+                        opacity={role === 'dm' ? 0.3 : 0.98}
+                        displacementMap={heightmapTexture}
+                        displacementScale={mapData?.heightScale || 1}
+                        depthWrite={false}
+                    />
+                ) : (
+                    <meshBasicMaterial
+                        color={0x000000}
+                        alphaMap={exploredTarget.texture}
+                        transparent
+                        opacity={role === 'dm' ? 0.3 : 0.98}
+                        depthWrite={false}
+                    />
+                )}
             </mesh>
 
-            {/* Current Layer: Semi-transparent mask over explored areas that are currently not visible */}
-            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.001, 0]} raycast={() => null}>
-                <shapeGeometry args={[shapeCurrent]} />
-                <meshBasicMaterial color="#000000" transparent opacity={role === 'dm' ? 0.3 : 0.6} depthWrite={false} depthTest={false} />
+            {/* Current Vision: Shadows for unseen areas (Grayed Out) */}
+            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.015, 0]} renderOrder={100}>
+                <planeGeometry args={[width, height, resolvedHeightmapUrl ? subdivisions : 1, resolvedHeightmapUrl ? subdivisions : 1]} />
+                {resolvedHeightmapUrl ? (
+                    <meshStandardMaterial
+                        color={0x000000}
+                        roughness={1}
+                        metalness={0}
+                        alphaMap={fowTarget.texture}
+                        transparent
+                        opacity={role === 'dm' ? 0.2 : 0.6}
+                        displacementMap={heightmapTexture}
+                        displacementScale={mapData?.heightScale || 1}
+                        depthWrite={false}
+                    />
+                ) : (
+                    <meshBasicMaterial
+                        color={0x000000}
+                        alphaMap={fowTarget.texture}
+                        transparent
+                        opacity={role === 'dm' ? 0.2 : 0.6}
+                        depthWrite={false}
+                    />
+                )}
             </mesh>
         </group>
     );
@@ -1128,7 +1155,7 @@ const WallDrawingController = ({ isEnabled, onDrawEnd, getTerrainHeight }) => {
     return (
         <>
             {/* Show the line being actively drawn */}
-            {points.length > 1 && <Line points={points} color="magenta" lineWidth={5} />}
+            {points.length > 1 && <Line points={points} color="magenta" lineWidth={5} renderOrder={200} depthTest={false} />}
 
             {/* The large invisible plane to capture drawing events */}
             <mesh
@@ -1151,7 +1178,7 @@ const TokenImage = ({ imageUrl, size }) => {
         return new THREE.TextureLoader().load(imageUrl);
     }, [imageUrl]);
     return (
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.03, 0]}>
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.051, 0]}>
             <circleGeometry args={[size * 0.45, 32]} />
             <meshBasicMaterial map={texture} transparent />
         </mesh>
@@ -1162,6 +1189,7 @@ const TokenImage = ({ imageUrl, size }) => {
 const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelect, onContextMenu, role, getTerrainHeight, isSnapToGrid, isTerrainReady, draggedTokenId, setDraggedTokenId, viewMode, showNameplates, selectedTokenIds, groupDragData, onGroupDragEnd, isActiveTurn, canControl }) => {
   const meshRef = useRef();
   const visualsRef = useRef();
+  const rotationRef = useRef();
   const { controls } = useThree();
   const [hovered, setHover] = useState(false);
   const [resolvedImage, setResolvedImage] = useState(null);
@@ -1216,13 +1244,16 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
     }
 
     // --- Main animation loop ---
-    if (meshRef.current && visualsRef.current && getTerrainHeight) {
+    if (meshRef.current && visualsRef.current && rotationRef.current && getTerrainHeight) {
 
       // If another user is dragging, smoothly move the token
       if (!isLeftDragging.current) {
           if (rulerRef.current) rulerRef.current.visible = false;
           if (rulerLabelRef.current) rulerLabelRef.current.visible = false;
-              if (rulerTextRef.current) rulerTextRef.current.style.display = 'none';
+          if (rulerTextRef.current) rulerTextRef.current.style.display = 'none';
+
+          visualsRef.current.position.x = 0;
+          visualsRef.current.position.z = 0;
 
           let targetPosition = new THREE.Vector3(token.x || 0, token.y || 0.025, token.z || 0);
 
@@ -1233,12 +1264,13 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
           }
 
           const p = meshRef.current.position;
+          if (isRightDragging.current) targetPosition.y = p.y;
           p.lerp(targetPosition, 0.3); // Follow smoothly but tightly
 
           // Update rotation smoothly as well
           const targetRotY = token.rotationY || 0;
-          const diff = targetRotY - visualsRef.current.rotation.y;
-          visualsRef.current.rotation.y += Math.atan2(Math.sin(diff), Math.cos(diff)) * 0.15;
+          const diff = targetRotY - rotationRef.current.rotation.y;
+          rotationRef.current.rotation.y += Math.atan2(Math.sin(diff), Math.cos(diff)) * 0.15;
           return; // Skip the rest of the logic if we're just observing
       }
       
@@ -1246,18 +1278,31 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
       const worldPos = new THREE.Vector3();
       meshRef.current.getWorldPosition(worldPos);
       
-      if (groupDragData?.current?.activeTokenId === token.id) {
-          groupDragData.current.delta.subVectors(worldPos, dragStartPos.current);
+      let displayX = worldPos.x;
+      let displayZ = worldPos.z;
+
+      if (isSnapToGrid) {
+          const tokenSize = token.size || 1;
+          const isEvenSize = Math.round(tokenSize) % 2 === 0;
+          displayX = isEvenSize ? Math.round(worldPos.x / gridSize) * gridSize : Math.floor(worldPos.x / gridSize) * gridSize + gridSize / 2;
+          displayZ = isEvenSize ? Math.round(worldPos.z / gridSize) * gridSize : Math.floor(worldPos.z / gridSize) * gridSize + gridSize / 2;
       }
 
-      const terrainY = getTerrainHeight(worldPos.x, worldPos.z);
+      visualsRef.current.position.x = displayX - worldPos.x;
+      visualsRef.current.position.z = displayZ - worldPos.z;
+
+      if (groupDragData?.current?.activeTokenId === token.id) {
+          groupDragData.current.delta.subVectors(new THREE.Vector3(displayX, 0, displayZ), dragStartPos.current);
+      }
+
+      const terrainY = getTerrainHeight(displayX, displayZ);
       const targetY = terrainY + (token.elevationOffset || 0) + 0.025;
       
       meshRef.current.position.y = targetY; // Stick to terrain locally
       
       // --- Ruler and Velocity Logic (for local drag only) ---
       const start = dragStartPos.current;
-      const end = worldPos;
+      const end = new THREE.Vector3(displayX, targetY, displayZ);
       const distSq = end.clone().sub(start).lengthSq();
       
       if (distSq > 0.01) {
@@ -1296,8 +1341,8 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
       previousPos.current.copy(worldPos);
       
       // --- Rotation Lerping (for local drag only) ---
-      const diff = targetRotationY.current - visualsRef.current.rotation.y;
-      visualsRef.current.rotation.y += Math.atan2(Math.sin(diff), Math.cos(diff)) * 0.3;
+      const diff = targetRotationY.current - rotationRef.current.rotation.y;
+      rotationRef.current.rotation.y += Math.atan2(Math.sin(diff), Math.cos(diff)) * 0.3;
     }
   });
   // END CHANGE
@@ -1342,8 +1387,10 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
       
       if (hasDragged.current && meshRef.current) {
           const p = meshRef.current.position;
-          const x = isSnapToGrid ? Math.floor(p.x / gridSize) * gridSize + gridSize / 2 : p.x;
-          const z = isSnapToGrid ? Math.floor(p.z / gridSize) * gridSize + gridSize / 2 : p.z;
+          const tokenSize = token.size || 1;
+          const isEvenSize = Math.round(tokenSize) % 2 === 0;
+          const x = isSnapToGrid ? (isEvenSize ? Math.round(p.x / gridSize) * gridSize : Math.floor(p.x / gridSize) * gridSize + gridSize / 2) : p.x;
+          const z = isSnapToGrid ? (isEvenSize ? Math.round(p.z / gridSize) * gridSize : Math.floor(p.z / gridSize) * gridSize + gridSize / 2) : p.z;
           const terrainY = getTerrainHeight ? getTerrainHeight(x, z) : 0;
           const offset = p.y - terrainY - 0.025;
           const isFlying = Math.abs(offset) > 0.1;
@@ -1390,11 +1437,9 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
   }, [token.image, token.img]);
 
   const nameplatePos = useMemo(() => {
-      // In Top-Down, the camera looks straight down the Y axis, so Z controls vertical screen space.
-      // In Isometric, the camera is angled, so -Y controls vertical screen space.
       return viewMode === 'top-down' 
-          ? [0, 0, safeSize * 0.6] 
-          : [0, -safeSize * 0.7, 0];
+          ? [0, 0, safeSize * 0.75] 
+          : [0, 0.2, safeSize * 0.85]; // Hover slightly off the ground, shifted South (towards camera)
   }, [safeSize, viewMode]);
 
   const initials = useMemo(() => {
@@ -1426,78 +1471,134 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
       }}
     >
       <group ref={visualsRef}>
-        {showModel && (
-          <Suspense fallback={null}>
-            <group position={[0, token.modelYOffset || 0, 0]}>
-              <CharacterModel modelUrl={token.modelUrl} scale={token.modelScale || 1} />
-            </group>
-          </Suspense>
-        )}
+        <group ref={rotationRef}>
+          {showModel && (
+            <Suspense fallback={null}>
+              <group position={[0, (token.modelYOffset || 0) * safeSize, 0]}>
+                <CharacterModel modelUrl={token.modelUrl} scale={(token.modelScale || 1) * safeSize} />
+              </group>
+            </Suspense>
+          )}
 
-        {!showModel && (
-            <>
-              {resolvedImage ? (
-                  <Suspense fallback={null}>
-                      <TokenImage imageUrl={resolvedImage} size={safeSize} />
-                  </Suspense>
-              ) : (
-                <mesh position={[0, 0.03, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-                    <circleGeometry args={[safeSize * 0.45, 32]} />
-                    <meshStandardMaterial color="#1e293b" />
+          {!showModel && (
+              <>
+                {resolvedImage ? (
+                    <Suspense fallback={null}>
+                        <TokenImage imageUrl={resolvedImage} size={safeSize} />
+                    </Suspense>
+                ) : (
+                  <mesh position={[0, 0.051, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+                      <circleGeometry args={[safeSize * 0.45, 32]} />
+                      <meshStandardMaterial color="#1e293b" />
+                      <Text
+                          position={[0, 0, 0.01]}
+                          fontSize={safeSize * 0.35}
+                          color={baseColor}
+                          anchorX="center"
+                          anchorY="middle"
+                          fontWeight="bold"
+                      >
+                          {initials}
+                      </Text>
+                  </mesh>
+                )}
+              </>
+          )}
+
+          {/* Stone Pedestal Base */}
+          <mesh position={[0, 0.02, 0]}>
+            <cylinderGeometry args={[safeSize * 0.48, safeSize * 0.5, 0.04, 32]} />
+            <meshStandardMaterial color="#334155" roughness={0.9} metalness={0.1} transparent={true} opacity={opacity} />
+          </mesh>
+          
+          {/* Inner colored accent ring */}
+          <mesh position={[0, 0.045, 0]}>
+            <cylinderGeometry args={[safeSize * 0.46, safeSize * 0.46, 0.01, 32]} />
+            <meshStandardMaterial color={baseColor} roughness={0.5} metalness={0.2} emissive={baseColor} emissiveIntensity={hovered ? 0.5 : 0.1} transparent={true} opacity={opacity} />
+          </mesh>
+
+          <mesh position={[0, 0.05, safeSize * 0.45]} rotation={[Math.PI / 2, 0, 0]}>
+            <coneGeometry args={[safeSize * 0.15, safeSize * 0.2, 3]} />
+            <meshStandardMaterial color={baseColor} roughness={0.5} metalness={0.2} emissive={baseColor} emissiveIntensity={hovered ? 0.5 : 0.1} transparent={true} opacity={opacity} />
+          </mesh>
+
+          {isSelected && (
+            <mesh position={[0, -0.06, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+              <ringGeometry args={[safeSize * 0.55, safeSize * 0.6, 32]} />
+              <meshBasicMaterial color="#3b82f6" transparent opacity={0.8} />
+            </mesh>
+          )}
+        </group>
+
+        {showNameplates && (
+          <Billboard position={nameplatePos}>
+            <group>
+                {/* Stone Plaque Background */}
+                <RoundedBox args={[safeSize * 1.4, safeSize * 0.28, 0.02]} radius={safeSize * 0.05} smoothness={4} position={[0, 0, -0.01]}>
+                    <meshStandardMaterial color="#1e293b" roughness={0.7} metalness={0.3} transparent opacity={opacity * 0.9} depthTest={true} />
+                </RoundedBox>
+                
+                {/* Metal Inner Border */}
+                <RoundedBox args={[safeSize * 1.35, safeSize * 0.23, 0.02]} radius={safeSize * 0.04} smoothness={4} position={[0, 0, -0.005]}>
+                    <meshStandardMaterial color="#0f172a" roughness={0.4} metalness={0.8} transparent opacity={opacity * 0.9} depthTest={true} />
+                </RoundedBox>
+
+                {/* NAME */}
+                <Text
+                    position={[0, 0, 0.01]}
+                    fontSize={safeSize * 0.14}
+                    color="#e2e8f0"
+                    anchorX="center"
+                    anchorY="middle"
+                    fontWeight="bold"
+                    fillOpacity={opacity}
+                    depthTest={true}
+                    maxWidth={safeSize * 1.3}
+                >
+                    {token.name || "Unknown"}
+                </Text>
+
+                {/* ELEVATION */}
+                {Math.abs(token.elevationOffset || 0) > 0.1 && (
                     <Text
-                        position={[0, 0, 0.01]}
-                        fontSize={safeSize * 0.35}
-                        color={baseColor}
+                        position={[0, safeSize * 0.25, 0]}
+                        fontSize={safeSize * 0.12}
+                        color="#93c5fd"
+                        outlineWidth={safeSize * 0.02}
+                        outlineColor="#1e3a8a"
                         anchorX="center"
                         anchorY="middle"
                         fontWeight="bold"
+                        fillOpacity={opacity}
+                        outlineOpacity={opacity}
+                        depthTest={true}
                     >
-                        {initials}
+                        {token.elevationOffset > 0 ? '↑ ' : '↓ '}{Math.round((token.elevationOffset || 0) * 5)}ft
                     </Text>
-                </mesh>
-              )}
-            </>
-        )}
-
-        <mesh>
-          <cylinderGeometry args={[safeSize * 0.45, safeSize * 0.45, 0.05, 32]} />
-          <meshStandardMaterial color={baseColor} roughness={0.5} metalness={0.2} emissive={baseColor} emissiveIntensity={hovered ? 0.5 : 0.1} transparent={true} opacity={opacity} />
-        </mesh>
-
-        <mesh position={[0, 0, safeSize * 0.45]} rotation={[Math.PI / 2, 0, 0]}>
-          <coneGeometry args={[safeSize * 0.15, safeSize * 0.2, 3]} />
-          <meshStandardMaterial color={baseColor} roughness={0.5} metalness={0.2} emissive={baseColor} emissiveIntensity={hovered ? 0.5 : 0.1} transparent={true} opacity={opacity} />
-        </mesh>
-
-        {isSelected && (
-          <mesh position={[0, -0.01, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-            <ringGeometry args={[safeSize * 0.5, safeSize * 0.55, 32]} />
-            <meshBasicMaterial color="#3b82f6" transparent opacity={0.8} />
-          </mesh>
-        )}
-      </group>
-
-      <Html position={nameplatePos} center occlude="raycast" className="pointer-events-none select-none z-50" distanceFactor={4}>
-        <div className="flex flex-col items-center gap-1">
-            {showNameplates && (
-                <div className="bg-slate-900/95 text-slate-100 text-[9px] px-2 py-0.5 rounded shadow-[0_5px_10px_rgba(0,0,0,0.6)] font-bold whitespace-nowrap border border-slate-700 flex items-center gap-1 justify-center relative min-w-[40px]">
-                    <div className="absolute top-0 left-0 right-0 h-[2px]" style={{ backgroundColor: baseColor }}></div>
-                    <span className="truncate max-w-[100px]">{token.name || "Unknown"}</span>
-                    {Math.abs(token.elevationOffset || 0) > 0.1 && (
-                      <span className="text-blue-400 drop-shadow-md ml-1">
-                        {token.elevationOffset > 0 ? '+' : ''}{Math.round((token.elevationOffset || 0) * 5)}ft
-                      </span>
-                    )}
-                </div>
-            )}
-            {saveStatus && (
-                <div className={`px-2 py-0.5 rounded text-[8px] font-bold flex items-center gap-1 shadow-lg ${saveStatus === 'saving' ? 'bg-amber-500/90 text-white' : 'bg-green-500/90 text-white'}`}>
-                    {saveStatus === 'saving' ? <Icon name="loader" size={8} className="animate-spin" /> : <Icon name="check" size={8} />}
-                    {saveStatus === 'saving' ? 'Saving' : 'Saved'}
-                </div>
-            )}
-        </div>
-      </Html>
+                )}
+                
+                {/* SAVE STATUS */}
+                {saveStatus && (
+                    <Text
+                        position={[0, -safeSize * 0.25, 0]}
+                        fontSize={safeSize * 0.1}
+                        color="#fbbf24"
+                        outlineWidth={safeSize * 0.015}
+                        outlineColor="#78350f"
+                        anchorX="center"
+                        anchorY="middle"
+                        fontWeight="bold"
+                        fillOpacity={opacity}
+                        outlineOpacity={opacity}
+                        depthTest={true}
+                    >
+                        {saveStatus === 'saving' ? 'Saving...' : 'Saved'}
+                    </Text>
+                )}
+            </group>
+        </Billboard>
+      )}
+    </group>
     </group>
   );
 
@@ -1563,8 +1664,10 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
               dragControlsRef.current.matrix.identity();
               dragControlsRef.current.updateMatrixWorld();
               
-              const snapX = isSnapToGrid ? Math.floor(worldPos.x / gridSize) * gridSize + gridSize / 2 : worldPos.x;
-              const snapZ = isSnapToGrid ? Math.floor(worldPos.z / gridSize) * gridSize + gridSize / 2 : worldPos.z;
+              const tokenSize = token.size || 1;
+              const isEvenSize = Math.round(tokenSize) % 2 === 0;
+              const snapX = isSnapToGrid ? (isEvenSize ? Math.round(worldPos.x / gridSize) * gridSize : Math.floor(worldPos.x / gridSize) * gridSize + gridSize / 2) : worldPos.x;
+              const snapZ = isSnapToGrid ? (isEvenSize ? Math.round(worldPos.z / gridSize) * gridSize : Math.floor(worldPos.z / gridSize) * gridSize + gridSize / 2) : worldPos.z;
               
               if (groupDragData?.current?.activeTokenId === token.id) {
                   const snappedDelta = new THREE.Vector3(snapX - dragStartPos.current.x, 0, snapZ - dragStartPos.current.z);
@@ -1650,6 +1753,69 @@ const DropZone = ({ onMapDrop }) => {
     }, [camera, gl]);
 
     return null;
+};
+
+const DisplacedGrid = ({ mapData, aspect, resolvedHeightmapUrl }) => {
+    const { scale = 20, gridSize = 1, heightScale = 1 } = mapData;
+    const width = scale * aspect;
+    const height = scale;
+
+    const isLowPerf = localStorage.getItem('vtt_low_performance') === 'true';
+    const subdivisions = isLowPerf ? 128 : 256;
+
+    const heightmapTexture = useMemo(() => {
+        if (!resolvedHeightmapUrl) return null;
+        return new THREE.TextureLoader().load(resolvedHeightmapUrl);
+    }, [resolvedHeightmapUrl]);
+
+    const gridTexture = useMemo(() => {
+        if (!gridSize || gridSize <= 0) return null;
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        const size = 256; // Higher resolution for crispness
+        canvas.width = size;
+        canvas.height = size;
+        
+        ctx.clearRect(0, 0, size, size);
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)'; // Lighter overlay to contrast map features
+        ctx.lineWidth = 4;
+        
+        // Draw lines at the edge to form a grid when tiled
+        ctx.beginPath();
+        ctx.moveTo(0, size);
+        ctx.lineTo(size, size);
+        ctx.lineTo(size, 0);
+        ctx.stroke();
+
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.wrapS = THREE.RepeatWrapping;
+        texture.wrapT = THREE.RepeatWrapping;
+        
+        const repeatX = width / gridSize;
+        const repeatY = height / gridSize;
+        texture.repeat.set(repeatX, repeatY);
+        
+        // Ensure that world origin (0,0) is always exactly on a grid intersection
+        texture.offset.set(-(width / 2) / gridSize, -(height / 2) / gridSize);
+
+        return texture;
+    }, [width, height, gridSize]);
+
+    return (
+        // Placed at y=0.016 to render slightly above the Fog of War (y=0.015)
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.016, 0]} renderOrder={101}>
+            <planeGeometry args={[width, height, subdivisions, subdivisions]} />
+            <meshStandardMaterial
+                map={gridTexture}
+                displacementMap={heightmapTexture}
+                displacementScale={heightScale}
+                transparent={true}
+                roughness={1}
+                metalness={0}
+                depthWrite={false}
+            />
+        </mesh>
+    );
 };
 
 export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet, role, onOpenHandouts, onOpenChat, onOpenJournal }) {
@@ -1858,8 +2024,10 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
           const newX = (t.x || 0) + delta.x;
           const newZ = (t.z || 0) + delta.z;
 
-          const finalX = isSnapToGrid ? Math.floor(newX / gridSize) * gridSize + gridSize / 2 : newX;
-          const finalZ = isSnapToGrid ? Math.floor(newZ / gridSize) * gridSize + gridSize / 2 : newZ;
+          const tokenSize = t.size || 1;
+          const isEvenSize = Math.round(tokenSize) % 2 === 0;
+          const finalX = isSnapToGrid ? (isEvenSize ? Math.round(newX / gridSize) * gridSize : Math.floor(newX / gridSize) * gridSize + gridSize / 2) : newX;
+          const finalZ = isSnapToGrid ? (isEvenSize ? Math.round(newZ / gridSize) * gridSize : Math.floor(newZ / gridSize) * gridSize + gridSize / 2) : newZ;
 
           const terrainY = getTerrainHeight ? getTerrainHeight(finalX, finalZ) : 0;
           const finalY = terrainY + (t.elevationOffset || 0) + 0.025;
@@ -1870,6 +2038,137 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
 
   const tokensList = Object.values(mergedTokens);
   const allCharacters = [...(data?.players || []), ...(data?.npcs || [])];
+
+  // Calculate Player Vision Sources (Used by both Fog Renderer and CPU Visibility checks)
+  const playerVisionSources = useMemo(() => {
+      if (!tokensList || !allCharacters) return [];
+
+      let relevantTokens;
+      if (role === 'dm') {
+          const playerCharIds = new Set((data?.players || []).map(p => String(p.id)));
+          relevantTokens = tokensList.filter(t => t.characterId && playerCharIds.has(String(t.characterId)));
+      } else {
+          const myCharId = data?.assignments?.[user?.uid];
+          relevantTokens = tokensList.filter(t => {
+              if (!t.characterId) return false;
+              if (t.isSharedControl) return true;
+              if (myCharId && String(t.characterId) === String(myCharId)) return true;
+              const char = allCharacters.find(c => String(c.id) === String(t.characterId));
+              return char && String(char.ownerId) === String(user?.uid);
+          });
+      }
+      
+      return relevantTokens.map(t => {
+          const character = allCharacters.find(c => String(c.id) === String(t.characterId));
+          if (!character) return null;
+          if (mapData?.fowEnabled === false) return { id: t.id, x: t.x || 0, z: t.z || 0, range: 9999 };
+          
+          let visionRange = 5; 
+          let parsedDv = 0;
+
+          if (typeof character?.senses === 'object' && character.senses !== null && !Array.isArray(character.senses)) {
+              const dv = character.senses.darkvision || character.senses.Darkvision;
+              if (dv) {
+                  const match = String(dv).match(/(\d+)/);
+                  if (match) parsedDv = parseInt(match[1], 10);
+              }
+          }
+          if (character?.darkvision) {
+              const match = String(character.darkvision).match(/(\d+)/);
+              if (match) parsedDv = Math.max(parsedDv, parseInt(match[1], 10));
+          }
+
+          if (parsedDv === 0 && character?.senses) {
+              let sensesStr = "";
+              if (typeof character.senses === 'string') {
+                  sensesStr = character.senses;
+              } else if (Array.isArray(character.senses)) {
+                  sensesStr = character.senses.map(s => typeof s === 'object' ? JSON.stringify(s) : String(s)).join(" ");
+              } else if (typeof character.senses === 'object') {
+                  sensesStr = Object.values(character.senses).map(String).join(" ");
+              }
+              
+              if (sensesStr.toLowerCase().includes('darkvision')) {
+                  const match = sensesStr.match(/darkvision[^0-9a-z]*(\d+)/i) || sensesStr.match(/(\d+)[^0-9a-z]*darkvision/i);
+                  if (match) parsedDv = parseInt(match[1], 10);
+                  else parsedDv = 60;
+              }
+          }
+
+          if (parsedDv === 0 && Array.isArray(character?.features)) {
+              const dvFeature = character.features.find(f => f.name?.toLowerCase().includes('darkvision'));
+              if (dvFeature) {
+                  const desc = typeof dvFeature === 'object' ? (dvFeature.desc || JSON.stringify(dvFeature)) : String(dvFeature);
+                  const matches = desc.match(/\b(30|60|90|120|150)\b/);
+                  if (matches) {
+                      parsedDv = parseInt(matches[1], 10);
+                  } else {
+                      const match = desc.match(/(\d+)/);
+                      if (match) parsedDv = parseInt(match[1], 10);
+                      else parsedDv = 60;
+                  }
+              }
+          }
+
+          if (parsedDv > visionRange) {
+              visionRange = parsedDv;
+          }
+
+          return { id: t.id, x: t.x || 0, z: t.z || 0, range: (visionRange / 5) * gridSize };
+      }).filter(Boolean);
+  }, [tokensList, role, user?.uid, data?.assignments, allCharacters, gridSize, data?.players, mapData?.fowEnabled]);
+
+  // CPU-based Line of Sight / Token Visibility Filter
+  const visibleTokenIds = useMemo(() => {
+      if (role === 'dm') return new Set(tokensList.map(t => t.id)); // DM sees everything
+      const visibleIds = new Set();
+
+      tokensList.forEach(t => {
+          if (t.isHidden) return; // Hidden tokens are completely excluded
+          
+          const character = allCharacters.find(c => String(c.id) === String(t.characterId));
+          const isOwner = (character?.ownerId && String(character.ownerId) === String(user?.uid)) || (t.ownerId && String(t.ownerId) === String(user?.uid));
+          const myCharAssigned = data?.assignments?.[user?.uid] && String(t.characterId) === String(data.assignments[user.uid]);
+          
+          // You can always see yourself and tokens you share control over
+          if (isOwner || myCharAssigned || t.isSharedControl) {
+              visibleIds.add(t.id);
+              return;
+          }
+
+          const targetPt = { x: t.x || 0, z: t.z || 0 };
+
+          // Check visibility from each of the player's vision sources
+          for (const src of playerVisionSources) {
+              // Condition 1: Is the target within darkvision range AND there is line of sight?
+              const dist = Math.sqrt(Math.pow(src.x - targetPt.x, 2) + Math.pow(src.z - targetPt.z, 2));
+              if (dist <= src.range && checkLineOfSight(src, targetPt, mapData?.walls)) {
+                  visibleIds.add(t.id);
+                  return; // Visible, no need to check further for this token
+              }
+
+              // Condition 2: Is the target illuminated by a light source AND does the player have line of sight to it?
+              if (mapData?.lights && mapData?.fowEnabled !== false) {
+                  // First, check if the player has LOS to the target token. If not, no light can make it visible to them.
+                  if (checkLineOfSight(src, targetPt, mapData?.walls)) {
+                      // Now, check if any light source illuminates the target token.
+                      for (const light of Object.values(mapData.lights)) {
+                          const lightRange = (light.radius || 15) / 5 * gridSize;
+                          const lightPt = { x: light.position.x, z: light.position.z };
+                          const distToLight = Math.sqrt(Math.pow(lightPt.x - targetPt.x, 2) + Math.pow(lightPt.z - targetPt.z, 2));
+                          
+                          // A token is illuminated if it's within a light's range AND the light has LOS to it.
+                          if (distToLight <= lightRange && checkLineOfSight(lightPt, targetPt, mapData?.walls)) {
+                              visibleIds.add(t.id);
+                              return; // Visible, no need to check further for this token
+                          }
+                      }
+                  }
+              }
+          }
+      });
+      return visibleIds;
+  }, [tokensList, role, playerVisionSources, mapData?.walls, mapData?.lights, mapData?.fowEnabled, allCharacters, user?.uid, data?.assignments, gridSize]);
 
   // Extract active combatant early so the Camera Director can hook into it
   const activeCombatantId = mapData && data?.campaign?.combat?.active && data?.campaign?.combat?.combatants?.length 
@@ -2066,7 +2365,8 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
       characterId: token.characterId,
       elevationOffset: token.elevationOffset,
       isHidden: token.isHidden,
-      isSharedControl: token.isSharedControl
+      isSharedControl: token.isSharedControl,
+      size: token.size || 1
     });
   };
 
@@ -2148,8 +2448,10 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
     }
 
     // Calculate grid snapping and elevation
-    const dropX = isSnapToGrid ? Math.floor(position.x / gridSize) * gridSize + gridSize / 2 : position.x;
-    const dropZ = isSnapToGrid ? Math.floor(position.z / gridSize) * gridSize + gridSize / 2 : position.z;
+    const tokenSize = payload.size || 1;
+    const isEvenSize = Math.round(tokenSize) % 2 === 0;
+    const dropX = isSnapToGrid ? (isEvenSize ? Math.round(position.x / gridSize) * gridSize : Math.floor(position.x / gridSize) * gridSize + gridSize / 2) : position.x;
+    const dropZ = isSnapToGrid ? (isEvenSize ? Math.round(position.z / gridSize) * gridSize : Math.floor(position.z / gridSize) * gridSize + gridSize / 2) : position.z;
     const terrainY = getTerrainHeight ? getTerrainHeight(dropX, dropZ) : 0;
 
     const newTokenId = `token_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -2248,6 +2550,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
       onDrop={(e) => e.preventDefault()}
     >
       <Canvas 
+        frameloop="demand"
         key={remountKey}
         camera={{ position: [0, 8, 8], fov: 50 }} 
         style={{ width: '100%', height: '100%' }}
@@ -2296,23 +2599,38 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
             )}
         </Suspense>
 
-        <MarqueeSelector tokens={tokensList} onSelectTokens={setSelectedTokenIds} />
+        <MarqueeSelector tokens={role === 'dm' ? tokensList : tokensList.filter(t => visibleTokenIds.has(t.id))} onSelectTokens={setSelectedTokenIds} />
 
-        {/* A visual grid to represent the tactical tabletop surface */}
-        <Grid 
-          infiniteGrid 
-          fadeDistance={40} 
-          sectionColor="#666" 
-          cellColor="#222" 
-          cellSize={gridSize}
-          sectionSize={gridSize}
-        />
+        {mapData?.showGrid !== false && (
+            mapData?.heightmapUrl ? (
+                <DisplacedGrid 
+                    mapData={mapData}
+                    aspect={aspect}
+                    resolvedHeightmapUrl={resolvedHeightmapUrl}
+                />
+            ) : (
+                <Grid 
+                  position={[0, 0.016, 0]}
+                  renderOrder={101}
+                  infiniteGrid 
+                  fadeDistance={60} 
+                  sectionColor="#888" 
+                  cellColor="#444" 
+                  cellSize={gridSize}
+                  sectionSize={gridSize * 5}
+                />
+            )
+        )}
 
         {/* Active Combat Tracker Integration */}
         <CombatCameraDirector activeTokenId={activeCombatantId} tokensList={tokensList} />
         
         {/* Render all tokens on the map */}
         {mapData && isAspectReady && (!mapData.heightmapUrl || terrainData) && tokensList.map(token => {
+            if (role !== 'dm' && (!visibleTokenIds.has(token.id) || token.isHidden)) {
+                return null; // Skip rendering if invisible
+            }
+
             // Find the linked character if one exists
             const character = allCharacters.find(c => String(c.id) === String(token.characterId));
             const displayToken = { ...token };
@@ -2358,23 +2676,37 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
             );
         })}
 
-        <Walls walls={mapData?.walls} onWallContextMenu={handleWallContextMenu} onToggleDoor={handleToggleDoor} />
+        <Walls 
+            walls={mapData?.walls} 
+            onWallContextMenu={handleWallContextMenu} 
+            onToggleDoor={handleToggleDoor} 
+            showWalls={role === 'dm' && (isDrawingWalls || isArchitectMode)}
+            role={role}
+        />
 
         {/* The Dynamic Fog of War layer */}
-        <FogOfWar 
+        {mapData && <GpuFogOfWar 
+            key={`fow-${activeMapId}-${mapData?.scale}-${aspect}`}
             enabled={mapData?.fowEnabled} 
-            tokens={tokensList} 
             walls={mapData?.walls} 
             lights={mapData?.lights}
-            role={role} 
-            user={user} 
-            assignments={data?.assignments} 
-            allCharacters={allCharacters}
             gridSize={gridSize}
-        />
+            mapData={mapData}
+            aspect={aspect}
+            resolvedHeightmapUrl={resolvedHeightmapUrl}
+            playerVisionSources={playerVisionSources}
+            role={role}
+        />}
 
         {role === 'dm' && (
             <>
+                <MapLights 
+                    lights={mapData?.lights} 
+                    onContextMenu={handleLightContextMenu} 
+                    role={role} 
+                    gridSize={gridSize} 
+                    showLightRadius={isPlacingLights} 
+                />
                 <WallDrawingController
                     isEnabled={isDrawingWalls}
                     getTerrainHeight={getTerrainHeight}
@@ -2396,14 +2728,16 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
                 <LightPlacementController 
                     isEnabled={isPlacingLights}
                     getTerrainHeight={getTerrainHeight}
-                    onPlaceLight={(pt) => {
+                    gridSize={gridSize}
+                    onPlaceLight={(pt, radiusInMapUnits) => {
                         const lightId = `light_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+                        const radiusFt = Math.round((radiusInMapUnits / gridSize) * 5);
                         updateMap(campaignCode, activeMapId, { 
                             [`lights.${lightId}`]: { 
                                 id: lightId, 
                                 position: { x: pt.x, y: pt.y, z: pt.z }, 
                                 color: '#fef08a', 
-                                radius: 6 * gridSize, 
+                                radius: radiusFt, 
                                 intensity: 1.5 
                             } 
                         });
@@ -2815,6 +3149,25 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
                   {contextMenu.isHidden ? "Reveal to Players" : "Hide from Players"}
                 </button>
                 
+                <div className="border-t border-slate-700 my-1"></div>
+                <div className="flex items-center justify-between px-4 py-1">
+                    <span className="text-xs font-bold text-slate-400">Size</span>
+                    <div className="flex items-center gap-1">
+                        <button onClick={() => {
+                            const newSize = Math.max(0.5, (contextMenu.size || 1) - 0.5);
+                            updateToken(contextMenu.tokenId, { size: newSize });
+                            setContextMenu({ ...contextMenu, size: newSize }); // Keeps menu open!
+                        }} className="p-1.5 bg-slate-700 rounded hover:bg-slate-600"><Icon name="minus" size={12}/></button>
+                        <span className="text-sm font-bold w-6 text-center tabular-nums">{contextMenu.size || 1}</span>
+                        <button onClick={() => {
+                            const newSize = (contextMenu.size || 1) + 0.5;
+                            updateToken(contextMenu.tokenId, { size: newSize });
+                            setContextMenu({ ...contextMenu, size: newSize }); // Keeps menu open!
+                        }} className="p-1.5 bg-slate-700 rounded hover:bg-slate-600"><Icon name="plus" size={12}/></button>
+                    </div>
+                </div>
+                <div className="border-t border-slate-700 my-1"></div>
+                
                 <button 
                   className="w-full text-left px-4 py-2 hover:bg-red-900/50 text-red-400 transition-colors"
                   onClick={() => {
@@ -2909,11 +3262,10 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
                     className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors text-amber-400"
                     onClick={() => {
                         const light = mapData.lights[lightContextMenu.lightId];
-                        const currentRadiusFt = Math.round(((light?.radius || (6 * gridSize)) / gridSize) * 5);
-                        const newRadius = window.prompt("Enter new light radius in feet:", currentRadiusFt);
+                        const currentRadiusFt = light?.radius || 30;
+                        const newRadius = window.prompt("Enter new light radius in feet (e.g. 15, 30, 60):", currentRadiusFt);
                         if (newRadius && !isNaN(newRadius)) {
-                            const radiusInSquares = (Number(newRadius) / 5) * gridSize;
-                            updateMap(campaignCode, activeMapId, { [`lights.${lightContextMenu.lightId}.radius`]: radiusInSquares });
+                            updateMap(campaignCode, activeMapId, { [`lights.${lightContextMenu.lightId}.radius`]: Number(newRadius) });
                         }
                         setLightContextMenu(null);
                     }}

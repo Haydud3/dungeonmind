@@ -52,7 +52,7 @@ const GLTFModel = ({ url, scale }) => {
     const { scene } = useGLTF(url);
     return (
         <Center>
-            <primitive object={scene} scale={scale} />
+            <primitive object={scene.clone(true)} scale={scale} />
         </Center>
     );
 }
