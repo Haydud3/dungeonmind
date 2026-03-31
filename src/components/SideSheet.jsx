@@ -4,11 +4,11 @@ import { useCharacterStore } from '../stores/useCharacterStore';
 import { useNewCampaign } from '../contexts/NewCampaignProvider';
 import { searchGithubModels } from '../utils/miniManifest';
 import Icon from './Icon';
-import { doc, onSnapshot } from 'firebase/firestore';
-import { db, appId } from '../firebase';
+import { subscribeToMap, updateMap } from '../utils/mapService';
 
 const SideSheet = ({ characterId, onClose, role, onDiceRoll }) => {
-    const { campaign: data, user, updateCampaign, updateToken, gameParams } = useNewCampaign();
+    const { campaign: data, user, updateCampaign, gameParams } = useNewCampaign();
+    const activeMapId = data?.activeMapId;
     
     const isVirtual = typeof characterId === 'object' && characterId !== null && characterId.isToken;
     const actualCharId = isVirtual ? characterId.characterId : characterId;
@@ -34,23 +34,22 @@ const SideSheet = ({ characterId, onClose, role, onDiceRoll }) => {
     };
 
     useEffect(() => {
-        setLiveHp(null); // Clear any previous token's HP immediately
-        if (!isVirtual || !tokenId || !gameParams?.code) return;
-        const tokenRef = doc(db, 'artifacts', appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'tokens_v2', tokenId);
-        const unsub = onSnapshot(tokenRef, (snap) => {
-            if (snap.exists()) {
-                const tData = snap.data();
-                setLiveHp(tData.hp || null);
+        setLiveHp(null);
+        if (!isVirtual || !tokenId || !gameParams?.code || !activeMapId) return;
+
+        const unsub = subscribeToMap(gameParams.code, activeMapId, (map) => {
+            if (map?.tokens?.[tokenId]) {
+                setLiveHp(map.tokens[tokenId].hp || null);
             } else {
                 setLiveHp(null);
             }
         });
         return () => unsub();
-    }, [isVirtual, tokenId, gameParams?.code]);
+    }, [isVirtual, tokenId, gameParams?.code, activeMapId]);
 
     const handleSave = (char) => {
         if (isVirtual && tokenId) {
-            updateToken(tokenId, { hp: char.hp });
+            if (activeMapId) updateMap(gameParams.code, activeMapId, { [`tokens.${tokenId}.hp`]: char.hp });
             const isPc = data?.players?.some(p => String(p.id) === String(actualCharId));
             if (isPc) {
                 const newPlayers = (data.players || []).map(p => String(p.id) === String(actualCharId) ? { ...char, hp: p.hp, id: actualCharId } : p);

@@ -95,7 +95,7 @@ const scanFeatures = (architectUrl, illuminationUrl, scale = 20) => {
                 const px2 = Math.min(x2 * stepX, canvas.width);
                 const py2 = Math.min(y2 * stepY, canvas.height);
                 walls[id] = { id, type, points: [get3DCoord(px1, py1), get3DCoord(px2, py2)] };
-                if (type === 'door') walls[id].isOpen = false;
+                if (type === 'door' || type === 'window') walls[id].isOpen = false;
             };
 
             const getType = (x, y) => (x >= 0 && x < cols && y >= 0 && y < rows) ? grid[y][x] : null;
@@ -298,13 +298,14 @@ const MapGenerator = ({ onGenerateMap, mapData }) => {
             const scale = mapData?.scale || 20;
             const features = await scanFeatures(architectPanel.dataUrl, illuminationPanel.dataUrl, scale);
 
-            const mapId = await storeChunkedMap(mapPanel.dataUrl, "generated_map.png");
-            const heightId = await storeChunkedMap(heightPanel.dataUrl, "generated_heightmap.png");
+            const mapId = await storeChunkedMap(mapPanel.dataUrl, `generated_map_${Date.now()}.png`);
+            const heightId = await storeChunkedMap(heightPanel.dataUrl, `generated_heightmap_${Date.now()}.png`);
 
             onGenerateMap({
                 backgroundUrl: mapId,
                 heightmapUrl: heightId,
-                features
+                features,
+                prompt: promptText
             });
 
         } catch (err) {

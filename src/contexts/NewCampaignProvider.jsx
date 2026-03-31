@@ -146,24 +146,6 @@ export const NewCampaignProvider = ({ children }) => {
         await updateDoc(campaignRef, { bannedUsers: arrayRemove(targetUid) });
     };
 
-    const addToken = async (token) => {
-        if (!gameParams?.code) return;
-        const tokenRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'tokens_v2', String(token.id));
-        await setDoc(tokenRef, token);
-    };
-
-    const updateToken = async (tokenId, changes) => {
-        if (!gameParams?.code) return;
-        const tokenRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'tokens_v2', String(tokenId));
-        await setDoc(tokenRef, changes, { merge: true });
-    };
-
-    const deleteToken = async (tokenId) => {
-        if (!gameParams?.code) return;
-        const tokenRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'tokens_v2', String(tokenId));
-        await deleteDoc(tokenRef);
-    };
-
     const sendMessage = async (message) => {
         if (!gameParams?.code) return;
         const chatRef = collection(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'chat');
@@ -283,7 +265,7 @@ export const NewCampaignProvider = ({ children }) => {
     };
 
     return (
-        <NewCampaignContext.Provider value={{ user, campaign, chatLog, journal_pages, loreChunks, error, gameParams, joinCampaign, leaveCampaign, updateCampaign, kickPlayer, banPlayer, unbanPlayer, addToken, updateToken, deleteToken, sendMessage, editMessage, deleteMessage, clearChat, saveJournalPage, deleteJournalPage, uploadLore, deleteHandout }}>
+        <NewCampaignContext.Provider value={{ user, campaign, chatLog, journal_pages, loreChunks, error, gameParams, joinCampaign, leaveCampaign, updateCampaign, kickPlayer, banPlayer, unbanPlayer, sendMessage, editMessage, deleteMessage, clearChat, saveJournalPage, deleteJournalPage, uploadLore, deleteHandout }}>
             {children}
         </NewCampaignContext.Provider>
     );

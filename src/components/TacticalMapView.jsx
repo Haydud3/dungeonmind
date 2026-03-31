@@ -2,14 +2,15 @@ import React, { useState, useEffect, Suspense, useRef, useCallback, useMemo } fr
 import { Canvas, useThree, useFrame } from '@react-three/fiber';
 import { MapControls, Grid, useTexture, DragControls, Html, useCursor, Line, Text, RoundedBox, Billboard } from '@react-three/drei';
 import * as THREE from 'three';
-import { subscribeToMap, updateMap } from '../utils/mapService';
+import { subscribeToMap, updateMap, createMap } from '../utils/mapService';
 import { useNewCampaign } from '../contexts/NewCampaignProvider';
 import AssetManager from './AssetManager';
+import { MeasurementTools } from './MeasurementTools';
 import Icon from './Icon';
 import { retrieveChunkedMap } from '../utils/storageUtils';
 import CharacterModel from './CharacterModel';
 import CameraController from '../utils/CameraController';
-import { collection, onSnapshot } from 'firebase/firestore';
+import { collection, doc, query, where, getDocs } from 'firebase/firestore';
 import { db, appId } from '../firebase';
 import { searchGithubModels } from '../utils/miniManifest';
 
@@ -274,7 +275,7 @@ const Heightmap = ({ heightmapUrl, backgroundUrl, heightScale, scale = 20 }) => 
     />
 };
 
-const WallSegment = ({ start, end, onContextMenu, onToggleDoor, wall }) => {
+const WallSegment = ({ start, end, onContextMenu, onToggleDoor, wall, onDelete }) => {
     const vec = useMemo(() => new THREE.Vector3().subVectors(end, start), [start, end]);
     const midpoint = useMemo(() => new THREE.Vector3().addVectors(start, end).multiplyScalar(0.5), [start, end]);
     const quat = useMemo(() => {
@@ -285,6 +286,8 @@ const WallSegment = ({ start, end, onContextMenu, onToggleDoor, wall }) => {
     }, [vec]);
     
     const length = vec.length();
+    const [hovered, setHover] = useState(false);
+    useCursor(hovered, 'pointer', 'auto');
 
     return (
         <mesh 
@@ -292,14 +295,30 @@ const WallSegment = ({ start, end, onContextMenu, onToggleDoor, wall }) => {
             quaternion={quat}
             renderOrder={200}
             onClick={(e) => {
-                if (wall.type === 'door') {
+                if (onDelete) {
+                    e.stopPropagation();
+                    onDelete(wall.id);
+                } else if (wall.type === 'door' || wall.type === 'window') {
                     e.stopPropagation();
                     if (onToggleDoor) onToggleDoor(e, wall.id);
                 }
             }}
             onContextMenu={(e) => {
+                if (onDelete) return;
                 e.stopPropagation();
                 if (onContextMenu) onContextMenu(e, wall.id);
+            }}
+            onPointerOver={(e) => {
+                if (onDelete) {
+                    e.stopPropagation();
+                    setHover(true);
+                }
+            }}
+            onPointerOut={(e) => {
+                if (onDelete) {
+                    e.stopPropagation();
+                    setHover(false);
+                }
             }}
         >
             <cylinderGeometry args={[0.4, 0.4, length, 8]} />
@@ -308,9 +327,17 @@ const WallSegment = ({ start, end, onContextMenu, onToggleDoor, wall }) => {
     );
 };
 
-const Wall = ({ wall, onContextMenu, onToggleDoor, showWalls, role }) => {
+const Wall = ({ wall, onContextMenu, onToggleDoor, showWalls, role, playerDoorVisibility, onDelete }) => {
+    if (wall.isSecret && role !== 'dm') {
+        return null;
+    }
     const points = wall.points.map(p => new THREE.Vector3(p.x, p.y, p.z));
-    const type = wall.type || 'wall';
+    let type = wall.type || 'wall';
+    if (role !== 'dm' && playerDoorVisibility === false) {
+        if (type === 'door' || type === 'window') {
+            type = 'wall';
+        }
+    }
     const color = type === 'door' ? '#3b82f6' : type === 'window' ? '#06b6d4' : '#ef4444';
 
     // Hide structural walls unless editing (doors and windows stay visible)
@@ -328,6 +355,7 @@ const Wall = ({ wall, onContextMenu, onToggleDoor, showWalls, role }) => {
                     onContextMenu={onContextMenu}
                     onToggleDoor={onToggleDoor}
                     wall={wall}
+                    onDelete={onDelete}
                 />
             );
         }
@@ -338,7 +366,7 @@ const Wall = ({ wall, onContextMenu, onToggleDoor, showWalls, role }) => {
             <Line 
                 points={points} 
                 color={color} 
-                lineWidth={type === 'door' ? 8 : 5} 
+                lineWidth={type === 'door' || type === 'window' ? 8 : 5} 
                 dashed={wall.isOpen}
                 dashScale={wall.isOpen ? 2 : 1}
                 transparent={true}
@@ -351,12 +379,12 @@ const Wall = ({ wall, onContextMenu, onToggleDoor, showWalls, role }) => {
     );
 };
 
-const Walls = ({ walls, onWallContextMenu, onToggleDoor, showWalls, role }) => {
+const Walls = ({ walls, onWallContextMenu, onToggleDoor, showWalls, role, playerDoorVisibility, onDelete }) => {
     if (!walls) return null;
     return (
         <group>
             {Object.values(walls).map(wall => (
-                <Wall key={wall.id} wall={wall} onContextMenu={onWallContextMenu} onToggleDoor={onToggleDoor} showWalls={showWalls} role={role} />
+                <Wall key={wall.id} wall={wall} onContextMenu={onWallContextMenu} onToggleDoor={onToggleDoor} showWalls={showWalls} role={role} playerDoorVisibility={playerDoorVisibility} onDelete={onDelete} />
             ))}
         </group>
     );
@@ -434,7 +462,7 @@ const EditableHP = ({ currentHp, maxHp, onSave }) => {
     );
 };
 
-const CombatTrackerSidebar = ({ combat, updateCampaign, updateToken, tokens, role, campaignData, allCharacters, onOpenSheet, data }) => {
+const CombatTrackerSidebar = ({ combat, updateCampaign, tokens, role, campaignData, allCharacters, onOpenSheet, data, campaignCode, activeMapId }) => {
     if (role !== 'dm' || !combat?.active || !combat?.combatants?.length) return null;
 
     const combatants = combat.combatants;
@@ -471,7 +499,7 @@ const CombatTrackerSidebar = ({ combat, updateCampaign, updateToken, tokens, rol
             const token = tokens.find(t => t.id === tokenId);
             if (token) {
                 const oldHp = token.hp || allCharacters.find(ch => String(ch.id) === String(charId))?.hp || {};
-                updateToken(tokenId, { hp: { ...oldHp, current: newHp } });
+                updateMap(campaignCode, activeMapId, { [`tokens.${tokenId}.hp`]: { ...oldHp, current: newHp } });
             } else {
                 const newNpcs = (data?.npcs || []).map(n => String(n.id) === String(charId) ? { ...n, hp: { ...n.hp, current: newHp } } : n);
                 updateCampaign({ npcs: newNpcs });
@@ -747,8 +775,10 @@ const LightPlacementController = ({ isEnabled, onPlaceLight, getTerrainHeight })
     );
 };
 
-const MapLights = ({ lights, onContextMenu, role, gridSize = 1, showLightRadius }) => {
+const MapLights = ({ lights, onContextMenu, role, gridSize = 1, showLightRadius, onDelete }) => {
     if (!lights || role !== 'dm') return null;
+    const [hovered, setHover] = useState(null);
+    useCursor(hovered, 'pointer', 'auto');
     return (
         <group>
             {Object.values(lights).map(light => {
@@ -757,13 +787,33 @@ const MapLights = ({ lights, onContextMenu, role, gridSize = 1, showLightRadius 
                     <group key={light.id} position={[light.position.x, light.position.y || 1, light.position.z]}>
                         <mesh 
                             renderOrder={200}
+                            visible={showLightRadius || !!onDelete}
+                            onClick={(e) => {
+                                if (onDelete) {
+                                    e.stopPropagation();
+                                    onDelete(light.id);
+                                }
+                            }}
                             onContextMenu={(e) => {
+                                if (onDelete) return;
                                 e.stopPropagation();
                                 if (onContextMenu) onContextMenu(e, light.id);
                             }}
+                            onPointerOver={(e) => {
+                                if (onDelete || showLightRadius) {
+                                    e.stopPropagation();
+                                    setHover(light.id);
+                                }
+                            }}
+                            onPointerOut={(e) => {
+                                if (onDelete || showLightRadius) {
+                                    e.stopPropagation();
+                                    setHover(null);
+                                }
+                            }}
                         >
                             <sphereGeometry args={[0.4]} />
-                            <meshBasicMaterial color={light.color || "#fef08a"} transparent opacity={0.8} depthTest={false} />
+                            <meshBasicMaterial color={light.color || "#fef08a"} transparent opacity={hovered === light.id ? 1 : 0.8} depthTest={false} />
                         </mesh>
                         {showLightRadius && (
                             <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.9, 0]} renderOrder={200}>
@@ -778,7 +828,7 @@ const MapLights = ({ lights, onContextMenu, role, gridSize = 1, showLightRadius 
     );
 };
 
-const GpuFogOfWar = ({ enabled, walls, lights, gridSize, mapData, aspect, resolvedHeightmapUrl, playerVisionSources, role }) => {
+const GpuFogOfWar = ({ enabled, walls, lights, gridSize, mapData, aspect, resolvedHeightmapUrl, playerVisionSources, role, fowWallsEnabled }) => {
     const { gl } = useThree();
     const scale = mapData?.scale || 20;
     const width = scale * aspect;
@@ -907,7 +957,7 @@ const GpuFogOfWar = ({ enabled, walls, lights, gridSize, mapData, aspect, resolv
             fowScene.clear();
 
             let shadowGeo = null;
-            if (walls) {
+            if (walls && fowWallsEnabled !== false) {
                 const vertices = [];
                 Object.values(walls).forEach(wall => {
                     if (wall.isOpen || !wall.points || wall.points.length < 2) return;
@@ -1186,7 +1236,7 @@ const TokenImage = ({ imageUrl, size }) => {
 }
 
 // Interactive 3D Token
-const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelect, onContextMenu, role, getTerrainHeight, isSnapToGrid, isTerrainReady, draggedTokenId, setDraggedTokenId, viewMode, showNameplates, selectedTokenIds, groupDragData, onGroupDragEnd, isActiveTurn, canControl }) => {
+const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelect, onContextMenu, role, getTerrainHeight, isSnapToGrid, isTerrainReady, activeTool, draggedTokenId, setDraggedTokenId, viewMode, showNameplates, selectedTokenIds, groupDragData, onGroupDragEnd, isActiveTurn, canControl }) => {
   const meshRef = useRef();
   const visualsRef = useRef();
   const rotationRef = useRef();
@@ -1625,7 +1675,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
         <DragControls
           ref={dragControlsRef}
           axisLock="y"
-          enabled={isTerrainReady && (draggedTokenId === null || draggedTokenId === token.id)}
+          enabled={isTerrainReady && !activeTool && (draggedTokenId === null || draggedTokenId === token.id)}
           onDragStart={() => {
             if (controls) controls.enabled = false;
             isLeftDragging.current = true;
@@ -1819,7 +1869,7 @@ const DisplacedGrid = ({ mapData, aspect, resolvedHeightmapUrl }) => {
 };
 
 export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet, role, onOpenHandouts, onOpenChat, onOpenJournal }) {
-  const { campaign, updateCampaign, updateToken, addToken, deleteToken, user } = useNewCampaign();
+  const { campaign, updateCampaign, user } = useNewCampaign();
   const data = campaign;
   const cameraControllerRef = useRef();
   const zoomRef = useRef();
@@ -1831,8 +1881,10 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
   const [isDrawingWalls, setIsDrawingWalls] = useState(false);
   const [isArchitectMode, setIsArchitectMode] = useState(false);
   const [isPlacingLights, setIsPlacingLights] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [wallContextMenu, setWallContextMenu] = useState(null);
   const [lightContextMenu, setLightContextMenu] = useState(null);
+  const [activeTool, setActiveTool] = useState(null);
   const [isSnapToGrid, setIsSnapToGrid] = useState(true);
   const [viewMode, setViewMode] = useState('isometric');
   const [draggedTokenId, setDraggedTokenId] = useState(null);
@@ -1861,19 +1913,6 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
       setAvailableModels(results);
       setIsSearchingMinis(false);
   };
-
-  // --- FIX: Listen directly to the tokens_v2 subcollection ---
-  const [liveTokens, setLiveTokens] = useState({});
-  useEffect(() => {
-      if (!campaignCode) return;
-      const tokensRef = collection(db, 'artifacts', appId || 'dungeonmind', 'public', 'data', 'campaigns', campaignCode, 'tokens_v2');
-      const unsub = onSnapshot(tokensRef, (snap) => {
-          const t = {};
-          snap.docs.forEach(doc => { t[doc.id] = doc.data(); });
-          setLiveTokens(t);
-      });
-      return () => unsub();
-  }, [campaignCode]);
 
   // Helper to open manager to a specific tab
   const openAssets = (tab) => {
@@ -1966,42 +2005,28 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
 
   // Subscribe to real-time map updates from Firebase
   useEffect(() => {
+    setMapData(null); // Immediately clear last map's data
     if (!campaignCode || !activeMapId) return;
     const unsubscribe = subscribeToMap(campaignCode, activeMapId, (data) => {
-      setMapData(data);
+      if (data) {
+        setMapData(data);
+      } else {
+        setMapData(null);
+      }
     });
     return () => unsubscribe();
   }, [campaignCode, activeMapId]);
 
   const gridSize = mapData?.gridSize || 1;
   const showPlane = mapData?.backgroundUrl && mapData.backgroundUrl.trim() !== '';
-  const legacyTokens = data?.campaign?.activeMap?.tokens || {};
   const showNameplates = mapData?.showNameplates !== false;
   
-  // Safely merge legacy map tokens with the realtime token updates so they aren't overwritten
-  const mergedTokens = useMemo(() => {
-      const result = {};
-      
-      // 1. Ensure legacy tokens are mapped by their actual ID, not an array index
-      const legacyArray = Array.isArray(legacyTokens) ? legacyTokens : Object.values(legacyTokens || {});
-      legacyArray.forEach(t => {
-          if (t && t.id) result[t.id] = { ...t };
-      });
-      // 2. Merge realtime Firestore tokens over them
-      for (const tId in liveTokens) {
-          const liveT = liveTokens[tId];
-          if (liveT && liveT.id) {
-              if (result[liveT.id]) result[liveT.id] = { ...result[liveT.id], ...liveT };
-              else result[liveT.id] = liveT;
-          }
-      }
-      return result;
-  }, [legacyTokens, liveTokens]);
+  const tokens = useMemo(() => mapData?.tokens || {}, [mapData]);
   
   const latestTokensRef = useRef({});
   useEffect(() => {
-      latestTokensRef.current = mergedTokens;
-  }, [mergedTokens]);
+      latestTokensRef.current = tokens;
+  }, [tokens]);
 
   const groupDragData = useRef({ activeTokenId: null, delta: new THREE.Vector3() });
 
@@ -2032,11 +2057,16 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
           const terrainY = getTerrainHeight ? getTerrainHeight(finalX, finalZ) : 0;
           const finalY = terrainY + (t.elevationOffset || 0) + 0.025;
 
-          updateToken(id, { x: finalX, y: finalY, z: finalZ, elevationOffset: t.elevationOffset || 0 });
+          updateMap(campaignCode, activeMapId, {
+              [`tokens.${id}.x`]: finalX,
+              [`tokens.${id}.y`]: finalY,
+              [`tokens.${id}.z`]: finalZ,
+              [`tokens.${id}.elevationOffset`]: t.elevationOffset || 0,
+          });
       });
-  }, [selectedTokenIds, isSnapToGrid, gridSize, getTerrainHeight, updateToken]);
+  }, [selectedTokenIds, isSnapToGrid, gridSize, getTerrainHeight, campaignCode, activeMapId]);
 
-  const tokensList = Object.values(mergedTokens);
+  const tokensList = Object.values(tokens).filter(Boolean); // Filter out null/undefined tokens
   const allCharacters = [...(data?.players || []), ...(data?.npcs || [])];
 
   // Calculate Player Vision Sources (Used by both Fog Renderer and CPU Visibility checks)
@@ -2326,35 +2356,31 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
   };
 
   const handleModelSelect = async (model) => {
-      const finalNpc = { ...pendingNpc };
-      if (model) {
-          finalNpc.modelUrl = model.url;
-          finalNpc.modelScale = model.scale;
-          finalNpc.modelYOffset = model.yOffset;
-      }
-      
-      updateCampaign({ npcs: [...(data?.npcs || []), finalNpc] });
-      
-      const dropX = 0;
-      const dropZ = 0;
-      const terrainY = getTerrainHeight ? getTerrainHeight(dropX, dropZ) : 0;
-      
-      const newTokenId = `token_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      await addToken({
-          id: newTokenId,
-          characterId: finalNpc.id,
-          name: finalNpc.name,
-          type: 'npc',
-          x: dropX,
-          y: terrainY + 0.025,
-          z: dropZ,
-          image: finalNpc.image || '',
-          size: finalNpc.size || 1,
-          hp: finalNpc.hp
-      });
-      
-      setPendingNpc(null);
-      setShowModelPicker(false);
+    if (!pendingNpc) return;
+    const finalNpc = { ...pendingNpc };
+    if (model) {
+        finalNpc.modelUrl = model.url;
+        finalNpc.modelScale = model.scale;
+        finalNpc.modelYOffset = model.yOffset;
+    }
+    
+    updateCampaign({ npcs: [...(data?.npcs || []), finalNpc] });
+    
+    const dropX = 0;
+    const dropZ = 0;
+    const terrainY = getTerrainHeight ? getTerrainHeight(dropX, dropZ) : 0;
+    
+    const newTokenId = `token_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const tokenData = {
+        id: newTokenId, characterId: finalNpc.id, name: finalNpc.name,
+        type: 'npc', x: dropX, y: terrainY + 0.025, z: dropZ,
+        image: finalNpc.image || '', size: finalNpc.size || 1, hp: finalNpc.hp
+    };
+
+    await updateMap(campaignCode, activeMapId, { [`tokens.${newTokenId}`]: tokenData });
+    
+    setPendingNpc(null);
+    setShowModelPicker(false);
   };
 
   const handleContextMenu = (e, token) => {
@@ -2394,17 +2420,19 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
   const handleToggleDoor = (e, wallId) => {
       e.stopPropagation();
       const wall = mapData?.walls?.[wallId];
-      if (wall && wall.type === 'door') {
+      if (wall && (wall.type === 'door' || wall.type === 'window')) {
           updateMap(campaignCode, activeMapId, { [`walls.${wallId}.isOpen`]: !wall.isOpen });
       }
   };
 
   // Handler triggered by Token3D when a drag ends
   const handleUpdateTokenPosition = async (tokenId, position) => {
-    console.log("[TacticalMapView] handleUpdateTokenPosition called for", tokenId, "with", position);
     try {
-      await updateToken(tokenId, position);
-      console.log("[TacticalMapView] Successfully pushed updateToken to Firestore");
+        const updates = {};
+        Object.keys(position).forEach(key => {
+            updates[`tokens.${tokenId}.${key}`] = position[key];
+        });
+        await updateMap(campaignCode, activeMapId, updates);
     } catch (e) {
       console.error("[TacticalMapView] Failed to updateToken in Firestore:", e);
       throw e;
@@ -2484,7 +2512,9 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
     }
 
     if (tokenData) {
-        await addToken(tokenData);
+        await updateMap(campaignCode, activeMapId, {
+            [`tokens.${tokenData.id}`]: tokenData
+        });
     }
   };
 
@@ -2495,30 +2525,34 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
       if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target?.tagName)) return;
 
       if (e.key === 'Delete' || e.key === 'Backspace') {
+          if (activeTool) return;
           if (selectedTokenIds.length > 0) {
+              const updates = {};
               if (role === 'dm') {
-                  selectedTokenIds.forEach(id => deleteToken(id));
-                  setSelectedTokenIds([]);
+                  selectedTokenIds.forEach(id => {
+                      updates[`tokens.${id}`] = null;
+                  });
               } else {
-                  const tokensToDelete = [];
                   selectedTokenIds.forEach(id => {
                       const t = latestTokensRef.current[id];
                       if (!t) return;
                       const allChars = [...(data?.players || []), ...(data?.npcs || [])];
                       const character = allChars.find(c => String(c.id) === String(t.characterId));
                       const isOwner = (character?.ownerId && String(character.ownerId) === String(user?.uid)) || (t.ownerId && String(t.ownerId) === String(user?.uid));
-                      if (isOwner) tokensToDelete.push(id);
+                      if (isOwner) updates[`tokens.${id}`] = null;
                   });
-                  tokensToDelete.forEach(id => deleteToken(id));
-                  setSelectedTokenIds(prev => prev.filter(id => !tokensToDelete.includes(id)));
               }
+              if (Object.keys(updates).length > 0) {
+                  updateMap(campaignCode, activeMapId, updates);
+              }
+              setSelectedTokenIds([]);
           }
           return;
       }
 
       if (e.key === 'Escape') {
           setSelectedTokenIds([]); setContextMenu(null); setWallContextMenu(null); setLightContextMenu(null);
-          if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); }
+          if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); setActiveTool(null); }
           return;
       }
 
@@ -2526,18 +2560,75 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
 
       if (role === 'dm') {
           switch(e.key.toLowerCase()) {
-              case 'a': setShowAssetManager(false); setShowTokenManager(false); setIsDrawingWalls(false); setIsPlacingLights(false); setIsArchitectMode(p => !p); break;
-              case 'd': setShowAssetManager(false); setShowTokenManager(false); setIsArchitectMode(false); setIsPlacingLights(false); setIsDrawingWalls(p => !p); break;
-              case 'l': setShowAssetManager(false); setShowTokenManager(false); setIsArchitectMode(false); setIsDrawingWalls(false); setIsPlacingLights(p => !p); break;
-              case 't': setShowAssetManager(false); setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); setShowTokenManager(p => !p); break;
-              case 'm': setShowTokenManager(false); setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); setShowAssetManager(p => !p); break;
+              case 'a': setActiveTool(null); setShowAssetManager(false); setShowTokenManager(false); setIsDrawingWalls(false); setIsPlacingLights(false); setIsArchitectMode(p => !p); break;
+              case 'd': setActiveTool(null); setShowAssetManager(false); setShowTokenManager(false); setIsArchitectMode(false); setIsPlacingLights(false); setIsDrawingWalls(p => !p); break;
+              case 'l': setActiveTool(null); setShowAssetManager(false); setShowTokenManager(false); setIsArchitectMode(false); setIsDrawingWalls(false); setIsPlacingLights(p => !p); break;
+              case 't': setActiveTool(null); setShowAssetManager(false); setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); setShowTokenManager(p => !p); break;
+              case 'm': setActiveTool(null); setShowTokenManager(false); setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); setShowAssetManager(p => !p); break;
           }
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [role, selectedTokenIds, deleteToken, data, user]);
+  }, [role, selectedTokenIds, data, user, campaignCode, activeMapId]);
+
+  const handleNewBlankMap = async () => {
+      if (role !== 'dm') return;
+      if (!window.confirm("Create a new blank map? This will navigate away from the current map.")) return;
+
+      const newMapId = doc(collection(db, 'a')).id;
+      const newMapData = {
+          name: "New Blank Map",
+          gridSize: 1,
+          scale: 20,
+          environment: 'day',
+          tokens: {},
+          walls: {},
+          lights: {}
+      };
+      await createMap(campaignCode, newMapId, newMapData);
+      await updateCampaign({ activeMapId: newMapId });
+  };
+
+  const handleSetBackground = async (asset) => {
+    if (!campaignCode) return;
+
+    const assetUrl = asset.generatedMapUrl || asset.url;
+    const assetName = asset.name;
+
+    const mapsRef = collection(db, 'artifacts', appId, 'public', 'data', 'campaigns', campaignCode, 'maps');
+    const q = query(mapsRef, where("backgroundUrl", "==", assetUrl));
+    
+    const querySnapshot = await getDocs(q);
+    
+    if (!querySnapshot.empty) {
+        const existingMap = querySnapshot.docs[0];
+        await updateMap(campaignCode, existingMap.id, {
+            heightmapUrl: asset.generatedHeightmapUrl || existingMap.data().heightmapUrl || null,
+            walls: asset.generatedFeatures?.walls || existingMap.data().walls || {},
+            lights: asset.generatedFeatures?.lights || existingMap.data().lights || {}
+        });
+        await updateCampaign({ activeMapId: existingMap.id });
+    } else {
+        const newMapId = doc(collection(db, 'a')).id;
+        const newMapData = {
+            name: assetName ? assetName.replace(/\.[^/.]+$/, "") : "New Map",
+            backgroundUrl: assetUrl,
+            heightmapUrl: asset.generatedHeightmapUrl || null,
+            walls: asset.generatedFeatures?.walls || {},
+            lights: asset.generatedFeatures?.lights || {},
+            gridSize: 1,
+            scale: 20,
+            environment: 'day',
+            tokens: {},
+        };
+        await createMap(campaignCode, newMapId, newMapData);
+        await updateCampaign({ activeMapId: newMapId });
+    }
+    setShowAssetManager(false);
+  };
+
 
   const envSetting = ENV_SETTINGS[mapData?.environment || 'day'] || ENV_SETTINGS.day;
   const lightingMultiplier = mapData?.lightingIntensity ?? 1.0;
@@ -2556,7 +2647,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
         style={{ width: '100%', height: '100%' }}
         onCreated={({ gl }) => {
             gl.domElement.addEventListener('webglcontextlost', (event) => {
-                event.preventDefault();
+                event.preventDefault(); // Prevent the default action which might be to simply lose the context
                 console.warn('WebGL context lost. Attempting to restore...');
             });
             gl.domElement.addEventListener('webglcontextrestored', () => {
@@ -2567,6 +2658,11 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
         /* Clear selection and context menu when clicking the background void */
         onPointerMissed={(e) => {
           if (isDrawingWalls || isArchitectMode || isPlacingLights) return;
+          // If a measurement tool is active, a missed click should clear it.
+          if (activeTool) {
+              setActiveTool(null);
+              return;
+          }
           if (e.target.tagName !== 'CANVAS') return;
           if (e.button === 2) return; // Don't clear selection on right-click so Marquee can work
           setSelectedTokenIds([]);
@@ -2585,6 +2681,13 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
         <ambientLight color={envSetting.ambient.color} intensity={envSetting.ambient.intensity * lightingMultiplier} />
         <directionalLight color={envSetting.dir.color} position={envSetting.dir.position} intensity={envSetting.dir.intensity * lightingMultiplier} />
         
+        <Suspense fallback={null}>
+            <MeasurementTools 
+                activeTool={activeTool} 
+                getTerrainHeight={getTerrainHeight} 
+                gridSize={gridSize} 
+            />
+        </Suspense>
         {/* Suspense is required when using useTexture to catch the loading state */}
         <Suspense fallback={null}>
             {mapData?.heightmapUrl ? (
@@ -2662,7 +2765,8 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
                     role={role}
                     getTerrainHeight={getTerrainHeight}
                     isSnapToGrid={isSnapToGrid}
-                    isTerrainReady={!mapData.heightmapUrl || !!terrainData}
+                    isTerrainReady={!activeTool && (!mapData.heightmapUrl || !!terrainData)}
+                    activeTool={activeTool}
                     draggedTokenId={draggedTokenId}
                     setDraggedTokenId={setDraggedTokenId}
                     viewMode={viewMode}
@@ -2678,16 +2782,23 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
 
         <Walls 
             walls={mapData?.walls} 
-            onWallContextMenu={handleWallContextMenu} 
+            onWallContextMenu={isDeleting ? null : handleWallContextMenu} 
             onToggleDoor={handleToggleDoor} 
             showWalls={role === 'dm' && (isDrawingWalls || isArchitectMode)}
             role={role}
+            playerDoorVisibility={mapData?.playerDoorVisibility}
+            onDelete={isDeleting ? (wallId) => {
+                const newWalls = { ...mapData.walls };
+                delete newWalls[wallId];
+                updateMap(campaignCode, activeMapId, { walls: newWalls });
+            } : null}
         />
 
         {/* The Dynamic Fog of War layer */}
         {mapData && <GpuFogOfWar 
             key={`fow-${activeMapId}-${mapData?.scale}-${aspect}`}
             enabled={mapData?.fowEnabled} 
+            fowWallsEnabled={mapData?.fowWallsEnabled}
             walls={mapData?.walls} 
             lights={mapData?.lights}
             gridSize={gridSize}
@@ -2759,180 +2870,65 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
         <ZoomHandler zoomRef={zoomRef} />
       </Canvas>
 
-      {/* Toolbar for Map */}
       <div className="absolute top-4 left-4 z-[70] flex flex-col items-start gap-2">
         <div className="h-10 px-3 bg-slate-900/80 backdrop-blur border border-slate-700 rounded-lg shadow-lg flex items-center gap-2 cursor-help" title={`Connected to Realm: ${campaignCode}`}>
             <div className="w-2 h-2 rounded-full shadow-[0_0_10px_rgba(34,197,94,0.5)] bg-green-500"></div>
             <span className="text-sm font-bold text-amber-500 fantasy-font tracking-widest">{campaignCode}</span>
         </div>
         <div className="flex gap-2">
-            <button
-              onClick={() => {
-                cameraControllerRef.current?.reset();
-              }}
-              className="w-10 h-10 bg-slate-900/80 backdrop-blur border border-slate-700 hover:border-blue-500 hover:bg-slate-800 text-white rounded-lg shadow-lg flex items-center justify-center transition-all"
-              title="Reset View"
-            >
+            <button onClick={() => { cameraControllerRef.current?.reset(); }} className="w-10 h-10 bg-slate-900/80 backdrop-blur border border-slate-700 hover:border-blue-500 hover:bg-slate-800 text-white rounded-lg shadow-lg flex items-center justify-center transition-all" title="Reset View">
               <Icon name="camera" size={18} />
             </button>
-            <button
-              onClick={() => setViewMode(prev => prev === 'isometric' ? 'top-down' : 'isometric')}
-              className="w-10 h-10 bg-slate-900/80 backdrop-blur border border-slate-700 hover:border-blue-500 hover:bg-slate-800 text-white rounded-lg shadow-lg flex items-center justify-center transition-all"
-              title={viewMode === 'isometric' ? 'Switch to Top-Down (V)' : 'Switch to Isometric (V)'}
-            >
+            <button onClick={() => setViewMode(prev => prev === 'isometric' ? 'top-down' : 'isometric')} className="w-10 h-10 bg-slate-900/80 backdrop-blur border border-slate-700 hover:border-blue-500 hover:bg-slate-800 text-white rounded-lg shadow-lg flex items-center justify-center transition-all" title={viewMode === 'isometric' ? 'Switch to Top-Down (V)' : 'Switch to Isometric (V)'}>
               <Icon name={viewMode === 'isometric' ? 'layout-grid' : 'box'} size={18} />
             </button>
         </div>
         <div className="flex gap-2">
-            <button
-              onClick={() => zoomRef.current?.zoomIn()}
-              className="w-10 h-10 bg-slate-900/80 backdrop-blur border border-slate-700 hover:border-blue-500 hover:bg-slate-800 text-white rounded-lg shadow-lg flex items-center justify-center transition-all"
-              title="Zoom In"
-            >
+            <button onClick={() => zoomRef.current?.zoomIn()} className="w-10 h-10 bg-slate-900/80 backdrop-blur border border-slate-700 hover:border-blue-500 hover:bg-slate-800 text-white rounded-lg shadow-lg flex items-center justify-center transition-all" title="Zoom In">
               <Icon name="zoom-in" size={18} />
             </button>
-            <button
-              onClick={() => zoomRef.current?.zoomOut()}
-              className="w-10 h-10 bg-slate-900/80 backdrop-blur border border-slate-700 hover:border-blue-500 hover:bg-slate-800 text-white rounded-lg shadow-lg flex items-center justify-center transition-all"
-              title="Zoom Out"
-            >
+            <button onClick={() => zoomRef.current?.zoomOut()} className="w-10 h-10 bg-slate-900/80 backdrop-blur border border-slate-700 hover:border-blue-500 hover:bg-slate-800 text-white rounded-lg shadow-lg flex items-center justify-center transition-all" title="Zoom Out">
               <Icon name="zoom-out" size={18} />
             </button>
         </div>
       </div>
 
-      {/* Combat Ribbon HUD Overlay (Visible to everyone) */}
-      <CombatRibbon 
-          combat={data?.campaign?.combat} 
-          updateCampaign={updateCampaign} 
-          tokens={tokensList} 
-          role={role} 
-          campaignData={data?.campaign}
-      />
+      <CombatRibbon combat={data?.campaign?.combat} updateCampaign={updateCampaign} tokens={tokensList} role={role} campaignData={data?.campaign} />
 
-      {/* Combat Tracker Sidebar HUD Overlay (DM Only) */}
-      <CombatTrackerSidebar 
-          combat={data?.campaign?.combat} 
-          updateCampaign={updateCampaign} 
-          tokens={tokensList} 
-          role={role} 
-          campaignData={data?.campaign}
-          allCharacters={allCharacters}
-          data={data}
-          onOpenSheet={onOpenSheet}
-          updateToken={updateToken}
-      />
+      <CombatTrackerSidebar combat={data?.campaign?.combat} updateCampaign={updateCampaign} tokens={tokensList} role={role} campaignCode={campaignCode} activeMapId={activeMapId} campaignData={data?.campaign} allCharacters={allCharacters} data={data} onOpenSheet={onOpenSheet} />
 
-      {/* Top-Right: Tools Dock */}
-      <div className="absolute top-4 right-4 z-[70] flex flex-col gap-2">
+      <div className="absolute top-4 right-4 z-[70] flex flex-col items-end gap-3">
         {role === 'dm' && (
           <>
-            {isDrawingWalls && (
-                <button 
-                    onClick={() => {
-                        if (window.confirm('Are you sure you want to clear all walls?')) {
-                            updateMap(campaignCode, activeMapId, { walls: null });
-                        }
-                    }}
-                    className="w-10 h-10 bg-red-900/80 backdrop-blur border border-red-500 text-red-200 hover:bg-red-700 hover:text-white rounded-xl shadow-2xl flex items-center justify-center transition-all"
-                    title="Clear All Walls"
-                >
-                    <Icon name="trash-2" size={18} />
-                </button>
-            )}
-            {isPlacingLights && (
-                <button 
-                    onClick={() => {
-                        if (window.confirm('Are you sure you want to clear all lights?')) {
-                            updateMap(campaignCode, activeMapId, { lights: null });
-                        }
-                    }}
-                    className="w-10 h-10 bg-red-900/80 backdrop-blur border border-red-500 text-red-200 hover:bg-red-700 hover:text-white rounded-xl shadow-2xl flex items-center justify-center transition-all"
-                    title="Clear All Lights"
-                >
-                    <Icon name="trash-2" size={18} />
-                </button>
-            )}
-            
-            <button 
-              onClick={() => { setShowAssetManager(false); setShowTokenManager(false); setIsDrawingWalls(false); setIsPlacingLights(false); setIsArchitectMode(!isArchitectMode); }}
-              className={`w-10 h-10 backdrop-blur rounded-xl border shadow-2xl flex items-center justify-center transition-all hover:scale-105 ${isArchitectMode ? 'bg-red-900/80 border-red-500 text-red-300' : 'bg-slate-900/80 border-slate-700 text-slate-300 hover:border-red-500 hover:bg-slate-800'}`}
-              title={isArchitectMode ? "Stop Architect (A)" : "Architect Pen Tool (A)"}
-            >
-              <Icon name="pen-tool" size={18} />
-            </button>
+            <div className="flex flex-col items-end gap-2">
+                <div className="flex gap-1 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-1 rounded-full shadow-2xl">
+                    <ToolButton name="ruler" icon="ruler" isActive={activeTool === 'ruler'} onClick={() => { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); setActiveTool(p => p === 'ruler' ? null : 'ruler'); }} />
+                    <ToolButton name="cone" icon="triangle" isActive={activeTool === 'cone'} onClick={() => { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); setActiveTool(p => p === 'cone' ? null : 'cone'); }} />
+                    <ToolButton name="circle" icon="circle" isActive={activeTool === 'circle'} onClick={() => { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); setActiveTool(p => p === 'circle' ? null : 'circle'); }} />
+                    <ToolButton name="box" icon="square" isActive={activeTool === 'box'} onClick={() => { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); setActiveTool(p => p === 'box' ? null : 'box'); }} />
+                </div>
+                <div className="flex gap-1 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-1 rounded-full shadow-2xl">
+                    <ToolButton name="architect" icon="pen-tool" isActive={isArchitectMode} onClick={() => { setActiveTool(null); setIsDrawingWalls(false); setIsPlacingLights(false); setIsArchitectMode(p => !p); }} />
+                    <ToolButton name="draw" icon="pencil" isActive={isDrawingWalls} onClick={() => { setActiveTool(null); setIsArchitectMode(false); setIsPlacingLights(false); setIsDrawingWalls(p => !p); }} />
+                    <ToolButton name="light" icon="lightbulb" isActive={isPlacingLights} onClick={() => { setActiveTool(null); setIsArchitectMode(false); setIsDrawingWalls(false); setIsPlacingLights(p => !p); }} />
+                    <ToolButton name="delete" icon="trash-2" isActive={isDeleting} onClick={() => { setActiveTool(null); setIsArchitectMode(false); setIsDrawingWalls(false); setIsPlacingLights(false); setIsDeleting(p => !p); }} />
+                </div>
+            </div>
 
-            <button 
-              onClick={() => { setShowAssetManager(false); setShowTokenManager(false); setIsArchitectMode(false); setIsPlacingLights(false); setIsDrawingWalls(!isDrawingWalls); }}
-              className={`w-10 h-10 backdrop-blur rounded-xl border shadow-2xl flex items-center justify-center transition-all hover:scale-105 ${isDrawingWalls ? 'bg-blue-900/80 border-blue-500 text-blue-300' : 'bg-slate-900/80 border-slate-700 text-slate-300 hover:border-blue-500 hover:bg-slate-800'}`}
-              title={isDrawingWalls ? "Stop Drawing (D)" : "Freehand Draw Tool (D)"}
-            >
-              <Icon name="pencil" size={18} />
-            </button>
-
-            <button 
-              onClick={() => { setShowAssetManager(false); setShowTokenManager(false); setIsArchitectMode(false); setIsDrawingWalls(false); setIsPlacingLights(!isPlacingLights); }}
-              className={`w-10 h-10 backdrop-blur rounded-xl border shadow-2xl flex items-center justify-center transition-all hover:scale-105 ${isPlacingLights ? 'bg-yellow-900/80 border-yellow-500 text-yellow-300' : 'bg-slate-900/80 border-slate-700 text-slate-300 hover:border-yellow-500 hover:bg-slate-800'}`}
-              title={isPlacingLights ? "Stop Placing Lights (L)" : "Place Light Source (L)"}
-            >
-              <Icon name="lightbulb" size={18} />
-            </button>
-
-            <button 
-              onClick={() => { setShowAssetManager(false); setShowTokenManager(!showTokenManager); setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); }}
-              className={`w-10 h-10 backdrop-blur rounded-xl border shadow-2xl flex items-center justify-center transition-all hover:scale-105 ${showTokenManager ? 'bg-indigo-900/80 border-indigo-500 text-indigo-300' : 'bg-slate-900/80 border-slate-700 text-slate-300 hover:border-indigo-500 hover:bg-slate-800'}`}
-              title="Actors & Tokens (T)"
-            >
-              <Icon name="users" size={18} />
-            </button>
-
-            <div className="w-6 h-px bg-slate-700/50 my-1 mx-auto rounded-full"></div>
-
-            <button 
-              onClick={() => { setShowTokenManager(false); setShowAssetManager(!showAssetManager); setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); }}
-              className={`w-10 h-10 backdrop-blur rounded-xl border shadow-2xl flex items-center justify-center transition-all hover:scale-105 ${showAssetManager ? 'bg-amber-900/80 border-amber-500 text-amber-300' : 'bg-slate-900/80 border-slate-700 text-slate-300 hover:border-amber-500 hover:bg-slate-800'}`}
-              title="Map Editor (M)"
-            >
-              <Icon name="map" size={18} />
-            </button>
-
-            <div className="w-6 h-px bg-slate-700/50 my-1 mx-auto rounded-full"></div>
+            <div className="flex flex-col gap-2">
+                <ToolButton name="tokens" icon="users" isActive={showTokenManager} onClick={() => { setActiveTool(null); setShowAssetManager(false); setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); setShowTokenManager(p => !p); }} isStandalone={true} />
+                <ToolButton name="map" icon="map" isActive={showAssetManager} onClick={() => { setActiveTool(null); setShowTokenManager(false); setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); setShowAssetManager(p => !p); }} isStandalone={true} />
+            </div>
           </>
         )}
 
-        {onOpenHandouts && (
-          <button 
-            onClick={onOpenHandouts}
-            className="w-10 h-10 bg-amber-900/60 backdrop-blur border border-amber-700 hover:border-amber-500 hover:bg-amber-800 text-amber-200 rounded-xl shadow-2xl flex items-center justify-center transition-all hover:scale-105"
-            title="Handouts"
-          >
-            <Icon name="scroll" size={18} />
-          </button>
-        )}
+        <div className="w-full h-px bg-slate-700/50 my-1"></div>
 
-        {(onOpenChat || onOpenJournal) && (
-          <div className="w-6 h-px bg-slate-700/50 my-1 mx-auto rounded-full"></div>
-        )}
-
-        {onOpenChat && (
-          <button 
-            onClick={onOpenChat}
-            className="w-10 h-10 bg-indigo-900/60 backdrop-blur border border-indigo-700 hover:border-indigo-500 hover:bg-indigo-800 text-indigo-200 rounded-xl shadow-2xl flex items-center justify-center transition-all hover:scale-105"
-            title="Chat & Dice"
-          >
-            <Icon name="message-circle" size={18} />
-          </button>
-        )}
-
-        {onOpenJournal && (
-          <button 
-            onClick={onOpenJournal}
-            className="w-10 h-10 bg-emerald-900/60 backdrop-blur border border-emerald-700 hover:border-emerald-500 hover:bg-emerald-800 text-emerald-200 rounded-xl shadow-2xl flex items-center justify-center transition-all hover:scale-105"
-            title="Journal"
-          >
-            <Icon name="book" size={18} />
-          </button>
-        )}
+        <div className="flex flex-col gap-2">
+            {onOpenHandouts && <ToolButton name="Handouts" icon="scroll" onClick={onOpenHandouts} isStandalone={true} />}
+            {onOpenChat && <ToolButton name="Chat" icon="message-circle" onClick={onOpenChat} isStandalone={true} />}
+            {onOpenJournal && <ToolButton name="Journal" icon="book" onClick={onOpenJournal} isStandalone={true} />}
+        </div>
       </div>
 
       {/* Actors Manager Drawer */}
@@ -3050,13 +3046,20 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
           activeMapId={activeMapId}
           updateMap={updateMap}
           onClose={() => setShowAssetManager(false)} 
-          onSetBackground={(url) => updateMap(campaignCode, activeMapId, { backgroundUrl: url })}
+          onSetBackground={handleSetBackground}
           onSetHeightmap={(url) => updateMap(campaignCode, activeMapId, { heightmapUrl: url })}
-          onGenerateMap={({ backgroundUrl, heightmapUrl }) => {
-              updateMap(campaignCode, activeMapId, { backgroundUrl, heightmapUrl });
+          onGenerateMap={({ backgroundUrl, heightmapUrl, features, prompt }) => {
+              updateMap(campaignCode, activeMapId, {
+                  backgroundUrl,
+                  heightmapUrl,
+                  walls: features.walls || {},
+                  lights: features.lights || {},
+                  prompt: prompt || ''
+              });
           }}
           isSnapToGrid={isSnapToGrid}
           setIsSnapToGrid={setIsSnapToGrid}
+          onNewBlankMap={handleNewBlankMap}
         />
       )}
 
@@ -3098,7 +3101,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
               <button 
                 className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors text-blue-400 font-bold"
                 onClick={() => {
-                  updateToken(contextMenu.tokenId, { elevationOffset: 0 });
+                  updateMap(campaignCode, activeMapId, { [`tokens.${contextMenu.tokenId}.elevationOffset`]: 0 });
                   setContextMenu(null);
                 }}
               >
@@ -3115,9 +3118,11 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
                     const idsToToggle = selectedTokenIds.includes(contextMenu.tokenId) && selectedTokenIds.length > 1 
                         ? selectedTokenIds 
                         : [contextMenu.tokenId];
+                    const updates = {};
                     idsToToggle.forEach(id => {
-                        updateToken(id, { isSharedControl: !contextMenu.isSharedControl });
+                        updates[`tokens.${id}.isSharedControl`] = !contextMenu.isSharedControl;
                     });
+                    updateMap(campaignCode, activeMapId, updates);
                     setContextMenu(null);
                   }}
                 >
@@ -3142,7 +3147,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
                 <button 
                   className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors"
                   onClick={() => {
-                    updateToken(contextMenu.tokenId, { isHidden: !contextMenu.isHidden });
+                    updateMap(campaignCode, activeMapId, { [`tokens.${contextMenu.tokenId}.isHidden`]: !contextMenu.isHidden });
                     setContextMenu(null);
                   }}
                 >
@@ -3155,13 +3160,13 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
                     <div className="flex items-center gap-1">
                         <button onClick={() => {
                             const newSize = Math.max(0.5, (contextMenu.size || 1) - 0.5);
-                            updateToken(contextMenu.tokenId, { size: newSize });
+                            updateMap(campaignCode, activeMapId, { [`tokens.${contextMenu.tokenId}.size`]: newSize });
                             setContextMenu({ ...contextMenu, size: newSize }); // Keeps menu open!
                         }} className="p-1.5 bg-slate-700 rounded hover:bg-slate-600"><Icon name="minus" size={12}/></button>
                         <span className="text-sm font-bold w-6 text-center tabular-nums">{contextMenu.size || 1}</span>
                         <button onClick={() => {
                             const newSize = (contextMenu.size || 1) + 0.5;
-                            updateToken(contextMenu.tokenId, { size: newSize });
+                            updateMap(campaignCode, activeMapId, { [`tokens.${contextMenu.tokenId}.size`]: newSize });
                             setContextMenu({ ...contextMenu, size: newSize }); // Keeps menu open!
                         }} className="p-1.5 bg-slate-700 rounded hover:bg-slate-600"><Icon name="plus" size={12}/></button>
                     </div>
@@ -3171,12 +3176,16 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
                 <button 
                   className="w-full text-left px-4 py-2 hover:bg-red-900/50 text-red-400 transition-colors"
                   onClick={() => {
+                    const updates = {};
                     if (selectedTokenIds.includes(contextMenu.tokenId) && selectedTokenIds.length > 1) {
-                        selectedTokenIds.forEach(id => deleteToken(id));
+                        selectedTokenIds.forEach(id => {
+                            updates[`tokens.${id}`] = null;
+                        });
                         setSelectedTokenIds([]);
                     } else {
-                        deleteToken(contextMenu.tokenId);
+                        updates[`tokens.${contextMenu.tokenId}`] = null;
                     }
+                    updateMap(campaignCode, activeMapId, updates);
                     setContextMenu(null);
                   }}
                 >
@@ -3227,6 +3236,17 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
                     }}
                 >
                     Make Window
+                </button>
+                <div className="border-t border-slate-700 my-1"></div>
+                <button
+                    className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors text-cyan-400"
+                    onClick={() => {
+                        const wall = mapData.walls[wallContextMenu.wallId];
+                        updateMap(campaignCode, activeMapId, { [`walls.${wallContextMenu.wallId}.isSecret`]: !wall?.isSecret });
+                        setWallContextMenu(null);
+                    }}
+                >
+                    {mapData.walls[wallContextMenu.wallId]?.isSecret ? 'Make Not Secret' : 'Make Secret'}
                 </button>
                 <div className="border-t border-slate-700 my-1"></div>
                 <button 
@@ -3371,3 +3391,19 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
     </div>
   );
 }
+
+const ToolButton = ({ name, icon, isActive, onClick, isStandalone = false, title }) => {
+    const baseClasses = isStandalone 
+        ? "w-10 h-10 backdrop-blur rounded-xl border shadow-2xl flex items-center justify-center transition-all hover:scale-105"
+        : "w-9 h-9 rounded-full flex items-center justify-center transition-colors";
+
+    const colorClasses = isStandalone
+        ? (isActive ? 'bg-indigo-900/80 border-indigo-500 text-indigo-300' : 'bg-slate-900/80 border-slate-700 text-slate-300 hover:border-indigo-500 hover:bg-slate-800')
+        : (isActive ? 'bg-slate-700 text-amber-400' : 'text-slate-400 hover:bg-slate-800 hover:text-white');
+
+    return (
+        <button onClick={onClick} className={`${baseClasses} ${colorClasses}`} title={title || name.charAt(0).toUpperCase() + name.slice(1)}>
+            <Icon name={icon} size={18} />
+        </button>
+    );
+};
