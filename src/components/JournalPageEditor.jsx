@@ -399,7 +399,7 @@ const JournalPageEditor = ({
                             <Icon name={toolbarExpanded ? "chevron-up" : "more-horizontal"} size={20} />
                         </button>
 
-                        <div className="hidden md:flex items-center bg-slate-800 rounded border border-slate-700">
+                        <div className="flex items-center bg-slate-800 rounded border border-slate-700">
                             <button onClick={() => adjustZoom(-0.1)} className="p-1 hover:text-white text-slate-400 border-r border-slate-700">
                                 <Icon name="minus" size={12}/>
                             </button>

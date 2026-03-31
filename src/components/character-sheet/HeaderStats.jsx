@@ -250,7 +250,7 @@ const HeaderStats = ({ onDiceRoll, onLogAction, onBack, onPossess, isNpc, combat
               </div>
               {/* END CHANGE */}
 
-              <div className="grid grid-cols-6 gap-2 mb-4 bg-slate-800/50 p-2 rounded-xl border border-slate-700">
+              <div className="grid grid-cols-3 md:grid-cols-6 gap-2 mb-4 bg-slate-800/50 p-2 rounded-xl border border-slate-700">
                   {['str', 'dex', 'con', 'int', 'wis', 'cha'].map((stat) => {
                         const val = character.stats?.[stat] || 10;
                         const mod = calcMod(val);
@@ -274,7 +274,7 @@ const HeaderStats = ({ onDiceRoll, onLogAction, onBack, onPossess, isNpc, combat
                 </div>
                 
                 {/* SENSES ROW: Now 4 columns to include Darkvision */}
-                <div className="grid grid-cols-4 gap-2 text-center">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-center">
                     <div className="bg-slate-800 p-1 rounded border border-slate-700">
                         <div className="text-[9px] text-slate-500">Perc</div>
                         <div className="text-sm font-bold text-white">{passPerc}</div>

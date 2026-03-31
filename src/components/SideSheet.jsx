@@ -1,4 +1,4 @@
-import React, { useMemo, useEffect, useState } from 'react';
+import React, { useMemo, useEffect, useState, useCallback } from 'react';
 import SheetContainer from './character-sheet/SheetContainer';
 import { useCharacterStore } from '../stores/useCharacterStore';
 import { useNewCampaign } from '../contexts/NewCampaignProvider';
@@ -22,6 +22,7 @@ const SideSheet = ({ characterId, onClose, role, onDiceRoll }) => {
     const [availableModels, setAvailableModels] = useState([]);
     const [miniSearchQuery, setMiniSearchQuery] = useState("");
     const [isSearchingMinis, setIsSearchingMinis] = useState(false);
+    const [editableName, setEditableName] = useState('');
 
     const handleMiniSearch = async (overrideQuery, typeFallback) => {
         const q = overrideQuery !== undefined ? overrideQuery : miniSearchQuery;
@@ -47,7 +48,7 @@ const SideSheet = ({ characterId, onClose, role, onDiceRoll }) => {
         return () => unsub();
     }, [isVirtual, tokenId, gameParams?.code, activeMapId]);
 
-    const handleSave = (char) => {
+    const handleSave = useCallback((char) => {
         if (isVirtual && tokenId) {
             if (activeMapId) updateMap(gameParams.code, activeMapId, { [`tokens.${tokenId}.hp`]: char.hp });
             const isPc = data?.players?.some(p => String(p.id) === String(actualCharId));
@@ -68,13 +69,25 @@ const SideSheet = ({ characterId, onClose, role, onDiceRoll }) => {
                 updateCampaign({ npcs: newNpcs });
             }
         }
-    };
+    }, [isVirtual, tokenId, activeMapId, gameParams?.code, data, updateCampaign, actualCharId]);
 
     const character = useMemo(() => {
         if (!data) return null;
         const allChars = [...(data.players || []), ...(data.npcs || [])];
         return allChars.find(c => String(c.id) === String(actualCharId));
     }, [actualCharId, data]);
+
+    useEffect(() => {
+        if (character) {
+            setEditableName(character.name);
+        }
+    }, [character]);
+
+    const handleNameSave = () => {
+        if (character && editableName && character.name !== editableName) {
+            handleSave({ ...character, name: editableName });
+        }
+    };
 
     const handleOpenModelPicker = () => {
         if (!character) return;
@@ -84,17 +97,19 @@ const SideSheet = ({ characterId, onClose, role, onDiceRoll }) => {
         handleMiniSearch(character.name, character.race);
     };
 
-    const handleModelSelect = (model) => {
+    const handleModelSelect = (model, forceStatue = false) => {
         if (!character) return;
         const finalChar = { ...character };
         if (model) {
             finalChar.modelUrl = model.url;
             finalChar.modelScale = model.scale;
             finalChar.modelYOffset = model.yOffset;
+            finalChar.forceStatue = forceStatue;
         } else {
             delete finalChar.modelUrl;
             delete finalChar.modelScale;
             delete finalChar.modelYOffset;
+            delete finalChar.forceStatue;
         }
         handleSave(finalChar);
         setShowModelPicker(false);
@@ -147,20 +162,34 @@ const SideSheet = ({ characterId, onClose, role, onDiceRoll }) => {
 
     return (
         <div className="absolute top-0 right-0 bottom-0 w-[550px] bg-slate-900 border-l border-slate-700 shadow-2xl z-[80] flex flex-col animate-in slide-in-from-right duration-300">
-            <SheetContainer 
-                key={displayId}
-                characterId={displayId}
-                data={modifiedData}
-                onClose={onClose}
-                onBack={onClose}
-                onSave={handleSave}
-                role={role}
-                onDiceRoll={onDiceRoll}
-                onLogAction={(msg) => addLogEntry({ message: msg, id: Date.now() })}
-                isOwner={isOwner}
-                    onOpenModelPicker={role === 'dm' ? handleOpenModelPicker : undefined}
-            />
-            {showModelPicker && character && (
+            <div className="p-4 border-b border-slate-700 flex items-center gap-4 shrink-0">
+                <input 
+                    type="text"
+                    value={editableName}
+                    onChange={e => setEditableName(e.target.value)}
+                    onBlur={handleNameSave}
+                    onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); }}
+                    className="text-xl font-bold text-white bg-transparent outline-none focus:bg-slate-800 rounded px-2 -mx-2 w-full"
+                />
+                <button onClick={onClose} className="text-slate-400 hover:text-white">
+                    <Icon name="x" size={24} />
+                </button>
+            </div>
+            <div className="flex-1 min-h-0 relative">
+                <SheetContainer 
+                    key={displayId}
+                    characterId={displayId}
+                    data={modifiedData}
+                    onClose={onClose}
+                    onBack={onClose}
+                    onSave={handleSave}
+                    role={role}
+                    onDiceRoll={onDiceRoll}
+                    onLogAction={(msg) => addLogEntry({ message: msg, id: Date.now() })}
+                    isOwner={isOwner}
+                        onOpenModelPicker={role === 'dm' ? handleOpenModelPicker : undefined}
+                />
+                {showModelPicker && character && (
                 <div className="fixed inset-0 z-[110] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
                     <div className="max-w-2xl w-full bg-slate-900 rounded-xl border border-slate-700 shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
                         <div className="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-800">
@@ -192,12 +221,20 @@ const SideSheet = ({ characterId, onClose, role, onDiceRoll }) => {
                                     <p className="text-slate-400 mb-4 text-sm">We found {availableModels.length} compatible 3D models.</p>
                             <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                                 {availableModels.map((model, i) => (
-                                    <div key={i} onClick={() => handleModelSelect(model)} className="bg-slate-800 border border-slate-700 rounded-lg p-2 cursor-pointer hover:border-amber-500 hover:bg-slate-700 transition-all group">
-                                        <div className="aspect-square bg-slate-900 rounded-md mb-2 overflow-hidden border border-slate-700 group-hover:border-amber-500/50 relative">
+                                    <div key={i} className="bg-slate-800 border border-slate-700 rounded-lg p-2 flex flex-col justify-between transition-all group">
+                                        <div>
+                                            <div className="aspect-square bg-slate-900 rounded-md mb-2 overflow-hidden border border-slate-700 relative">
                                             {model.thumb ? <img src={model.thumb} className="w-full h-full object-cover" /> : <Icon name="box" size={32} className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-slate-600"/>}
                                         </div>
-                                        <div className="font-bold text-sm text-slate-200 group-hover:text-amber-400 truncate">{model.name}</div>
-                                        <div className="text-[10px] text-slate-500 truncate">Scale: {model.scale}x</div>
+                                            <div className="font-bold text-sm text-slate-200 truncate">{model.name}</div>
+                                            <div className="text-[10px] text-slate-500 truncate">Scale: {model.scale}x</div>
+                                        </div>
+                                        <div className="flex gap-2 mt-2">
+                                            <button onClick={() => handleModelSelect(model)} className="flex-1 text-center text-xs px-2 py-1.5 bg-amber-700 hover:bg-amber-600 rounded text-white font-bold transition-colors">Select</button>
+                                            <button onClick={() => handleModelSelect(model, true)} className="text-center text-xs p-1.5 bg-slate-700 hover:bg-slate-600 rounded text-slate-300 hover:text-white transition-colors" title="Select as stone statue">
+                                                <Icon name="gem" size={14}/>
+                                            </button>
+                                        </div>
                                     </div>
                                 ))}
                                 
@@ -214,7 +251,8 @@ const SideSheet = ({ characterId, onClose, role, onDiceRoll }) => {
                         </div>
                     </div>
                 </div>
-            )}
+                )}
+            </div>
         </div>
     );
 };

@@ -37,6 +37,14 @@ h1, h2, h3, .fantasy-font { font-family: 'Cinzel', serif; }
     padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
+.pl-safe {
+    padding-left: env(safe-area-inset-left, 0px);
+}
+
+.pr-safe {
+    padding-right: env(safe-area-inset-right, 0px);
+}
+
 /* --- QUILL EDITOR MOBILE OVERRIDES --- */
 .ql-toolbar {
     background: #1e293b;

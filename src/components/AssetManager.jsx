@@ -229,11 +229,11 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                             min="5" 
                             max="100" 
                             step="1" 
-                            value={mapData.scale || 20} 
+                            value={mapData?.scale || 20} 
                             onChange={(e) => updateMap(campaignCode, activeMapId, { scale: parseFloat(e.target.value) })}
                             className="w-full accent-amber-500"
                         />
-                        <div className="text-right text-xs text-slate-400 mt-1">{mapData.scale || 20} units</div>
+                        <div className="text-right text-xs text-slate-400 mt-1">{mapData?.scale || 20} units</div>
                     </div>
                     
                     <div>
@@ -243,11 +243,11 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                             min="0.5" 
                             max="5" 
                             step="0.5" 
-                            value={mapData.gridSize || 1} 
+                            value={mapData?.gridSize || 1} 
                             onChange={(e) => updateMap(campaignCode, activeMapId, { gridSize: parseFloat(e.target.value) })}
                             className="w-full accent-amber-500"
                         />
-                        <div className="text-right text-xs text-slate-400 mt-1">{mapData.gridSize || 1}x</div>
+                        <div className="text-right text-xs text-slate-400 mt-1">{mapData?.gridSize || 1}x</div>
                     </div>
 
                     <div>
@@ -327,7 +327,7 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                             onChange={(e) => updateMap(campaignCode, activeMapId, { heightScale: parseFloat(e.target.value) })}
                             className="w-full accent-blue-500"
                         />
-                        <div className="text-right text-xs text-slate-400 mt-1">{mapData.heightScale || 1}x multiplier</div>
+                        <div className="text-right text-xs text-slate-400 mt-1">{mapData?.heightScale || 1}x multiplier</div>
                         
                         <button onClick={() => updateMap(campaignCode, activeMapId, { heightmapUrl: null, heightScale: 1 })} className="w-full py-2 border border-red-900/50 rounded text-center text-xs font-bold text-red-400 hover:bg-red-900/20 hover:text-red-300 hover:border-red-500 mt-4 transition-colors">
                             <Icon name="trash-2" size={14} className="inline mr-1" /> Remove Heightmap

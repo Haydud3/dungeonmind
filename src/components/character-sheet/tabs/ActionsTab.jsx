@@ -332,7 +332,7 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
             {/* ADD FORM */}
             {showAdd && isOwner && (
                 <div className="bg-slate-800 p-4 rounded-xl border border-slate-600 shadow-xl animate-in slide-in-from-top-2">
-                    <div className="grid grid-cols-2 gap-3 mb-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
                         <div className="col-span-2">
                             <label className="text-[10px] uppercase font-bold text-slate-500">Name</label>
                             <input className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm" value={newAction.name} onChange={e=>setNewAction({...newAction, name:e.target.value})} placeholder="Fireball"/>

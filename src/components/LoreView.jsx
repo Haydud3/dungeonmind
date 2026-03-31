@@ -69,7 +69,7 @@ const LoreView = ({ aiHelper }) => {
                         <p className="text-slate-400 text-sm">Upload campaign books to feed the DungeonMind.</p>
                     </div>
                     <div className="text-right">
-                        <div className="text-2xl font-bold text-white">{(pdfChunks || []).length}</div>
+                        <div className="text-2xl font-bold text-white">{(loreChunks || []).length}</div>
                         <div className="text-xs text-slate-500 uppercase tracking-widest">Pages Indexed</div>
                     </div>
                 </div>
@@ -88,7 +88,7 @@ const LoreView = ({ aiHelper }) => {
                 </div>
 
                 {/* CONTENT AREA */}
-                <div className="flex-1 flex gap-6 overflow-hidden">
+                <div className="flex-1 flex flex-col md:flex-row gap-6 overflow-hidden">
                     {/* RESULTS */}
                     <div className="flex-1 overflow-y-auto custom-scroll space-y-4 pr-2">
                         {searchResults.map((hit, i) => (
@@ -104,7 +104,7 @@ const LoreView = ({ aiHelper }) => {
                     </div>
 
                     {/* UPLOAD BOX */}
-                    <div className="w-80 shrink-0 flex flex-col gap-4">
+                    <div className="w-full md:w-80 h-64 md:h-auto shrink-0 flex flex-col gap-4">
                         <div {...getRootProps()} className={`flex-1 border-2 border-dashed rounded-xl flex flex-col items-center justify-center p-6 text-center cursor-pointer transition-all ${isDragActive ? 'border-cyan-400 bg-cyan-900/10' : 'border-slate-700 hover:border-slate-500 hover:bg-slate-800'}`}>
                             <input {...getInputProps()} />
                             {isProcessing ? (

@@ -1,8 +1,9 @@
-import React, { useState, useEffect, Suspense } from 'react';
+import React, { useState, useEffect, Suspense, useMemo } from 'react';
 import { useGLTF, Center } from '@react-three/drei';
 import { retrieveChunkedMap } from '../utils/storageUtils';
+import * as THREE from 'three';
 
-const CharacterModel = ({ modelUrl, scale }) => {
+const CharacterModel = ({ modelUrl, scale, forceStatue }) => {
     const [url, setUrl] = useState(null);
     const [error, setError] = useState(null);
 
@@ -43,16 +44,41 @@ const CharacterModel = ({ modelUrl, scale }) => {
 
     return (
         <Suspense fallback={null}>
-            <GLTFModel url={url} scale={scale} />
+            <GLTFModel url={url} scale={scale} forceStatue={forceStatue} />
         </Suspense>
     )
 };
 
-const GLTFModel = ({ url, scale }) => {
+const GLTFModel = ({ url, scale, forceStatue }) => {
     const { scene } = useGLTF(url);
+
+    const statueMaterial = useMemo(() => new THREE.MeshStandardMaterial({
+        color: '#94a3b8', // slate-400
+        roughness: 0.7,
+        metalness: 0.2,
+    }), []);
+
+    const clonedScene = useMemo(() => {
+        const clone = scene.clone(true);
+        if (forceStatue) {
+            clone.traverse((child) => {
+                if (child.isMesh) {
+                    // Ensure we don't override materials that already have textures
+                    if (Array.isArray(child.material)) {
+                        child.material = child.material.map(mat => mat.map ? mat : statueMaterial);
+                    } else if (child.material && !child.material.map) {
+                        child.material = statueMaterial;
+                    }
+                }
+            });
+        }
+        return clone;
+    }, [scene, forceStatue, statueMaterial]);
+
+
     return (
         <Center>
-            <primitive object={scene.clone(true)} scale={scale} />
+            <primitive object={clonedScene} scale={scale} />
         </Center>
     );
 }

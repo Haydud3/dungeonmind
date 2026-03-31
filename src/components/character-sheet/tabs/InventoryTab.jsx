@@ -72,7 +72,7 @@ const InventoryTab = ({ onDiceRoll, onLogAction, isOwner }) => {
                     <div className="w-8 h-8 rounded-full bg-amber-500/10 border border-amber-500/50 flex items-center justify-center text-amber-500"><Icon name="coins" size={18}/></div>
                     <h3 className="text-sm font-bold text-white">Currency</h3>
                 </div>
-                <div className="flex gap-2">
+                <div className="grid grid-cols-3 md:grid-cols-5 gap-2">
                     {['cp', 'sp', 'ep', 'gp', 'pp'].map(c => (
                         <div key={c} className="flex-1 relative">
                              <input 

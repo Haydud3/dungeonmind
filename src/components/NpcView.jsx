@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import Icon from './Icon'; 
 import CharacterCreator from './ai-wizard/CharacterCreator';
 import SheetContainer from './character-sheet/SheetContainer'; 
@@ -14,6 +14,20 @@ const NpcView = ({ data, setData, role, setChatInput, setView, onPossess, aiHelp
     const { updateCampaign } = useNewCampaign();
     // View State
     const [viewingNpcId, setViewingNpcId] = useState(null);
+    const [editableName, setEditableName] = useState('');
+
+    const viewingNpc = useMemo(() => {
+        if (!viewingNpcId) return null;
+        const npcs = (data?.npcs || []).filter(n => n && n.id);
+        return npcs.find(n => String(n.id) === String(viewingNpcId));
+    }, [viewingNpcId, data?.npcs]);
+
+    useEffect(() => {
+        if (viewingNpc) {
+            setEditableName(viewingNpc.name);
+        }
+    }, [viewingNpc]);
+
 // END CHANGE
     const [showCreationMenu, setShowCreationMenu] = useState(false);
     const [showAiCreator, setShowAiCreator] = useState(false);
@@ -123,6 +137,12 @@ const NpcView = ({ data, setData, role, setChatInput, setView, onPossess, aiHelp
         setIsForging(false);
     };
     // END CHANGE
+
+    const handleNameSave = () => {
+        if (viewingNpc && editableName && viewingNpc.name !== editableName) {
+            handleSheetSave({ ...viewingNpc, name: editableName });
+        }
+    };
 
     // --- D&D 5e API INTEGRATION ---
     const searchCompendium = async () => {
@@ -236,16 +256,18 @@ const NpcView = ({ data, setData, role, setChatInput, setView, onPossess, aiHelp
         handleMiniSearch(npc.name, npc.race);
     };
 
-    const handleModelSelect = (model) => {
+    const handleModelSelect = (model, forceStatue = false) => {
         const finalNpc = { ...npcForModelSelection };
         if (model) {
             finalNpc.modelUrl = model.url;
             finalNpc.modelScale = model.scale;
             finalNpc.modelYOffset = model.yOffset;
+            finalNpc.forceStatue = forceStatue;
         } else {
             delete finalNpc.modelUrl;
             delete finalNpc.modelScale;
             delete finalNpc.modelYOffset;
+            delete finalNpc.forceStatue;
         }
         if (isNewNpc) {
             handleNpcComplete(finalNpc);
@@ -331,32 +353,46 @@ const NpcView = ({ data, setData, role, setChatInput, setView, onPossess, aiHelp
     if (viewingNpcId) {
         return (
             <div className="fixed inset-0 z-[9999] bg-slate-950 flex flex-col h-full w-full animate-in fade-in">
-                <SheetContainer 
-                    characterId={viewingNpcId} 
-                    onSave={handleSheetSave} 
-                    onBack={() => setViewingNpcId(null)} 
-                    onDiceRoll={async (formula, options) => {
-                        if (onDiceRoll) {
-                            const r = await onDiceRoll(formula, { ...options, chat: true, isPrivate: role === 'dm' });
-                            if (typeof r === 'number') return r;
-                            if (r && typeof r === 'object') {
-                                if (typeof r.total === 'number') return r.total;
-                                if (typeof r.result === 'number') return r.result;
+                <div className="p-4 border-b border-slate-700 flex items-center gap-4 shrink-0 bg-slate-900">
+                    <button onClick={() => setViewingNpcId(null)} className="text-slate-400 hover:text-white">
+                        <Icon name="arrow-left" size={24} />
+                    </button>
+                    <input 
+                        type="text"
+                        value={editableName}
+                        onChange={e => setEditableName(e.target.value)}
+                        onBlur={handleNameSave}
+                        onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); }}
+                        className="text-2xl font-bold text-white bg-transparent outline-none focus:bg-slate-800 rounded px-2 -mx-2 w-full"
+                    />
+                </div>
+                <div className="flex-1 min-h-0 relative">
+                    <SheetContainer 
+                        characterId={viewingNpcId} 
+                        onSave={handleSheetSave} 
+                        onBack={() => setViewingNpcId(null)} 
+                        onDiceRoll={async (formula, options) => {
+                            if (onDiceRoll) {
+                                const r = await onDiceRoll(formula, { ...options, chat: true, isPrivate: role === 'dm' });
+                                if (typeof r === 'number') return r;
+                                if (r && typeof r === 'object') {
+                                    if (typeof r.total === 'number') return r.total;
+                                    if (typeof r.result === 'number') return r.result;
+                                }
+                                const parsed = parseInt(r);
+                                return isNaN(parsed) ? 0 : parsed;
                             }
-                            const parsed = parseInt(r);
-                            return isNaN(parsed) ? 0 : parsed;
-                        }
-                    }} 
-                    diceLog={diceLog}
-                    onLogAction={(msg) => addLogEntry({ message: msg, id: Date.now() })}
-                    isNpc={true} 
-                    // --- FIX: PASS ROLE HERE ---
-                    role={role}
-                    // ---------------------------
-                    onOpenModelPicker={() => openModelPickerForExisting(viewingNpcId)}
-                />
-                {showModelPicker && npcForModelSelection && (
-                    <div className="fixed inset-0 z-[10000] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
+                        }} 
+                        diceLog={diceLog}
+                        onLogAction={(msg) => addLogEntry({ message: msg, id: Date.now() })}
+                        isNpc={true} 
+                        // --- FIX: PASS ROLE HERE ---
+                        role={role}
+                        // ---------------------------
+                        onOpenModelPicker={() => openModelPickerForExisting(viewingNpcId)}
+                    />
+                    {showModelPicker && npcForModelSelection && (
+                        <div className="absolute inset-0 z-[10000] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
                         <div className="max-w-2xl w-full bg-slate-900 rounded-xl border border-slate-700 shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
                             <div className="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-800">
                                 <h3 className="font-bold text-white flex items-center gap-2"><Icon name="box" size={18}/> Select 3D Mini: {npcForModelSelection.name}</h3>
@@ -387,12 +423,20 @@ const NpcView = ({ data, setData, role, setChatInput, setView, onPossess, aiHelp
                                         <p className="text-slate-400 mb-4 text-sm">We found {availableModels.length} compatible 3D models.</p>
                                 <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                                     {availableModels.map((model, i) => (
-                                        <div key={i} onClick={() => handleModelSelect(model)} className="bg-slate-800 border border-slate-700 rounded-lg p-2 cursor-pointer hover:border-amber-500 hover:bg-slate-700 transition-all group">
-                                            <div className="aspect-square bg-slate-900 rounded-md mb-2 overflow-hidden border border-slate-700 group-hover:border-amber-500/50 relative">
+                                        <div key={i} className="bg-slate-800 border border-slate-700 rounded-lg p-2 flex flex-col justify-between transition-all group">
+                                            <div>
+                                                <div className="aspect-square bg-slate-900 rounded-md mb-2 overflow-hidden border border-slate-700 relative">
                                                 {model.thumb ? <img src={model.thumb} className="w-full h-full object-cover" /> : <Icon name="box" size={32} className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-slate-600"/>}
                                             </div>
-                                            <div className="font-bold text-sm text-slate-200 group-hover:text-amber-400 truncate">{model.name}</div>
-                                            <div className="text-[10px] text-slate-500 truncate">Scale: {model.scale}x</div>
+                                                <div className="font-bold text-sm text-slate-200 truncate">{model.name}</div>
+                                                <div className="text-[10px] text-slate-500 truncate">Scale: {model.scale}x</div>
+                                            </div>
+                                            <div className="flex gap-2 mt-2">
+                                                <button onClick={() => handleModelSelect(model)} className="flex-1 text-center text-xs px-2 py-1.5 bg-amber-700 hover:bg-amber-600 rounded text-white font-bold transition-colors">Select</button>
+                                                <button onClick={() => handleModelSelect(model, true)} className="text-center text-xs p-1.5 bg-slate-700 hover:bg-slate-600 rounded text-slate-300 hover:text-white transition-colors" title="Select as stone statue">
+                                                    <Icon name="gem" size={14}/>
+                                                </button>
+                                            </div>
                                         </div>
                                     ))}
                                     
@@ -410,6 +454,7 @@ const NpcView = ({ data, setData, role, setChatInput, setView, onPossess, aiHelp
                         </div>
                     </div>
                 )}
+            </div>
             </div>
         );
     }

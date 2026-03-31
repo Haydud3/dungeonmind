@@ -396,7 +396,7 @@ const SettingsView = ({
                                                     {isDm && <span className="text-[10px] font-bold bg-amber-600/20 text-amber-500 px-2 py-0.5 rounded border border-amber-600/50 uppercase">Dungeon Master</span>}
                                                 </div>
                                                 
-                                                <div className="flex gap-2">
+                                                <div className="flex flex-wrap gap-2">
                                                     {isMe ? (
                                                         isDm && (
                                                             <button onClick={() => toggleDmStatus(uid)} className="text-xs bg-slate-800 hover:bg-red-900/50 text-slate-400 hover:text-red-400 border border-slate-600 px-3 py-1 rounded">

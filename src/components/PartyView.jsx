@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import Icon from './Icon';
 import CharacterCreator from './ai-wizard/CharacterCreator';
 import SheetContainer from './character-sheet/SheetContainer'; 
@@ -33,6 +33,21 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
     const dataRef = useRef(data);
     useEffect(() => { dataRef.current = data; }, [data]);
 
+    const [editableName, setEditableName] = useState('');
+
+    const viewingCharacter = useMemo(() => {
+        if (!viewingCharacterId) return null;
+        return (data?.players || []).find(p => String(p.id) === String(viewingCharacterId));
+    }, [viewingCharacterId, data?.players]);
+
+    useEffect(() => {
+        if (viewingCharacter) {
+            setEditableName(viewingCharacter.name);
+        }
+    }, [viewingCharacter]);
+
+
+
     // START CHANGE: New Forge Handler
     const handleForgeSubmit = async () => {
         if (!forgeName.trim()) return;
@@ -50,6 +65,12 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
         setIsForging(false);
     };
     // END CHANGE
+
+    const handleNameSave = () => {
+        if (viewingCharacter && editableName && viewingCharacter.name !== editableName) {
+            handleSheetSave({ ...viewingCharacter, name: editableName });
+        }
+    };
 
     const handleSheetSave = async (updatedChar) => {
         // Double check specifically for undefined here as a failsafe
@@ -182,29 +203,42 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
 
     if (viewingCharacterId) {
         return (
-            <div className="flex flex-col h-full w-full">
-                <SheetContainer 
-                    characterId={viewingCharacterId} 
-                    onSave={handleSheetSave} 
-                    onDiceRoll={async (formula, options) => {
-                        if (onDiceRoll) {
-                            const r = await onDiceRoll(formula, { ...options, chat: true, isPrivate: role === 'dm' });
-                            if (typeof r === 'number') return r;
-                            if (r && typeof r === 'object') {
-                                if (typeof r.total === 'number') return r.total;
-                                if (typeof r.result === 'number') return r.result;
+            <div className="flex flex-col h-full w-full bg-slate-950">
+                <div className="p-4 border-b border-slate-700 flex items-center gap-4 shrink-0 bg-slate-900">
+                    <button onClick={() => setViewingCharacterId(null)} className="text-slate-400 hover:text-white">
+                        <Icon name="arrow-left" size={24} />
+                    </button>
+                    <input 
+                        type="text"
+                        value={editableName}
+                        onChange={e => setEditableName(e.target.value)}
+                        onBlur={handleNameSave}
+                        onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); }}
+                        className="text-2xl font-bold text-white bg-transparent outline-none focus:bg-slate-800 rounded px-2 -mx-2 w-full"
+                    />
+                </div>
+                <div className="flex-1 min-h-0">
+                    <SheetContainer 
+                        characterId={viewingCharacterId} 
+                        onSave={handleSheetSave} 
+                        onDiceRoll={async (formula, options) => {
+                            if (onDiceRoll) {
+                                const r = await onDiceRoll(formula, { ...options, chat: true, isPrivate: role === 'dm' });
+                                if (typeof r === 'number') return r;
+                                if (r && typeof r === 'object') {
+                                    if (typeof r.total === 'number') return r.total;
+                                    if (typeof r.result === 'number') return r.result;
+                                }
+                                const parsed = parseInt(r);
+                                return isNaN(parsed) ? 0 : parsed;
                             }
-                            const parsed = parseInt(r);
-                            return isNaN(parsed) ? 0 : parsed;
-                        }
-                    }}
-                    diceLog={diceLog}
-                    onLogAction={onLogAction}
-                    onBack={() => setViewingCharacterId(null)} 
-                    // START CHANGE: Pass Role here to enable DM Tab
-                    role={role}
-                    // END CHANGE
-                />
+                        }}
+                        diceLog={diceLog}
+                        onLogAction={onLogAction}
+                        onBack={() => setViewingCharacterId(null)} 
+                        role={role}
+                    />
+                </div>
             </div>
         );
     }

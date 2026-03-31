@@ -128,12 +128,12 @@ const SkillsTab = ({ onDiceRoll, onLogAction }) => {
             {/* END CHANGE */}
 
             {/* Header */}
-            <div className="grid grid-cols-12 gap-2 text-[10px] uppercase font-bold text-slate-500 px-2 mt-2">
+            <div className="grid grid-cols-4 md:grid-cols-12 gap-2 text-[10px] uppercase font-bold text-slate-500 px-2 mt-2">
                 <div className="col-span-1">Prof</div>
-                <div className="col-span-4">Skill</div>
-                <div className="col-span-2 text-center">Stat</div>
-                <div className="col-span-3 text-center">Math</div>
-                <div className="col-span-2 text-right">Total</div>
+                <div className="col-span-2 md:col-span-4">Skill</div>
+                <div className="hidden md:block col-span-2 text-center">Stat</div>
+                <div className="hidden md:block col-span-3 text-center">Math</div>
+                <div className="col-span-1 md:col-span-2 text-right">Total</div>
             </div>
 
             {/* Skill List */}
@@ -145,33 +145,33 @@ const SkillsTab = ({ onDiceRoll, onLogAction }) => {
                         <div 
                             key={skill.name} 
                             onClick={() => handleRoll(skill)}
-                            className="grid grid-cols-12 gap-2 items-center bg-slate-800/50 border border-slate-700/50 rounded-lg p-2 hover:bg-slate-800 hover:border-amber-500/50 cursor-pointer transition-all group"
+                            className="grid grid-cols-4 md:grid-cols-12 gap-2 items-center bg-slate-800/50 border border-slate-700/50 rounded-lg p-2 hover:bg-slate-800 hover:border-amber-500/50 cursor-pointer transition-all group"
                         >
                             {/* Proficiency Dot */}
-                            <div className="col-span-1 flex justify-center" onClick={(e) => { e.stopPropagation(); toggleSkill(skill.name); }}>
+                            <div className="col-span-1 flex justify-start md:justify-center" onClick={(e) => { e.stopPropagation(); toggleSkill(skill.name); }}>
                                 <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center transition-colors ${isProf ? 'bg-amber-500 border-amber-500' : 'border-slate-600 group-hover:border-slate-400'}`}>
                                     {isProf && <Icon name="check" size={10} className="text-black stroke-[3]"/>}
                                 </div>
                             </div>
 
                             {/* Skill Name */}
-                            <div className="col-span-4 font-bold text-slate-200 text-sm truncate group-hover:text-white">
+                            <div className="col-span-2 md:col-span-4 font-bold text-slate-200 text-sm truncate group-hover:text-white">
                                 {skill.name}
                             </div>
 
-                            {/* Stat Label */}
-                            <div className="col-span-2 text-center text-xs text-slate-500 uppercase font-mono">
+                            {/* Stat Label (Hidden on Mobile) */}
+                            <div className="hidden md:block col-span-2 text-center text-xs text-slate-500 uppercase font-mono">
                                 {skill.stat.substring(0,3)}
                             </div>
 
-                            {/* The Math Breakdown */}
-                            <div className="col-span-3 text-center text-[10px] text-slate-400 font-mono flex justify-center gap-1">
+                            {/* The Math Breakdown (Hidden on Mobile) */}
+                            <div className="hidden md:flex col-span-3 text-center text-[10px] text-slate-400 font-mono justify-center gap-1">
                                 <span>{abilityMod >= 0 ? '+' : ''}{abilityMod}</span>
                                 {isProf && <span className="text-green-400">+{profBonus}</span>}
                             </div>
 
                             {/* Total Bonus */}
-                            <div className="col-span-2 text-right font-bold text-amber-500 text-sm">
+                            <div className="col-span-1 md:col-span-2 text-right font-bold text-amber-500 text-sm">
                                 {total >= 0 ? '+' : ''}{total}
                             </div>
                         </div>

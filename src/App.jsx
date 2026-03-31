@@ -233,8 +233,6 @@ function DungeonMindApp() {
   const generatePlayer = () => console.log('generatePlayer called');
   const generateNpc = () => console.log('generateNpc called');
   const savePlayer = () => console.log('savePlayer called');
-  const setLoreChunks = () => console.log('setLoreChunks called');
-  const uploadLore = () => console.log('uploadLore called');
   const handleHandoutSave = () => console.log('handleHandoutSave called');
   const handleHandoutDelete = () => console.log('handleHandoutDelete called');
   const updateCloud = () => console.log('updateCloud called');
@@ -313,7 +311,7 @@ function DungeonMindApp() {
 
 
   return (
-    <div className="fixed inset-0 w-full h-full flex flex-col md:flex-row bg-slate-900 text-slate-200 font-sans overflow-hidden">
+    <div className="fixed inset-0 w-full h-full flex flex-col md:flex-row bg-slate-900 text-slate-200 font-sans overflow-hidden pt-safe pb-safe pl-safe pr-safe">
        <Sidebar view={currentView} setView={setCurrentView} onExit={leaveCampaign} />
        <main className="flex-1 flex flex-col overflow-hidden relative w-full h-full">
            {currentView !== 'map' && (
@@ -424,7 +422,7 @@ function DungeonMindApp() {
               )}
 
               {/* 6. LORE (Bible) */}
-              {currentView === 'lore' && <LoreView data={data} aiHelper={queryAiService} pdfChunks={loreChunks} setPdfChunks={setLoreChunks} onUploadLore={uploadLore} />}
+              {currentView === 'lore' && <LoreView aiHelper={queryAiService} />}
               
               {/* 7. SETTINGS */}
               {currentView === 'settings' && <SettingsView 
