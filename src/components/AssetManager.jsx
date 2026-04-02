@@ -109,20 +109,33 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
         }
     }
 
-    const handleGenerateMap = async (asset, generationData) => {
-        const { backgroundUrl, heightmapUrl, features } = generationData;
+    const handleUpdateAssetLayer = async (asset, layerType, data) => {
         const assetRef = doc(db, 'artifacts', appId || 'dungeonmind', 'public', 'data', 'campaigns', campaignCode, 'assets', asset.id);
-        await updateDoc(assetRef, {
-            generatedMapUrl: backgroundUrl,
-            generatedHeightmapUrl: heightmapUrl,
-            generatedFeatures: features,
-        });
+        const updates = {};
+        const mapUpdates = {};
+
+        if (layerType === 'baseMap') {
+            updates.generatedMapUrl = data;
+            mapUpdates.backgroundUrl = data;
+        } else if (layerType === 'heightMap') {
+            updates.generatedHeightmapUrl = data;
+            mapUpdates.heightmapUrl = data;
+        } else if (layerType === 'architectMask') {
+            const currentFeatures = asset.generatedFeatures || { walls: {}, lights: [] };
+            updates.generatedFeatures = { ...currentFeatures, walls: data.walls };
+            mapUpdates.walls = data.walls || {};
+        } else if (layerType === 'illuminationMask') {
+            const currentFeatures = asset.generatedFeatures || { walls: {}, lights: [] };
+            updates.generatedFeatures = { ...currentFeatures, lights: data.lights };
+            mapUpdates.lights = data.lights || {};
+        }
+
+        await updateDoc(assetRef, updates);
         
         // Only apply to the current map if we are currently viewing this asset
-        if (mapData?.backgroundUrl === backgroundUrl || mapData?.backgroundUrl === asset.url) {
-            onGenerateMap(generationData);
+        if (mapData?.backgroundUrl === asset.generatedMapUrl || mapData?.backgroundUrl === asset.url || mapData?.backgroundUrl === data || mapUpdates.walls || mapUpdates.lights || mapUpdates.heightmapUrl) {
+            updateMap(campaignCode, activeMapId, mapUpdates);
         }
-        setActiveTab('library');
     };
 
     return (
@@ -340,7 +353,7 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                 <div className="flex-1 overflow-y-auto custom-scroll p-4 space-y-6">
                     <MapGenerator 
                         mapData={mapData} 
-                        onGenerateMap={(generationData) => handleGenerateMap(selectedAsset, generationData)} 
+                        onUpdateAssetLayer={(layerType, data) => handleUpdateAssetLayer(selectedAsset, layerType, data)} 
                         asset={selectedAsset} 
                     />
                 </div>
