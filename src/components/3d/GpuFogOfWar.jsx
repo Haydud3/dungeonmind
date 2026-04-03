@@ -95,6 +95,7 @@ export const GpuFogOfWar = ({ enabled, walls, lights, gridSize, mapData, aspect,
         const oldAutoClear = gl.autoClear;
         gl.autoClear = false;
 
+        const wallsArray = Object.values(walls || {});
         gl.setRenderTarget(fowTarget);
         gl.setClearColor(0xffffff, 1); // 1. Clear to white (fully fogged)
         gl.clear(true, true, true); // color, depth, stencil
@@ -107,10 +108,10 @@ export const GpuFogOfWar = ({ enabled, walls, lights, gridSize, mapData, aspect,
                 const lightRangeInMapUnits = (light.radius || 15) / 5 * gridSize; 
                 
                 let isVisibleToPlayers = role === 'dm';
-                if (!isVisibleToPlayers && playerVisionSources.length > 0) {
-                    const lightPt = { x: light.position.x, z: light.position.z };
+                if (!isVisibleToPlayers) { // If not DM, check if any player token can see this light
+                    const lightPt = { x: light.position.x, y: light.position.y || 0, z: light.position.z };
                     for (const src of playerVisionSources) {
-                        if (checkLineOfSight(src, lightPt, walls)) {
+                        if (checkLineOfSight(src, lightPt, wallsArray)) {
                             isVisibleToPlayers = true;
                             break;
                         }
@@ -132,7 +133,7 @@ export const GpuFogOfWar = ({ enabled, walls, lights, gridSize, mapData, aspect,
             fowScene.clear();
 
             let shadowGeo = null;
-            if (walls && fowWallsEnabled !== false) {
+            if (wallsArray.length > 0 && fowWallsEnabled !== false) {
                 const vertices = [];
                 Object.values(walls).forEach(wall => {
                     if (wall.isOpen || !wall.points || wall.points.length < 2) return;

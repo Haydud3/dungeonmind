@@ -23,14 +23,15 @@ export const DisplacedGrid = ({ mapData, aspect, resolvedHeightmapUrl }) => {
         canvas.height = size;
         
         ctx.clearRect(0, 0, size, size);
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)'; // Lighter overlay to contrast map features
-        ctx.lineWidth = 4;
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)'; // Slightly less transparent
+        ctx.lineWidth = 1; // Use 1 pixel line for crisp grid
         
         // Draw lines at the edge to form a grid when tiled
         ctx.beginPath();
-        ctx.moveTo(0, size);
-        ctx.lineTo(size, size);
-        ctx.lineTo(size, 0);
+        ctx.moveTo(0, size - 0.5); // Draw a line at the bottom edge
+        ctx.lineTo(size, size - 0.5);
+        ctx.moveTo(size - 0.5, 0); // Draw a line at the right edge
+        ctx.lineTo(size - 0.5, size);
         ctx.stroke();
 
         const texture = new THREE.CanvasTexture(canvas);
@@ -48,8 +49,8 @@ export const DisplacedGrid = ({ mapData, aspect, resolvedHeightmapUrl }) => {
     }, [width, height, gridSize]);
 
     return (
-        // Placed at y=0.016 to render slightly above the Fog of War (y=0.015)
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.016, 0]} renderOrder={101}>
+        // Placed at y=0.02 to ensure it renders clearly above the Fog of War (y=0.015)
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]} renderOrder={101}>
             <planeGeometry args={[width, height, subdivisions, subdivisions]} />
             <meshStandardMaterial
                 map={gridTexture}

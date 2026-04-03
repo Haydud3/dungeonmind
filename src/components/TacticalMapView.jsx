@@ -43,6 +43,34 @@ import { Rain } from './3d/Rain';
 import { DropZone } from './ui/DropZone';
 import { DisplacedGrid } from './3d/DisplacedGrid';
 
+// Helper function to generate boundary walls
+const generateBoundaryWalls = (mapScale, mapAspect) => {
+    const mapWidth = mapScale * mapAspect;
+    const mapHeight = mapScale;
+    const walls = {};
+
+    const halfWidth = mapWidth / 2;
+    const halfHeight = mapHeight / 2;
+
+    // Small offset to ensure walls are slightly outside the map plane
+    const wallThicknessOffset = 0.1; 
+
+    // Define corners slightly outside the map to ensure they encompass the entire map plane
+    const topLeft = { x: -halfWidth - wallThicknessOffset, y: 0, z: -halfHeight - wallThicknessOffset };
+    const topRight = { x: halfWidth + wallThicknessOffset, y: 0, z: -halfHeight - wallThicknessOffset };
+    const bottomLeft = { x: -halfWidth - wallThicknessOffset, y: 0, z: halfHeight + wallThicknessOffset };
+    const bottomRight = { x: halfWidth + wallThicknessOffset, y: 0, z: halfHeight + wallThicknessOffset };
+
+    // Generate unique IDs for walls
+    const generateWallId = () => `wall_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+
+    walls[generateWallId()] = { id: generateWallId(), type: 'wall', points: [topLeft, topRight] }; // Top wall
+    walls[generateWallId()] = { id: generateWallId(), type: 'wall', points: [bottomLeft, bottomRight] }; // Bottom wall
+    walls[generateWallId()] = { id: generateWallId(), type: 'wall', points: [topLeft, bottomLeft] }; // Left wall
+    walls[generateWallId()] = { id: generateWallId(), type: 'wall', points: [topRight, bottomRight] }; // Right wall
+    return walls;
+};
+
 export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet, role, onOpenHandouts, onOpenChat, onOpenJournal }) {
   const { campaign, updateCampaign, user } = useNewCampaign();
   const data = campaign;
@@ -384,7 +412,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
               visionRange = parsedDv;
           }
 
-          return { id: t.id, x: t.x || 0, z: t.z || 0, range: (visionRange / 5) * gridSize };
+          return { id: t.id, x: t.x || 0, y: t.y || 0, z: t.z || 0, range: (visionRange / 5) * gridSize };
       }).filter(Boolean);
   }, [tokensList, role, user?.uid, data?.assignments, allCharacters, gridSize, data?.players, mapData?.fowEnabled]);
 
@@ -439,13 +467,14 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
               return;
           }
 
+          const wallsArray = Object.values(mapData?.walls || {});
           const targetPt = { x: t.x || 0, z: t.z || 0 };
 
           // Check visibility from each of the player's vision sources
           for (const src of playerVisionSources) {
               // Condition 1: Is the target within darkvision range AND there is line of sight?
               const dist = Math.sqrt(Math.pow(src.x - targetPt.x, 2) + Math.pow(src.z - targetPt.z, 2));
-              if (dist <= src.range && checkLineOfSight(src, targetPt, mapData?.walls)) {
+              if (dist <= src.range && checkLineOfSight(src, targetPt, wallsArray)) {
                   visibleIds.add(t.id);
                   return; // Visible, no need to check further for this token
               }
@@ -453,7 +482,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
               // Condition 2: Is the target illuminated by a light source AND does the player have line of sight to it?
               if (mapData?.lights && mapData?.fowEnabled !== false) {
                   // First, check if the player has LOS to the target token. If not, no light can make it visible to them.
-                  if (checkLineOfSight(src, targetPt, mapData?.walls)) {
+                  if (checkLineOfSight(src, targetPt, wallsArray)) {
                       // Now, check if any light source illuminates the target token.
                       for (const light of Object.values(mapData.lights)) {
                           const lightRange = (light.radius || 15) / 5 * gridSize;
@@ -461,7 +490,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
                           const distToLight = Math.sqrt(Math.pow(lightPt.x - targetPt.x, 2) + Math.pow(lightPt.z - targetPt.z, 2));
                           
                           // A token is illuminated if it's within a light's range AND the light has LOS to it.
-                          if (distToLight <= lightRange && checkLineOfSight(lightPt, targetPt, mapData?.walls)) {
+                          if (distToLight <= lightRange && checkLineOfSight(lightPt, targetPt, wallsArray)) {
                               visibleIds.add(t.id);
                               return; // Visible, no need to check further for this token
                           }
@@ -862,6 +891,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
       const newMapId = doc(collection(db, 'a')).id;
       const newMapData = {
           name: "New Blank Map",
+              walls: generateBoundaryWalls(defaultScale, defaultAspect), // Add generated walls
           gridSize: 1,
           scale: 20,
           environment: 'day',
@@ -886,6 +916,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
     
     if (!querySnapshot.empty) {
         const existingMap = querySnapshot.docs[0];
+        const existingMapData = existingMap.data();
         await updateMap(campaignCode, existingMap.id, {
             heightmapUrl: asset.generatedHeightmapUrl || existingMap.data().heightmapUrl || null,
             walls: asset.generatedFeatures?.walls || existingMap.data().walls || {},
@@ -894,11 +925,27 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
         await updateCampaign({ activeMapId: existingMap.id });
     } else {
         const newMapId = doc(collection(db, 'a')).id;
+        const defaultScale = 20; // Default scale for new maps
+
+        let currentAspect = 1;
+        if (assetUrl) {
+            // Load image to get aspect ratio for boundary walls
+            const img = new Image();
+            img.src = assetUrl;
+            await new Promise(resolve => {
+                img.onload = () => {
+                    currentAspect = img.width / img.height || 1;
+                    resolve();
+                };
+                img.onerror = () => { console.warn("Failed to load image for aspect ratio, defaulting to 1."); resolve(); };
+            });
+        }
+        const generatedBoundaryWalls = generateBoundaryWalls(defaultScale, currentAspect);
         const newMapData = {
             name: assetName ? assetName.replace(/\.[^/.]+$/, "") : "New Map",
             backgroundUrl: assetUrl,
-            heightmapUrl: asset.generatedHeightmapUrl || null,
-            walls: asset.generatedFeatures?.walls || {},
+            heightmapUrl: asset.generatedHeightmapUrl || null, // Keep existing generated features
+            walls: { ...(asset.generatedFeatures?.walls || {}), ...generatedBoundaryWalls }, // Merge generated walls
             lights: asset.generatedFeatures?.lights || {},
             gridSize: 1,
             scale: 20,
@@ -925,8 +972,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
       onMouseMove={handleMouseMove}
     >
       <Canvas 
-        frameloop={mapData?.environment === 'rain' ? 'always' : 'demand'}
-        key={remountKey}
+        frameloop="always"
         camera={{ position: [0, 8, 8], fov: 50 }} 
         style={{ width: '100%', height: '100%' }}
         onCreated={({ gl }) => {

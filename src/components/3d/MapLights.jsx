@@ -10,10 +10,10 @@ export const MapLights = ({ lights, onContextMenu, role, gridSize = 1, showLight
             {Object.values(lights).map(light => {
                 const radiusInMapUnits = (light.radius || 15) / 5 * gridSize; 
                 return (
-                    <group key={light.id} position={[light.position.x, light.position.y || 1, light.position.z]}>
+                    <group key={light.id} position={[light.position.x, light.position.y || 1, light.position.z]} userData={{ isLight: true, lightId: light.id }}>
                         <mesh 
                             renderOrder={200}
-                            visible={showLightRadius || !!onDelete}
+                            visible={role === 'dm'} // Always visible for DM
                             onClick={(e) => {
                                 if (onDelete) {
                                     e.stopPropagation();

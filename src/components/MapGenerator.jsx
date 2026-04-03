@@ -367,7 +367,7 @@ const scanFeatures = (architectUrl, illuminationUrl, scale = 20) => {
                 }
             }
             
-            resolve({ walls, lights: Object.values(lights) });
+            resolve({ walls, lights });
         };
         
         archImg.onload = processPixels; 
