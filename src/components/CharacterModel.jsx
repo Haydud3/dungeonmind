@@ -3,7 +3,7 @@ import { useGLTF, Center } from '@react-three/drei';
 import { retrieveChunkedMap } from '../utils/storageUtils';
 import * as THREE from 'three';
 
-const CharacterModel = ({ modelUrl, scale, forceStatue }) => {
+const CharacterModel = ({ modelUrl, scale, forceStatue, opacity = 1 }) => {
     const [url, setUrl] = useState(null);
     const [error, setError] = useState(null);
 
@@ -44,37 +44,55 @@ const CharacterModel = ({ modelUrl, scale, forceStatue }) => {
 
     return (
         <Suspense fallback={null}>
-            <GLTFModel url={url} scale={scale} forceStatue={forceStatue} />
+            <GLTFModel url={url} scale={scale} forceStatue={forceStatue} opacity={opacity} />
         </Suspense>
     )
 };
 
-const GLTFModel = ({ url, scale, forceStatue }) => {
+const GLTFModel = ({ url, scale, forceStatue, opacity = 1 }) => {
     const { scene } = useGLTF(url);
 
     const statueMaterial = useMemo(() => new THREE.MeshStandardMaterial({
         color: '#94a3b8', // slate-400
         roughness: 0.7,
         metalness: 0.2,
-    }), []);
+        transparent: opacity < 1,
+        opacity: opacity
+    }), [opacity]);
 
     const clonedScene = useMemo(() => {
         const clone = scene.clone(true);
-        if (forceStatue) {
-            clone.traverse((child) => {
-                if (child.isMesh) {
-                    // Ensure we don't override materials that already have textures
+        const applyOpacity = (material) => {
+            if (opacity < 1) {
+                const newMat = material.clone();
+                newMat.transparent = true;
+                newMat.opacity = opacity;
+                return newMat;
+            }
+            return material;
+        };
+
+        clone.traverse((child) => {
+            if (child.isMesh) {
+                if (forceStatue) {
                     if (Array.isArray(child.material)) {
-                        child.material = child.material.map(mat => mat.map ? mat : statueMaterial);
+                        child.material = child.material.map(mat => applyOpacity(mat.map ? mat : statueMaterial));
                     } else if (child.material && !child.material.map) {
                         child.material = statueMaterial;
+                    } else {
+                        child.material = applyOpacity(child.material);
+                    }
+                } else if (child.material) {
+                    if (Array.isArray(child.material)) {
+                        child.material = child.material.map(applyOpacity);
+                    } else {
+                        child.material = applyOpacity(child.material);
                     }
                 }
-            });
-        }
+            }
+        });
         return clone;
-    }, [scene, forceStatue, statueMaterial]);
-
+    }, [scene, forceStatue, statueMaterial, opacity]);
 
     return (
         <Center>

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import Icon from '../Icon';
 import { updateMap } from '../../utils/mapService';
 
@@ -262,6 +263,55 @@ export const CombatTrackerSidebar = ({ combat, updateCampaign, tokens, role, cam
                         Next Turn <Icon name="arrow-right" size={16}/>
                     </button>
                 </div>
+            )}
+
+            {/* Add Combatant Modal */}
+            {showAddModal && createPortal(
+                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+                    <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-full max-w-md flex flex-col max-h-[80vh]">
+                        <div className="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-800 rounded-t-xl shrink-0">
+                            <h3 className="font-bold text-white flex items-center gap-2">
+                                <Icon name="users" size={18} className="text-amber-500"/> Add to Combat
+                            </h3>
+                            <button onClick={() => setShowAddModal(false)} className="text-slate-400 hover:text-white">
+                                <Icon name="x" size={20}/>
+                            </button>
+                        </div>
+                        
+                        <div className="p-4 overflow-y-auto custom-scroll flex-1 min-h-0 space-y-2">
+                            {allCharacters?.length > 0 ? allCharacters.map(actor => {
+                                const isNpc = data?.npcs?.some(n => String(n.id) === String(actor.id));
+                                const isAlreadyInCombat = combatants.some(c => c.characterId === actor.id);
+                                
+                                return (
+                                    <div 
+                                        key={actor.id} 
+                                        className={`flex items-center gap-3 p-2 rounded-lg border ${isAlreadyInCombat ? 'bg-slate-800/50 border-slate-700 opacity-50' : 'bg-slate-800 border-slate-600 hover:border-amber-500 cursor-pointer'}`}
+                                        onClick={() => !isAlreadyInCombat && handleAddActorToCombat(actor, isNpc)}
+                                    >
+                                        <div className="w-10 h-10 rounded bg-slate-900 overflow-hidden shrink-0">
+                                            {actor.image ? <img src={actor.image} className="w-full h-full object-cover"/> : <div className="w-full h-full flex items-center justify-center font-bold text-slate-500">{actor.name?.[0] || '?'}</div>}
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                            <div className="font-bold text-white text-sm truncate">{actor.name}</div>
+                                            <div className="text-[10px] uppercase text-slate-400 font-bold">{isNpc ? 'NPC' : 'Player'}</div>
+                                        </div>
+                                        {!isAlreadyInCombat ? (
+                                            <button className="p-2 text-amber-500 hover:text-amber-400">
+                                                <Icon name="plus" size={16}/>
+                                            </button>
+                                        ) : (
+                                            <span className="text-xs text-slate-500 px-2">Added</span>
+                                        )}
+                                    </div>
+                                );
+                            }) : (
+                                <div className="text-center p-4 text-slate-500 text-sm">No characters found.</div>
+                            )}
+                        </div>
+                    </div>
+                </div>,
+                document.body
             )}
         </div>
     );

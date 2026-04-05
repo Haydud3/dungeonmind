@@ -14,6 +14,7 @@ import WorldCreator from './components/WorldCreator';
 import TacticalMapView from './components/TacticalMapView';
 import NpcView from './components/NpcView';
 import DiceOverlay from './components/DiceOverlay';
+import DiceTray from './components/DiceTray';
 import ResolvedImage from './components/ResolvedImage';
 import HandoutEditor from './components/HandoutEditor';
 import LoreView from './components/LoreView';
@@ -150,6 +151,7 @@ function DungeonMindApp() {
   const [rollingDice, setRollingDice] = useState(null);
   const [activeTemplate, setActiveTemplate] = useState(null); // NEW: Track active spell template
   const addLogEntry = useCharacterStore((state) => state.addLogEntry);
+  const rollTimeoutRef = useRef(null);
 
   const [rightPanel, setRightPanel] = useState({ mode: 'closed', data: null });
   const [vttSidebar, setVttSidebar] = useState(null); // 'chat' | 'journal' | null
@@ -227,7 +229,117 @@ function DungeonMindApp() {
 ) ? 'dm' : 'player';
 
   // --- HELPER FUNCTIONS ---
-  const handleDiceRoll = () => console.log('handleDiceRoll called');
+  const handleDiceRoll = (formula, options = {}) => {
+      try {
+          let strFormula = String(formula).trim();
+          if (/^\d+$/.test(strFormula)) {
+              strFormula = `1d${strFormula}`;
+          }
+          
+          const match = strFormula.match(/(\d*)d(\d+)\s*(?:([+-])\s*(\d+))?/i);
+          if (!match) {
+              console.error("Invalid dice formula", formula);
+              return 0;
+          }
+          
+          const count = parseInt(match[1]) || 1;
+          const sides = parseInt(match[2]) || 1; // Ensure sides is at least 1
+          const sign = match[3];
+          const modValue = parseInt(match[4]) || 0;
+          const mod = sign === '-' ? -modValue : modValue;
+          
+          let totalNatural = 0;
+          let rolls = [];
+          for(let i=0; i<count; i++) {
+              const r = Math.floor(Math.random() * sides) + 1;
+              rolls.push(r);
+              totalNatural += r;
+          }
+          
+          // Ensure totalNatural and result are always finite numbers before storing in state
+          const safeTotalNatural = Number.isFinite(totalNatural) ? totalNatural : 0;
+          const safeResult = Number.isFinite(totalNatural + mod) ? (totalNatural + mod) : 0;
+
+
+          // Debugging: Log the calculated values to console
+          console.log("DEBUG: handleDiceRoll calculated values - totalNatural:", safeTotalNatural, "result:", safeResult);
+          
+          // Determine character name for display, prioritizing options.characterName
+          const isDm = effectiveRole === 'dm';
+          const myChar = data?.players?.find(p => p.ownerId === user?.uid);
+          const defaultSenderName = possessedNpcId
+              ? data?.npcs?.find(n => n.id === possessedNpcId)?.name
+              : (isDm ? 'Dungeon Master' : (myChar?.name || user?.email?.split('@')[0] || 'Player'));
+          const derivedCharacterName = options.characterName || defaultSenderName;
+
+          const rollLog = {
+              id: Date.now().toString() + Math.random().toString(36).substring(2, 5),
+              die: `${count}d${sides}`,
+              formulaDisplay: options.alias || strFormula,
+              natural: safeTotalNatural,
+              rolls: rolls,
+              mod: mod,
+              result: safeResult,
+              characterName: derivedCharacterName, // Add to log for consistency
+          };
+          
+          setDiceLog(prev => [rollLog, ...prev].slice(0, 50));
+          
+          const newAnimations = rolls.map(r => ({ die: sides, result: r }));
+          if (rollTimeoutRef.current) clearTimeout(rollTimeoutRef.current);
+          setRollingDice(newAnimations);
+          rollTimeoutRef.current = setTimeout(() => setRollingDice(null), 4000);
+
+          const naturalClass = (sides === 20 && safeTotalNatural === 20 && count === 1) ? "text-green-400" : (sides === 20 && safeTotalNatural === 1 && count === 1) ? "text-red-400" : "text-slate-300";
+          const rollsStr = rolls.length > 1 ? rolls.join(' + ') : rolls[0];
+          const toastHtml = `
+                <div class="space-y-1 text-left w-full">
+                    <div class="font-bold text-amber-500 border-b border-amber-900/50 pb-1 flex justify-between">
+                        <span>${options.weaponName || options.alias || 'Dice Roll'}</span>
+                        <span class="text-xs text-slate-500 font-normal self-end">${options.actionType || 'Roll'}</span>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-2 text-sm text-slate-300 mt-1 w-full">
+                        <span class="bg-slate-800 px-2 py-1 rounded text-xs font-mono break-all">${strFormula}</span>
+                        <span>➜</span>
+                        <span class="font-mono text-xs ${naturalClass} break-words">[${rollsStr}]${mod !== 0 ? (mod > 0 ? '+' : '') + mod : ''}</span>
+                        <span>=</span>
+                        <span class="text-xl font-bold ${naturalClass.includes('green') ? 'text-green-400 glow' : naturalClass.includes('red') ? 'text-red-500' : 'text-white'}">${safeResult}</span>
+                    </div>
+                </div>
+          `;
+          if (addLogEntry) {
+              addLogEntry({ message: toastHtml, id: Date.now() });
+          }
+
+          const payload = {
+              formula: strFormula,
+              naturalRoll: safeTotalNatural,
+              rolls: rolls,
+              modifier: mod,
+              total: safeResult,
+              characterName: derivedCharacterName,
+              isDmRoll: isDm,
+              actionType: options.actionType || null,
+              weaponName: options.weaponName || null,
+              damageType: options.damageType || null,
+              alias: options.alias || null
+          };
+
+          sendMessage({
+              content: JSON.stringify(payload),
+              type: isDm ? 'roll-private' : 'roll-public',
+              senderId: user?.uid || 'anon',
+              senderName: derivedCharacterName,
+              targetId: null,
+              timestamp: Date.now()
+          });
+          
+          return safeResult;
+      } catch (err) {
+          console.error("Dice error", err);
+          return 0;
+      }
+  };
   const queryAiService = async () => console.log('queryAiService called');
   const handleInitiative = () => console.log('handleInitiative called');
   const generatePlayer = () => console.log('generatePlayer called');
@@ -367,6 +479,7 @@ function DungeonMindApp() {
                       onOpenHandouts={() => setShowHandoutCreator(true)}
                       onOpenChat={() => setVttSidebar('chat')}
                       onOpenJournal={() => setVttSidebar('journal')}
+                      onOpenDiceTray={() => setShowTools(p => !p)}
                   />
               )}
               
@@ -533,13 +646,8 @@ function DungeonMindApp() {
        
        {/* Global Dice Tray Sidebar */}
        {showTools && (
-           <div className="fixed z-[100] right-0 top-0 bottom-0 w-64 bg-slate-900/95 backdrop-blur border-l border-slate-700 p-4 shadow-2xl animate-in slide-in-from-right duration-300 flex flex-col">
-               <div className="flex justify-between items-center mb-4">
-                   <span className="fantasy-font text-amber-500 text-lg">Dice Roller</span>
-                   <button onClick={() => setShowTools(false)} className="text-slate-400 hover:text-white">
-                       <Icon name="x" size={24}/>
-                   </button>
-               </div>
+           <div className="fixed top-0 right-0 bottom-0 w-80 max-w-full bg-slate-900 border-l border-slate-700 shadow-2xl z-[100] flex flex-col animate-in slide-in-from-right duration-300">
+               <DiceTray diceLog={diceLog} handleDiceRoll={handleDiceRoll} onClose={() => setShowTools(false)} />
            </div>
        )}
 

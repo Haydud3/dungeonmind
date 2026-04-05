@@ -103,6 +103,10 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
 
             setAssets(prev => prev.filter(a => a.id !== asset.id));
 
+            if (mapData?.backgroundUrl === asset.url || mapData?.backgroundUrl === asset.generatedMapUrl) {
+                onNewBlankMap(true);
+            }
+
         } catch (err) {
             console.error("Error deleting asset:", err);
             alert("Failed to delete asset.");
@@ -143,7 +147,7 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
             <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-950">
                 <h3 className="font-bold text-amber-500 flex items-center gap-2"><Icon name="map" size={18} /> Map Editor</h3>
                 <div className="flex items-center">
-                    <button onClick={onNewBlankMap} className="text-slate-400 hover:text-white p-1" title="New Blank Map">
+                    <button onClick={() => onNewBlankMap()} className="text-slate-400 hover:text-white p-1" title="New Blank Map">
                         <Icon name="file-plus" size={18} />
                     </button>
                     <button onClick={onClose} className="text-slate-400 hover:text-white p-1"><Icon name="x" size={18} /></button>

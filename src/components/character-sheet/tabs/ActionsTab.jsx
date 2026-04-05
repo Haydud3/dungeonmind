@@ -97,69 +97,30 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
         if (!onDiceRoll) return alert("Dice connection missing.");
 
         if (type === 'hit') {
-            const roll = await onDiceRoll(20, true);
             const mod = parseInt(action.hit) || 0;
-            const total = roll + mod;
-            const isCrit = roll === 20;
-            const isFail = roll === 1;
-            
-            onLogAction && onLogAction(`
-                <div class="space-y-1">
-                    <div class="font-bold text-cyan-400 border-b border-cyan-900/50 pb-1 flex justify-between">
-                        <span>${action.name}</span>
-                        <span class="text-xs text-slate-500 font-normal self-end">Attack</span>
-                    </div>
-                    <div class="flex items-center gap-2 text-sm text-slate-300">
-                        <span class="bg-slate-800 px-2 py-1 rounded text-xs font-mono">d20 ${mod >= 0 ? '+' : ''}${mod}</span>
-                        <span>➜</span>
-                        <span class="font-mono text-slate-400">${roll}</span>
-                        <span>=</span>
-                        <span class="text-2xl font-bold ${isCrit ? 'text-green-400 glow' : isFail ? 'text-red-500' : 'text-white'}">${total}</span>
-                    </div>
-                </div>
-            `);
+            const formula = `1d20${mod >= 0 ? '+' : ''}${mod}`;
+            onDiceRoll(formula, {
+                actionType: 'attack',
+                weaponName: action.name,
+                alias: 'Attack Roll'
+            });
         } 
         else if (type === 'dmg') {
-            const regex = /(\d+)d(\d+)(?:\s*([+-])\s*(\d+))?/;
-            // FIX: Added safety check for action.dmg
-            const match = action.dmg ? action.dmg.match(regex) : null;
-            
-            if (match) {
-                const [fullStr, count, die, sign, modVal] = match;
-                const typeLabel = action.dmg.replace(fullStr, '').trim();
-                
-                let rollTotal = 0;
-                const rolls = [];
-                for(let i=0; i<parseInt(count); i++) {
-                    const r = await onDiceRoll(parseInt(die), true);
-                    rolls.push(r);
-                    rollTotal += r;
-                }
-                if(modVal) rollTotal += (sign === '-' ? -1 : 1) * parseInt(modVal);
-
-                onLogAction && onLogAction(`
-                    <div class="space-y-1">
-                        <div class="font-bold text-indigo-400 border-b border-indigo-900/50 pb-1 flex justify-between">
-                            <span>${action.name}</span>
-                            <span class="text-xs text-slate-500 font-normal self-end">${typeLabel || 'Damage'}</span>
-                        </div>
-                        <div class="flex flex-wrap items-center gap-2 text-sm text-slate-300">
-                            <span class="bg-slate-800 px-2 py-1 rounded text-xs font-mono">${fullStr}</span>
-                            <span>➜</span>
-                            <span class="font-mono text-xs text-slate-400">[${rolls.join('+')}]${modVal ? (sign + modVal) : ''}</span>
-                            <span>=</span>
-                            <span class="text-2xl font-bold text-indigo-300">${rollTotal}</span>
-                        </div>
-                    </div>
-                `);
-            } else {
-                onLogAction && onLogAction(`<div class="font-bold text-indigo-300">${action.name}: ${action.dmg}</div>`);
+            if (!action.dmg) {
+                onLogAction && onLogAction(`<div class="font-bold text-indigo-300">${action.name}</div>`);
+                return;
             }
+            onDiceRoll(action.dmg, {
+                actionType: 'damage',
+                weaponName: action.name,
+                alias: 'Damage Roll',
+                damageType: action.notes || ''
+            });
         } 
         else {
             onLogAction && onLogAction(`
                 <div class="bg-slate-800 p-2 rounded border-l-4 border-slate-600">
-                    <div class="font-bold text-white">${character.name} uses ${action.name}</div>
+                    <div class="font-bold text-white">${character?.name || 'Character'} uses ${action.name}</div>
                     <div class="text-xs text-slate-400 mt-1">${action.desc || action.notes || "No details."}</div>
                 </div>
             `);

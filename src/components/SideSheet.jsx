@@ -14,7 +14,12 @@ const SideSheet = ({ characterId, onClose, role, onDiceRoll }) => {
     const actualCharId = isVirtual ? characterId.characterId : characterId;
     const tokenId = isVirtual ? characterId.tokenId : null;
     
-    const isOwner = data?.players?.some(p => String(p.id) === String(actualCharId) && p.ownerId === user?.uid);
+    // START CHANGE: Enhance isOwner logic to correctly identify the DM and the assigned player
+    const isOwner = role === 'dm' || 
+                    String(data?.assignments?.[user?.uid]) === String(actualCharId) || 
+                    data?.players?.some(p => String(p.id) === String(actualCharId) && p.ownerId === user?.uid);
+    // END CHANGE
+    
     const addLogEntry = useCharacterStore((state) => state.addLogEntry);
 
     const [liveHp, setLiveHp] = useState(null);

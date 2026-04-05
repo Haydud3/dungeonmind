@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import Icon from './Icon';
 import { useNewCampaign } from '../contexts/NewCampaignProvider';
 import * as fb from '../firebase';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 
 const Lobby = ({ user }) => {
     const { joinCampaign } = useNewCampaign();
@@ -10,11 +11,33 @@ const Lobby = ({ user }) => {
     const [recents, setRecents] = useState([]);
 
     useEffect(() => {
+        const fetchRecents = async () => {
+            let localRecents = [];
         try {
             const saved = localStorage.getItem('dm_recents');
-            if (saved) setRecents(JSON.parse(saved));
+                if (saved) localRecents = JSON.parse(saved);
         } catch(e) {}
-    }, []);
+            
+            if (user && user.uid) {
+                try {
+                    const userDocRef = doc(fb.db, 'users', user.uid);
+                    const userDoc = await getDoc(userDocRef);
+                    if (userDoc.exists()) {
+                        const cloudRecents = userDoc.data().recents || [];
+                        if (cloudRecents.length > 0) {
+                            setRecents(cloudRecents);
+                            localStorage.setItem('dm_recents', JSON.stringify(cloudRecents));
+                            return;
+                        }
+                    }
+                } catch(e) {
+                    console.error("Failed to fetch recents from cloud", e);
+                }
+            }
+            setRecents(localRecents);
+        };
+        fetchRecents();
+    }, [user]);
 
     const handleLogin = async () => {
         if(!fb) return;
@@ -24,11 +47,20 @@ const Lobby = ({ user }) => {
         } catch (e) { alert("Login Error: " + e.message); setIsLoggingIn(false); }
     };
 
-    const addToRecents = (code, role) => {
+    const addToRecents = async (code, role) => {
         const newItem = { code, role, date: Date.now() };
         const newRecents = [newItem, ...recents.filter(r => r.code !== code)].slice(0, 5);
         setRecents(newRecents);
         localStorage.setItem('dm_recents', JSON.stringify(newRecents));
+        
+        if (user && user.uid) {
+            try {
+                const userDocRef = doc(fb.db, 'users', user.uid);
+                await setDoc(userDocRef, { recents: newRecents }, { merge: true });
+            } catch(e) {
+                console.error("Failed to sync recents to cloud", e);
+            }
+        }
     };
 
     const createNew = async () => {
@@ -58,6 +90,15 @@ const Lobby = ({ user }) => {
             const newRecents = recents.filter(r => r.code !== item.code);
             setRecents(newRecents);
             localStorage.setItem('dm_recents', JSON.stringify(newRecents));
+            
+            if (user && user.uid) {
+                try {
+                    const userDocRef = doc(fb.db, 'users', user.uid);
+                    await setDoc(userDocRef, { recents: newRecents }, { merge: true });
+                } catch(e) {
+                    console.error("Failed to remove recent from cloud", e);
+                }
+            }
         }
     };
 

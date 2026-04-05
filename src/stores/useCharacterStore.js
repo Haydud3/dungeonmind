@@ -288,5 +288,11 @@ export const useCharacterStore = create((set, get) => ({
     sidebarDragEntity: null,
     dragPosition: { x: 0, y: 0 },
     setSidebarDragEntity: (entity) => set({ sidebarDragEntity: entity }),
-    setDragPosition: (pos) => set({ dragPosition: pos })
+    setDragPosition: (pos) => set({ dragPosition: pos }),
+
+    // START CHANGE: Global Target Selection
+    selectedTokenIds: [],
+    setSelectedTokenIds: (ids) => set((state) => ({ 
+        selectedTokenIds: typeof ids === 'function' ? ids(state.selectedTokenIds || []) : ids 
+    }))
 }));

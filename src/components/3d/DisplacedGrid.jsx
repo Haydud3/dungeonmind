@@ -1,7 +1,8 @@
 import React, { useMemo } from 'react';
 import * as THREE from 'three';
+import { useTexture } from '@react-three/drei';
 
-export const DisplacedGrid = ({ mapData, aspect, resolvedHeightmapUrl }) => {
+const DisplacedGridContent = ({ mapData, aspect, resolvedHeightmapUrl }) => {
     const { scale = 20, gridSize = 1, heightScale = 1 } = mapData;
     const width = scale * aspect;
     const height = scale;
@@ -9,10 +10,7 @@ export const DisplacedGrid = ({ mapData, aspect, resolvedHeightmapUrl }) => {
     const isLowPerf = localStorage.getItem('vtt_low_performance') === 'true';
     const subdivisions = isLowPerf ? 128 : 256;
 
-    const heightmapTexture = useMemo(() => {
-        if (!resolvedHeightmapUrl) return null;
-        return new THREE.TextureLoader().load(resolvedHeightmapUrl);
-    }, [resolvedHeightmapUrl]);
+    const heightmapTexture = useTexture(resolvedHeightmapUrl);
 
     const gridTexture = useMemo(() => {
         if (!gridSize || gridSize <= 0) return null;
@@ -56,11 +54,19 @@ export const DisplacedGrid = ({ mapData, aspect, resolvedHeightmapUrl }) => {
                 map={gridTexture}
                 displacementMap={heightmapTexture}
                 displacementScale={heightScale}
+                displacementBias={0.01}
                 transparent={true}
                 roughness={1}
                 metalness={0}
                 depthWrite={false}
+                polygonOffset={true}
+                polygonOffsetFactor={-4}
             />
         </mesh>
     );
+};
+
+export const DisplacedGrid = ({ mapData, aspect, resolvedHeightmapUrl }) => {
+    if (!resolvedHeightmapUrl) return null;
+    return <DisplacedGridContent mapData={mapData} aspect={aspect} resolvedHeightmapUrl={resolvedHeightmapUrl} />;
 };

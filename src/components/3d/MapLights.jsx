@@ -2,9 +2,11 @@ import React, { useState } from 'react';
 import { useCursor } from '@react-three/drei';
 
 export const MapLights = ({ lights, onContextMenu, role, gridSize = 1, showLightRadius, onDelete }) => {
-    if (!lights || role !== 'dm') return null;
     const [hovered, setHover] = useState(null);
     useCursor(hovered, 'pointer', 'auto');
+
+    if (!lights || role !== 'dm') return null;
+
     return (
         <group>
             {Object.values(lights).map(light => {

@@ -1,4 +1,4 @@
-import React, { useRef, useMemo } from 'react';
+import React, { useRef, useMemo, Suspense } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Text, ContactShadows, Edges } from '@react-three/drei';
 import * as THREE from 'three';
@@ -140,7 +140,7 @@ const CONFIG = {
 };
 
 // --- DIE MESH ---
-const DieMesh = ({ dieType, result }) => {
+const DieMesh = ({ dieType, result, index = 0, total = 1 }) => {
     const meshRef = useRef();
     console.log("[DEBUG] DieMesh input:", { dieType, result });
     
@@ -265,7 +265,10 @@ const DieMesh = ({ dieType, result }) => {
         const yOffset = safeType === 4 ? 0.0 : 1.5;
 
         meshRef.current.position.y = yPos + yOffset; 
-        meshRef.current.position.x = -8 + (8 * ease);
+        
+        const spacing = total > 5 ? 12 / total : 2.5;
+        const xOffset = total > 1 ? (index - (total - 1) / 2) * spacing : 0;
+        meshRef.current.position.x = -8 + ((8 + xOffset) * ease);
 
         if (t < 0.7) {
             meshRef.current.rotation.x += delta * 15;
@@ -306,6 +309,7 @@ const DieMesh = ({ dieType, result }) => {
 
 const DiceOverlay = ({ roll }) => {
     console.log("[DEBUG] DiceOverlay roll data:", roll);
+    const rolls = Array.isArray(roll) ? roll : [roll];
 
     return (
         <div className={`fixed inset-0 z-[9999] pointer-events-none flex items-center justify-center w-screen h-screen transition-opacity duration-500 ${roll ? 'opacity-100' : 'opacity-0'}`}>
@@ -318,7 +322,13 @@ const DiceOverlay = ({ roll }) => {
                     <pointLight position={[10, 10, 10]} intensity={2} />
                     <pointLight position={[-10, 10, -10]} intensity={1} color="orange" />
                     
-                    {roll && <DieMesh dieType={roll.die || roll.sides || roll.formula} result={roll.total ?? roll.result ?? roll.value} />}
+                    {roll && (
+                        <Suspense fallback={null}>
+                            {rolls.map((r, i) => (
+                                <DieMesh key={i} dieType={r.die || r.sides || r.formula} result={r.total ?? r.result ?? r.value} index={i} total={rolls.length} />
+                            ))}
+                        </Suspense>
+                    )}
                     
                     <ContactShadows position={[0, 0, 0]} opacity={0.5} scale={40} blur={2} far={10} color="#000" />
                 </Canvas>

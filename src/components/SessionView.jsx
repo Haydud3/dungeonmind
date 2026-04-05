@@ -6,6 +6,8 @@ import { useCharacterStore } from '../stores/useCharacterStore';
 import ResolvedImage from './ResolvedImage';
 import { compressImage } from '../utils/imageCompressor';
 import { storeChunkedMap } from '../utils/storageUtils';
+import { getMapRef, updateMap } from '../utils/mapService';
+import { getDoc } from 'firebase/firestore';
 // END CHANGE
 
 // START CHANGE: Add clearChat to destructured props
@@ -72,21 +74,86 @@ const SessionView = ({
     };
 
     // START CHANGE: Apply Damage Handler
-    const handleApplyDamage = (amount) => {
-        const { targetId, updateHP } = useCharacterStore.getState();
-        if (!targetId) return alert("No target selected!");
+    const handleApplyDamage = async (amount) => {
+        const { selectedTokenIds } = useCharacterStore.getState();
+        if (!selectedTokenIds || selectedTokenIds.length === 0) return alert("No target selected!");
 
-        // We need to update the token's HP in the GLOBAL cloud data, not just local state.
-        
-        // TEMPORARY LOCAL FIX: Use the store if the target is the LOADED character
-        const storeChar = useCharacterStore.getState().character;
-        if (storeChar && (storeChar.id === targetId || storeChar.tokenIds?.includes(targetId))) {
-            updateHP('current', storeChar.hp.current - amount);
-            alert(`Applied ${amount} damage to ${storeChar.name}!`);
+        const activeMapId = data?.activeMapId;
+        const code = gameParams?.code;
+
+        if (activeMapId && code) {
+            try {
+                const mapRef = getMapRef(code, activeMapId);
+                const mapSnap = await getDoc(mapRef);
+                if (mapSnap.exists()) {
+                    const mapData = mapSnap.data();
+                    const updates = {};
+                    let alertText = [];
+                    
+                    selectedTokenIds.forEach(id => {
+                        const token = mapData.tokens?.[id];
+                        if (token) {
+                            const char = [...(data?.players || []), ...(data?.npcs || [])].find(c => String(c.id) === String(token.characterId));
+                            
+                            let currentHp = 0;
+                            let maxHp = 10;
+                            
+                            if (token.hp && token.hp.current !== undefined) {
+                                currentHp = token.hp.current;
+                                maxHp = token.hp.max || 10;
+                            } else if (char && char.hp && char.hp.current !== undefined) {
+                                currentHp = char.hp.current;
+                                maxHp = char.hp.max || 10;
+                            } else {
+                                return; // Skip if no HP tracking found
+                            }
+                            
+                            const newHp = Math.max(0, currentHp - amount);
+                            updates[`tokens.${id}.hp`] = { ...token.hp, current: newHp, max: maxHp };
+                            
+                            alertText.push(`${char ? char.name : 'Token'}: ${currentHp} -> ${newHp}`);
+                        }
+                    });
+                    
+                    if (Object.keys(updates).length > 0) {
+                        await updateMap(code, activeMapId, updates);
+                        
+                        const newPlayers = [...(data.players || [])];
+                        const newNpcs = [...(data.npcs || [])];
+                        let campaignUpdated = false;
+                        
+                        selectedTokenIds.forEach(id => {
+                             const token = mapData.tokens?.[id];
+                             if (token) {
+                                 const pIdx = newPlayers.findIndex(p => String(p.id) === String(token.characterId));
+                                 if (pIdx > -1) {
+                                     newPlayers[pIdx] = { ...newPlayers[pIdx], hp: { ...newPlayers[pIdx].hp, current: Math.max(0, (newPlayers[pIdx].hp.current || 0) - amount) } };
+                                     campaignUpdated = true;
+                                 } else {
+                                     const nIdx = newNpcs.findIndex(n => String(n.id) === String(token.characterId));
+                                     if (nIdx > -1) {
+                                         newNpcs[nIdx] = { ...newNpcs[nIdx], hp: { ...newNpcs[nIdx].hp, current: Math.max(0, (newNpcs[nIdx].hp.current || 0) - amount) } };
+                                         campaignUpdated = true;
+                                     }
+                                 }
+                             }
+                        });
+                        
+                        if (campaignUpdated) {
+                            context.updateCampaign({ players: newPlayers, npcs: newNpcs });
+                        }
+                        
+                        alert(`Applied ${amount} damage:\n${alertText.join('\\n')}`);
+                    } else {
+                        alert("Selected tokens don't have HP tracking enabled.");
+                    }
+                }
+            } catch(e) {
+                console.error("Failed to apply damage", e);
+                alert("Failed to apply damage. See console.");
+            }
         } else {
-             // Fallback: This requires the parent to pass a handler, or we need to access Firebase directly.
-             // For this "Lite" version, we will assume the DM has the sheet open or we add a prop later.
-             alert(`Target ID: ${targetId} selected. (To fix HP, open their sheet!)`);
+            alert("No active map found.");
         }
     };
     // END CHANGE
@@ -409,29 +476,102 @@ const SessionView = ({
                                             ) : (
                                                 /* START CHANGE: Interactive Dice Rolls */
                                                 (() => {
-                                                const isRoll = msg.type?.startsWith('roll-');
-                                                const html = isRoll ? msg.content : formatMessage(msg.content);
-                                                // Check for "Rolled 15" or similar patterns from DiceTray
-                                                // Regex matches: "Rolled [Result] (Formula)" or just numbers
-                                                // FIX: Added safety check (msg.content && ...)
-                                                const damageMatch = msg.content && (msg.content.match(/Rolled\s+(\d+)/i) || msg.content.match(/data-total="(\d+)"/));
-                                                
-                                                if (role === 'dm' && damageMatch) {
-                                                    const dmg = parseInt(damageMatch[1]);
-                                                    return (
-                                                        <div>
-                                                            <span dangerouslySetInnerHTML={{__html: html}} />
-                                                            <button 
-                                                                onClick={() => handleApplyDamage(dmg)}
-                                                                className="ml-2 inline-flex items-center gap-1 bg-red-900/50 hover:bg-red-700 border border-red-500/30 text-[10px] text-red-200 px-1.5 py-0.5 rounded cursor-pointer transition-colors"
-                                                                title={`Apply ${dmg} damage to target`}
-                                                            >
-                                                                <Icon name="sword" size={10}/> -{dmg} HP
-                                                            </button>
-                                                        </div>
-                                                    );
-                                                }
-                                                return <span dangerouslySetInnerHTML={{__html: html}} />;
+                                                    const isRoll = msg.type?.startsWith('roll-');
+                                                    if (isRoll) {
+                                                        try {
+                                                            const rollData = JSON.parse(msg.content);
+                                                            const isCrit = rollData.formula.includes('d20') && rollData.naturalRoll === 20;
+                                                            const isFumble = rollData.formula.includes('d20') && rollData.naturalRoll === 1;
+                                                            const naturalClass = isCrit ? "text-green-400 font-bold" : isFumble ? "text-red-400 font-bold" : "text-slate-300";
+                                                            
+                                                            const hasDetails = rollData.weaponName || rollData.damageType || rollData.actionType || rollData.alias;
+                                                            
+                                                            const renderApplyDamage = () => {
+                                                                if (role === 'dm') {
+                                                                    return (
+                                                                        <button 
+                                                                            onClick={() => handleApplyDamage(rollData.total)}
+                                                                            className="mt-2 inline-flex items-center gap-1 bg-red-900/50 hover:bg-red-700 border border-red-500/30 text-[10px] text-red-200 px-2 py-1 rounded cursor-pointer transition-colors whitespace-nowrap"
+                                                                            title={`Apply ${rollData.total} damage to target`}
+                                                                        >
+                                                                            <Icon name="sword" size={10}/> -{rollData.total} HP
+                                                                        </button>
+                                                                    );
+                                                                }
+                                                                return null;
+                                                            };
+
+                                                            if (hasDetails) {
+                                                                return (
+                                                                    <div className="bg-slate-800 border border-slate-700 rounded-lg p-3 w-full max-w-sm shadow-xl flex flex-col items-start text-left relative overflow-hidden">
+                                                                        {msg.type === 'roll-private' && (
+                                                                            <div className="absolute top-2 right-2 text-slate-500" title="Private DM Roll">
+                                                                                <Icon name="eye-off" size={14} />
+                                                                            </div>
+                                                                        )}
+                                                                        <div className="font-bold text-amber-500 text-sm">{rollData.characterName}</div>
+                                                                        {rollData.weaponName && <div className="font-bold text-slate-200 text-base">{rollData.weaponName}</div>}
+                                                                        {rollData.damageType && <div className="text-slate-400 text-xs mb-1">{rollData.damageType}</div>}
+                                                                        {rollData.alias && <div className="text-slate-300 text-xs mb-1">{rollData.alias}</div>}
+                                                                        <div className="mt-2 pt-2 border-t border-slate-700/50 w-full flex flex-row items-center flex-wrap gap-2">
+                                                                            <span className="text-slate-400 text-sm break-all">{rollData.formula}{rollData.modifier !== 0 ? (rollData.modifier > 0 ? `+${rollData.modifier}` : rollData.modifier) : ''}</span>
+                                                                            <span className="text-slate-400 text-sm">➜</span>
+                                                                            <div className="flex items-baseline gap-1 flex-wrap">
+                                                                                <span className={`${naturalClass} text-lg font-bold break-words`}>[{rollData.rolls ? rollData.rolls.join(' + ') : rollData.naturalRoll}]</span>
+                                                                                {rollData.modifier !== 0 && <span className="text-slate-400 text-sm">{rollData.modifier > 0 ? '+' : ''}{rollData.modifier}</span>}
+                                                                            </div>
+                                                                            <span className="text-slate-500 text-sm font-bold">=</span>
+                                                                            <span className="text-xl font-bold text-amber-500 drop-shadow-md">{rollData.total}</span>
+                                                                        </div>
+                                                                        {renderApplyDamage()}
+                                                                    </div>
+                                                                );
+                                                            }
+
+                                                            return (
+                                                                <div className="bg-slate-800/80 border border-slate-700/50 rounded-lg p-2 w-full max-w-sm flex flex-col items-start relative overflow-hidden">
+                                                                    {msg.type === 'roll-private' && (
+                                                                        <div className="absolute top-2 right-2 text-slate-500" title="Private DM Roll">
+                                                                            <Icon name="eye-off" size={12} />
+                                                                        </div>
+                                                                    )}
+                                                                    <div className="text-slate-400 text-xs break-all">{rollData.characterName} rolled {rollData.formula}</div>
+                                                                    <div className="flex items-baseline gap-2 mt-1 flex-wrap">
+                                                                        <span className={`${naturalClass} text-lg font-bold break-words`}>[{rollData.rolls ? rollData.rolls.join(' + ') : rollData.naturalRoll}]</span>
+                                                                        {rollData.modifier !== 0 && <span className="text-slate-400 text-sm">{rollData.modifier > 0 ? '+' : ''}{rollData.modifier}</span>}
+                                                                        <span className="text-slate-500 font-bold">=</span>
+                                                                        <span className="text-xl font-bold text-amber-500">{rollData.total}</span>
+                                                                    </div>
+                                                                    {renderApplyDamage()}
+                                                                </div>
+                                                            );
+
+                                                        } catch (e) {
+                                                            // Fallback for old HTML messages
+                                                            const html = msg.content;
+                                                            const damageMatch = msg.content && (msg.content.match(/Rolled\s+(\d+)/i) || msg.content.match(/data-total="(\d+)"/));
+                                                            if (role === 'dm' && damageMatch) {
+                                                                const dmg = parseInt(damageMatch[1]);
+                                                                return (
+                                                                    <div>
+                                                                        <span dangerouslySetInnerHTML={{__html: html}} />
+                                                                        <button 
+                                                                            onClick={() => handleApplyDamage(dmg)}
+                                                                            className="ml-2 inline-flex items-center gap-1 bg-red-900/50 hover:bg-red-700 border border-red-500/30 text-[10px] text-red-200 px-1.5 py-0.5 rounded cursor-pointer transition-colors"
+                                                                            title={`Apply ${dmg} damage to target`}
+                                                                        >
+                                                                            <Icon name="sword" size={10}/> -{dmg} HP
+                                                                        </button>
+                                                                    </div>
+                                                                );
+                                                            }
+                                                            return <span dangerouslySetInnerHTML={{__html: html}} />;
+                                                        }
+                                                    }
+
+                                                    // Regular chat message handling
+                                                    const html = formatMessage(msg.content);
+                                                    return <span dangerouslySetInnerHTML={{__html: html}} />;
                                                 })()
                                             )}
                                             {/* END CHANGE */}
@@ -523,7 +663,6 @@ const SessionView = ({
                     {/* END CHANGE */}
                 </div>
             </div>
-            {showTools && (<div className="absolute z-40 right-0 top-0 bottom-0 w-64 bg-slate-900/95 backdrop-blur border-l border-slate-700 p-4 shadow-2xl animate-in slide-in-from-right duration-300 flex flex-col"><div className="flex justify-between items-center mb-4"><span className="fantasy-font text-amber-500 text-lg">Dice Roller</span><button onClick={() => setShowTools(false)} className="text-slate-400 hover:text-white"><Icon name="x" size={24}/></button></div><DiceTray diceLog={diceLog} handleDiceRoll={handleDiceRoll} /></div>)}
         </div>
     );
 };

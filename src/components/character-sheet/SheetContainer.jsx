@@ -96,6 +96,19 @@ const SheetContainer = ({ characterId, tokenId, data, onSave, onDiceRoll, onLogA
 
     if (!character) return <div className="text-slate-500 p-10 text-center animate-pulse">Loading Character...</div>;
 
+    // Wrap onDiceRoll to ensure character-specific details are always passed
+    const wrappedOnDiceRoll = (formula, childOptions = {}) => {
+        const characterName = character?.name;
+        const options = {
+            ...childOptions,
+            characterName: childOptions.characterName || characterName,
+            // weaponName and damageType should ideally be provided by the child component (e.g., ActionsTab)
+            // when making an attack roll. If not provided, they will be undefined and not rendered by App.jsx.
+            alias: childOptions.alias || 'Roll' // Provide a default alias if none from child
+        };
+        onDiceRoll(formula, options);
+    };
+
     // START CHANGE: Route to External D&D Beyond Sheet if enabled and user is the owner (Player)
     // DMs always see the VTT version to maintain standard control over NPCs and Shared sheets.
     if (character.useExternalSheet && character.externalSheetUrl && isOwner && role !== 'dm') {
@@ -113,7 +126,7 @@ const SheetContainer = ({ characterId, tokenId, data, onSave, onDiceRoll, onLogA
             
             {/* Header */}
             <HeaderStats 
-                onDiceRoll={onDiceRoll} 
+                onDiceRoll={wrappedOnDiceRoll} 
                 onLogAction={handleLogAction} 
                 onBack={handleBack} 
                 onPossess={onPossess} 
@@ -141,13 +154,13 @@ const SheetContainer = ({ characterId, tokenId, data, onSave, onDiceRoll, onLogA
                 <div className="p-4 max-w-2xl mx-auto pb-32"> 
                     <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
                         
-                        {activeTab === 'actions' && <ActionsTab onDiceRoll={onDiceRoll} onLogAction={handleLogAction} isOwner={isOwner} />}
+                        {activeTab === 'actions' && <ActionsTab onDiceRoll={wrappedOnDiceRoll} onLogAction={handleLogAction} isOwner={isOwner} />}
                         
                         {/* THIS IS THE CRITICAL LINE FOR SKILLS */}
-                        {activeTab === 'skills' && <SkillsTab onDiceRoll={onDiceRoll} onLogAction={handleLogAction} isOwner={isOwner} />}
+                        {activeTab === 'skills' && <SkillsTab onDiceRoll={wrappedOnDiceRoll} onLogAction={handleLogAction} isOwner={isOwner} />}
                         
-                        {activeTab === 'spells' && <SpellsTab onDiceRoll={onDiceRoll} onLogAction={handleLogAction} onPlaceTemplate={onPlaceTemplate} isOwner={isOwner} />}
-                        {activeTab === 'inventory' && <InventoryTab onDiceRoll={onDiceRoll} onLogAction={handleLogAction} isOwner={isOwner} />}
+                        {activeTab === 'spells' && <SpellsTab onDiceRoll={wrappedOnDiceRoll} onLogAction={handleLogAction} onPlaceTemplate={onPlaceTemplate} isOwner={isOwner} />}
+                        {activeTab === 'inventory' && <InventoryTab onDiceRoll={wrappedOnDiceRoll} onLogAction={handleLogAction} isOwner={isOwner} />}
                         {activeTab === 'features' && <FeaturesTab isOwner={isOwner} />}
                         {activeTab === 'bio' && <BioTab isOwner={isOwner} onOpenModelPicker={onOpenModelPicker} />}
                         

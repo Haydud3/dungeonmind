@@ -4,8 +4,25 @@ import { DragControls, Html, useCursor, Text, RoundedBox, Billboard } from '@rea
 import * as THREE from 'three';
 import CharacterModel from '../CharacterModel';
 import { retrieveChunkedMap } from '../../utils/storageUtils';
+import Icon from '../Icon';
 
-const TokenImage = ({ imageUrl, size }) => {
+const CONDITION_ICONS = {
+  Blinded: { icon: 'eye-off', color: '#64748b' },
+  Charmed: { icon: 'heart', color: '#ec4899' },
+  Deafened: { icon: 'ear-off', color: '#eab308' },
+  Frightened: { icon: 'ghost', color: '#a855f7' },
+  Grappled: { icon: 'link', color: '#f97316' },
+  Incapacitated: { icon: 'ban', color: '#ef4444' },
+  Invisible: { icon: 'eye-off', color: '#93c5fd' },
+  Paralyzed: { icon: 'zap', color: '#14b8a6' },
+  Poisoned: { icon: 'skull', color: '#22c55e' },
+  Prone: { icon: 'arrow-down-to-line', color: '#78350f' },
+  Restrained: { icon: 'lock', color: '#ea580c' },
+  Stunned: { icon: 'stars', color: '#eab308' },
+  Unconscious: { icon: 'moon', color: '#1e293b' }
+};
+
+const TokenImage = ({ imageUrl, size, opacity }) => {
     const texture = useMemo(() => {
         if (!imageUrl) return null;
         return new THREE.TextureLoader().load(imageUrl);
@@ -13,7 +30,7 @@ const TokenImage = ({ imageUrl, size }) => {
     return (
         <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.051, 0]}>
             <circleGeometry args={[size * 0.45, 32]} />
-            <meshBasicMaterial map={texture} transparent />
+            <meshBasicMaterial map={texture} transparent opacity={opacity} />
         </mesh>
     )
 }
@@ -37,7 +54,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
   const showModel = !!token.modelUrl && !isTopDownView;
 
   if (token.isHidden && role !== 'dm') return null;
-  const opacity = token.isHidden ? 0.4 : 1;
+  const opacity = token.isHidden ? 0.4 : (token.conditions?.includes('Invisible') ? 0.6 : 1);
 
   useCursor(hovered, 'pointer', 'auto');
 
@@ -343,7 +360,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
           {showModel && (
             <Suspense fallback={null}>
               <group position={[0, (token.modelYOffset || 0) * safeSize, 0]}>
-                <CharacterModel modelUrl={token.modelUrl} scale={(token.modelScale || 1) * safeSize} forceStatue={token.forceStatue} />
+                <CharacterModel modelUrl={token.modelUrl} scale={(token.modelScale || 1) * safeSize} forceStatue={token.forceStatue} opacity={opacity} />
               </group>
             </Suspense>
           )}
@@ -352,12 +369,12 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
               <>
                 {resolvedImage ? (
                     <Suspense fallback={null}>
-                        <TokenImage imageUrl={resolvedImage} size={safeSize} />
+                        <TokenImage imageUrl={resolvedImage} size={safeSize} opacity={opacity} />
                     </Suspense>
                 ) : (
                   <mesh position={[0, 0.051, 0]} rotation={[-Math.PI / 2, 0, 0]}>
                       <circleGeometry args={[safeSize * 0.45, 32]} />
-                      <meshStandardMaterial color="#1e293b" />
+                      <meshStandardMaterial color="#1e293b" transparent opacity={opacity} />
                       <Text
                           position={[0, 0, 0.01]}
                           fontSize={safeSize * 0.35}
@@ -365,6 +382,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
                           anchorX="center"
                           anchorY="middle"
                           fontWeight="bold"
+                          fillOpacity={opacity}
                       >
                           {initials}
                       </Text>
@@ -443,6 +461,23 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
                     >
                         {token.elevationOffset > 0 ? '↑ ' : '↓ '}{Math.round((token.elevationOffset || 0) * 5)}ft
                     </Text>
+                )}
+
+                {/* CONDITIONS */}
+                {token.conditions && token.conditions.length > 0 && (
+                    <Html center position={[0, safeSize * 0.45, 0]} className="pointer-events-none z-10" zIndexRange={[100, 0]}>
+                        <div className="flex flex-wrap justify-center gap-0.5 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-0.5 rounded shadow-lg max-w-[80px]" style={{ opacity }}>
+                            {token.conditions.map(cond => {
+                                const info = CONDITION_ICONS[cond];
+                                if (!info) return null;
+                                return (
+                                    <div key={cond} className="rounded p-0.5" style={{ backgroundColor: info.color }} title={cond}>
+                                        <Icon name={info.icon} size={10} color="white" />
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </Html>
                 )}
                 
                 {/* SAVE STATUS */}

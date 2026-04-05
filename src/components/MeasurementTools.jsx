@@ -85,10 +85,12 @@ const RulerTool = ({ getTerrainHeight, gridSize }) => {
     );
 };
 
-const ShapeToolBase = ({ children }) => {
+const ShapeToolBase = ({ children, onHitTest, tokens, onCompleteSelection }) => {
     const { controls } = useThree();
     const [startPoint, setStartPoint] = useState(null);
     const [endPoint, setEndPoint] = useState(null);
+    const [isDrawing, setIsDrawing] = useState(false);
+    const [isFinalizing, setIsFinalizing] = useState(false);
 
     useEffect(() => {
         if (controls) controls.enabled = !startPoint;
@@ -97,18 +99,54 @@ const ShapeToolBase = ({ children }) => {
     const handlePointerDown = e => {
         if (e.button !== 0) return;
         e.stopPropagation();
+        
+        // If the shape is already drawn, the second click prepares to finalize
+        if (startPoint && endPoint && !isDrawing) {
+            setIsFinalizing(true);
+            return;
+        }
+        
         setStartPoint(e.point);
         setEndPoint(e.point);
+        setIsDrawing(true);
     };
 
     const handlePointerMove = e => {
-        if (!startPoint) return;
+        if (!startPoint || !isDrawing || isFinalizing) return;
         e.stopPropagation();
         setEndPoint(e.point);
     };
 
     const handlePointerUp = e => {
-        // Persist the shape until right-click
+        if (e.button !== 0) return;
+        e.stopPropagation();
+
+        if (isDrawing) {
+            setIsDrawing(false);
+        }
+    };
+
+    const handleClick = e => {
+        if (e.button !== 0) return;
+        e.stopPropagation();
+
+        // Delaying finalization to the 'click' event ensures the shape mesh consumes the 
+        // click before unmounting, preventing the canvas from firing onPointerMissed!
+        if (isFinalizing) {
+            if (onHitTest && tokens && onCompleteSelection) {
+                const selectedIds = [];
+                tokens.forEach(t => {
+                    const tx = t.x || 0;
+                    const tz = t.z || 0;
+                    if (onHitTest(startPoint, endPoint, tx, tz)) {
+                        selectedIds.push(t.id);
+                    }
+                });
+                onCompleteSelection(selectedIds);
+            } else if (onCompleteSelection) {
+                onCompleteSelection([]);
+            }
+        }
     };
 
     const handleContextMenu = e => {
@@ -116,6 +154,8 @@ const ShapeToolBase = ({ children }) => {
         e.stopPropagation();
         setStartPoint(null);
         setEndPoint(null);
+        setIsDrawing(false);
+        setIsFinalizing(false);
     };
 
     return (
@@ -125,6 +165,7 @@ const ShapeToolBase = ({ children }) => {
                 onPointerDown={handlePointerDown}
                 onPointerMove={handlePointerMove}
                 onPointerUp={handlePointerUp}
+                onClick={handleClick}
                 onContextMenu={handleContextMenu}
                 rotation={[-Math.PI / 2, 0, 0]}
                 visible={false}
@@ -135,8 +176,16 @@ const ShapeToolBase = ({ children }) => {
     );
 };
 
-const CircleTool = ({ gridSize }) => (
-    <ShapeToolBase>
+const CircleTool = ({ gridSize, tokens, onCompleteSelection }) => (
+    <ShapeToolBase
+        tokens={tokens}
+        onCompleteSelection={onCompleteSelection}
+        onHitTest={(start, end, tx, tz) => {
+            const radius = start.distanceTo(end);
+            const dist = Math.sqrt((start.x - tx) ** 2 + (start.z - tz) ** 2);
+            return dist <= radius + 0.25; // 0.25 leniency grabs tokens slightly touching the edge
+        }}
+    >
         {(start, end) => {
             const radius = start.distanceTo(end);
             const radiusFt = Math.round((radius / gridSize) * 5);
@@ -155,8 +204,24 @@ const CircleTool = ({ gridSize }) => (
     </ShapeToolBase>
 );
 
-const ConeTool = ({ gridSize }) => (
-    <ShapeToolBase>
+const ConeTool = ({ gridSize, tokens, onCompleteSelection }) => (
+    <ShapeToolBase
+        tokens={tokens}
+        onCompleteSelection={onCompleteSelection}
+        onHitTest={(start, end, tx, tz) => {
+            const vec = new THREE.Vector3().subVectors(end, start);
+            const length = vec.length();
+            const dist = Math.sqrt((start.x - tx) ** 2 + (start.z - tz) ** 2);
+            if (dist > length + 0.25) return false; // Too far
+            
+            const angleToToken = Math.atan2(tx - start.x, tz - start.z);
+            const coneAngle = Math.atan2(vec.x, vec.z);
+            
+            let diff = Math.abs(angleToToken - coneAngle);
+            if (diff > Math.PI) diff = 2 * Math.PI - diff;
+            return diff <= Math.PI / 6 + 0.05; // 30 degrees + slight leniency = 60 degree cone
+        }}
+    >
         {(start, end) => {
             const vec = new THREE.Vector3().subVectors(end, start);
             const length = vec.length();
@@ -164,8 +229,8 @@ const ConeTool = ({ gridSize }) => (
             const lengthFt = Math.round((length / gridSize) * 5);
             return (
                 <group position={[start.x, start.y + 0.1, start.z]} rotation={[0, angle, 0]}>
-                    <mesh rotation={[Math.PI / 2, 0, 0]}>
-                        <coneGeometry args={[length, length, 32, 1, true, -Math.PI / 6, Math.PI / 3]} />
+                    <mesh rotation={[-Math.PI / 2, 0, 0]}>
+                        <circleGeometry args={[length, 32, -Math.PI / 2 - Math.PI / 6, Math.PI / 3]} />
                         <meshBasicMaterial color="#10b981" side={THREE.DoubleSide} transparent opacity={0.5} depthTest={false} />
                     </mesh>
                     <Html position={[0, 0.3, length / 2]} center>
@@ -177,8 +242,18 @@ const ConeTool = ({ gridSize }) => (
     </ShapeToolBase>
 );
 
-const BoxTool = ({ gridSize }) => (
-    <ShapeToolBase>
+const BoxTool = ({ gridSize, tokens, onCompleteSelection }) => (
+    <ShapeToolBase
+        tokens={tokens}
+        onCompleteSelection={onCompleteSelection}
+        onHitTest={(start, end, tx, tz) => {
+            const minX = Math.min(start.x, end.x) - 0.25;
+            const maxX = Math.max(start.x, end.x) + 0.25;
+            const minZ = Math.min(start.z, end.z) - 0.25;
+            const maxZ = Math.max(start.z, end.z) + 0.25;
+            return tx >= minX && tx <= maxX && tz >= minZ && tz <= maxZ;
+        }}
+    >
         {(start, end) => {
             const width = Math.abs(start.x - end.x);
             const depth = Math.abs(start.z - end.z);
@@ -201,13 +276,13 @@ const BoxTool = ({ gridSize }) => (
     </ShapeToolBase>
 );
 
-export const MeasurementTools = ({ activeTool, getTerrainHeight, gridSize }) => {
+export const MeasurementTools = ({ activeTool, getTerrainHeight, gridSize, tokens, onCompleteSelection }) => {
     if (!activeTool) return null;
     switch (activeTool) {
         case 'ruler': return <RulerTool getTerrainHeight={getTerrainHeight} gridSize={gridSize} />;
-        case 'circle': return <CircleTool gridSize={gridSize} />;
-        case 'cone': return <ConeTool gridSize={gridSize} />;
-        case 'box': return <BoxTool gridSize={gridSize} />;
+        case 'circle': return <CircleTool gridSize={gridSize} tokens={tokens} onCompleteSelection={onCompleteSelection} />;
+        case 'cone': return <ConeTool gridSize={gridSize} tokens={tokens} onCompleteSelection={onCompleteSelection} />;
+        case 'box': return <BoxTool gridSize={gridSize} tokens={tokens} onCompleteSelection={onCompleteSelection} />;
         default: return null;
     }
 };

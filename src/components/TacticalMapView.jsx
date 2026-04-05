@@ -4,6 +4,7 @@ import { MapControls, Grid, useTexture, DragControls, Html, useCursor, Line, Tex
 import * as THREE from 'three';
 import { subscribeToMap, updateMap, createMap } from '../utils/mapService';
 import { useNewCampaign } from '../contexts/NewCampaignProvider';
+import { useCharacterStore } from '../stores/useCharacterStore';
 import AssetManager from './AssetManager';
 import { MeasurementTools } from './MeasurementTools';
 import Icon from './Icon';
@@ -71,13 +72,14 @@ const generateBoundaryWalls = (mapScale, mapAspect) => {
     return walls;
 };
 
-export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet, role, onOpenHandouts, onOpenChat, onOpenJournal }) {
+export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet, role, onOpenHandouts, onOpenChat, onOpenJournal, onOpenDiceTray }) {
   const { campaign, updateCampaign, user } = useNewCampaign();
   const data = campaign;
   const cameraControllerRef = useRef();
   const zoomRef = useRef();
   const [mapData, setMapData] = useState(null);
-  const [selectedTokenIds, setSelectedTokenIds] = useState([]);
+  const selectedTokenIds = useCharacterStore(state => state.selectedTokenIds);
+  const setSelectedTokenIds = useCharacterStore(state => state.setSelectedTokenIds);
   const [contextMenu, setContextMenu] = useState(null);
   const [showAssetManager, setShowAssetManager] = useState(false);
   const [showTokenManager, setShowTokenManager] = useState(false);
@@ -855,7 +857,8 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
 
       if (e.key === 'Escape') {
           setSelectedTokenIds([]); setContextMenu(null); setWallContextMenu(null); setLightContextMenu(null);
-          if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); setActiveTool(null); }
+          if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); }
+          setActiveTool(null);
           return;
       }
 
@@ -884,19 +887,20 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
     };
   }, [role, selectedTokenIds, data, user, campaignCode, activeMapId, activeTool]);
 
-  const handleNewBlankMap = async () => {
+  const handleNewBlankMap = async (skipConfirm = false) => {
       if (role !== 'dm') return;
-      if (!window.confirm("Create a new blank map? This will navigate away from the current map.")) return;
+      if (!skipConfirm) {
+          if (!window.confirm("Create a new blank map? This will navigate away from the current map.")) return;
+      }
 
       const newMapId = doc(collection(db, 'a')).id;
       const newMapData = {
           name: "New Blank Map",
-              walls: generateBoundaryWalls(defaultScale, defaultAspect), // Add generated walls
+          walls: generateBoundaryWalls(20, 1), // Add generated walls
           gridSize: 1,
           scale: 20,
           environment: 'day',
           tokens: {},
-          walls: {},
           lights: {}
       };
       await createMap(campaignCode, newMapId, newMapData);
@@ -1024,6 +1028,11 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
                 activeTool={activeTool} 
                 getTerrainHeight={getTerrainHeight} 
                 gridSize={gridSize} 
+                tokens={tokensList}
+                onCompleteSelection={(ids) => {
+                    setSelectedTokenIds(ids);
+                    setActiveTool(null);
+                }}
             />
         </Suspense>
         {/* Suspense is required when using useTexture to catch the loading state */}
@@ -1034,6 +1043,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
                     backgroundUrl={mapData.backgroundUrl}
                     heightScale={mapData.heightScale || 1}
                     scale={mapData.scale || 20}
+                    aspect={aspect}
                 />
             ) : (
                 showPlane && <MapPlane backgroundUrl={mapData.backgroundUrl} scale={mapData.scale || 20} />
@@ -1052,11 +1062,13 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
 
         {mapData?.showGrid !== false && (
             mapData?.heightmapUrl ? (
-                <DisplacedGrid 
-                    mapData={mapData}
-                    aspect={aspect}
-                    resolvedHeightmapUrl={resolvedHeightmapUrl}
-                />
+                <Suspense fallback={null}>
+                    <DisplacedGrid 
+                        mapData={mapData}
+                        aspect={aspect}
+                        resolvedHeightmapUrl={resolvedHeightmapUrl}
+                    />
+                </Suspense>
             ) : (
                 <Grid 
                   position={[0, 0.016, 0]}
@@ -1064,9 +1076,9 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
                   infiniteGrid 
                   fadeDistance={60} 
                   sectionColor="#888" 
-                  cellColor="#444" 
+                  cellColor="#888" 
                   cellSize={gridSize}
-                  sectionSize={gridSize * 5}
+                  sectionSize={gridSize}
                 />
             )
         )}
@@ -1091,6 +1103,9 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
                 displayToken.modelUrl = character.modelUrl;
                 displayToken.modelScale = character.modelScale;
                 displayToken.modelYOffset = character.modelYOffset;
+                displayToken.conditions = character.conditions || token.conditions || [];
+            } else {
+                displayToken.conditions = token.conditions || [];
             }
             
             const isOwner = (character?.ownerId && String(character.ownerId) === String(user?.uid)) || 
@@ -1258,15 +1273,15 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
       )}
 
       <div className={`absolute top-4 right-4 z-[70] flex flex-col items-end gap-3 ${uiOpacityClass}`}>
-        {role === 'dm' && (
-          <>
-            <div className="flex flex-col items-end gap-2">
-                <div className="flex gap-1 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-1 rounded-full shadow-2xl">
-                    <ToolButton name="ruler" icon="ruler" isActive={activeTool === 'ruler'} onClick={() => { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); setActiveTool(p => p === 'ruler' ? null : 'ruler'); }} />
-                    <ToolButton name="cone" icon="triangle" isActive={activeTool === 'cone'} onClick={() => { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); setActiveTool(p => p === 'cone' ? null : 'cone'); }} />
-                    <ToolButton name="circle" icon="circle" isActive={activeTool === 'circle'} onClick={() => { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); setActiveTool(p => p === 'circle' ? null : 'circle'); }} />
-                    <ToolButton name="box" icon="square" isActive={activeTool === 'box'} onClick={() => { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); setActiveTool(p => p === 'box' ? null : 'box'); }} />
-                </div>
+        <div className="flex flex-col items-end gap-2">
+            <div className="flex gap-1 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-1 rounded-full shadow-2xl">
+                <ToolButton name="ruler" icon="ruler" isActive={activeTool === 'ruler'} onClick={() => { if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setActiveTool(p => p === 'ruler' ? null : 'ruler'); }} />
+                <ToolButton name="cone" icon="triangle" isActive={activeTool === 'cone'} onClick={() => { if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setActiveTool(p => p === 'cone' ? null : 'cone'); }} />
+                <ToolButton name="circle" icon="circle" isActive={activeTool === 'circle'} onClick={() => { if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setActiveTool(p => p === 'circle' ? null : 'circle'); }} />
+                <ToolButton name="box" icon="square" isActive={activeTool === 'box'} onClick={() => { if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setActiveTool(p => p === 'box' ? null : 'box'); }} />
+            </div>
+            
+            {role === 'dm' && (
                 <div className="flex gap-1 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-1 rounded-full shadow-2xl">
                     <ToolButton name="architect" icon="pen-tool" isActive={isArchitectMode} onClick={() => { setActiveTool(null); setIsDrawingWalls(false); setIsPlacingLights(false); setIsArchitectMode(p => !p); }} />
                     
@@ -1319,8 +1334,10 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
                         }
                     }} />
                 </div>
-            </div>
+            )}
+        </div>
 
+        {role === 'dm' && (
             <div className="flex flex-col gap-2">
                 <ToolButton name="tokens" icon="users" isActive={showTokenManager} onClick={() => { setActiveTool(null); setShowAssetManager(false); setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); setShowTokenManager(p => !p); }} isStandalone={true} />
                 <ToolButton name="map" icon="map" isActive={showAssetManager} onClick={() => { setActiveTool(null); setShowTokenManager(false); setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); setShowAssetManager(p => !p); }} isStandalone={true} />
@@ -1337,12 +1354,12 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
                     isStandalone={true} 
                 />
             </div>
-          </>
         )}
 
         <div className="w-full h-px bg-slate-700/50 my-1"></div>
 
         <div className="flex flex-col gap-2">
+            {onOpenDiceTray && <ToolButton name="Dice" icon="dices" onClick={onOpenDiceTray} isStandalone={true} />}
             {onOpenHandouts && <ToolButton name="Handouts" icon="scroll" onClick={onOpenHandouts} isStandalone={true} />}
             {onOpenChat && <ToolButton name="Chat" icon="message-circle" onClick={onOpenChat} isStandalone={true} />}
             {onOpenJournal && <ToolButton name="Journal" icon="book" onClick={onOpenJournal} isStandalone={true} />}
