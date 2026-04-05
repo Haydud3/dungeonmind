@@ -688,6 +688,10 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
   };
 
   const handleContextMenu = (e, token) => {
+    if (typeof navigator !== 'undefined' && navigator.vibrate) {
+      navigator.vibrate(50); // Haptic feedback on token long-press/right-click
+    }
+    
     setContextMenu({
       x: e.clientX,
       y: e.clientY,
@@ -969,7 +973,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
   return (
     <div 
       ref={containerRef}
-      className="w-full h-full relative bg-slate-950" 
+      className="w-full h-full relative bg-slate-950 select-none [-webkit-touch-callout:none]" 
       style={{ display: 'block' }}
       onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; }}
       onDrop={(e) => e.preventDefault()}
@@ -1766,7 +1770,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
                   </div>
                   <div className="p-4 border-b border-slate-700">
                       <div className="flex gap-2">
-                          <input autoFocus value={compendiumSearch} onChange={(e) => setCompendiumSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && searchCompendium()} placeholder="Search (e.g. Owlbear, Lich)..." className="flex-1 bg-slate-950 border border-slate-600 rounded px-3 py-2 text-white outline-none focus:border-blue-500"/>
+                          <input autoFocus value={compendiumSearch} onChange={(e) => setCompendiumSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && searchCompendium()} placeholder="Search (e.g. Owlbear, Lich)..." className="flex-1 bg-slate-950 border border-slate-600 rounded px-3 py-2 text-white outline-none focus:border-blue-500 select-text"/>
                           <button onClick={searchCompendium} disabled={isLoadingCompendium} className="bg-blue-600 hover:bg-blue-500 px-4 rounded text-white font-bold">{isLoadingCompendium ? <Icon name="loader" size={18} className="animate-spin"/> : <Icon name="search" size={18}/>}</button>
                       </div>
                   </div>
@@ -1797,7 +1801,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
                           onChange={e => setMiniSearchQuery(e.target.value)} 
                           onKeyDown={e => e.key === 'Enter' && handleMiniSearch()}
                           placeholder="Search 3D Models (e.g. Dragon, Goblin)..." 
-                          className="flex-1 bg-slate-950 border border-slate-600 rounded px-3 py-2 text-white outline-none focus:border-amber-500"
+                          className="flex-1 bg-slate-950 border border-slate-600 rounded px-3 py-2 text-white outline-none focus:border-amber-500 select-text"
                       />
                       <button 
                           onClick={() => handleMiniSearch()} 

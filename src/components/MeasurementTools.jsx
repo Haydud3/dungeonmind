@@ -10,6 +10,9 @@ const RulerTool = ({ getTerrainHeight, gridSize }) => {
 
     useEffect(() => {
         if (controls) controls.enabled = points.length === 0;
+        return () => {
+            if (controls) controls.enabled = true;
+        };
     }, [points, controls]);
 
     const handlePointerDown = e => {
@@ -94,6 +97,9 @@ const ShapeToolBase = ({ children, onHitTest, tokens, onCompleteSelection }) => 
 
     useEffect(() => {
         if (controls) controls.enabled = !startPoint;
+        return () => {
+            if (controls) controls.enabled = true;
+        };
     }, [startPoint, controls]);
 
     const handlePointerDown = e => {
