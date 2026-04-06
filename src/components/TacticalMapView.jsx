@@ -707,6 +707,9 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
 
   const handleWallContextMenu = (e, wallId) => {
     e.stopPropagation();
+    if (typeof navigator !== 'undefined' && navigator.vibrate) {
+      navigator.vibrate(50); // Haptic feedback on wall long-press/right-click
+    }
     setContextMenu(null); // Close token context menu
     setWallContextMenu({
       x: e.clientX,
@@ -717,6 +720,9 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
 
   const handleLightContextMenu = (e, lightId) => {
       e.stopPropagation();
+      if (typeof navigator !== 'undefined' && navigator.vibrate) {
+        navigator.vibrate(50); // Haptic feedback on light long-press/right-click
+      }
       setContextMenu(null);
       setWallContextMenu(null);
       setLightContextMenu({

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { useCursor, Line, Text, Billboard } from '@react-three/drei';
 
@@ -15,6 +15,43 @@ export const WallSegment = ({ start, end, onContextMenu, onToggleDoor, wall, onD
     const length = vec.length();
     const [hovered, setHover] = useState(false);
     useCursor(hovered, 'pointer', 'auto');
+
+    const touchStartPos = useRef({ x: 0, y: 0 });
+    const longPressTimer = useRef(null);
+
+    const handleTouchStart = (e) => {
+        if (e.touches && e.touches.length > 0) {
+            touchStartPos.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+            longPressTimer.current = setTimeout(() => {
+                longPressTimer.current = null;
+                if (typeof navigator !== 'undefined' && navigator.vibrate) {
+                    navigator.vibrate(50); // Haptic feedback on long-press
+                }
+                if (onDelete) return;
+                if (onContextMenu) {
+                    onContextMenu({ clientX: touchStartPos.current.x, clientY: touchStartPos.current.y, stopPropagation: () => e.stopPropagation(), preventDefault: () => {} }, wall.id);
+                }
+            }, 500);
+        }
+    };
+
+    const handleTouchMove = (e) => {
+        if (longPressTimer.current && e.touches && e.touches.length > 0) {
+            const dx = e.touches[0].clientX - touchStartPos.current.x;
+            const dy = e.touches[0].clientY - touchStartPos.current.y;
+            if (Math.sqrt(dx * dx + dy * dy) > 10) {
+                clearTimeout(longPressTimer.current);
+                longPressTimer.current = null;
+            }
+        }
+    };
+
+    const handleTouchEnd = () => {
+        if (longPressTimer.current) {
+            clearTimeout(longPressTimer.current);
+            longPressTimer.current = null;
+        }
+    };
 
     return (
         <mesh 
@@ -47,6 +84,10 @@ export const WallSegment = ({ start, end, onContextMenu, onToggleDoor, wall, onD
                     setHover(false);
                 }
             }}
+            onTouchStart={handleTouchStart}
+            onTouchMove={handleTouchMove}
+            onTouchEnd={handleTouchEnd}
+            onTouchCancel={handleTouchEnd}
         >
             <cylinderGeometry args={[0.4, 0.4, length, 8]} />
             <meshBasicMaterial visible={false} />
