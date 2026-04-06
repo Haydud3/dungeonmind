@@ -213,7 +213,8 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
   }, [token.rotationY]);
 
   const handlePointerDown = (e) => {
-    if (!isTerrainReady || e.button === 2) {
+    if (!isTerrainReady) return;
+    if (e.button === 2) {
       e.stopPropagation();
       // Stop the native event so the MarqueeSelector doesn't accidentally trigger
       // when you are right-clicking a token to change its elevation.
@@ -225,6 +226,15 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
       dragStartY.current = meshRef.current.position.y;
       startMouseY.current = e.clientY;
       if (controls) controls.enabled = false;
+    } else if (e.pointerType === 'touch') {
+      touchStartPos.current = { x: e.clientX, y: e.clientY };
+      longPressTimer.current = setTimeout(() => {
+        if (canControl && !hasDragged.current) {
+          if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate(50);
+          const mockEvent = { clientX: touchStartPos.current.x, clientY: touchStartPos.current.y, preventDefault: () => {}, stopPropagation: () => {} };
+          if (onContextMenu) onContextMenu(mockEvent, token);
+        }
+      }, 500);
     }
   };
 
@@ -236,10 +246,21 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
       }
       const deltaY = -(e.clientY - startMouseY.current) * 0.05;
       meshRef.current.position.y = Math.max(0.025, dragStartY.current + deltaY);
+    } else if (e.pointerType === 'touch' && longPressTimer.current) {
+      const dx = e.clientX - touchStartPos.current.x;
+      const dy = e.clientY - touchStartPos.current.y;
+      if (Math.sqrt(dx * dx + dy * dy) > 10) {
+        clearTimeout(longPressTimer.current);
+        longPressTimer.current = null;
+      }
     }
   };
 
   const handlePointerUp = (e) => {
+    if (e.pointerType === 'touch' && longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
     if (isRightDragging.current) {
       e.stopPropagation();
       e.target.releasePointerCapture(e.pointerId);
@@ -332,27 +353,6 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
         if (canControl && !hasDragged.current) {
             if (onContextMenu) onContextMenu(e, token);
         }
-      }}
-      onTouchStart={(e) => {
-        e.stopPropagation();
-        touchStartPos.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-        longPressTimer.current = setTimeout(() => {
-          if (canControl && !hasDragged.current) {
-            const mockEvent = { clientX: e.touches[0].clientX, clientY: e.touches[0].clientY, preventDefault: () => {}, stopPropagation: () => {} };
-            if (onContextMenu) onContextMenu(mockEvent, token);
-          }
-        }, 500);
-      }}
-      onTouchMove={(e) => {
-        const touch = e.touches[0];
-        const distance = Math.sqrt(Math.pow(touch.clientX - touchStartPos.current.x, 2) + Math.pow(touch.clientY - touchStartPos.current.y, 2));
-        if (distance > 10) {
-          clearTimeout(longPressTimer.current);
-        }
-      }}
-      onTouchEnd={(e) => {
-        e.stopPropagation();
-        clearTimeout(longPressTimer.current);
       }}
     >
       <group ref={visualsRef}>

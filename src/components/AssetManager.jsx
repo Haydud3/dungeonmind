@@ -247,7 +247,44 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                             max="100" 
                             step="1" 
                             value={mapData?.scale || 20} 
-                            onChange={(e) => updateMap(campaignCode, activeMapId, { scale: parseFloat(e.target.value) })}
+                            onChange={(e) => {
+                                const newScale = parseFloat(e.target.value);
+                                const oldScale = mapData?.scale || 20;
+                                const ratio = newScale / oldScale;
+
+                                const updates = { scale: newScale };
+
+                                if (mapData?.walls) {
+                                    updates.walls = {};
+                                    for (const [id, wall] of Object.entries(mapData.walls)) {
+                                        updates.walls[id] = {
+                                            ...wall,
+                                            points: wall.points.map(p => ({
+                                                ...p,
+                                                x: p.x * ratio,
+                                                z: p.z * ratio,
+                                            }))
+                                        };
+                                    }
+                                }
+
+                                if (mapData?.lights) {
+                                    updates.lights = {};
+                                    for (const [id, light] of Object.entries(mapData.lights)) {
+                                        updates.lights[id] = {
+                                            ...light,
+                                            position: {
+                                                ...light.position,
+                                                x: light.position.x * ratio,
+                                                z: light.position.z * ratio,
+                                            },
+                                            radius: (light.radius || 15) * ratio,
+                                        };
+                                    }
+                                }
+
+                                updateMap(campaignCode, activeMapId, updates);
+                            }}
                             className="w-full accent-amber-500"
                         />
                         <div className="text-right text-xs text-slate-400 mt-1">{mapData?.scale || 20} units</div>
