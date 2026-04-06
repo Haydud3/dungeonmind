@@ -292,16 +292,105 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                     
                     <div>
                         <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Grid Size</label>
+                        <div className="flex items-center gap-2">
+                            <input 
+                                type="range" 
+                                min="0.1" 
+                                max="5" 
+                                step="0.01" 
+                                value={mapData?.gridSize ?? 1} 
+                                onChange={(e) => updateMap(campaignCode, activeMapId, { gridSize: parseFloat(e.target.value) })}
+                                className="w-full accent-amber-500 flex-1"
+                            />
+                            <input 
+                                type="number" 
+                                min="0.1" 
+                                step="0.01" 
+                                value={mapData?.gridSize ?? 1} 
+                                onChange={(e) => {
+                                    const val = parseFloat(e.target.value);
+                                    if (!isNaN(val)) updateMap(campaignCode, activeMapId, { gridSize: val });
+                                }}
+                                className="w-16 bg-slate-900 border border-slate-700 rounded p-1 text-xs text-white text-right outline-none focus:border-amber-500"
+                            />
+                        </div>
+                    </div>
+
+                    <div>
+                        <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Grid Offset X</label>
+                        <div className="flex items-center gap-2">
+                            <input 
+                                type="range" 
+                                min="-5" 
+                                max="5" 
+                                step="0.01" 
+                                value={mapData?.gridOffsetX ?? 0} 
+                                onChange={(e) => updateMap(campaignCode, activeMapId, { gridOffsetX: parseFloat(e.target.value) })}
+                                className="w-full accent-amber-500 flex-1"
+                            />
+                            <input 
+                                type="number" 
+                                step="0.01" 
+                                value={mapData?.gridOffsetX ?? 0} 
+                                onChange={(e) => {
+                                    const val = parseFloat(e.target.value);
+                                    if (!isNaN(val)) updateMap(campaignCode, activeMapId, { gridOffsetX: val });
+                                }}
+                                className="w-16 bg-slate-900 border border-slate-700 rounded p-1 text-xs text-white text-right outline-none focus:border-amber-500"
+                            />
+                        </div>
+                    </div>
+
+                    <div>
+                        <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Grid Offset Y</label>
+                        <div className="flex items-center gap-2">
+                            <input 
+                                type="range" 
+                                min="-5" 
+                                max="5" 
+                                step="0.01" 
+                                value={mapData?.gridOffsetY ?? 0} 
+                                onChange={(e) => updateMap(campaignCode, activeMapId, { gridOffsetY: parseFloat(e.target.value) })}
+                                className="w-full accent-amber-500 flex-1"
+                            />
+                            <input 
+                                type="number" 
+                                step="0.01" 
+                                value={mapData?.gridOffsetY ?? 0} 
+                                onChange={(e) => {
+                                    const val = parseFloat(e.target.value);
+                                    if (!isNaN(val)) updateMap(campaignCode, activeMapId, { gridOffsetY: val });
+                                }}
+                                className="w-16 bg-slate-900 border border-slate-700 rounded p-1 text-xs text-white text-right outline-none focus:border-amber-500"
+                            />
+                        </div>
+                    </div>
+
+                    <div>
+                        <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Grid Color</label>
+                        <div className="flex gap-2 items-center">
+                            <input 
+                                type="color" 
+                                value={mapData?.gridColor || '#888888'} 
+                                onChange={(e) => updateMap(campaignCode, activeMapId, { gridColor: e.target.value })}
+                                className="w-8 h-8 rounded cursor-pointer bg-slate-900 border border-slate-700 p-0.5"
+                            />
+                            <div className="flex-1 text-xs text-slate-400 uppercase">{mapData?.gridColor || '#888888'}</div>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Grid Thickness</label>
                         <input 
                             type="range" 
                             min="0.5" 
                             max="5" 
                             step="0.5" 
-                            value={mapData?.gridSize || 1} 
-                            onChange={(e) => updateMap(campaignCode, activeMapId, { gridSize: parseFloat(e.target.value) })}
+                            value={mapData?.gridThickness || 1} 
+                            onChange={(e) => updateMap(campaignCode, activeMapId, { gridThickness: parseFloat(e.target.value) })}
                             className="w-full accent-amber-500"
                         />
-                        <div className="text-right text-xs text-slate-400 mt-1">{mapData?.gridSize || 1}x</div>
+                        <div className="text-right text-xs text-slate-400 mt-1">{mapData?.gridThickness || 1}x</div>
                     </div>
 
                     <div>

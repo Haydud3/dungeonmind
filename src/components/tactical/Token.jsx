@@ -36,10 +36,11 @@ const TokenImage = ({ imageUrl, size, opacity }) => {
 }
 
 // Interactive 3D Token
-const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelect, onContextMenu, role, getTerrainHeight, isSnapToGrid, isTerrainReady, activeTool, draggedTokenId, setDraggedTokenId, viewMode, showNameplates, selectedTokenIds, groupDragData, onGroupDragEnd, isActiveTurn, canControl, shiftHeldRef }) => {
+const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gridOffsetY = 0, isSelected, onSelect, onContextMenu, role, getTerrainHeight, isSnapToGrid, isTerrainReady, activeTool, draggedTokenId, setDraggedTokenId, viewMode, showNameplates, selectedTokenIds, groupDragData, onGroupDragEnd, isActiveTurn, canControl, shiftHeldRef }) => {
   const meshRef = useRef();
   const visualsRef = useRef();
   const rotationRef = useRef();
+  const nameplateGlowRef = useRef();
   const { controls } = useThree();
   const [hovered, setHover] = useState(false);
   const [resolvedImage, setResolvedImage] = useState(null);
@@ -100,6 +101,12 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
   }, [token.x, token.y, token.z, token.id]);
 
   useFrame((state, delta) => {
+    if (nameplateGlowRef.current && isActiveTurn) {
+        const t = state.clock.elapsedTime;
+        nameplateGlowRef.current.opacity = opacity * (0.4 + Math.sin(t * 3) * 0.4);
+        nameplateGlowRef.current.emissiveIntensity = 0.5 + Math.sin(t * 3) * 0.5;
+    }
+
     // --- Main animation loop ---
     if (meshRef.current && visualsRef.current && rotationRef.current && getTerrainHeight) {
 
@@ -145,8 +152,8 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
       if (isSnapToGrid) {
           const tokenSize = token.size || 1;
           const isEvenSize = Math.round(tokenSize) % 2 === 0;
-          displayX = isEvenSize ? Math.round(worldPos.x / gridSize) * gridSize : Math.floor(worldPos.x / gridSize) * gridSize + gridSize / 2;
-          displayZ = isEvenSize ? Math.round(worldPos.z / gridSize) * gridSize : Math.floor(worldPos.z / gridSize) * gridSize + gridSize / 2;
+          displayX = isEvenSize ? Math.round((worldPos.x - gridOffsetX) / gridSize) * gridSize + gridOffsetX : Math.floor((worldPos.x - gridOffsetX) / gridSize) * gridSize + gridSize / 2 + gridOffsetX;
+          displayZ = isEvenSize ? Math.round((worldPos.z - gridOffsetY) / gridSize) * gridSize + gridOffsetY : Math.floor((worldPos.z - gridOffsetY) / gridSize) * gridSize + gridSize / 2 + gridOffsetY;
       }
 
       visualsRef.current.position.x = displayX - worldPos.x;
@@ -228,7 +235,21 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
       if (controls) controls.enabled = false;
     } else if (e.pointerType === 'touch') {
       touchStartPos.current = { x: e.clientX, y: e.clientY };
+      
+      const startWorldPos = new THREE.Vector3();
+      if (meshRef.current) meshRef.current.getWorldPosition(startWorldPos);
+
       longPressTimer.current = setTimeout(() => {
+        longPressTimer.current = null;
+        
+        if (isLeftDragging.current) {
+            const currentWorldPos = new THREE.Vector3();
+            if (meshRef.current) meshRef.current.getWorldPosition(currentWorldPos);
+            if (currentWorldPos.distanceToSquared(startWorldPos) > 0.01) {
+                return; // Token was moved, so cancel the long press
+            }
+        }
+
         if (canControl && !hasDragged.current) {
           if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate(50);
           const mockEvent = { clientX: touchStartPos.current.x, clientY: touchStartPos.current.y, preventDefault: () => {}, stopPropagation: () => {} };
@@ -271,8 +292,8 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
           const p = meshRef.current.position;
           const tokenSize = token.size || 1;
           const isEvenSize = Math.round(tokenSize) % 2 === 0;
-          const x = isSnapToGrid ? (isEvenSize ? Math.round(p.x / gridSize) * gridSize : Math.floor(p.x / gridSize) * gridSize + gridSize / 2) : p.x;
-          const z = isSnapToGrid ? (isEvenSize ? Math.round(p.z / gridSize) * gridSize : Math.floor(p.z / gridSize) * gridSize + gridSize / 2) : p.z;
+          const x = isSnapToGrid ? (isEvenSize ? Math.round((p.x - gridOffsetX) / gridSize) * gridSize + gridOffsetX : Math.floor((p.x - gridOffsetX) / gridSize) * gridSize + gridSize / 2 + gridOffsetX) : p.x;
+          const z = isSnapToGrid ? (isEvenSize ? Math.round((p.z - gridOffsetY) / gridSize) * gridSize + gridOffsetY : Math.floor((p.z - gridOffsetY) / gridSize) * gridSize + gridSize / 2 + gridOffsetY) : p.z;
           const terrainY = getTerrainHeight ? getTerrainHeight(x, z) : 0;
           const offset = p.y - terrainY - 0.025;
           const isFlying = Math.abs(offset) > 0.1;
@@ -325,7 +346,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
   const nameplatePos = useMemo(() => {
       return viewMode === 'top-down' 
           ? [0, 0, safeSize * 0.75] 
-          : [0, 0.2, safeSize * 0.85]; // Hover slightly off the ground, shifted South (towards camera)
+          : [0, safeSize * 0.2, safeSize * 0.85]; // Hover slightly off the ground, shifted South (towards camera)
   }, [safeSize, viewMode]);
 
   const initials = useMemo(() => {
@@ -419,6 +440,13 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
         {showNameplates && (
           <Billboard position={nameplatePos}>
             <group>
+                {/* Turn Indicator Glow */}
+                {isActiveTurn && (
+                    <RoundedBox args={[safeSize * 1.5, safeSize * 0.38, 0.01]} radius={safeSize * 0.08} smoothness={4} position={[0, 0, -0.02]}>
+                        <meshStandardMaterial ref={nameplateGlowRef} color={baseColor} emissive={baseColor} emissiveIntensity={0.5} transparent opacity={opacity * 0.8} depthTest={true} />
+                    </RoundedBox>
+                )}
+
                 {/* Stone Plaque Background */}
                 <RoundedBox args={[safeSize * 1.4, safeSize * 0.28, 0.02]} radius={safeSize * 0.05} smoothness={4} position={[0, 0, -0.01]}>
                     <meshStandardMaterial color="#1e293b" roughness={0.7} metalness={0.3} transparent opacity={opacity * 0.9} depthTest={true} />
@@ -553,6 +581,12 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
                 if (groupDragData) groupDragData.current.activeTokenId = null;
             }
           }}
+          onDrag={() => {
+            if (longPressTimer.current) {
+                clearTimeout(longPressTimer.current);
+                longPressTimer.current = null;
+            }
+          }}
           onDragEnd={() => {
             console.log("[Token3D] onDragEnd triggered for", token.id);
             if (controls) controls.enabled = true;
@@ -572,8 +606,8 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, isSelected, onSelec
               
               const tokenSize = token.size || 1;
               const isEvenSize = Math.round(tokenSize) % 2 === 0;
-              const snapX = isSnapToGrid ? (isEvenSize ? Math.round(worldPos.x / gridSize) * gridSize : Math.floor(worldPos.x / gridSize) * gridSize + gridSize / 2) : worldPos.x;
-              const snapZ = isSnapToGrid ? (isEvenSize ? Math.round(worldPos.z / gridSize) * gridSize : Math.floor(worldPos.z / gridSize) * gridSize + gridSize / 2) : worldPos.z;
+              const snapX = isSnapToGrid ? (isEvenSize ? Math.round((worldPos.x - gridOffsetX) / gridSize) * gridSize + gridOffsetX : Math.floor((worldPos.x - gridOffsetX) / gridSize) * gridSize + gridSize / 2 + gridOffsetX) : worldPos.x;
+              const snapZ = isSnapToGrid ? (isEvenSize ? Math.round((worldPos.z - gridOffsetY) / gridSize) * gridSize + gridOffsetY : Math.floor((worldPos.z - gridOffsetY) / gridSize) * gridSize + gridSize / 2 + gridOffsetY) : worldPos.z;
               
               if (groupDragData?.current?.activeTokenId === token.id) {
                   const snappedDelta = new THREE.Vector3(snapX - dragStartPos.current.x, 0, snapZ - dragStartPos.current.z);

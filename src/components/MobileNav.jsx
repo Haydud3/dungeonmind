@@ -14,6 +14,7 @@ const MobileNav = ({ view, setView, compact, className = "" }) => {
 
     return (
         <nav 
+            id="mobile-nav"
             // UPDATED: 
             // 1. Compact: Fixed height 'h-[52px]', aligned 'items-center', and 'pb-0' to touch the bottom edge.
             // 2. Normal: Dynamic height via style, aligned 'items-start', with safe-area padding.

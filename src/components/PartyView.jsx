@@ -3,7 +3,10 @@ import Icon from './Icon';
 import CharacterCreator from './ai-wizard/CharacterCreator';
 import SheetContainer from './character-sheet/SheetContainer'; 
 import { useCharacterStore } from '../stores/useCharacterStore';
-import { parsePdf } from '../utils/dndBeyondParser.js';
+// START CHANGE: Import D&D Beyond Importer
+import { parsePdf } from '../utils/dndBeyondParser.js'; // This seems to be a misnamed file in the original code, should be pdfParser.js
+import DndBeyondImporter from './character-sheet/DndBeyondImporter';
+// END CHANGE
 import { enrichCharacter } from '../utils/srdEnricher.js';
 
 import { useNewCampaign } from '../contexts/NewCampaignProvider';
@@ -22,6 +25,9 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
     const [forgeName, setForgeName] = useState('');
     const [forgeContext, setForgeContext] = useState('');
     const [isForging, setIsForging] = useState(false);
+    // START CHANGE: Add state for D&D Beyond Importer
+    const [showDndBeyondImport, setShowDndBeyondImport] = useState(false);
+    // END CHANGE
     // END CHANGE
     const [viewingCharacterId, setViewingCharacterId] = useState(null);
     const [isImporting, setIsImporting] = useState(false);
@@ -357,6 +363,13 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
                                             <p className="text-xs text-slate-400">Generate instantly.</p>
                                         </div>
                                         {/* END CHANGE */}
+                                        {/* START CHANGE: Add D&D Beyond URL Import Option */}
+                                        <div onClick={() => { setShowCreationMenu(false); setShowDndBeyondImport(true); }} className="bg-slate-800 border-2 border-slate-700 hover:border-red-500 rounded-xl p-6 cursor-pointer group transition-all hover:-translate-y-1">
+                                            <div className="w-16 h-16 bg-red-900/30 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform"><Icon name="link" size={32}/></div>
+                                            <h3 className="font-bold text-xl text-white mb-2">D&D Beyond URL</h3>
+                                            <p className="text-xs text-slate-400">Import from public URL.</p>
+                                        </div>
+                                        {/* END CHANGE */}
                                     </div>
                                 </>
                             )}
@@ -364,6 +377,17 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
                     </div>
                 </div>
             )}
+
+            {/* START CHANGE: D&D Beyond Importer Modal */}
+            {showDndBeyondImport && (
+                <div className="fixed inset-0 z-50 bg-slate-900/90 backdrop-blur-sm flex items-center justify-center p-4">
+                    <DndBeyondImporter 
+                        onComplete={(charData) => { handleNewCharacter(charData); setShowDndBeyondImport(false); }}
+                        onCancel={() => setShowDndBeyondImport(false)}
+                    />
+                </div>
+            )}
+            {/* END CHANGE */}
 
             {/* AI CREATOR / FORGE */}
             {/* START CHANGE: New Context-Aware Forge Modal */}

@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { useTexture } from '@react-three/drei';
 
 const DisplacedGridContent = ({ mapData, aspect, resolvedHeightmapUrl }) => {
-    const { scale = 20, gridSize = 1, heightScale = 1 } = mapData;
+    const { scale = 20, gridSize = 1, heightScale = 1, gridOffsetX = 0, gridOffsetY = 0, gridColor = '#ffffff', gridThickness = 1 } = mapData;
     const width = scale * aspect;
     const height = scale;
 
@@ -21,15 +21,16 @@ const DisplacedGridContent = ({ mapData, aspect, resolvedHeightmapUrl }) => {
         canvas.height = size;
         
         ctx.clearRect(0, 0, size, size);
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)'; // Slightly less transparent
-        ctx.lineWidth = 1; // Use 1 pixel line for crisp grid
+        ctx.globalAlpha = 0.6;
+        ctx.strokeStyle = gridColor;
+        ctx.lineWidth = gridThickness;
         
         // Draw lines at the edge to form a grid when tiled
         ctx.beginPath();
-        ctx.moveTo(0, size - 0.5); // Draw a line at the bottom edge
-        ctx.lineTo(size, size - 0.5);
-        ctx.moveTo(size - 0.5, 0); // Draw a line at the right edge
-        ctx.lineTo(size - 0.5, size);
+        ctx.moveTo(0, size - (gridThickness / 2)); // Draw a line at the bottom edge
+        ctx.lineTo(size, size - (gridThickness / 2));
+        ctx.moveTo(size - (gridThickness / 2), 0); // Draw a line at the right edge
+        ctx.lineTo(size - (gridThickness / 2), size);
         ctx.stroke();
 
         const texture = new THREE.CanvasTexture(canvas);
@@ -40,11 +41,11 @@ const DisplacedGridContent = ({ mapData, aspect, resolvedHeightmapUrl }) => {
         const repeatY = height / gridSize;
         texture.repeat.set(repeatX, repeatY);
         
-        // Ensure that world origin (0,0) is always exactly on a grid intersection
-        texture.offset.set(-(width / 2) / gridSize, -(height / 2) / gridSize);
+        // Ensure that world origin (0,0) is always exactly on a grid intersection, and apply user offsets
+        texture.offset.set(-(width / 2) / gridSize - gridOffsetX / gridSize, -(height / 2) / gridSize + gridOffsetY / gridSize);
 
         return texture;
-    }, [width, height, gridSize]);
+    }, [width, height, gridSize, gridOffsetX, gridOffsetY, gridColor, gridThickness]);
 
     return (
         // Placed at y=0.02 to ensure it renders clearly above the Fog of War (y=0.015)

@@ -487,3 +487,9 @@ h1, h2, h3, .fantasy-font { font-family: 'Cinzel', serif; }
     .mobile-nav-container { display: none !important; }
     .chat-sidebar { height: 100vh !important; bottom: 0 !important; }
 }
+
+/* --- FULLSCREEN FIXES --- */
+:fullscreen #app-sidebar,
+:fullscreen #mobile-nav {
+    display: none !important;
+}

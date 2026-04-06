@@ -21,4 +21,13 @@ const copy404 = () => ({
 export default defineConfig({
   plugins: [react(), copy404()],
   base: '/dungeonmind/', // <--- IMPORTANT: Ensure this matches your repo name!
+  server: {
+    proxy: {
+      '/dndbeyond-api': {
+        target: 'https://character-service.dndbeyond.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/dndbeyond-api/, ''),
+      },
+    }
+  }
 })

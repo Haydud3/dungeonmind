@@ -180,7 +180,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
 
   const toggleFullscreen = () => {
       if (!document.fullscreenElement) {
-          containerRef.current?.requestFullscreen().catch(err => {
+          document.documentElement.requestFullscreen().catch(err => {
               console.error(`Error attempting to enable fullscreen: ${err.message}`);
           });
       } else {
@@ -321,8 +321,10 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
 
           const tokenSize = t.size || 1;
           const isEvenSize = Math.round(tokenSize) % 2 === 0;
-          const finalX = isSnapToGrid ? (isEvenSize ? Math.round(newX / gridSize) * gridSize : Math.floor(newX / gridSize) * gridSize + gridSize / 2) : newX;
-          const finalZ = isSnapToGrid ? (isEvenSize ? Math.round(newZ / gridSize) * gridSize : Math.floor(newZ / gridSize) * gridSize + gridSize / 2) : newZ;
+          const gridOffsetX = mapData?.gridOffsetX || 0;
+          const gridOffsetY = mapData?.gridOffsetY || 0;
+          const finalX = isSnapToGrid ? (isEvenSize ? Math.round((newX - gridOffsetX) / gridSize) * gridSize + gridOffsetX : Math.floor((newX - gridOffsetX) / gridSize) * gridSize + gridSize / 2 + gridOffsetX) : newX;
+          const finalZ = isSnapToGrid ? (isEvenSize ? Math.round((newZ - gridOffsetY) / gridSize) * gridSize + gridOffsetY : Math.floor((newZ - gridOffsetY) / gridSize) * gridSize + gridSize / 2 + gridOffsetY) : newZ;
 
           const terrainY = getTerrainHeight ? getTerrainHeight(finalX, finalZ) : 0;
           const finalY = terrainY + (t.elevationOffset || 0) + 0.025;
@@ -334,7 +336,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
               [`tokens.${id}.elevationOffset`]: t.elevationOffset || 0,
           });
       });
-  }, [selectedTokenIds, isSnapToGrid, gridSize, getTerrainHeight, campaignCode, activeMapId]);
+  }, [selectedTokenIds, isSnapToGrid, gridSize, getTerrainHeight, campaignCode, activeMapId, mapData?.gridOffsetX, mapData?.gridOffsetY]);
 
   const tokensList = Object.values(tokens).filter(Boolean); // Filter out null/undefined tokens
   const allCharacters = [...(data?.players || []), ...(data?.npcs || [])];
@@ -793,8 +795,10 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
     // Calculate grid snapping and elevation
     const tokenSize = payload.size || 1;
     const isEvenSize = Math.round(tokenSize) % 2 === 0;
-    const dropX = isSnapToGrid ? (isEvenSize ? Math.round(position.x / gridSize) * gridSize : Math.floor(position.x / gridSize) * gridSize + gridSize / 2) : position.x;
-    const dropZ = isSnapToGrid ? (isEvenSize ? Math.round(position.z / gridSize) * gridSize : Math.floor(position.z / gridSize) * gridSize + gridSize / 2) : position.z;
+    const gridOffsetX = mapData?.gridOffsetX || 0;
+    const gridOffsetY = mapData?.gridOffsetY || 0;
+    const dropX = isSnapToGrid ? (isEvenSize ? Math.round((position.x - gridOffsetX) / gridSize) * gridSize + gridOffsetX : Math.floor((position.x - gridOffsetX) / gridSize) * gridSize + gridSize / 2 + gridOffsetX) : position.x;
+    const dropZ = isSnapToGrid ? (isEvenSize ? Math.round((position.z - gridOffsetY) / gridSize) * gridSize + gridOffsetY : Math.floor((position.z - gridOffsetY) / gridSize) * gridSize + gridSize / 2 + gridOffsetY) : position.z;
     const terrainY = getTerrainHeight ? getTerrainHeight(dropX, dropZ) : 0;
 
     const newTokenId = `token_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -1081,12 +1085,14 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
                 </Suspense>
             ) : (
                 <Grid 
-                  position={[0, 0.016, 0]}
+                  position={[mapData?.gridOffsetX || 0, 0.016, mapData?.gridOffsetY || 0]}
                   renderOrder={101}
                   infiniteGrid 
                   fadeDistance={60} 
-                  sectionColor="#888" 
-                  cellColor="#888" 
+                  sectionColor={mapData?.gridColor || "#888888"} 
+                  cellColor={mapData?.gridColor || "#888888"} 
+                  sectionThickness={mapData?.gridThickness || 1}
+                  cellThickness={(mapData?.gridThickness || 1) * 0.5}
                   cellSize={gridSize}
                   sectionSize={gridSize}
                 />
@@ -1130,6 +1136,8 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
                     token={displayToken} 
                     updateTokenPosition={handleUpdateTokenPosition}
                     gridSize={gridSize}
+                    gridOffsetX={mapData?.gridOffsetX || 0}
+                    gridOffsetY={mapData?.gridOffsetY || 0}
                     isSelected={selectedTokenIds.includes(token.id)}
                     onSelect={handleSelectToken}
                     onContextMenu={handleContextMenu}
