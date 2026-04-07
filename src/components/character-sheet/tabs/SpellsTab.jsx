@@ -56,7 +56,7 @@ const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate, isOwner, onUse })
                     <span>${spell.name}</span>
                     <span class="text-[10px] text-slate-500 uppercase">Spell</span>
                 </div>
-                <div class="text-sm text-slate-300 leading-relaxed max-h-60 overflow-y-auto custom-scroll">${spell.desc || "No description available."}</div>
+                    <div class="text-sm text-slate-300 leading-relaxed max-h-60 overflow-y-auto custom-scroll">${String(spell.desc || "No description available.").replace(/<[^>]*>?/gm, '')}</div>
                 ${spell.concentration ? '<div class="text-xs text-blue-400 font-bold mt-1">Concentration</div>' : ''}
             </div>
         `;
@@ -201,9 +201,22 @@ const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate, isOwner, onUse })
         const [expanded, setExpanded] = useState(false);
         const hasText = spell.desc;
 
-        // Detect if spell is an AoE/Placeable (FIX: Ensure spell.range is a string before using .includes)
-        const isAoE = (typeof spell.range === 'string' && (spell.range.includes('foot') || spell.range.includes('mile'))) || 
-                      (spell.desc && (spell.desc.includes('radius') || spell.desc.includes('cone') || spell.desc.includes('cube')));
+        // Safely extract range from string or object to prevent React render crash
+        const getRangeStr = (r) => {
+            if (!r) return 'Unknown Range';
+            if (typeof r === 'string') return r;
+            if (typeof r === 'object') {
+                const origin = r.origin || '';
+                const val = r.rangeValue ? `${r.rangeValue} ft` : '';
+                return `${val} ${origin}`.trim() || 'Self';
+            }
+            return 'Unknown Range';
+        };
+        
+        const rangeStr = getRangeStr(spell.meta?.range || spell.range);
+        
+        const isAoE = rangeStr.toLowerCase().includes('foot') || rangeStr.toLowerCase().includes('ft') || rangeStr.toLowerCase().includes('mile') || 
+                      (spell.desc && (spell.desc.toLowerCase().includes('radius') || spell.desc.toLowerCase().includes('cone') || spell.desc.toLowerCase().includes('cube')));
 
         return (
             <div className={`bg-slate-900 border border-slate-700 rounded-xl mb-2 transition-all hover:border-indigo-500/50 shadow-sm group ${expanded ? 'ring-1 ring-indigo-500/50' : ''}`}>
@@ -221,7 +234,7 @@ const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate, isOwner, onUse })
                                 {spell.ritual && <span className="text-[9px] bg-green-900/50 text-green-400 px-1 rounded border border-green-800" title="Ritual">R</span>}
                             </div>
                             <div className="text-[10px] text-slate-500 italic">
-                                {spell.level === 0 ? 'Cantrip' : `Level ${spell.level}`} • {spell.school} • {spell.meta?.range || spell.range}
+                                {spell.level === 0 ? 'Cantrip' : `Level ${spell.level}`} • {spell.school} • {rangeStr}
                             </div>
                         </div>
 
@@ -244,7 +257,7 @@ const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate, isOwner, onUse })
                                      onClick={(e) => handleRoll(spell, 'hit', e)}
                                      className="bg-slate-700 hover:bg-cyan-900/50 text-cyan-400 border border-slate-600 hover:border-cyan-500/50 px-2 py-1 rounded text-[10px] font-bold font-mono transition-colors uppercase"
                                  >
-                                     {spell.hit.includes('+') ? spell.hit : `+${spell.hit}`}
+                                     {String(spell.hit).includes('DC') ? spell.hit : (String(spell.hit).includes('+') ? spell.hit : `+${spell.hit}`)}
                                  </button>
                              )}
 
@@ -302,7 +315,7 @@ const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate, isOwner, onUse })
                 {expanded && hasText && editingIndex !== index && (
                     <div className="px-3 pb-3 pt-0">
                         <div className="border-t border-slate-700/50 pt-2 text-xs text-slate-300 leading-relaxed whitespace-pre-wrap animate-in fade-in">
-                            {spell.desc}
+                            {String(spell.desc || "No description available.").replace(/<[^>]*>?/gm, '')}
                         </div>
                     </div>
                 )}

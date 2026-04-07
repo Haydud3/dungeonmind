@@ -86,7 +86,7 @@ const FeaturesTab = ({ onUse }) => {
                                 </div>
                             </div>
                             <div className="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap">
-                                {feat.desc || "No description."}
+                                {String(feat.description || feat.desc || "No description.").replace(/<[^>]*>?/gm, '')}
                             </div>
                         </div>
                     ))}

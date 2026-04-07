@@ -3,7 +3,7 @@ import { useCharacterStore } from '../../stores/useCharacterStore';
 import Icon from '../Icon';
 import { compressImage } from '../../utils/imageCompressor';
 
-const HeaderStats = ({ onDiceRoll, onLogAction, onBack, onPossess, isNpc, combatActive, onInitiative, role }) => {
+const HeaderStats = ({ character, onDiceRoll, onLogAction, onBack, onPossess, isNpc, combatActive, onInitiative, role }) => {
   // --- DM EDIT HANDLERS ---
   const handleHpEdit = (e) => {
     if (role !== 'dm') return;
@@ -35,7 +35,7 @@ const HeaderStats = ({ onDiceRoll, onLogAction, onBack, onPossess, isNpc, combat
     }
   };
 
-  const { character, updateHP, updateStat, updateDeathSaves, setDeathSaves, recoverSlots, shortRest, updateInfo } = useCharacterStore();
+  const { updateHP, updateStat, updateDeathSaves, setDeathSaves, recoverSlots, shortRest, updateInfo } = useCharacterStore();
   const [isExpanded, setIsExpanded] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [showDeathModal, setShowDeathModal] = useState(false); 
@@ -66,9 +66,9 @@ const HeaderStats = ({ onDiceRoll, onLogAction, onBack, onPossess, isNpc, combat
   const darkvision = character.senses?.darkvision || 0;
 
   // --- HP LOGIC ---
-  const currentHP = character.hp.current;
-  const maxHP = character.hp.max;
-  const hpPercent = Math.min((currentHP / maxHP) * 100, 100);
+  const currentHP = character.hp?.current ?? 0;
+  const maxHP = character.hp?.max ?? 0;
+  const hpPercent = Math.min((currentHP / (maxHP || 1)) * 100, 100);
   const hpColor = hpPercent < 30 ? 'bg-red-600' : hpPercent < 60 ? 'bg-amber-500' : 'bg-green-500';
   const isDying = currentHP === 0 && !isNpc;
 
@@ -148,10 +148,21 @@ const HeaderStats = ({ onDiceRoll, onLogAction, onBack, onPossess, isNpc, combat
             </div>
 
             <div className="flex-1 flex flex-col justify-center min-w-0" onClick={() => setIsExpanded(!isExpanded)}>
-                <div className="flex justify-between items-end mb-1">
-                    <span className="text-sm font-bold text-white truncate">{character.name}</span>
+                <div className="flex justify-between items-start mb-1">
+                    <div className="flex-1 min-w-0">
+                        <input 
+                            className="text-sm font-bold text-white bg-transparent outline-none w-full truncate placeholder-slate-500"
+                            defaultValue={character.name}
+                            onBlur={(e) => updateInfo('name', e.target.value)}
+                            onClick={e => e.stopPropagation()}
+                        />
+                        <div className="flex gap-2 text-[10px] text-slate-400 mt-0.5">
+                            <span>LVL {character.level || 1}</span>
+                            <span className="truncate">{character.race || 'Unknown'}</span>
+                        </div>
+                    </div>
                     <span 
-                        className={`text-xs font-mono ${isDying ? 'text-red-500 font-bold animate-pulse' : 'text-slate-400'} ${role === 'dm' ? 'cursor-pointer hover:text-white underline decoration-dotted' : ''}`}
+                        className={`text-xs font-mono shrink-0 ml-2 ${isDying ? 'text-red-500 font-bold animate-pulse' : 'text-slate-400'} ${role === 'dm' ? 'cursor-pointer hover:text-white underline decoration-dotted' : ''}`}
                         onClick={handleHpEdit}
                     >
                         {isDying ? "CRITICAL" : `${currentHP}/${maxHP}`}

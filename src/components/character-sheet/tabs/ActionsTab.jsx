@@ -28,23 +28,21 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
     // --- 1. DATA GATHERING & MERGING ---
     
     // A. Inventory (Smart Sync: Only Equipped & Combat-Ready Items)
-    // START CHANGE: Filter inventory for equipped items with combat stats
     const inventoryActions = (character.inventory || [])
-        .filter(item => item.equipped && item.combat)
+        .filter(item => item.combat) // Removed item.equipped requirement
         .map(item => ({
             ...item.combat,
             name: item.name,
             id: `item-${item.name}-${Date.now()}`, // Unique ID generation
             source: "item",
-            notes: item.combat.notes || item.desc
+            notes: item.combat.notes || item.description
         }));
-    // END CHANGE
 
     // B. Spells (Directly from Spellbook)
     const spellActions = (character.spells || [])
         .filter(spell => {
             const t = (spell.time || "").toLowerCase();
-            return spell.hit || spell.dmg || t.includes("bonus") || t.includes("reaction");
+            return spell.hit || spell.dmg || t.includes("bonus") || t.includes("reaction") || String(spell.hit).includes("DC");
         })
         .map(spell => ({
             name: spell.name,
@@ -54,7 +52,7 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
             type: spell.time?.toLowerCase().includes("bonus") ? "Bonus Action" : 
                   spell.time?.toLowerCase().includes("reaction") ? "Reaction" : "Action",
             category: "Spell",
-            range: spell.range,
+            range: typeof spell.range === 'object' ? (spell.range?.rangeValue ? `${spell.range.rangeValue} ft` : 'Self') : spell.range,
             desc: spell.desc,
             source: "spell"
         }));
@@ -97,6 +95,16 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
         if (!onDiceRoll) return alert("Dice connection missing.");
 
         if (type === 'hit') {
+            if (String(action.hit).includes('DC')) {
+                onLogAction && onLogAction(`
+                    <div class="bg-slate-800 p-2 rounded border-l-4 border-cyan-600">
+                        <div class="font-bold text-cyan-400">${character?.name || 'Character'} forces a Saving Throw!</div>
+                        <div class="text-sm text-slate-300 mt-1">${action.name} requires a <span class="font-bold text-white">${action.hit}</span> save.</div>
+                    </div>
+                `);
+                return;
+            }
+
             const mod = parseInt(action.hit) || 0;
             const formula = `1d20${mod >= 0 ? '+' : ''}${mod}`;
             onDiceRoll(formula, {
@@ -118,10 +126,13 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
             });
         } 
         else {
+            const title = action.name;
+            const desc = String(action.desc || action.notes || "No description provided.").replace(/<[^>]*>?/gm, '');
+            
             onLogAction && onLogAction(`
-                <div class="bg-slate-800 p-2 rounded border-l-4 border-slate-600">
-                    <div class="font-bold text-white">${character?.name || 'Character'} uses ${action.name}</div>
-                    <div class="text-xs text-slate-400 mt-1">${action.desc || action.notes || "No details."}</div>
+                <div class="border-l-4 border-indigo-500 pl-3 py-1">
+                    <div class="font-bold text-indigo-300">${title}</div>
+                    <div class="text-xs text-slate-400 italic">${desc}</div>
                 </div>
             `);
         }
@@ -220,7 +231,7 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
                                     className="h-7 px-2 rounded bg-slate-700 hover:bg-cyan-900 text-cyan-200 border border-slate-600 hover:border-cyan-500 text-xs font-bold font-mono transition-colors" 
                                     title="Roll Attack"
                                 >
-                                {String(action.hit).includes('+') || String(action.hit).includes('-') ? action.hit : `+${action.hit}`}
+                                {String(action.hit).includes('+') || String(action.hit).includes('-') || String(action.hit).includes('DC') ? action.hit : `+${action.hit}`}
                                 </button>
                             )}
 
@@ -271,7 +282,7 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
                 {isExpanded && hasText && editingId !== action.id && (
                     <div className="px-3 pb-3 pt-0 border-t border-slate-700/50 animate-in fade-in">
                         <div className="pt-2 text-xs text-slate-300 leading-relaxed whitespace-pre-wrap">
-                            {action.desc || action.notes}
+                            {String(action.desc || action.notes || "").replace(/<[^>]*>?/gm, '')}
                             {action.uses && <div className="mt-2 text-[10px] text-slate-500 uppercase tracking-widest">Recharge: {action.uses.recovery}</div>}
                         </div>
                     </div>

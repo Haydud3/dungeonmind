@@ -48,6 +48,8 @@ export const parseDndBeyondJson = (json) => {
     if (!data) throw new Error("Invalid D&D Beyond JSON: 'data' property not found.");
     
     console.log("Parser received data:", data);
+    console.log("[DEBUG] Raw D&D Beyond Actions:", data.actions);
+    console.log("[DEBUG] Raw D&D Beyond Custom Actions:", data.customActions);
 
     // Initialize ALL arrays and objects the sheet expects to prevent crashes (bulletproof version)
     const characterSheet = {
@@ -149,7 +151,8 @@ export const parseDndBeyondJson = (json) => {
     });
 
     // HP (bulletproof version)
-    const maxHp = (data.baseHitPoints || 0) + (data.bonusHitPoints || 0) + (data.overrideHitPoints || 0);
+    const conMod = characterSheet.modifiers.con || 0;
+    const maxHp = (data.baseHitPoints || 0) + (data.bonusHitPoints || 0) + (data.overrideHitPoints || 0) + (conMod * characterSheet.level);
     characterSheet.hp = {
         max: maxHp,
         current: maxHp - (data.removedHitPoints || 0),
@@ -189,13 +192,48 @@ export const parseDndBeyondJson = (json) => {
 
     // Inventory (bulletproof version)
     characterSheet.inventory = (data.inventory || []).map(item => {
-        if (!item?.definition) return { name: 'Unknown Item', quantity: item?.quantity || 0, description: '', equipped: item?.equipped || false, weight: 0 };
+        const def = item.definition;
+        if (!def) return { name: 'Unknown Item', quantity: item?.quantity || 0, description: '', equipped: item?.equipped || false, weight: 0 };
+        
+        let combat = null;
+        const isWeapon = (def.filterType === "Weapon" || def.type === "Weapon" || def.weaponBehaviors?.length > 0);
+        
+        // ONLY add combat actions for EQUIPPED items
+        if (isWeapon && item.equipped) {
+            const wb = def.weaponBehaviors?.[0] || def;
+            const dmgDice = wb.damage?.diceString;
+            
+            if (dmgDice) {
+                const isFinesse = wb.properties?.some(p => p.name?.toLowerCase() === 'finesse');
+                const isRanged = wb.attackType === 2;
+                
+                const strMod = characterSheet.modifiers.str || 0;
+                const dexMod = characterSheet.modifiers.dex || 0;
+                const statMod = (isRanged || (isFinesse && dexMod > strMod)) ? dexMod : strMod;
+                const magicBonus = wb.grantedModifiers?.find(m => m.type === 'bonus' && m.subType === 'magic')?.value || 0;
+                
+                const totalHit = characterSheet.profBonus + statMod + magicBonus;
+                const totalDmgMod = statMod + magicBonus;
+                
+                combat = {
+                    hit: totalHit,
+                    dmg: `${dmgDice}${totalDmgMod !== 0 ? (totalDmgMod > 0 ? '+' : '') + totalDmgMod : ''}`,
+                    type: 'Action',
+                    category: 'Attack',
+                    range: wb.range ? `${wb.range} ft` : '5 ft',
+                    notes: wb.damageType || def.damageType || '',
+                    desc: def.description || '' // Added full description
+                };
+            }
+        }
+        
         return {
-            name: item.definition.name || 'Unknown Item',
+            name: def.name || 'Unknown Item',
             quantity: item.quantity || 1,
-            description: item.definition.description || '',
+            description: def.description || '',
             equipped: item.equipped || false,
-            weight: item.definition.weight || 0,
+            weight: def.weight || 0,
+            combat: combat // Maps straight to ActionsTab
         };
     });
     
@@ -207,7 +245,7 @@ export const parseDndBeyondJson = (json) => {
         return { name: f.definition.name, description: f.definition.snippet || f.definition.description || '', source: sourceName };
     };
 
-    characterSheet.features = [ // bulletproof version
+    characterSheet.features = [
         ...(data.race?.racialTraits || []).map(t => mapFeature(t, 'Race')),
         ...(data.classes || []).flatMap(c => (c.classFeatures || []).map(f => mapFeature(f, 'Class'))),
         ...(data.feats || []).map(f => mapFeature(f, 'Feat'))
@@ -240,15 +278,49 @@ export const parseDndBeyondJson = (json) => {
         characterSheet.spellAbility = spellcastingAbility;
     }
 
-    const spellsByLevel = {}; // bulletproof version
-    const allSpells = Object.values(data.spells || {}).flat().filter(spell => spell && spell.definition); // bulletproof version
-    allSpells.forEach(spell => {
-        const level = spell.definition.level;
+    // Get spells from racial traits, feats, AND the main class spellbook
+    const allSpellsRaw = [];
+    if (data.spells) {
+        Object.values(data.spells).forEach(arr => { if (Array.isArray(arr)) allSpellsRaw.push(...arr); });
+    }
+    if (data.classSpells) {
+        data.classSpells.forEach(cs => { if (Array.isArray(cs.spells)) allSpellsRaw.push(...cs.spells); });
+    }
+
+    const spellsByLevel = {};
+    const uniqueSpells = Array.from(new Map(allSpellsRaw.filter(s => s && s.definition).map(s => [s.definition.name, s])).values());
+    const actMap = { 1: 'Action', 3: 'Bonus Action', 4: 'Reaction', 8: 'Special' };
+
+    uniqueSpells.forEach(spell => {
+        const def = spell.definition;
+        const level = def.level;
         if (!spellsByLevel[level]) spellsByLevel[level] = [];
+        
+        let dmgString = "";
+        const dmgMod = def.modifiers?.find(m => m.type === 'damage');
+        if (dmgMod?.die?.diceString) {
+            dmgString = dmgMod.die.diceString;
+            if (def.name === "Eldritch Blast" && data.options?.class?.some(o => o.definition?.name === "Agonizing Blast")) {
+                const chaMod = characterSheet.modifiers.cha || 0;
+                dmgString += (chaMod > 0 ? `+${chaMod}` : `${chaMod}`);
+            }
+        }
+
+        let hitString = def.requiresAttackRoll ? characterSheet.spellAttackBonus : "";
+        if (def.requiresSavingThrow && def.saveDcAbilityId) hitString = `DC ${characterSheet.spellSaveDc} ${ABILITY_ID_MAP[def.saveDcAbilityId]?.toUpperCase()}`;
+
+        const rangeStr = typeof def.range === 'object' ? (def.range?.rangeValue ? `${def.range.rangeValue} ft` : (def.range?.origin || 'Self')) : (def.range || 'Self');
+        const activation = actMap[def.activation?.activationType] || 'Action';
+
         spellsByLevel[level].push({
-            ...spell.definition,
-            desc: spell.definition.description || '',
-            time: `${spell.definition.activation?.activationTime || ''} ${spell.definition.activation?.activationType || ''}`.trim(),
+            ...def,
+            desc: def.description || '',
+            time: `${def.activation?.activationTime || ''} ${activation}`.trim(),
+            range: rangeStr,
+            hit: hitString,
+            dmg: dmgString,
+            concentration: def.concentration || false,
+            ritual: def.ritual || false
         });
     });
     characterSheet.spells = Object.values(spellsByLevel).flat();
@@ -276,6 +348,19 @@ export const parseDndBeyondJson = (json) => {
             });
         }
     }
+
+    // Inject Unarmed Strike for all characters
+    const baseStrMod = characterSheet.modifiers.str || 0;
+    characterSheet.customActions.push({
+        id: 'unarmed-strike',
+        name: "Unarmed Strike",
+        hit: characterSheet.profBonus + baseStrMod,
+        dmg: `1${baseStrMod !== 0 ? (baseStrMod > 0 ? '+' : '') + baseStrMod : ''}`,
+        type: 'Action',
+        category: 'Attack',
+        range: '5 ft',
+        notes: 'Bludgeoning'
+    });
 
     // Log all collected warnings at the end
     if (warnings.length > 0) {

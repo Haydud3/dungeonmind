@@ -14,7 +14,7 @@ import DmNotesTab from './tabs/DmNotesTab';
 
 function SheetContainer({ character, onSave, onDiceRoll, diceLog, onLogAction, onBack, role, isNpc = false, onOpenModelPicker, data }) {
   const { loadCharacter, updateCharacter } = useCharacterStore();
-  const [activeTab, setActiveTab] = useState('bio');
+  const [activeTab, setActiveTab] = useState('actions');
 
   // Load the character into the store whenever the character prop changes
   useEffect(() => {
@@ -25,20 +25,11 @@ function SheetContainer({ character, onSave, onDiceRoll, diceLog, onLogAction, o
 
   // Determine if the current user is the owner of this character
   // This logic needs to be robust, considering both player characters and NPCs
-  const isOwner = useRef(false);
-  useEffect(() => {
-    if (character && data?.user?.uid) {
-      if (role === 'dm') {
-        isOwner.current = true; // DM is always considered the owner for editing purposes
-      } else if (isNpc) {
-        isOwner.current = (character.ownerId === data.user.uid);
-      } else { // Player character
-        isOwner.current = (character.ownerId === data.user.uid) || (data.campaign?.assignments?.[data.user.uid] === character.id);
-      }
-    } else {
-      isOwner.current = false;
-    }
-  }, [character, data, role, isNpc]);
+  const isOwner = role === 'dm' || 
+    (data?.user?.uid && (
+      (isNpc && character.ownerId === data.user.uid) || 
+      (!isNpc && (character.ownerId === data.user.uid || data.campaign?.assignments?.[data.user.uid] === character.id))
+    ));
 
   if (!character || !character.name) {
     return (
@@ -49,8 +40,9 @@ function SheetContainer({ character, onSave, onDiceRoll, diceLog, onLogAction, o
   }
 
   return (
-    <div className="flex flex-col h-full bg-slate-900">
+    <div className="flex flex-col h-full bg-slate-900 relative">
       <HeaderStats 
+        character={character}
         onDiceRoll={onDiceRoll} 
         onLogAction={onLogAction} 
         onBack={onBack} 
@@ -61,26 +53,34 @@ function SheetContainer({ character, onSave, onDiceRoll, diceLog, onLogAction, o
       {/* Tabs Navigation */}
       <div className="flex-none bg-slate-900 border-t border-b border-slate-800 shadow-inner z-20">
         <div className="flex justify-around text-sm font-bold text-slate-400">
-          <TabButton name="bio" activeTab={activeTab} setActiveTab={setActiveTab} icon="user" label="Bio" />
-          <TabButton name="skills" activeTab={activeTab} setActiveTab={setActiveTab} icon="target" label="Skills" />
-          <TabButton name="inventory" activeTab={activeTab} setActiveTab={setActiveTab} icon="backpack" label="Inventory" />
           <TabButton name="actions" activeTab={activeTab} setActiveTab={setActiveTab} icon="sword" label="Actions" />
           <TabButton name="spells" activeTab={activeTab} setActiveTab={setActiveTab} icon="sparkles" label="Spells" />
+          <TabButton name="skills" activeTab={activeTab} setActiveTab={setActiveTab} icon="target" label="Skills" />
+          <TabButton name="inventory" activeTab={activeTab} setActiveTab={setActiveTab} icon="backpack" label="Inventory" />
           <TabButton name="features" activeTab={activeTab} setActiveTab={setActiveTab} icon="scroll-text" label="Features" />
+          <TabButton name="bio" activeTab={activeTab} setActiveTab={setActiveTab} icon="user" label="Bio" />
           {role === 'dm' && <TabButton name="dmNotes" activeTab={activeTab} setActiveTab={setActiveTab} icon="eye-off" label="DM Notes" />}
         </div>
       </div>
 
       {/* Tab Content */}
       <div className="flex-1 overflow-y-auto custom-scroll p-4">
-        {activeTab === 'bio' && <BioTab onOpenModelPicker={onOpenModelPicker} />}
+        {activeTab === 'actions' && <ActionsTab onDiceRoll={onDiceRoll} onLogAction={onLogAction} isOwner={isOwner} />}
+        {activeTab === 'spells' && <SpellsTab onDiceRoll={onDiceRoll} onLogAction={onLogAction} isOwner={isOwner} />}
         {activeTab === 'skills' && <SkillsTab onDiceRoll={onDiceRoll} onLogAction={onLogAction} />}
-        {activeTab === 'actions' && <ActionsTab onDiceRoll={onDiceRoll} onLogAction={onLogAction} isOwner={isOwner.current} />}
-        {activeTab === 'inventory' && <InventoryTab onDiceRoll={onDiceRoll} onLogAction={onLogAction} isOwner={isOwner.current} />}
-        {activeTab === 'spells' && <SpellsTab onDiceRoll={onDiceRoll} onLogAction={onLogAction} isOwner={isOwner.current} />}
-        {activeTab === 'features' && <FeaturesTab onDiceRoll={onDiceRoll} onLogAction={onLogAction} isOwner={isOwner.current} />}
+        {activeTab === 'inventory' && <InventoryTab onDiceRoll={onDiceRoll} onLogAction={onLogAction} isOwner={isOwner} />}
+        {activeTab === 'features' && <FeaturesTab onDiceRoll={onDiceRoll} onLogAction={onLogAction} isOwner={isOwner} />}
+        {activeTab === 'bio' && <BioTab onOpenModelPicker={onOpenModelPicker} />}
         {activeTab === 'dmNotes' && role === 'dm' && <DmNotesTab />}
       </div>
+
+      {/* Floating Dice Tray Button */}
+      <button 
+        onClick={() => {/* Toggle global Dice Tray state */}} 
+        className="absolute bottom-20 left-4 z-[90] bg-indigo-600 p-3 rounded-full shadow-2xl text-white hover:scale-105 transition-transform"
+      >
+        <Icon name="dices" size={24}/>
+      </button>
     </div>
   );
 }
