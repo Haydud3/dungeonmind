@@ -182,8 +182,8 @@ const SideSheet = ({ characterId, onClose, role, onDiceRoll }) => {
             </div>
             <div className="flex-1 min-h-0 relative">
                 <SheetContainer 
-                    key={displayId}
-                    characterId={displayId}
+                    key={displayId} // Keep key for re-render on ID change
+                    character={character} // Pass the actual character object
                     data={modifiedData}
                     onClose={onClose}
                     onBack={onClose}

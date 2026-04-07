@@ -201,8 +201,8 @@ const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate, isOwner, onUse })
         const [expanded, setExpanded] = useState(false);
         const hasText = spell.desc;
 
-        // Detect if spell is an AoE/Placeable
-        const isAoE = (spell.range && (spell.range.includes('foot') || spell.range.includes('mile'))) || 
+        // Detect if spell is an AoE/Placeable (FIX: Ensure spell.range is a string before using .includes)
+        const isAoE = (typeof spell.range === 'string' && (spell.range.includes('foot') || spell.range.includes('mile'))) || 
                       (spell.desc && (spell.desc.includes('radius') || spell.desc.includes('cone') || spell.desc.includes('cube')));
 
         return (

@@ -368,7 +368,7 @@ const NpcView = ({ data, setData, role, setChatInput, setView, onPossess, aiHelp
                 </div>
                 <div className="flex-1 min-h-0 relative">
                     <SheetContainer 
-                        characterId={viewingNpcId} 
+                        character={viewingNpc} 
                         onSave={handleSheetSave} 
                         onBack={() => setViewingNpcId(null)} 
                         onDiceRoll={async (formula, options) => {

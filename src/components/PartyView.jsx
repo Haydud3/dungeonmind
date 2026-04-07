@@ -225,7 +225,8 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
                 </div>
                 <div className="flex-1 min-h-0">
                     <SheetContainer 
-                        characterId={viewingCharacterId} 
+                        // Pass the full viewingCharacter object instead of just the ID
+                        character={viewingCharacter}
                         onSave={handleSheetSave} 
                         onDiceRoll={async (formula, options) => {
                             if (onDiceRoll) {
@@ -380,11 +381,21 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
 
             {/* START CHANGE: D&D Beyond Importer Modal */}
             {showDndBeyondImport && (
-                <div className="fixed inset-0 z-50 bg-slate-900/90 backdrop-blur-sm flex items-center justify-center p-4">
-                    <DndBeyondImporter 
-                        onComplete={(charData) => { handleNewCharacter(charData); setShowDndBeyondImport(false); }}
-                        onCancel={() => setShowDndBeyondImport(false)}
-                    />
+                <div className="fixed inset-0 z-[60] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
+                    <div className="max-w-2xl w-full bg-slate-900 rounded-xl overflow-hidden shadow-2xl border border-slate-700 h-[80vh] relative">
+                        <button onClick={() => setShowDndBeyondImport(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white z-10"><Icon name="x" size={24}/></button>
+                        <DndBeyondImporter 
+                            onImport={(charData) => {
+                                if (charData) handleNewCharacter(charData);
+                                setShowDndBeyondImport(false);
+                            }} 
+                            onComplete={(charData) => {
+                                if (charData) handleNewCharacter(charData);
+                                setShowDndBeyondImport(false);
+                            }}
+                            onCancel={() => setShowDndBeyondImport(false)} 
+                        />
+                    </div>
                 </div>
             )}
             {/* END CHANGE */}

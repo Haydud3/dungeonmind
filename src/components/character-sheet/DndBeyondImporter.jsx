@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { parseDndBeyondJson } from './dndBeyondParser';
 import Icon from '../Icon';
 
-const DndBeyondImporter = ({ onComplete, onCancel }) => {
+const DndBeyondImporter = ({ onImport, onCancel }) => { // Changed prop from onComplete to onImport
   const [url, setUrl] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -28,8 +28,8 @@ const DndBeyondImporter = ({ onComplete, onCancel }) => {
       console.log("Raw D&D Beyond JSON Data:", jsonData); // Debugging: Log raw JSON
       const parsedData = parseDndBeyondJson(jsonData);
       console.log("Parsed Character Data:", parsedData); // Debugging: Log parsed data
-      
-      onComplete(parsedData);
+      // Use the new onImport prop name
+      onImport(parsedData); // Call onImport
 
     } catch (err) {
       setError(err.message);

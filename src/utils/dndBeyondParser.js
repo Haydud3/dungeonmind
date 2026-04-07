@@ -1,10 +1,304 @@
 import * as pdfjsLib from 'pdfjs-dist';
 
 // Dynamic versioning to match your installed package
-pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
+pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version || '4.0.379'}/build/pdf.worker.min.mjs`;
+
+/** -
+ * A map for D&D Beyond's ability score IDs to a common name.
+ */
+const ABILITY_ID_MAP = {
+  1: 'str',
+  2: 'dex',
+  3: 'con',
+  4: 'int',
+  5: 'wis',
+  6: 'cha',
+};
+
+/** -
+ * A map for D&D Beyond's alignment IDs to a common name.
+ */
+const ALIGNMENT_ID_MAP = {
+    1: 'Lawful Good', 2: 'Neutral Good', 3: 'Chaotic Good',
+    4: 'Lawful Neutral', 5: 'True Neutral', 6: 'Chaotic Neutral',
+    7: 'Lawful Evil', 8: 'Neutral Evil', 9: 'Chaotic Evil',
+};
+
+/** -
+ * A map of skill names from D&D Beyond to their associated ability score.
+ */
+const SKILL_ABILITY_MAP = {
+    'acrobatics': 'dex', 'animal-handling': 'wis', 'arcana': 'int',
+    'athletics': 'str', 'deception': 'cha', 'history': 'int',
+    'insight': 'wis', 'intimidation': 'cha', 'investigation': 'int',
+    'medicine': 'wis', 'nature': 'int', 'perception': 'wis',
+    'performance': 'cha', 'persuasion': 'cha', 'religion': 'int',
+    'sleight-of-hand': 'dex', 'stealth': 'dex', 'survival': 'wis'
+};
+
+const getAbilityModifier = (score = 10) => Math.floor((score - 10) / 2);
+const getProficiencyBonus = (level = 1) => Math.ceil(1 + level / 4);
 
 const sanitizeForFirestore = (data) => {
     return JSON.parse(JSON.stringify(data));
+};
+
+export const parseDndBeyondJson = (json) => {
+    const data = json.data; 
+    if (!data) throw new Error("Invalid D&D Beyond JSON: 'data' property not found.");
+    
+    console.log("Parser received data:", data);
+
+    // Initialize ALL arrays and objects the sheet expects to prevent crashes (bulletproof version)
+    const characterSheet = {
+        stats: {}, modifiers: {}, skills: {}, savingThrows: {}, proficiencies: {}, 
+        bio: {}, customActions: [], inventory: [], spells: [], spellSlots: {},
+        conditions: [], features: []
+    };
+
+    const warnings = [];
+
+    // Core Info
+    characterSheet.dndBeyondId = data.id;
+    characterSheet.name = data.name;
+    characterSheet.avatarUrl = data.decorations.avatarUrl;
+    characterSheet.inspiration = data.inspiration;
+    characterSheet.race = data.race?.fullName || data.race?.baseName || 'Unknown Race';
+    characterSheet.background = data.background?.definition?.name || 'Unknown';
+    characterSheet.alignment = ALIGNMENT_ID_MAP[data.alignmentId] || 'Unknown';
+    characterSheet.image = data.decorations.avatarUrl;
+    
+    // Speed (Safely grab walking speed)
+    characterSheet.speed = data.race?.weightSpeeds?.normal?.walk || 30;
+
+    // Classes & Level (bulletproof version)
+    characterSheet.classes = (data.classes || []).map(cls => {
+        if (!cls?.definition) return { name: 'Unknown Class', subclass: null, level: cls?.level || 0 };
+        return {
+            name: cls.definition.name || 'Unknown Class',
+            subclass: cls.subclassDefinition?.name || null,
+            level: cls.level || 0,
+        };
+    });
+
+    // Provide the top-level string the sheet expects (bulletproof version)
+    characterSheet.class = characterSheet.classes.map(c => c.name).join(' / ') || 'Unknown Class';
+
+    const totalLevel = characterSheet.classes.reduce((acc, cls) => acc + cls.level, 0);
+    characterSheet.level = totalLevel || 1;
+    characterSheet.xp = data.currentXp || 0;
+
+    // Stats & Modifiers (bulletproof version)
+    (data.stats || []).forEach(stat => {
+        const statName = ABILITY_ID_MAP[stat.id];
+        const score = (stat.value || 0) + ((data.bonusStats || []).find(bs => bs.id === stat.id)?.value || 0);
+        characterSheet.stats[statName] = score;
+        characterSheet.modifiers[statName] = getAbilityModifier(score);
+    });
+
+    // Initiative (bulletproof version)
+    characterSheet.initiative = characterSheet.modifiers.dex || 0;
+
+    // Proficiency Bonus (bulletproof version)
+    characterSheet.profBonus = getProficiencyBonus(totalLevel);
+
+    // Collect Proficiencies (bulletproof version)
+    const proficiencies = new Set();
+    const languages = new Set();
+    const armorProfs = new Set();
+    const weaponProfs = new Set();
+    const toolProfs = new Set();
+
+    ['race', 'class', 'background', 'item', 'feat'].forEach(source => {
+        if (data.modifiers?.[source]) {
+            data.modifiers[source].forEach(mod => {
+                if (mod.type === 'proficiency') proficiencies.add(mod.subType);
+                if (mod.type === 'language') languages.add(mod.friendlySubtypeName);
+            });
+        }
+    });
+
+    (data.classes || []).forEach(cls => {
+        const profText = cls.definition?.classFeatures?.find(f => f.name === 'Proficiencies')?.description || '';
+        if (profText.includes('Light armor')) armorProfs.add('Light Armor');
+        if (profText.includes('Medium armor')) armorProfs.add('Medium Armor');
+        if (profText.includes('Heavy armor')) armorProfs.add('Heavy Armor');
+        if (profText.includes('Shields')) armorProfs.add('Shields');
+        if (profText.includes('Simple weapons')) weaponProfs.add('Simple Weapons');
+        if (profText.includes('Martial weapons')) weaponProfs.add('Martial Weapons');
+    });
+
+    characterSheet.proficiencies = {
+        armor: [...armorProfs].join(', '),
+        weapons: [...weaponProfs].join(', '),
+        tools: [...toolProfs].join(', '),
+        languages: [...languages].join(', '),
+    };
+
+    // Saving Throws (bulletproof version)
+    Object.values(ABILITY_ID_MAP).forEach(name => {
+        characterSheet.savingThrows[name] = proficiencies.has(`${name}-saving-throws`) || proficiencies.has(`${name === 'str' ? 'strength' : name === 'dex' ? 'dexterity' : name === 'con' ? 'constitution' : name === 'int' ? 'intelligence' : name === 'wis' ? 'wisdom' : 'charisma'}-saving-throws`);
+    });
+    
+    // Skills (bulletproof version)
+    Object.entries(SKILL_ABILITY_MAP).forEach(([skillName, abilityName]) => {
+        const formattedSkillName = skillName.split('-').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' ');
+        if (proficiencies.has(skillName)) {
+            characterSheet.skills[formattedSkillName] = true;
+        }
+    });
+
+    // HP (bulletproof version)
+    const maxHp = (data.baseHitPoints || 0) + (data.bonusHitPoints || 0) + (data.overrideHitPoints || 0);
+    characterSheet.hp = {
+        max: maxHp,
+        current: maxHp - (data.removedHitPoints || 0),
+        temp: data.temporaryHitPoints || 0,
+    };
+
+    // AC (bulletproof version)
+    let acFormula = "10 + DEX";
+    let ac = 10 + (characterSheet.modifiers.dex || 0);
+    
+    const equippedArmor = (data.inventory || []).find(item => item.equipped && item.definition?.armorTypeId);
+    if (equippedArmor?.definition) {
+        ac = equippedArmor.definition.armorClass ?? ac;
+        acFormula = `${equippedArmor.definition.name || 'Armor'} (${ac})`;
+        const armorType = equippedArmor.definition.armorTypeId;
+        if (armorType === 1) {
+            ac += (characterSheet.modifiers.dex || 0);
+            acFormula += " + DEX";
+        } else if (armorType === 2) {
+            ac += Math.min((characterSheet.modifiers.dex || 0), 2);
+            acFormula += " + DEX (max 2)";
+        }
+    }
+
+    ['item', 'feat', 'race', 'class'].forEach(source => {
+        if (data.modifiers?.[source]) {
+            data.modifiers[source].forEach(mod => {
+                if (mod.type === 'bonus' && mod.subType === 'armor-class' && mod.fixedValue) {
+                    ac += mod.fixedValue;
+                    acFormula += ` + ${mod.fixedValue} (${mod.friendlyTypeName})`;
+                }
+            });
+        }
+    });
+    characterSheet.ac = ac;
+    characterSheet.acFormula = acFormula;
+
+    // Inventory (bulletproof version)
+    characterSheet.inventory = (data.inventory || []).map(item => {
+        if (!item?.definition) return { name: 'Unknown Item', quantity: item?.quantity || 0, description: '', equipped: item?.equipped || false, weight: 0 };
+        return {
+            name: item.definition.name || 'Unknown Item',
+            quantity: item.quantity || 1,
+            description: item.definition.description || '',
+            equipped: item.equipped || false,
+            weight: item.definition.weight || 0,
+        };
+    });
+    
+    characterSheet.currency = data.currencies || { cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 }; // bulletproof version
+
+    // Features and Traits
+    const mapFeature = (f, sourceName) => {
+        if (!f?.definition) return { name: `Unknown ${sourceName} Feature`, description: '', source: sourceName };
+        return { name: f.definition.name, description: f.definition.snippet || f.definition.description || '', source: sourceName };
+    };
+
+    characterSheet.features = [ // bulletproof version
+        ...(data.race?.racialTraits || []).map(t => mapFeature(t, 'Race')),
+        ...(data.classes || []).flatMap(c => (c.classFeatures || []).map(f => mapFeature(f, 'Class'))),
+        ...(data.feats || []).map(f => mapFeature(f, 'Feat'))
+    ];
+
+    // Bio
+    characterSheet.bio = {
+        appearance: data.traits?.appearance || [data.hair, data.eyes, data.skin, data.height, data.weight].filter(Boolean).join(', '), // bulletproof version
+        traits: data.traits?.personalityTraits || '',
+        ideals: data.traits?.ideals || '',
+        bonds: data.traits?.bonds || '',
+        flaws: data.traits?.flaws || '',
+        backstory: data.notes?.backstory || '',
+        notes: [data.notes?.allies, data.notes?.enemies, data.notes?.organizations].filter(Boolean).join('\n\n')
+    };
+
+    // Senses (bulletproof version)
+    characterSheet.senses = {
+        darkvision: (data.race?.racialTraits || []).find(t => t?.definition?.name === "Darkvision")?.definition?.description?.match(/(\d+)\s*feet/)?.[1] || 0
+    };
+
+    // Spells
+    const classInfo = data.classes?.[0]; // bulletproof version
+    const spellcastingAbilityId = classInfo?.definition?.spellCastingAbilityId;
+    const spellcastingAbility = ABILITY_ID_MAP[spellcastingAbilityId];
+    if (spellcastingAbility && characterSheet.modifiers[spellcastingAbility] !== undefined) {
+        const spellcastingModifier = characterSheet.modifiers[spellcastingAbility];
+        characterSheet.spellSaveDc = 8 + characterSheet.profBonus + spellcastingModifier;
+        characterSheet.spellAttackBonus = characterSheet.profBonus + spellcastingModifier;
+        characterSheet.spellAbility = spellcastingAbility;
+    }
+
+    const spellsByLevel = {}; // bulletproof version
+    const allSpells = Object.values(data.spells || {}).flat().filter(spell => spell && spell.definition); // bulletproof version
+    allSpells.forEach(spell => {
+        const level = spell.definition.level;
+        if (!spellsByLevel[level]) spellsByLevel[level] = [];
+        spellsByLevel[level].push({
+            ...spell.definition,
+            desc: spell.definition.description || '',
+            time: `${spell.definition.activation?.activationTime || ''} ${spell.definition.activation?.activationType || ''}`.trim(),
+        });
+    });
+    characterSheet.spells = Object.values(spellsByLevel).flat();
+    characterSheet.spellsByLevel = spellsByLevel;
+    
+    // Spell Slots
+    if (classInfo?.definition?.canCastSpells && classInfo?.definition?.spellRules) { 
+        if (data.pactMagic?.length > 0) {
+            const pactSlotInfo = classInfo.definition.spellRules?.levelSpellSlots?.[classInfo.level - 1] || [];
+            const slotLevel = pactSlotInfo.findIndex(s => s > 0) + 1;
+            if (slotLevel > 0) {
+                const total = pactSlotInfo[slotLevel - 1];
+                const used = data.pactMagic.find(p => p.level === slotLevel)?.used || 0;
+                characterSheet.pactSlots = { level: slotLevel, total, used };
+            }
+        }
+        if (data.spellSlots?.length > 0) {
+            const regularSlots = classInfo.definition.spellRules?.levelSpellSlots?.[classInfo.level - 1] || [];
+            regularSlots.forEach((total, index) => {
+                const level = index + 1;
+                if (total > 0) {
+                    const used = data.spellSlots.find(s => s.level === level)?.used || 0;
+                    characterSheet.spellSlots[level] = { total, used };
+                }
+            });
+        }
+    }
+
+    // Log all collected warnings at the end
+    if (warnings.length > 0) {
+        console.warn("DndBeyondParser encountered the following warnings during parsing:");
+        warnings.forEach((warning, index) => {
+            console.warn(`  ${index + 1}. ${warning}`);
+        });
+    }
+
+    // NEW DEBUG: Log the final characterSheet object before returning
+    console.log("DndBeyondParser: Final characterSheet object:", characterSheet);
+
+    // NEW DEBUG: Add checks for critical properties
+    const criticalProperties = ['name', 'level', 'class', 'race', 'hp', 'stats', 'modifiers', 'profBonus'];
+    criticalProperties.forEach(prop => {
+        if (!characterSheet[prop]) {
+            console.warn(`DndBeyondParser: Critical property '${prop}' is missing or empty in the final characterSheet. Current value:`, characterSheet[prop]);
+        } else if (typeof characterSheet[prop] === 'object' && Object.keys(characterSheet[prop]).length === 0) {
+            console.warn(`DndBeyondParser: Critical object property '${prop}' is empty in the final characterSheet.`);
+        }
+    });
+
+    return characterSheet;
 };
 
 export const parsePdf = async (file) => {

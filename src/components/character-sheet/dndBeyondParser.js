@@ -70,15 +70,18 @@ const getProficiencyBonus = (level = 1) => Math.ceil(1 + level / 4);
  * @returns {object} A structured character sheet.
  */
 export const parseDndBeyondJson = (json) => {
-    const data = json.data; // CRITICAL FIX: Access json.data to get the actual character object
+    const data = json.data; // CRITICAL: Access json.data directly for the main character object
     if (!data) {
         throw new Error("Invalid D&D Beyond JSON: 'data' property not found or is empty."); // Corrected typo: new new Error -> new Error
     }
+    console.log("Parser received data:", data); // NEW DEBUG: Log the full data object received by the parser
 
     // This will be the final character sheet object, structured to match the app's state
     const characterSheet = {
         stats: {}, modifiers: {}, skills: {}, savingThrows: {}, proficiencies: {}, bio: {}, customActions: []
     };
+
+    const warnings = []; // Initialize warnings array
 
     // Core Info
     characterSheet.dndBeyondId = data.id;
@@ -91,14 +94,24 @@ export const parseDndBeyondJson = (json) => {
     characterSheet.image = data.decorations.avatarUrl;
 
     // Classes & Level
-    characterSheet.classes = (data.classes || []).map(cls => ({ // Ensure data.classes is an array
-        name: cls.definition?.name || 'Unknown Class', // Added optional chaining
-        subclass: cls.subclassDefinition?.name || null, // Added optional chaining
-        level: cls.level || 0,
-    }));
+    characterSheet.classes = (data.classes || []).map(cls => { // Ensure data.classes is an array
+        if (!cls?.definition) { // NEW DEBUG: Check if class definition is missing
+            warnings.push(`DndBeyondParser: Class item missing 'definition' property. Skipping or providing fallback. Item: ${JSON.stringify(cls)}`);
+            return { name: 'Unknown Class', subclass: null, level: cls?.level || 0 }; // Return a fallback object
+        }
+        return {
+            name: cls.definition.name || 'Unknown Class', // Should exist if cls.definition is not null
+            subclass: cls.subclassDefinition?.name || null, // Added optional chaining
+            level: cls.level || 0,
+        };
+    });
+
     const totalLevel = characterSheet.classes.reduce((acc, cls) => acc + cls.level, 0);
     characterSheet.level = totalLevel;
     characterSheet.xp = data.currentXp;
+
+    // Declare classInfo early for consistent access throughout spell-related and other logic
+    const classInfo = data.classes?.[0];
 
     // Stats & Modifiers
     // Already initialized
@@ -134,6 +147,11 @@ export const parseDndBeyondJson = (json) => {
 
     // D&D Beyond sometimes grants proficiencies via `definition.description` text.
     // This is a simplified parse. A more robust solution would be needed for all cases.
+    // NEW DEBUG: Add a warning if data.classes is unexpectedly null here
+    if (!data.classes) {
+        warnings.push("DndBeyondParser: data.classes is null or undefined when checking proficiencies.");
+    }
+
     (data.classes || []).forEach(cls => { // Ensure data.classes is an array
         const profText = cls.definition?.classFeatures.find(f => f.name === 'Proficiencies')?.description || '';
         if (profText.includes('Light armor')) armorProfs.add('Light Armor');
@@ -176,8 +194,12 @@ export const parseDndBeyondJson = (json) => {
     // AC
     let acFormula = "10 + DEX";
     let ac = 10 + characterSheet.modifiers.dexterity; // Default AC
-    const equippedArmor = (data.inventory || []).find(i => i.equipped && i.definition?.filterType === 'Armor'); // CRITICAL FIX: Added optional chaining to i.definition in the find predicate
-    if (equippedArmor?.definition) { // Added optional chaining for definition
+    
+    // Find equipped armor
+    const equippedArmor = (data.inventory || []).find(item =>
+        item.equipped && item.definition?.armorTypeId
+    );
+    if (equippedArmor?.definition) {
         ac = equippedArmor.definition.armorClass ?? ac; // Fallback to default AC if armorClass is null or undefined
         acFormula = `${equippedArmor.definition.name || 'Armor'} (${ac})`;
         const armorType = equippedArmor.definition.armorTypeId;
@@ -204,20 +226,35 @@ export const parseDndBeyondJson = (json) => {
     characterSheet.acFormula = acFormula;
 
     // Inventory and Currency
-    characterSheet.inventory = (data.inventory || []).map(item => ({ // Ensure data.inventory is an array before mapping
-        name: item.definition?.name || 'Unknown Item', // Safely access item name
-        quantity: item.quantity,
-        description: item.definition?.description || '', // Safely access item description
-        equipped: item.equipped,
-        weight: item.definition?.weight || 0, // Added optional chaining
-    }));
+    characterSheet.inventory = (data.inventory || []).map(item => { // Ensure data.inventory is an array before mapping
+        if (!item?.definition) { // NEW DEBUG: Check if item definition is missing
+            warnings.push(`DndBeyondParser: Inventory item missing 'definition' property. Item: ${JSON.stringify(item)}`);
+            return { name: 'Unknown Item', quantity: item?.quantity || 0, description: '', equipped: item?.equipped || false, weight: 0 }; // Return a fallback
+        }
+        return {
+            name: item.definition?.name || 'Unknown Item', // Safely access item name
+            quantity: item.quantity,
+            description: item.definition?.description || '', // Safely access item description
+            equipped: item.equipped,
+            weight: item.definition?.weight || 0, // Added optional chaining
+        };
+    });
     characterSheet.currency = data.currencies;
+
+    // NEW DEBUG: Add warnings for missing definitions in features/traits
+    const mapFeature = (f, sourceName) => {
+        if (!f?.definition) { // NEW DEBUG: Check if feature definition is missing
+            warnings.push(`DndBeyondParser: ${sourceName} feature/trait missing 'definition' property. Item: ${JSON.stringify(f)}`);
+            return { name: `Unknown ${sourceName} Feature`, description: '', source: sourceName };
+        }
+        return { name: f.definition?.name || `Unknown ${sourceName} Feature`, description: f.definition?.snippet || f.definition?.description || '', source: sourceName };
+    };
 
     // Features and Traits
     characterSheet.features = [
-        ...(data.race?.racialTraits || []).map(t => ({ name: t.definition?.name || 'Unknown Trait', description: t.definition?.snippet || t.definition?.description || '', source: 'Race' })), // Safely map racial traits
-        ...(data.classes || []).flatMap(c => (c.classFeatures || []).map(f => ({ name: f.definition?.name || 'Unknown Feature', description: f.definition?.snippet || f.definition?.description || '', source: 'Class' }))), // Safely map class features
-        ...(data.feats || []).map(f => ({ name: f.definition?.name || 'Unknown Feat', description: f.definition?.snippet || f.definition?.description || '', source: 'Feat' })) // Safely map feats
+        ...(data.race?.racialTraits || []).map(t => mapFeature(t, 'Race')), // Safely map racial traits
+        ...(data.classes || []).flatMap(c => (c.classFeatures || []).map(f => mapFeature(f, 'Class'))), // Safely map class features
+        ...(data.feats || []).map(f => mapFeature(f, 'Feat')) // Safely map feats
     ];
 
     // Bio
@@ -233,7 +270,11 @@ export const parseDndBeyondJson = (json) => {
 
     // Senses
     characterSheet.senses = {
-        darkvision: data.race?.racialTraits?.find(t => t.definition?.name === "Darkvision")?.definition?.description?.match(/(\d+)\s*feet/)?.[1] || 0 // More robust optional chaining
+        darkvision: (data.race?.racialTraits || []).find(t => {
+            if (!t?.definition) warnings.push(`DndBeyondParser: Racial trait missing 'definition' when checking for Darkvision. Trait: ${JSON.stringify(t)}`);
+            return t.definition?.name === "Darkvision";
+        })?.definition?.description?.match(/(\d+)\s*feet/)?.[1] || 0 // More robust optional chaining
+
     };
 
     // Spells
@@ -247,16 +288,19 @@ export const parseDndBeyondJson = (json) => {
         characterSheet.spellAbility = spellcastingAbility.substring(0, 3);
     }
 
-    const allSpells = Object.values(data.spells || {}).flat(); // Ensure data.spells is an object before getting values
+    const spellsByLevel = {}; // Initialize spellsByLevel here
+    // Filter out any null or undefined spell entries before processing
+    const allSpells = Object.values(data.spells || {}).flat().filter(spell => spell);
     (allSpells || []).forEach(spell => {
         // CRITICAL FIX: Ensure spell.definition exists before accessing its properties
-        if (!spell.definition) {
-            return; // Skip this spell if its definition is missing
+        if (!spell.definition) { // 'spell' is guaranteed not to be null/undefined due to the filter above
+            warnings.push(`DndBeyondParser: Spell item missing 'definition' property. Skipping spell. Item: ${JSON.stringify(spell)}`);
+            return;
         }
         const level = spell.definition.level; // Level should be present if definition exists
         if (!spellsByLevel[level]) spellsByLevel[level] = [];
         spellsByLevel[level].push({
-            ...spell.definition, // Safely spread properties of spell.definition
+            ...spell.definition, // Safely spread properties of spell.definition (assuming it's not null due to check above)
             desc: spell.definition.description || '', // Align with srdEnricher, provide fallback
             time: `${spell.definition.activation?.activationTime || ''} ${spell.definition.activation?.activationType || ''}`.trim(), // CRITICAL FIX: Optional chaining for activation
         });
@@ -265,8 +309,8 @@ export const parseDndBeyondJson = (json) => {
     characterSheet.spellsByLevel = spellsByLevel; // Keep for detailed views if needed
 
     // Spell Slots
-    characterSheet.spellSlots = {};
-    if (classInfo?.definition?.canCastSpells && classInfo?.definition?.spellRules) {
+    characterSheet.spellSlots = {}; // Ensure characterSheet.spellSlots is initialized
+    if (classInfo?.definition?.canCastSpells && classInfo?.definition?.spellRules) { 
         if (data.pactMagic?.length > 0) { // Warlock Pact Magic
             const pactSlotInfo = classInfo.definition.spellRules?.levelSpellSlots?.[classInfo.level - 1] || []; // Safely access pact slot info
             const slotLevel = pactSlotInfo.findIndex(s => s > 0) + 1; // Determine slot level
@@ -286,6 +330,14 @@ export const parseDndBeyondJson = (json) => {
                 }
             });
         }
+    }
+
+    // Log all collected warnings at the end
+    if (warnings.length > 0) {
+        console.warn("DndBeyondParser encountered the following warnings during parsing:");
+        warnings.forEach((warning, index) => {
+            console.warn(`  ${index + 1}. ${warning}`);
+        });
     }
 
     return characterSheet;
