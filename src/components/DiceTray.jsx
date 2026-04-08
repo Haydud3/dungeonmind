@@ -127,22 +127,31 @@ const DiceTray = ({ diceLog = [], handleDiceRoll, onClose }) => {
                 {/* History */}
                 <h4 className="text-xs uppercase font-bold text-slate-500 tracking-wider mb-2 mt-2">Recent Rolls</h4>
                 <div className="flex-1 overflow-y-auto custom-scroll bg-slate-950/50 rounded-lg p-3 font-mono text-xs space-y-2 border border-slate-800 shadow-inner">
-                    {diceLog.length === 0 && <div className="text-center text-slate-600 italic py-4">No recent rolls</div>}
+                    {diceLog.length === 0 && <div className="text-center text-slate-600 italic py-4">No recent activity</div>}
                     {diceLog.map(log => (
                         <div key={log.id} className="flex flex-col bg-slate-900/80 p-2 rounded border border-slate-800">
-                            <div className="flex justify-between items-baseline mb-1">
-                                <span className="font-bold text-slate-300">{log.die}</span>
-                                <span className="text-[10px] text-slate-500 truncate ml-2">{log.formulaDisplay}</span>
-                            </div>
-                            <div className="flex justify-between items-center">
-                                <div className="flex items-center gap-1 text-slate-400 text-xs flex-wrap">
-                                    <span className={Number.isFinite(log.natural) && log.natural == 20 && log.die.includes('d20') && log.die.startsWith('1d20') ? "text-green-400 font-bold" : Number.isFinite(log.natural) && log.natural == 1 && log.die.includes('d20') && log.die.startsWith('1d20') ? "text-red-400 font-bold" : "break-all"}>
-                                        [{log.rolls ? log.rolls.join(' + ') : (Number.isFinite(log.natural) ? log.natural : 0)}]
-                                    </span>
-                                    {log.mod !== undefined && log.mod !== 0 && <span>{log.mod >= 0 ? '+' : ''}{log.mod}</span>}
+                            {log.formulaDisplay === '1d0' && log.result === 0 && log.alias ? (
+                                <div className="flex flex-col">
+                                    <span className="font-bold text-indigo-300">Used: {log.alias}</span>
+                                    {log.description && <span className="text-[10px] text-slate-400 mt-1">{log.description}</span>}
                                 </div>
-                                <span className="text-lg font-bold text-amber-500 whitespace-nowrap ml-2">= {Number.isFinite(log.result) ? log.result : 0}</span>
-                            </div>
+                            ) : (
+                                <>
+                                    <div className="flex justify-between items-baseline mb-1">
+                                        <span className="font-bold text-slate-300">{log.die}</span>
+                                        <span className="text-[10px] text-slate-500 truncate ml-2">{log.formulaDisplay}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center">
+                                        <div className="flex items-center gap-1 text-slate-400 text-xs flex-wrap">
+                                            <span className={Number.isFinite(log.natural) && log.natural == 20 && log.die.includes('d20') && log.die.startsWith('1d20') ? "text-green-400 font-bold" : Number.isFinite(log.natural) && log.natural == 1 && log.die.includes('d20') && log.die.startsWith('1d20') ? "text-red-400 font-bold" : "break-all"}>
+                                                [{log.rolls ? log.rolls.join(' + ') : (Number.isFinite(log.natural) ? log.natural : 0)}]
+                                            </span>
+                                            {log.mod !== undefined && log.mod !== 0 && <span>{log.mod >= 0 ? '+' : ''}{log.mod}</span>}
+                                        </div>
+                                        <span className="text-lg font-bold text-amber-500 whitespace-nowrap ml-2">= {Number.isFinite(log.result) ? log.result : 0}</span>
+                                    </div>
+                                </>
+                            )}
                         </div>
                     ))}
                 </div>

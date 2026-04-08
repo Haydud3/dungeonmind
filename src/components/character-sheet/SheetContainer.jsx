@@ -11,9 +11,13 @@ import ActionsTab from './tabs/ActionsTab';
 import InventoryTab from './tabs/InventoryTab'; 
 import SpellsTab from './tabs/SpellsTab';
 import DmNotesTab from './tabs/DmNotesTab';
+import RollToast from './widgets/RollToast';
 
 function SheetContainer({ character, onSave, onDiceRoll, diceLog, onLogAction, onBack, role, isNpc = false, onOpenModelPicker, data }) {
   const { loadCharacter, updateCharacter } = useCharacterStore();
+  const isDirty = useCharacterStore((state) => state.isDirty);
+  const storeCharacter = useCharacterStore((state) => state.character);
+  const markSaved = useCharacterStore((state) => state.markSaved);
   const [activeTab, setActiveTab] = useState('actions');
 
   // Load the character into the store whenever the character prop changes
@@ -22,6 +26,18 @@ function SheetContainer({ character, onSave, onDiceRoll, diceLog, onLogAction, o
       loadCharacter(character);
     }
   }, [character, loadCharacter]);
+
+  // Add inside SheetContainer function before the return:
+  useEffect(() => {
+      console.log("SheetContainer: Character Data Loaded:", character);
+  }, [character]);
+
+  useEffect(() => {
+      if (isDirty && storeCharacter && onSave) {
+          onSave(storeCharacter);
+          markSaved();
+      }
+  }, [isDirty, storeCharacter, onSave, markSaved]);
 
   // Determine if the current user is the owner of this character
   // This logic needs to be robust, considering both player characters and NPCs
@@ -46,9 +62,12 @@ function SheetContainer({ character, onSave, onDiceRoll, diceLog, onLogAction, o
         onDiceRoll={onDiceRoll} 
         onLogAction={onLogAction} 
         onBack={onBack} 
-        isNpc={isNpc} 
         role={role}
+        onOpenModelPicker={onOpenModelPicker} // Pass the prop down
       />
+
+      {/* Make sure RollToast is imported and placed here, or in App.jsx */}
+      <RollToast />
 
       {/* Tabs Navigation */}
       <div className="flex-none bg-slate-900 border-t border-b border-slate-800 shadow-inner z-20">
@@ -73,14 +92,6 @@ function SheetContainer({ character, onSave, onDiceRoll, diceLog, onLogAction, o
         {activeTab === 'bio' && <BioTab onOpenModelPicker={onOpenModelPicker} />}
         {activeTab === 'dmNotes' && role === 'dm' && <DmNotesTab />}
       </div>
-
-      {/* Floating Dice Tray Button */}
-      <button 
-        onClick={() => {/* Toggle global Dice Tray state */}} 
-        className="absolute bottom-20 left-4 z-[90] bg-indigo-600 p-3 rounded-full shadow-2xl text-white hover:scale-105 transition-transform"
-      >
-        <Icon name="dices" size={24}/>
-      </button>
     </div>
   );
 }

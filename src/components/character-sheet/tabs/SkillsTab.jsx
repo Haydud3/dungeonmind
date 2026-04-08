@@ -53,34 +53,22 @@ const SkillsTab = ({ onDiceRoll, onLogAction }) => {
 
     const handleRoll = async (skill) => {
         if (!onDiceRoll) return;
-
         const { abilityMod, isProf, total } = calculateSkill(skill);
 
-        try {
-            const roll = await onDiceRoll(20);
-            if (typeof roll !== 'number') return;
+        // Roll the 3D dice first
+        const roll = await onDiceRoll(20, { alias: skill.name });
+        if (typeof roll !== 'number') return;
 
-            const finalResult = roll + total;
+        const finalResult = roll + total;
 
-            const msg = `
-                <div class="font-bold text-white border-b border-slate-700 pb-1 mb-1 flex justify-between">
-                    <span>${skill.name} Check</span>
-                    <span class="text-xs text-slate-400 uppercase self-center">${skill.stat}</span>
-                </div>
-                <div class="flex items-center gap-2 text-sm text-slate-300">
-                    <span class="font-mono bg-slate-800 px-1 rounded">d20(${roll})</span>
-                    <span>+</span>
-                    <span class="text-xs text-slate-400">${abilityMod >= 0 ? '+' : ''}${abilityMod} (${skill.stat.substring(0,3).toUpperCase()})</span>
-                    ${isProf ? `<span>+</span> <span class="text-xs text-green-400">${profBonus} (PROF)</span>` : ''}
-                    <span>=</span>
-                    <span class="text-xl text-amber-500 font-bold">${finalResult}</span>
-                </div>
-            `;
-            if (onLogAction) onLogAction(msg);
-
-        } catch (e) {
-            console.error("Skill Roll interrupted", e);
-        }
+        // Send to Chat/Toast
+        onLogAction && onLogAction(`
+            <div class="font-bold text-white border-b border-slate-700 pb-1 mb-1">${skill.name} Check</div>
+            <div class="text-sm">
+                ${roll} (d20) + ${total} (mod) = <span class="text-amber-500 font-bold">${finalResult}</span>
+            </div>
+            <div class="text-[10px] text-slate-500">Proficiency: ${isProf ? 'Yes' : 'No'}</div>
+        `);
     };
 
     return (
@@ -98,7 +86,7 @@ const SkillsTab = ({ onDiceRoll, onLogAction }) => {
                                 key={stat} 
                                 onClick={async () => {
                                     if (!onDiceRoll) return;
-                                    const roll = await onDiceRoll(20);
+                                    const roll = await onDiceRoll(20, { alias: `${stat.toUpperCase()} Save` });
                                     const final = roll + total;
                                     onLogAction && onLogAction(`
                                         <div class="font-bold text-white border-b border-red-900/50 pb-1 mb-1 flex justify-between">
@@ -126,6 +114,23 @@ const SkillsTab = ({ onDiceRoll, onLogAction }) => {
                 </div>
             </div>
             {/* END CHANGE */}
+
+            {/* Passive Senses */}
+            <div className="bg-slate-800/30 rounded-xl p-3 border border-slate-700 flex justify-between text-center gap-2">
+                {[
+                    { name: 'Perception', stat: 'wis' },
+                    { name: 'Insight', stat: 'wis' },
+                    { name: 'Investigation', stat: 'int' }
+                ].map(sense => {
+                    const { total } = calculateSkill(sense);
+                    return (
+                        <div key={sense.name} className="flex-1 bg-slate-900/50 p-2 rounded border border-slate-700">
+                            <div className="text-[10px] text-slate-500 uppercase font-bold truncate">Passive {sense.name}</div>
+                            <div className="text-xl font-bold text-white">{10 + total}</div>
+                        </div>
+                    );
+                })}
+            </div>
 
             {/* Header */}
             <div className="grid grid-cols-4 md:grid-cols-12 gap-2 text-[10px] uppercase font-bold text-slate-500 px-2 mt-2">

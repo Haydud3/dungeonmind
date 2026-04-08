@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useCharacterStore } from '../../../stores/useCharacterStore';
 import Icon from '../../Icon';
 
-const FeaturesTab = ({ onUse }) => {
+const FeaturesTab = ({ onUse, isOwner }) => {
     const { character, updateInfo } = useCharacterStore();
     const [showAdd, setShowAdd] = useState(false);
     const [newFeat, setNewFeat] = useState({ name: "", source: "Class", desc: "" });
@@ -22,6 +22,17 @@ const FeaturesTab = ({ onUse }) => {
         if(!confirm("Remove feature?")) return;
         const updatedFeatures = features.filter((_, i) => i !== index);
         updateInfo('features', updatedFeatures);
+    };
+
+    const toggleUse = (index) => {
+        if (!isOwner) return;
+        const updatedFeatures = [...features];
+        if (updatedFeatures[index].uses) {
+            const u = updatedFeatures[index].uses;
+            if (u.current > 0) u.current--;
+            else u.current = u.max;
+            updateInfo('features', updatedFeatures);
+        }
     };
 
     return (
@@ -75,7 +86,21 @@ const FeaturesTab = ({ onUse }) => {
                         <div key={i} className="bg-slate-800 border border-slate-700 rounded-lg p-4 shadow-sm hover:border-amber-500/50 transition-colors group relative">
                             <div className="flex justify-between items-start">
                                 <div>
-                                    <div className="font-bold text-white text-lg">{feat.name}</div>
+                                    <div className="font-bold text-white text-lg flex items-center gap-2">
+                                        {feat.name}
+                                        {feat.uses && (
+                                            <div className="flex gap-1 items-center" onClick={(e) => e.stopPropagation()}>
+                                                {Array.from({ length: Math.min(5, feat.uses.max) }).map((_, ui) => (
+                                                    <div 
+                                                        key={ui} 
+                                                        onClick={() => toggleUse(i)}
+                                                        className={`w-2.5 h-2.5 rounded-full border transition-colors ${ui < feat.uses.current ? 'bg-amber-500 border-amber-600' : 'bg-slate-900 border-slate-600'} ${isOwner ? 'cursor-pointer' : 'cursor-default opacity-80'}`} 
+                                                    />
+                                                ))}
+                                                {feat.uses.recovery && <span className="text-[9px] text-slate-500 uppercase tracking-widest ml-1 bg-slate-900 px-1 rounded border border-slate-700">{feat.uses.recovery}</span>}
+                                            </div>
+                                        )}
+                                    </div>
                                     <div className="text-[10px] text-amber-500 uppercase font-bold tracking-wider mb-2">{feat.source}</div>
                                 </div>
                                 <div className="flex gap-2">

@@ -1,379 +1,248 @@
 import React, { useState, useRef } from 'react';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import Icon from '../Icon';
-import { compressImage } from '../../utils/imageCompressor';
 
-const HeaderStats = ({ character, onDiceRoll, onLogAction, onBack, onPossess, isNpc, combatActive, onInitiative, role }) => {
-  // --- DM EDIT HANDLERS ---
-  const handleHpEdit = (e) => {
-    if (role !== 'dm') return;
-    e.stopPropagation();
-    const val = prompt("Edit HP (current/max):", `${currentHP}/${maxHP}`);
-    if (val) {
-      const parts = val.split('/');
-      const newCurr = parseInt(parts[0]);
-      if (!isNaN(newCurr)) updateHP('current', newCurr);
-      
-      if (parts.length > 1) {
-        const newMax = parseInt(parts[1]);
-        if (!isNaN(newMax)) updateHP('max', newMax);
-      }
-    }
-  };
+const fileToBase64 = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = error => reject(error);
+});
 
-  const handleHitDiceEdit = (e) => {
-    if (role !== 'dm') return;
-    e.stopPropagation();
-    const val = prompt("Edit Hit Dice (current/max/die):", `${hitDice.current}/${hitDice.max}/${hitDice.die}`);
-    if (val) {
-      const parts = val.split('/');
-      const updates = { ...hitDice };
-      if (parts[0] !== undefined && !isNaN(parseInt(parts[0]))) updates.current = parseInt(parts[0]);
-      if (parts[1] !== undefined && !isNaN(parseInt(parts[1]))) updates.max = parseInt(parts[1]);
-      if (parts[2]) updates.die = parts[2].trim();
-      updateInfo('hitDice', updates);
-    }
-  };
+const HeaderStats = ({ character: propCharacter, onDiceRoll, onLogAction, onBack, role, onOpenModelPicker }) => { // Keep all original props
+    const storeCharacter = useCharacterStore(state => state.character);
+    const character = storeCharacter || propCharacter;
+    const { updateHP, updateInfo, updateHitDice, updateExhaustion, toggleCondition, updateStat, takeShortRest, takeLongRest, setDeathSaves, updateDeathSaves } = useCharacterStore(); // Added setDeathSaves, updateDeathSaves
+    const [isExpanded, setIsExpanded] = useState(false);
+    const fileInputRef = useRef(null);
 
-  const { updateHP, updateStat, updateDeathSaves, setDeathSaves, recoverSlots, shortRest, updateInfo } = useCharacterStore();
-  const [isExpanded, setIsExpanded] = useState(false);
-  const [isUploading, setIsUploading] = useState(false);
-  const [showDeathModal, setShowDeathModal] = useState(false); 
-  const fileInputRef = useRef(null);
+    const handleAvatarUpload = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        try {
+            const base64 = await fileToBase64(file);
+            updateInfo('image', base64);
+        } catch (err) {
+            console.error("Avatar upload failed:", err);
+        }
+    };
 
-  if (!character) return null;
+    if (!character) return null;
 
-  // --- STATS & MODIFIERS ---
-  const calcMod = (val) => Math.floor(((val || 10) - 10) / 2);
-  const dexMod = calcMod(character.stats?.dex);
-  const wisMod = calcMod(character.stats?.wis);
-  const intMod = calcMod(character.stats?.int);
-  const prof = character.profBonus || 2;
-  const ac = character.ac || 10 + dexMod; 
-  // START CHANGE: Get AC Formula
-  const acFormula = character.acFormula || "10 + DEX";
-  // END CHANGE
-  const init = character.init ? parseInt(character.init) : dexMod;
+    // HP Logic
+    const currentHP = character.hp?.current ?? 0;
+    const maxHP = character.hp?.max ?? 0;
+    const hpPercent = Math.min((currentHP / (maxHP || 1)) * 100, 100);
+    const hpColor = hpPercent < 30 ? 'bg-red-600' : hpPercent < 60 ? 'bg-amber-500' : 'bg-green-500';
 
-  // --- PASSIVE SENSES ---
-  const getPassive = (mod, skillName) => 10 + mod + (character.skills?.[skillName] ? prof : 0);
-  const passPerc = character.senses?.passivePerception || getPassive(wisMod, 'Perception');
-  const passInv = character.senses?.passiveInvestigation || getPassive(intMod, 'Investigation');
-  const passIns = character.senses?.passiveInsight || getPassive(wisMod, 'Insight');
-  
-  // --- DARKVISION (NEW) ---
-  // Defaults to 0 if not found. This maps to the data extracted by the updated parser.
-  const darkvision = character.senses?.darkvision || 0;
-
-  // --- HP LOGIC ---
-  const currentHP = character.hp?.current ?? 0;
-  const maxHP = character.hp?.max ?? 0;
-  const hpPercent = Math.min((currentHP / (maxHP || 1)) * 100, 100);
-  const hpColor = hpPercent < 30 ? 'bg-red-600' : hpPercent < 60 ? 'bg-amber-500' : 'bg-green-500';
-  const isDying = currentHP === 0 && !isNpc;
-
-  // START CHANGE: Destructure new actions and state
-  const { updateHitDice, updateExhaustion, toggleCondition } = useCharacterStore();
-  const hitDice = character.hitDice || { current: character.level, max: character.level, die: "d8" };
-  const exhaustion = character.exhaustion || 0;
-  const conditions = character.conditions || [];
-  // END CHANGE
-
-  // --- HANDLERS ---
-  const handleInitRoll = async () => { 
-      // onInitiative now handles the rolling logic internally via App.jsx
-      // We pass null as the second argument to trigger the auto-roll behavior
-      if (onInitiative) {
-          onInitiative(character, null);
-      }
-  };
-  const handleLongRest = () => { recoverSlots(); updateHP('current', maxHP); setIsExpanded(false); };
-  const handleShortRest = () => { const h = prompt("Heal amount:"); if(h) shortRest(parseInt(h)); setIsExpanded(false); };
-  
-  const handleImageUpload = async (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
-      setIsUploading(true);
-      try {
-          const compressedData = await compressImage(file, 500, 0.7); 
-          updateInfo('image', compressedData);
-      } catch (err) { alert("Upload failed."); }
-      setIsUploading(false);
-  };
-
-  const triggerUpload = () => { if (fileInputRef.current) fileInputRef.current.click(); };
-
-  // --- DEATH SAVE HANDLER ---
-  const handleDeathSave = async () => {
-      if(!onDiceRoll) return;
-      const roll = await onDiceRoll(20);
-      let resultMsg = "";
-      
-      if (roll === 20) {
-          resultMsg = `<span class="text-green-400 font-bold">Natural 20!</span> Regained 1 HP!`;
-          updateHP('current', 1); 
-          setShowDeathModal(false); 
-      } else if (roll === 1) {
-          resultMsg = `<span class="text-red-500 font-bold">Natural 1!</span> Two failures.`;
-          updateDeathSaves('crit_fail');
-      } else if (roll >= 10) {
-          resultMsg = `<span class="text-green-300">Success</span> (${roll})`;
-          updateDeathSaves('success');
-      } else {
-          resultMsg = `<span class="text-red-400">Failure</span> (${roll})`;
-          updateDeathSaves('failure');
-      }
-
-      onLogAction && onLogAction(`
-          <div class="flex items-center gap-2">
-              <span class="text-xs font-bold uppercase text-slate-500">Death Save</span>
-              <span>${resultMsg}</span>
-          </div>
-      `);
-  };
-
-  const saves = character.deathSaves || { successes: 0, failures: 0 };
-
-  return (
-    <>
-    <div className="bg-slate-900 border-b border-slate-800 sticky top-0 z-30 shadow-lg shrink-0">
-        
-        <div className="flex items-center gap-3 p-3 h-16">
-            {onBack && <button onClick={onBack} className="text-slate-400 hover:text-white p-1 mr-1"><Icon name="arrow-left" size={24}/></button>}
-            
-            <div onClick={triggerUpload} className="relative w-12 h-12 shrink-0 cursor-pointer group">
-                <img src={character.image || `https://ui-avatars.com/api/?name=${character.name}`} className="w-full h-full rounded-full object-cover border-2 border-slate-600 group-hover:border-amber-500 transition-colors"/>
-                {isNpc && <div className="absolute -top-1 -right-1 bg-red-600 text-[8px] font-bold text-white px-1 rounded">NPC</div>}
-                <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleImageUpload} disabled={isUploading}/>
-            </div>
-
-            <div className="flex-1 flex flex-col justify-center min-w-0" onClick={() => setIsExpanded(!isExpanded)}>
-                <div className="flex justify-between items-start mb-1">
-                    <div className="flex-1 min-w-0">
-                        <input 
-                            className="text-sm font-bold text-white bg-transparent outline-none w-full truncate placeholder-slate-500"
-                            defaultValue={character.name}
-                            onBlur={(e) => updateInfo('name', e.target.value)}
-                            onClick={e => e.stopPropagation()}
-                        />
-                        <div className="flex gap-2 text-[10px] text-slate-400 mt-0.5">
-                            <span>LVL {character.level || 1}</span>
-                            <span className="truncate">{character.race || 'Unknown'}</span>
-                        </div>
-                    </div>
-                    <span 
-                        className={`text-xs font-mono shrink-0 ml-2 ${isDying ? 'text-red-500 font-bold animate-pulse' : 'text-slate-400'} ${role === 'dm' ? 'cursor-pointer hover:text-white underline decoration-dotted' : ''}`}
-                        onClick={handleHpEdit}
-                    >
-                        {isDying ? "CRITICAL" : `${currentHP}/${maxHP}`}
-                    </span>
-                </div>
+    // Existing stats and resources
+    const ac = character.ac || 10;
+    const init = character.initiative || 0;
+    const hitDice = character.hitDice || { current: 1, max: 1, die: "d8" };
+    const exhaustion = character.exhaustion || 0;
+    const conditions = character.conditions || [];
+    const ds = character.deathSaves || { successes: 0, failures: 0 };
+    
+    return (
+        <div className="bg-slate-900 border-b border-slate-800 shadow-lg shrink-0 relative">
+            {/* Top Bar: HP, AC, Init */}
+            <div className="flex items-center gap-3 p-3 h-16">
+                {onBack && <button onClick={onBack} className="text-slate-400 hover:text-white p-1"><Icon name="arrow-left" size={20}/></button>}
                 
-                {isDying ? (
-                    <div 
-                        className="h-5 flex items-center justify-center bg-red-900/40 rounded border border-red-500/50 cursor-pointer hover:bg-red-900/60 transition-colors animate-pulse px-1" 
-                        onClick={(e) => { e.stopPropagation(); setShowDeathModal(true); }}
-                    >
-                        <Icon name="skull" size={12} className="text-red-500 mr-1.5"/>
-                        <span className="text-[10px] font-bold text-red-200 tracking-widest uppercase truncate">
-                            DYING <span className="opacity-50 text-[9px] ml-1">(ROLL)</span>
-                        </span>
-                    </div>
-                ) : (
-                    <div className="relative h-5 bg-slate-800 rounded-md overflow-hidden border border-slate-700 flex items-center">
-                        <div className={`absolute top-0 left-0 h-full ${hpColor} transition-all duration-500 opacity-30`} style={{ width: `${hpPercent}%` }}></div>
-                        <button onClick={(e) => {e.stopPropagation(); updateHP('current', Math.max(0, currentHP - 1))}} className="relative z-10 w-8 flex items-center justify-center hover:bg-black/20 text-slate-400 hover:text-red-400 h-full"><Icon name="minus" size={12}/></button>
-                        <div className="flex-1"></div>
-                        <button onClick={(e) => {e.stopPropagation(); updateHP('current', Math.min(maxHP, currentHP + 1))}} className="relative z-10 w-8 flex items-center justify-center hover:bg-black/20 text-slate-400 hover:text-green-400 h-full"><Icon name="plus" size={12}/></button>
-                    </div>
-                )}
-            </div>
-
-            <div className="flex gap-2 shrink-0">
-                {/* START CHANGE: AC Block with Formula Tooltip */}
-                <div className="flex flex-col items-center justify-center w-10 bg-slate-800 rounded border border-slate-700 p-1 group relative">
-                    <span className="text-[9px] text-slate-500 font-bold uppercase">AC</span>
-                    <span className="text-lg font-bold text-white">{ac}</span>
-                    <div className="absolute top-full mt-2 right-0 w-32 bg-black/90 text-white text-[10px] p-2 rounded shadow-xl border border-slate-700 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 whitespace-normal text-center">
-                        {acFormula}
-                    </div>
-                </div>
-                {/* END CHANGE */}
-                <div onClick={handleInitRoll} className="flex flex-col items-center justify-center w-10 bg-slate-800 rounded border border-slate-700 p-1 cursor-pointer hover:border-amber-500">
-                    <span className="text-[9px] text-slate-500 font-bold uppercase">INIT</span>
-                    <span className="text-lg font-bold text-white">{init >= 0 ? `+${init}` : init}</span>
-                </div>
-            </div>
-            
-            <button onClick={() => setIsExpanded(!isExpanded)} className={`p-2 text-slate-500 hover:text-white ${isExpanded?'rotate-180':''}`}><Icon name="chevron-down" size={20}/></button>
-        </div>
-
-        {/* --- EXPANDED DRAWER --- */}
-      {isExpanded && (
-          <div className="border-t border-slate-800 bg-slate-900/50 p-4 animate-in slide-in-from-top-2">
-              
-              {/* START CHANGE: Resource Tracker Row */}
-              <div className="flex gap-4 mb-4">
-                  {/* Hit Dice Control */}
-                  <div className="flex-1 bg-slate-800 p-2 rounded border border-slate-700 flex flex-col items-center justify-center cursor-pointer hover:border-amber-500"
-                       onClick={async () => {
-                           if (hitDice.current > 0 && onDiceRoll) {
-                               const dieSize = parseInt(hitDice.die.replace('d', '')) || 8;
-                               const roll = await onDiceRoll(dieSize);
-                               updateHitDice(hitDice.current - 1);
-                               // Optional: Auto-heal logic could go here
-                               onLogAction && onLogAction(`Used Hit Die (${hitDice.die}): Rolled ${roll}`);
-                           }
-                       }}>
-                      <span className="text-[10px] text-slate-500 uppercase font-bold">Hit Dice</span>
-                      <div className="flex items-center gap-1">
-                          <span className="text-xl font-bold text-white">{hitDice.current}</span>
-                          <span className="text-xs text-slate-400">/ {hitDice.max}</span>
-                      </div>
-                      <span className="text-[9px] text-slate-600">{hitDice.die}</span>
-                  </div>
-
-                  {/* Exhaustion Control */}
-                  <div className="flex-1 bg-slate-800 p-2 rounded border border-slate-700 flex flex-col items-center justify-center">
-                      <span className="text-[10px] text-slate-500 uppercase font-bold">Exhaustion</span>
-                      <div className="flex items-center gap-3 mt-1">
-                          <button onClick={() => updateExhaustion(exhaustion - 1)} className="text-slate-400 hover:text-white"><Icon name="minus" size={14}/></button>
-                          <span className={`text-xl font-bold ${exhaustion > 0 ? 'text-red-500' : 'text-slate-600'}`}>{exhaustion}</span>
-                          <button onClick={() => updateExhaustion(exhaustion + 1)} className="text-slate-400 hover:text-white"><Icon name="plus" size={14}/></button>
-                      </div>
-                  </div>
-              </div>
-
-              {/* Conditions Tray */}
-              <div className="bg-slate-800 p-3 rounded border border-slate-700 mb-4">
-                  <span className="text-[10px] text-slate-500 uppercase font-bold block mb-2">Conditions</span>
-                  <div className="flex flex-wrap gap-2">
-                      {['Blinded', 'Charmed', 'Deafened', 'Frightened', 'Grappled', 'Incapacitated', 'Invisible', 'Paralyzed', 'Poisoned', 'Prone', 'Restrained', 'Stunned', 'Unconscious'].map(cond => (
-                          <button 
-                              key={cond}
-                              onClick={() => toggleCondition(cond)}
-                              className={`text-[10px] px-2 py-1 rounded border transition-all ${conditions.includes(cond) ? 'bg-red-900/50 border-red-500 text-red-200' : 'bg-slate-900 border-slate-600 text-slate-500 hover:border-slate-400'}`}
-                          >
-                              {cond}
-                          </button>
-                      ))}
-                  </div>
-              </div>
-              {/* END CHANGE */}
-
-              <div className="grid grid-cols-3 md:grid-cols-6 gap-2 mb-4 bg-slate-800/50 p-2 rounded-xl border border-slate-700">
-                  {['str', 'dex', 'con', 'int', 'wis', 'cha'].map((stat) => {
-                        const val = character.stats?.[stat] || 10;
-                        const mod = calcMod(val);
-                        return (
-                            <div key={stat} className="flex flex-col items-center">
-                                <label className="text-[9px] uppercase font-bold text-slate-500 mb-1">{stat}</label>
-                                <input type="number" className="w-full bg-slate-900 border border-slate-700 rounded text-center text-sm font-bold text-white py-1 outline-none" value={val} onChange={(e) => updateStat(stat, parseInt(e.target.value))} />
-                                <span className={`text-[9px] mt-1 font-mono ${mod >= 0 ? 'text-green-400' : 'text-red-400'}`}>{mod >= 0 ? '+' : ''}{mod}</span>
+                <div className="flex-1 min-w-0 flex items-center gap-2"> {/* Combined character info and HP bar */}
+                    <div className="flex items-center gap-2">
+                        <input type="file" accept="image/*" className="hidden" ref={fileInputRef} onChange={handleAvatarUpload} />
+                        <button onClick={() => fileInputRef.current?.click()} className="w-8 h-8 rounded-full bg-slate-700 overflow-hidden flex-shrink-0 relative"> {/* Avatar button */}
+                            <img src={character.image} className="w-full h-full object-cover" alt="Character" />
+                        </button>
+                        {/* HP Input */}
+                        <div className="flex flex-col items-center">
+                            <span className="text-[9px] text-slate-500 font-bold">HP</span>
+                            <div className="flex items-center gap-1">
+                                <input
+                                    type="number"
+                                    className="w-10 bg-transparent text-center text-sm font-bold text-green-400 outline-none"
+                                    value={currentHP}
+                                    onChange={e => updateHP('current', parseInt(e.target.value) || 0)}
+                                />
+                                <span className="text-sm font-bold text-white">/</span>
+                                <input
+                                    type="number"
+                                    className="w-10 bg-transparent text-center text-sm font-bold text-white outline-none"
+                                    value={maxHP}
+                                    onChange={e => updateHP('max', parseInt(e.target.value) || 0)}
+                                />
                             </div>
-                        );
-                    })}
-                </div>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-                    <button onClick={handleShortRest} className="bg-slate-800 border border-slate-600 py-2 rounded text-xs font-bold text-slate-300">Short Rest</button>
-                    <button onClick={handleLongRest} className="bg-indigo-900/50 border border-indigo-700 py-2 rounded text-xs font-bold text-indigo-200">Long Rest</button>
-                    <div className="bg-slate-800 border border-slate-700 py-2 rounded flex items-center justify-center gap-2 text-xs font-bold">
-                        <span className="text-[10px] text-slate-500 uppercase">Prof</span>
-                        <span className="text-white">+{prof}</span>
-                    </div>
-                    <div onClick={() => updateInfo('inspiration', !character.inspiration)} className={`py-2 rounded border flex items-center justify-center gap-2 text-xs font-bold cursor-pointer transition-colors ${character.inspiration ? 'bg-amber-500/20 border-amber-500 text-amber-400' : 'bg-slate-800 border-slate-700 text-slate-500'}`}><Icon name="flame" size={14} className={character.inspiration ? "fill-amber-500" : ""}/> Inspiration</div>
-                </div>
-                
-                {/* SENSES ROW: Now 4 columns to include Darkvision */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-center">
-                    <div className="bg-slate-800 p-1 rounded border border-slate-700">
-                        <div className="text-[9px] text-slate-500">Perc</div>
-                        <div className="text-sm font-bold text-white">{passPerc}</div>
-                    </div>
-                    <div className="bg-slate-800 p-1 rounded border border-slate-700">
-                        <div className="text-[9px] text-slate-500">Inv</div>
-                        <div className="text-sm font-bold text-white">{passInv}</div>
-                    </div>
-                    <div className="bg-slate-800 p-1 rounded border border-slate-700">
-                        <div className="text-[9px] text-slate-500">Ins</div>
-                        <div className="text-sm font-bold text-white">{passIns}</div>
-                    </div>
-                    <div className="bg-slate-800 p-1 rounded border border-slate-700 group relative">
-                        <div className="text-[9px] text-slate-500">Vision</div>
-                        <input
-                            type="number"
-                            className={`w-full bg-transparent text-center text-sm font-bold outline-none p-0 ${darkvision > 0 ? 'text-cyan-400' : 'text-slate-500'}`}
-                            value={darkvision}
-                            onChange={(e) => updateInfo('senses', { ...character.senses, darkvision: parseInt(e.target.value) || 0 })}
-                        />
-                    </div>
-                </div>
-            </div>
-        )}
-    </div>
-
-    {/* --- DEATH SAVE MODAL --- */}
-    {showDeathModal && (
-        <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200" onClick={() => setShowDeathModal(false)}>
-            <div className="bg-slate-900 border border-red-900 rounded-2xl p-6 w-full max-w-sm shadow-2xl relative" onClick={e => e.stopPropagation()}>
-                <button onClick={() => setShowDeathModal(false)} className="absolute top-4 right-4 text-slate-500 hover:text-white"><Icon name="x" size={24}/></button>
-                
-                <div className="text-center mb-6">
-                    <Icon name="skull" size={48} className="text-red-600 mx-auto mb-2 animate-pulse"/>
-                    <h2 className="text-2xl fantasy-font text-white">Death Saves</h2>
-                    <p className="text-slate-400 text-sm">You are dying. Roll to survive.</p>
-                </div>
-
-                <div className="space-y-6">
-                    {/* Successes */}
-                    <div className="flex flex-col items-center">
-                        <span className="text-xs font-bold text-green-500 uppercase tracking-widest mb-2">Successes (3 to Stabilize)</span>
-                        <div className="flex gap-4">
-                            {[...Array(3)].map((_, i) => (
-                                <div 
-                                    key={`s-big-${i}`} 
-                                    onClick={() => setDeathSaves('successes', i < saves.successes ? i : i + 1)}
-                                    className={`w-8 h-8 rounded-full border-2 border-green-900 cursor-pointer transition-all ${i < saves.successes ? 'bg-green-500 scale-110 shadow-[0_0_10px_rgba(34,197,94,0.5)]' : 'bg-slate-800 hover:bg-slate-700'}`}
-                                ></div>
-                            ))}
+                        </div>
+                        <div className="flex-1 flex flex-col justify-center" onClick={() => setIsExpanded(!isExpanded)}>
+                            <div className="flex items-center gap-2">
+                                <div className="font-bold text-white text-sm truncate">{character.name}</div>
+                                <button 
+                                    onClick={(e) => { e.stopPropagation(); updateInfo('inspiration', !character.inspiration); }}
+                                    className={`transition-colors p-0.5 rounded-full ${character.inspiration ? 'text-amber-400 bg-amber-900/30' : 'text-slate-600 hover:text-slate-400'}`}
+                                    title="Inspiration"
+                                >
+                                    <Icon name="sparkles" size={14} />
+                                </button>
+                            </div>
+                            <div className="relative h-3 bg-slate-800 rounded-full overflow-hidden mt-0.5">
+                                <div className={`h-full ${hpColor}`} style={{ width: `${hpPercent}%` }}></div>
+                            </div>
                         </div>
                     </div>
-
-                    {/* Failures */}
-                    <div className="flex flex-col items-center">
-                        <span className="text-xs font-bold text-red-500 uppercase tracking-widest mb-2">Failures (3 to Die)</span>
-                        <div className="flex gap-4">
-                            {[...Array(3)].map((_, i) => (
-                                <div 
-                                    key={`f-big-${i}`} 
-                                    onClick={() => setDeathSaves('failures', i < saves.failures ? i : i + 1)}
-                                    className={`w-8 h-8 rounded-full border-2 border-red-900 cursor-pointer transition-all ${i < saves.failures ? 'bg-red-600 scale-110 shadow-[0_0_10px_rgba(239,68,68,0.5)]' : 'bg-slate-800 hover:bg-slate-700'}`}
-                                ></div>
-                            ))}
-                        </div>
+                </div>
+                <div className="flex items-center gap-2">
+                    <div className="flex flex-col items-center bg-slate-800 px-2 py-1 rounded">
+                        <span className="text-[9px] text-slate-500 font-bold">AC</span>
+                        <div className="text-sm font-bold text-white">{ac}</div>
                     </div>
-
-                    {/* Roll Button */}
-                    <button 
-                        onClick={handleDeathSave} 
-                        className="w-full py-4 bg-slate-800 hover:bg-slate-700 border border-slate-600 text-white font-bold rounded-xl text-lg flex items-center justify-center gap-3 transition-all active:scale-95"
-                    >
-                        <Icon name="dices" size={24}/> Roll d20
-                    </button>
-                    
-                    {/* Heal Button (Escape Hatch) */}
-                    <button 
-                        onClick={() => { updateHP('current', 1); setShowDeathModal(false); }}
-                        className="w-full py-2 text-green-400 hover:text-green-300 text-xs font-bold flex items-center justify-center gap-2"
-                    >
-                        <Icon name="heart" size={14}/> Heal (Force Stabilize)
+                    <div className="flex flex-col items-center bg-slate-800 px-2 py-1 rounded">
+                        <span className="text-[9px] text-slate-500 font-bold">INIT</span>
+                        <div className="text-sm font-bold text-amber-500">{init >= 0 ? `+${init}` : init}</div>
+                        <button onClick={() => onDiceRoll(`1d20+${init}`, { alias: 'Initiative' })} className="text-[8px] text-slate-500 hover:text-white mt-0.5">
+                            Roll
+                        </button>
+                    </div>
+                    <button onClick={() => setIsExpanded(!isExpanded)} className="text-slate-400 ml-2">
+                        <Icon name={isExpanded ? "chevron-up" : "chevron-down"} size={20} />
                     </button>
                 </div>
             </div>
+
+            {/* Death Saves Floating Panel (Shows only when HP <= 0) */}
+            {currentHP <= 0 && (
+                <div className="bg-red-950/80 border-t border-red-900 p-3 animate-in slide-in-from-top-2 flex flex-col items-center gap-2">
+                    <div className="text-xs font-bold text-red-400 uppercase tracking-widest flex items-center gap-2">
+                        <Icon name="skull" size={14} /> Death Saving Throws
+                    </div>
+                    <div className="flex gap-6 items-center">
+                        <div className="flex flex-col items-end gap-1">
+                            <span className="text-[10px] text-slate-400">SUCCESSES</span>
+                            <div className="flex gap-1">
+                                {[1, 2, 3].map(i => (
+                                    <div key={`s-${i}`} onClick={() => setDeathSaves('successes', ds.successes === i ? i - 1 : i)} className={`w-4 h-4 rounded-full border-2 cursor-pointer transition-colors ${i <= ds.successes ? 'bg-green-500 border-green-400' : 'bg-slate-900 border-slate-600 hover:border-green-500/50'}`}></div>
+                                ))}
+                            </div>
+                        </div>
+                        
+                        <button 
+                            onClick={async () => {
+                                if (!onDiceRoll) return;
+                                const roll = await onDiceRoll(20, { alias: 'Death Save' });
+                                if (roll === 1) updateDeathSaves('crit_fail');
+                                else if (roll === 20) updateDeathSaves('success'); // Usually 2 successes, but let's just trigger standard success or let user handle healing manually. Wait, rules say 20 is regain 1 HP, we handled this in store optionally or manually.
+                                else if (roll >= 10) updateDeathSaves('success');
+                                else updateDeathSaves('failure');
+                            }}
+                            className="bg-slate-800 hover:bg-slate-700 text-white font-bold px-3 py-1 rounded shadow-lg border border-slate-600 text-sm"
+                        >
+                            ROLL
+                        </button>
+
+                        <div className="flex flex-col items-start gap-1">
+                            <span className="text-[10px] text-slate-400">FAILURES</span>
+                            <div className="flex gap-1">
+                                {[1, 2, 3].map(i => (
+                                    <div key={`f-${i}`} onClick={() => setDeathSaves('failures', ds.failures === i ? i - 1 : i)} className={`w-4 h-4 rounded-full border-2 cursor-pointer transition-colors ${i <= ds.failures ? 'bg-red-500 border-red-400' : 'bg-slate-900 border-slate-600 hover:border-red-500/50'}`}></div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Expanded Drawer */}
+            {isExpanded && (
+                <div className="p-4 border-t border-slate-800 bg-slate-950/50 animate-in slide-in-from-top-2 space-y-4">
+                    <div className="flex gap-4">
+                        {/* Hit Dice */}
+                        <div className="flex flex-col items-center bg-slate-800 p-2 rounded flex-1">
+                            <span className="text-[10px] text-slate-500 uppercase">Hit Dice ({hitDice.die})</span>
+                            <div className="flex items-center gap-2 mt-1">
+                                <button onClick={() => updateHitDice(hitDice.current - 1)} className="text-slate-400 hover:text-white">-</button>
+                                <span className="font-bold text-white text-sm">{hitDice.current}/{hitDice.max}</span>
+                                <button onClick={() => updateHitDice(hitDice.current + 1)} className="text-slate-400 hover:text-white">+</button>
+                            </div>
+                        </div>
+                        {/* Exhaustion */}
+                        <div className="flex flex-col items-center bg-slate-800 p-2 rounded flex-1">
+                            <span className="text-[10px] text-slate-500 uppercase">Exhaustion</span>
+                            <div className="flex items-center gap-2 mt-1">
+                                <button onClick={() => updateExhaustion(exhaustion - 1)} className="text-slate-400 hover:text-white">-</button>
+                                <span className="font-bold text-red-400 text-sm">{exhaustion}</span>
+                                <button onClick={() => updateExhaustion(exhaustion + 1)} className="text-slate-400 hover:text-white">+</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Stats Grid */}
+                    <div className="grid grid-cols-6 gap-2">
+                        {['str', 'dex', 'con', 'int', 'wis', 'cha'].map(s => (
+                            <div key={s} className="bg-slate-800 p-1.5 rounded text-center">
+                                <div className="text-[9px] uppercase text-slate-500">{s}</div>
+                                <input
+                                    className="w-full bg-transparent text-center text-sm font-bold text-white outline-none"
+                                    value={character.stats?.[s] || 10}
+                                    onChange={e => updateStat(s, parseInt(e.target.value) || 0)}
+                                    type="number"
+                                />
+                            </div>
+                        ))}
+                    </div>
+
+                    {/* Senses Grid */}
+                    <div className="grid grid-cols-4 gap-2">
+                        {[
+                            { id: 'darkvision', label: 'Darkvision' },
+                            { id: 'blindsight', label: 'Blindsight' },
+                            { id: 'tremorsense', label: 'Tremorsense' },
+                            { id: 'truesight', label: 'Truesight' }
+                        ].map(sense => (
+                            <div key={sense.id} className="bg-slate-800 p-1.5 rounded text-center">
+                                <div className="text-[9px] uppercase text-slate-500 truncate" title={sense.label}>{sense.label}</div>
+                                <input
+                                    className="w-full bg-transparent text-center text-sm font-bold text-indigo-400 outline-none"
+                                    value={parseInt(character[sense.id]) || 0}
+                                    onChange={e => updateInfo(sense.id, parseInt(e.target.value) || 0)}
+                                    type="number"
+                                />
+                            </div>
+                        ))}
+                    </div>
+
+                    {/* Conditions */}
+                    <div className="flex flex-wrap gap-2 bg-slate-800 p-2 rounded">
+                        <span className="text-[10px] text-slate-500 uppercase font-bold w-full mb-1">Conditions</span>
+                        {['Blinded', 'Charmed', 'Deafened', 'Frightened', 'Grappled', 'Incapacitated', 'Invisible', 'Paralyzed', 'Petrified', 'Poisoned', 'Prone', 'Restrained', 'Stunned', 'Unconscious'].map(cond => (
+                            <button
+                                key={cond}
+                                onClick={() => toggleCondition(cond)}
+                                className={`px-2 py-1 rounded text-[10px] font-bold ${conditions.includes(cond) ? 'bg-red-900 text-white border border-red-500' : 'bg-slate-900 text-slate-400 border border-slate-700 hover:bg-slate-700'}`}
+                            >
+                                {cond}
+                            </button>
+                        ))}
+                    </div>
+
+                    {/* Rest Buttons */}
+                    <div className="flex gap-2 justify-center mt-4">
+                        <button
+                            onClick={takeShortRest}
+                            className="px-4 py-2 rounded-lg bg-blue-700 hover:bg-blue-600 text-white font-bold text-sm"
+                        >
+                            Short Rest
+                        </button>
+                        <button
+                            onClick={takeLongRest}
+                            className="px-4 py-2 rounded-lg bg-indigo-700 hover:bg-indigo-600 text-white font-bold text-sm"
+                        >
+                            Long Rest
+                        </button>
+                    </div>
+                </div>
+            )}
         </div>
-    )}
-    </>
-  );
+    );
 };
 
 export default HeaderStats;

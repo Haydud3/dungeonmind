@@ -92,9 +92,18 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
     // --- 4. HANDLERS ---
     const handleRoll = async (action, type, e) => {
         if(e) e.stopPropagation();
-        if (!onDiceRoll) return alert("Dice connection missing.");
+        
+        // Log the usage to Chat/Toast
+        if (type === 'use') {
+            onLogAction && onLogAction(`
+                <div class="font-bold text-indigo-300">${action.name}</div>
+                <div class="text-xs text-slate-400 mt-1">${action.desc || action.notes || ""}</div>
+            `);
+        }
 
+        // Then handle the actual dice roll logic
         if (type === 'hit') {
+            if (!onDiceRoll) return alert("Dice connection missing.");
             if (String(action.hit).includes('DC')) {
                 onLogAction && onLogAction(`
                     <div class="bg-slate-800 p-2 rounded border-l-4 border-cyan-600">
@@ -108,12 +117,12 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
             const mod = parseInt(action.hit) || 0;
             const formula = `1d20${mod >= 0 ? '+' : ''}${mod}`;
             onDiceRoll(formula, {
-                actionType: 'attack',
                 weaponName: action.name,
-                alias: 'Attack Roll'
+                alias: 'Attack'
             });
         } 
         else if (type === 'dmg') {
+            if (!onDiceRoll) return alert("Dice connection missing.");
             if (!action.dmg) {
                 onLogAction && onLogAction(`<div class="font-bold text-indigo-300">${action.name}</div>`);
                 return;
@@ -125,17 +134,6 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
                 damageType: action.notes || ''
             });
         } 
-        else {
-            const title = action.name;
-            const desc = String(action.desc || action.notes || "No description provided.").replace(/<[^>]*>?/gm, '');
-            
-            onLogAction && onLogAction(`
-                <div class="border-l-4 border-indigo-500 pl-3 py-1">
-                    <div class="font-bold text-indigo-300">${title}</div>
-                    <div class="text-xs text-slate-400 italic">${desc}</div>
-                </div>
-            `);
-        }
     };
 
     const toggleUse = (actionId) => {

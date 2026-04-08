@@ -7,7 +7,7 @@ import Icon from '../../Icon';
 
 const InventoryTab = ({ onDiceRoll, onLogAction, isOwner }) => {
     // START CHANGE: Add toggleEquip and loadCharacter to destructuring
-    const { character, updateCurrency, addItem, removeItem, toggleEquip, loadCharacter } = useCharacterStore();
+    const { character, updateCurrency, addItem, removeItem, toggleEquip, toggleAttune, loadCharacter } = useCharacterStore();
     // END CHANGE
     const [newItemName, setNewItemName] = useState("");
     
@@ -17,12 +17,14 @@ const InventoryTab = ({ onDiceRoll, onLogAction, isOwner }) => {
     const [srdResults, setSrdResults] = useState([]);
     const [isSearching, setIsSearching] = useState(false);
     
-    // START CHANGE: Calculate Encumbrance
+    // START CHANGE: Calculate Encumbrance & Attunement
     const strScore = character.stats?.str || 10;
     const carryCapacity = strScore * 15;
     const totalWeight = (character.inventory || []).reduce((acc, item) => acc + (parseFloat(item.weight || 0) * (item.qty || 1)), 0);
     const encumbrancePct = Math.min((totalWeight / carryCapacity) * 100, 100);
     const isEncumbered = totalWeight > (strScore * 5); // 5x STR Variant Rule or just > Capacity? Adhering to visual meter for now.
+    
+    const attunedCount = (character.inventory || []).filter(i => i.attuned).length;
     // END CHANGE
 
     const handleAddItem = (e) => {
@@ -87,19 +89,33 @@ const InventoryTab = ({ onDiceRoll, onLogAction, isOwner }) => {
                 </div>
             </div>
 
-            {/* START CHANGE: Encumbrance Meter */}
-            <div className="bg-slate-800/50 rounded-lg p-3 border border-slate-700/50">
-                <div className="flex justify-between text-[10px] uppercase font-bold text-slate-500 mb-1">
-                    <span>Encumbrance</span>
-                    <span>{totalWeight.toFixed(1)} / {carryCapacity} lb</span>
+            {/* START CHANGE: Encumbrance Meter & Attunement */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="bg-slate-800/50 rounded-lg p-3 border border-slate-700/50">
+                    <div className="flex justify-between text-[10px] uppercase font-bold text-slate-500 mb-1">
+                        <span>Encumbrance</span>
+                        <span>{totalWeight.toFixed(1)} / {carryCapacity} lb</span>
+                    </div>
+                    <div className="h-2 bg-slate-700 rounded-full overflow-hidden relative">
+                        <div 
+                            className={`absolute top-0 left-0 h-full transition-all duration-500 ${totalWeight > carryCapacity ? 'bg-red-500' : isEncumbered ? 'bg-amber-500' : 'bg-green-500'}`} 
+                            style={{ width: `${encumbrancePct}%` }} 
+                        />
+                    </div>
+                    {totalWeight > carryCapacity && <div className="text-[10px] text-red-400 font-bold mt-1 text-center">Over Encumbered (Speed -10)</div>}
                 </div>
-                <div className="h-2 bg-slate-700 rounded-full overflow-hidden relative">
-                    <div 
-                        className={`absolute top-0 left-0 h-full transition-all duration-500 ${totalWeight > carryCapacity ? 'bg-red-500' : isEncumbered ? 'bg-amber-500' : 'bg-green-500'}`} 
-                        style={{ width: `${encumbrancePct}%` }} 
-                    />
+
+                <div className="bg-slate-800/50 rounded-lg p-3 border border-slate-700/50">
+                    <div className="flex justify-between text-[10px] uppercase font-bold text-slate-500 mb-1">
+                        <span>Attunement</span>
+                        <span className={attunedCount > 3 ? 'text-red-400 font-bold' : ''}>{attunedCount} / 3 Items</span>
+                    </div>
+                    <div className="flex gap-2 h-2 mt-1">
+                        {[1, 2, 3].map(i => (
+                            <div key={i} className={`flex-1 rounded-full border transition-colors ${i <= attunedCount ? (attunedCount > 3 ? 'bg-red-500 border-red-400' : 'bg-cyan-500 border-cyan-400') : 'bg-slate-900 border-slate-700'}`} />
+                        ))}
+                    </div>
                 </div>
-                {totalWeight > carryCapacity && <div className="text-[10px] text-red-400 font-bold mt-1 text-center">Over Encumbered (Speed -10)</div>}
             </div>
             {/* END CHANGE */}
 
@@ -154,7 +170,16 @@ const InventoryTab = ({ onDiceRoll, onLogAction, isOwner }) => {
                                     {(item.weight || item.qty > 1) && <span className="text-xs text-slate-500">x{item.qty || 1} {item.weight ? `• ${item.weight}lb` : ''}</span>}
                                 </div>
                             </div>
-                            <button onClick={() => removeItem(i)} className="text-slate-600 hover:text-red-500 p-2"><Icon name="trash-2" size={14}/></button>
+                            <div className="flex items-center gap-1 shrink-0">
+                                <button 
+                                    onClick={() => isOwner && toggleAttune(i)} 
+                                    className={`p-2 transition-colors ${item.attuned ? 'text-cyan-400 drop-shadow-[0_0_5px_rgba(34,211,238,0.8)]' : 'text-slate-600 hover:text-cyan-500/50'} ${!isOwner && 'opacity-50 cursor-default'}`}
+                                    title="Toggle Attunement"
+                                >
+                                    <Icon name="gem" size={14}/>
+                                </button>
+                                <button onClick={() => removeItem(i)} className="text-slate-600 hover:text-red-500 p-2"><Icon name="trash-2" size={14}/></button>
+                            </div>
                         </div>
                     ))
                 )}

@@ -6,6 +6,7 @@ import { useCharacterStore } from '../stores/useCharacterStore';
 // START CHANGE: Import D&D Beyond Importer
 import { parsePdf } from '../utils/dndBeyondParser.js'; // This seems to be a misnamed file in the original code, should be pdfParser.js
 import DndBeyondImporter from './character-sheet/DndBeyondImporter';
+import { parseDndBeyondJson } from './character-sheet/dndBeyondParser.js';
 // END CHANGE
 import { enrichCharacter } from '../utils/srdEnricher.js';
 
@@ -27,6 +28,7 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
     const [isForging, setIsForging] = useState(false);
     // START CHANGE: Add state for D&D Beyond Importer
     const [showDndBeyondImport, setShowDndBeyondImport] = useState(false);
+    const [refreshCharacter, setRefreshCharacter] = useState(null);
     // END CHANGE
     // END CHANGE
     const [viewingCharacterId, setViewingCharacterId] = useState(null);
@@ -51,6 +53,63 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
             setEditableName(viewingCharacter.name);
         }
     }, [viewingCharacter]);
+
+    const handleRefreshDndBeyond = async (mode) => {
+        if (!refreshCharacter?.dndBeyondId) return;
+        setIsImporting(true);
+        setImportStatus("Fetching from D&D Beyond...");
+        try {
+            const response = await fetch(`/dndbeyond-api/character/v5/character/${refreshCharacter.dndBeyondId}`);
+            if (!response.ok) throw new Error(`Fetch failed: ${response.status}`);
+            const jsonData = await response.json();
+            const parsedData = parseDndBeyondJson(jsonData);
+            const enrichedChar = await enrichCharacter(parsedData);
+            
+            const currentData = dataRef.current || {};
+            const pList = currentData.players || [];
+            const existingIndex = pList.findIndex(p => String(p.id) === String(refreshCharacter.id));
+            
+            if (existingIndex !== -1) {
+                const existing = pList[existingIndex];
+                let cleanChar;
+                
+                if (mode === 'combine') {
+                    // Combine mode: Keep current inventory, HP, current slots, conditions, image, and ID.
+                    cleanChar = JSON.parse(JSON.stringify({
+                        ...enrichedChar,
+                        id: existing.id,
+                        ownerId: existing.ownerId,
+                        image: existing.image || enrichedChar.image,
+                        hp: existing.hp,
+                        inventory: existing.inventory,
+                        conditions: existing.conditions,
+                        bio: { ...enrichedChar.bio, notes: existing.bio?.notes || enrichedChar.bio?.notes },
+                        spellSlots: existing.spellSlots,
+                        currency: existing.currency
+                    }, (k, v) => v === undefined ? null : v));
+                    alert(`Combined updates for ${cleanChar.name}`);
+                } else {
+                    // Overwrite mode: Completely replace the character except for ID, Owner, Image
+                    cleanChar = JSON.parse(JSON.stringify({
+                        ...enrichedChar,
+                        id: existing.id,
+                        ownerId: existing.ownerId,
+                        image: existing.image || enrichedChar.image,
+                        bio: { ...enrichedChar.bio, notes: existing.bio?.notes || enrichedChar.bio?.notes }
+                    }, (k, v) => v === undefined ? null : v));
+                    alert(`Overwrote ${cleanChar.name} with fresh D&D Beyond data.`);
+                }
+                
+                const newPlayers = [...pList];
+                newPlayers[existingIndex] = cleanChar;
+                updateCampaign({ players: newPlayers });
+            }
+        } catch(err) {
+            alert("Refresh failed: " + err.message);
+        }
+        setRefreshCharacter(null);
+        setIsImporting(false);
+    };
 
 
 
@@ -210,19 +269,6 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
     if (viewingCharacterId) {
         return (
             <div className="flex flex-col h-full w-full bg-slate-950">
-                <div className="p-4 border-b border-slate-700 flex items-center gap-4 shrink-0 bg-slate-900">
-                    <button onClick={() => setViewingCharacterId(null)} className="text-slate-400 hover:text-white">
-                        <Icon name="arrow-left" size={24} />
-                    </button>
-                    <input 
-                        type="text"
-                        value={editableName}
-                        onChange={e => setEditableName(e.target.value)}
-                        onBlur={handleNameSave}
-                        onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); }}
-                        className="text-2xl font-bold text-white bg-transparent outline-none focus:bg-slate-800 rounded px-2 -mx-2 w-full"
-                    />
-                </div>
                 <div className="flex-1 min-h-0">
                     <SheetContainer 
                         // Pass the full viewingCharacter object instead of just the ID
@@ -298,7 +344,14 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
                                     </div>
                                 </div>
                             </div>
-                            {role === 'dm' && <button onClick={(e) => handleDelete(p.id, e)} className="absolute top-2 left-2 p-2 bg-red-900/80 text-white rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-700"><Icon name="trash-2" size={14}/></button>}
+                            {role === 'dm' && (
+                                <div className="absolute top-2 left-2 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <button onClick={(e) => handleDelete(p.id, e)} className="p-2 bg-red-900/80 text-white rounded hover:bg-red-700" title="Delete"><Icon name="trash-2" size={14}/></button>
+                                    {p.dndBeyondId && (
+                                        <button onClick={(e) => { e.stopPropagation(); setRefreshCharacter(p); }} className="p-2 bg-blue-900/80 text-white rounded hover:bg-blue-700" title="Refresh from D&D Beyond"><Icon name="refresh-cw" size={14}/></button>
+                                    )}
+                                </div>
+                            )}
                         </div>
                         ) : (
                             <div key={p.id} onClick={() => handleCharacterClick(p)} className="group bg-slate-800 border border-slate-700 hover:border-indigo-500/50 rounded-xl p-3 flex items-center gap-4 cursor-pointer shadow-lg transition-all hover:-translate-y-0.5">
@@ -313,6 +366,9 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
                                 </div>
                                 {role === 'dm' && (
                                     <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        {p.dndBeyondId && (
+                                            <button onClick={(e) => { e.stopPropagation(); setRefreshCharacter(p); }} className="p-2 bg-blue-900/50 text-blue-400 rounded hover:bg-blue-700 hover:text-white transition-colors" title="Refresh from D&D Beyond"><Icon name="refresh-cw" size={16}/></button>
+                                        )}
                                         <button onClick={(e) => { e.stopPropagation(); handleDelete(p.id, e); }} className="p-2 bg-red-900/50 text-red-400 rounded hover:bg-red-700 hover:text-white transition-colors" title="Delete"><Icon name="trash-2" size={16}/></button>
                                     </div>
                                 )}
@@ -375,6 +431,37 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
                                 </>
                             )}
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Refresh Character Modal */}
+            {refreshCharacter && (
+                <div className="fixed inset-0 z-[70] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
+                    <div className="max-w-md w-full bg-slate-900 rounded-xl overflow-hidden shadow-2xl border border-slate-700 p-6 relative">
+                        <button onClick={() => setRefreshCharacter(null)} className="absolute top-4 right-4 text-slate-400 hover:text-white"><Icon name="x" size={24}/></button>
+                        <h3 className="text-xl font-bold text-white mb-2 flex items-center gap-2"><Icon name="refresh-cw" className="text-blue-400"/> Refresh {refreshCharacter.name}</h3>
+                        
+                        {isImporting ? (
+                            <div className="py-8 text-center">
+                                <Icon name="loader-2" size={48} className="animate-spin text-blue-500 mx-auto mb-4"/>
+                                <p className="text-blue-400 font-bold animate-pulse">{importStatus}</p>
+                            </div>
+                        ) : (
+                            <>
+                                <p className="text-sm text-slate-400 mb-6">How would you like to apply the fresh data from D&D Beyond?</p>
+                                <div className="space-y-4">
+                                    <button onClick={() => handleRefreshDndBeyond('combine')} className="w-full text-left bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded-lg p-4 group transition-colors">
+                                        <div className="font-bold text-white group-hover:text-blue-400 flex items-center gap-2 mb-1"><Icon name="git-merge" size={16}/> Combine (Recommended)</div>
+                                        <p className="text-xs text-slate-400">Updates stats, spells, and features but keeps your current Inventory, HP, and Conditions.</p>
+                                    </button>
+                                    <button onClick={() => handleRefreshDndBeyond('overwrite')} className="w-full text-left bg-slate-800 hover:bg-red-900/50 border border-slate-600 hover:border-red-500/50 rounded-lg p-4 group transition-colors">
+                                        <div className="font-bold text-white group-hover:text-red-400 flex items-center gap-2 mb-1"><Icon name="alert-triangle" size={16}/> Overwrite</div>
+                                        <p className="text-xs text-slate-400">Completely replaces this character with the D&D Beyond sheet. You will lose local inventory changes.</p>
+                                    </button>
+                                </div>
+                            </>
+                        )}
                     </div>
                 </div>
             )}

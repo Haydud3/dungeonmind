@@ -174,6 +174,16 @@ const BioTab = ({ onOpenModelPicker }) => {
                 </div>
             </div>
 
+            {/* Defenses */}
+            <div className="bg-slate-800 rounded-xl p-4 border border-slate-700">
+                <h4 className="text-xs font-bold text-slate-400 uppercase mb-3 border-b border-slate-700 pb-1">Resistances & Immunities</h4>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div><span className="text-[10px] text-green-500 font-bold block mb-1">RESISTANCES</span><div className="text-sm text-slate-300 bg-slate-900/50 p-2 rounded min-h-[2rem] capitalize">{character.defenses?.resistances || "None"}</div></div>
+                    <div><span className="text-[10px] text-cyan-500 font-bold block mb-1">IMMUNITIES</span><div className="text-sm text-slate-300 bg-slate-900/50 p-2 rounded min-h-[2rem] capitalize">{character.defenses?.immunities || "None"}</div></div>
+                    <div><span className="text-[10px] text-red-500 font-bold block mb-1">VULNERABILITIES</span><div className="text-sm text-slate-300 bg-slate-900/50 p-2 rounded min-h-[2rem] capitalize">{character.defenses?.vulnerabilities || "None"}</div></div>
+                </div>
+            </div>
+
             {/* Proficiencies */}
             <div className="bg-slate-800 rounded-xl p-4 border border-slate-700">
                 <h4 className="text-xs font-bold text-slate-400 uppercase mb-3 border-b border-slate-700 pb-1">Proficiencies & Languages</h4>

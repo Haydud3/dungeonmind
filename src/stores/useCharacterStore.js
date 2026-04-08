@@ -76,9 +76,11 @@ export const useCharacterStore = create((set, get) => ({
                 3: { current: 0, max: 0 } 
             },
             // END CHANGE
+            currency: char.currency || { cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
             inventory: char.inventory || [],
             features: char.features || [],
-            classes: char.classes || [],
+            classes: char.classes || [], // Assuming classes is an array of objects { name: 'Barbarian', level: 1 }
+            abilityUses: char.abilityUses || {}, // New field for tracking ability uses
             externalSheetUrl: char.externalSheetUrl || "",
             useExternalSheet: char.useExternalSheet || false
         })) : null, 
@@ -196,26 +198,10 @@ export const useCharacterStore = create((set, get) => ({
     }),
     // END CHANGE
 
-    shortRest: (healAmount) => set((state) => {
-        if (!state.character) return {};
-        const char = { ...state.character };
-        const max = char.hp.max;
-        char.hp.current = Math.min(max, char.hp.current + healAmount);
-        
-        // Warlock Pact Magic (Reset slots on Short Rest if class is Warlock)
-        if (char.class?.toLowerCase().includes('warlock') && char.spellSlots) {
-             Object.keys(char.spellSlots).forEach(lvl => {
-                char.spellSlots[lvl].current = char.spellSlots[lvl].max;
-            });
-        }
-
-        return { character: char, isDirty: true };
-    }),
-
     // START CHANGE: Resource Trackers, Inventory & Equipment Logic
     updateHitDice: (current) => set((state) => {
         const char = { ...state.character };
-        if (!char.hitDice) char.hitDice = { current: 1, max: 1, die: "d8" };
+        if (!char.hitDice) char.hitDice = { current: 0, max: 0, die: 'd8' }; // Initialize if missing
         char.hitDice.current = Math.max(0, Math.min(current, char.hitDice.max));
         return { character: char, isDirty: true };
     }),
@@ -231,6 +217,61 @@ export const useCharacterStore = create((set, get) => ({
         const list = char.conditions || [];
         if (list.includes(condition)) char.conditions = list.filter(c => c !== condition);
         else char.conditions = [...list, condition];
+        return { character: char, isDirty: true };
+    }),
+
+    // New action for taking a short rest
+    takeShortRest: () => set((state) => {
+        if (!state.character) return {};
+        const char = { ...state.character };
+
+        // Regain half spent Hit Dice, minimum of one.
+        const regainedHitDice = Math.max(1, Math.ceil((char.hitDice.max - (char.hitDice.current || 0)) / 2));
+        char.hitDice.current = Math.min(char.hitDice.max, (char.hitDice.current || 0) + regainedHitDice);
+
+        // Warlock Pact Magic (Reset slots on Short Rest if class is Warlock)
+        if (char.class?.toLowerCase().includes('warlock') && char.spellSlots) {
+             Object.keys(char.spellSlots).forEach(lvl => {
+                char.spellSlots[lvl].current = char.spellSlots[lvl].max;
+            });
+        }
+        // Reduce exhaustion by 1 level (optional, common house rule)
+        char.exhaustion = Math.max(0, (char.exhaustion || 0) - 1);
+        get().resetAbilityUses('short'); // Reset abilities that refresh on short rest
+        return { character: char, isDirty: true };
+    }),
+
+    // New action for taking a long rest
+    takeLongRest: () => set((state) => {
+        if (!state.character) return {};
+        const char = { ...state.character };
+        char.hp.current = char.hp.max; // Full HP
+        char.hitDice.current = char.hitDice.max; // All Hit Dice back
+        Object.keys(char.spellSlots || {}).forEach(lvl => { char.spellSlots[lvl].current = char.spellSlots[lvl].max; }); // All Spell Slots back
+        char.exhaustion = 0; // No exhaustion
+        char.conditions = []; // Clear all conditions
+        char.deathSaves = { successes: 0, failures: 0 }; // Reset death saves
+        get().resetAbilityUses('long'); // Reset abilities that refresh on long rest
+        return { character: char, isDirty: true };
+    }),
+
+    // New action to update specific ability uses
+    updateAbilityUse: (abilityName, current) => set((state) => {
+        if (!state.character || !state.character.abilityUses?.[abilityName]) return {};
+        const char = { ...state.character };
+        char.abilityUses[abilityName].current = Math.max(0, Math.min(current, char.abilityUses[abilityName].max));
+        return { character: char, isDirty: true };
+    }),
+
+    // New action to reset ability uses based on reset type
+    resetAbilityUses: (resetType) => set((state) => {
+        if (!state.character || !state.character.abilityUses) return {};
+        const char = { ...state.character };
+        for (const abilityName in char.abilityUses) {
+            if (char.abilityUses[abilityName].reset === resetType) {
+                char.abilityUses[abilityName].current = char.abilityUses[abilityName].max;
+            }
+        }
         return { character: char, isDirty: true };
     }),
 
@@ -266,6 +307,15 @@ export const useCharacterStore = create((set, get) => ({
         tempChar.acFormula = acData.formula;
         // END CHANGE
 
+        return { character: tempChar, isDirty: true };
+    }),
+
+    toggleAttune: (index) => set((state) => {
+        if (!state.character) return {};
+        const newInv = [...state.character.inventory];
+        const item = newInv[index];
+        item.attuned = !item.attuned;
+        const tempChar = { ...state.character, inventory: newInv };
         return { character: tempChar, isDirty: true };
     }),
     // END CHANGE

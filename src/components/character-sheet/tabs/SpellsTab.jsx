@@ -33,6 +33,7 @@ const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate, isOwner, onUse })
         if (filter === 'All') return true;
         if (filter === 'Conc') return s.concentration;
         if (filter === 'Ritual') return s.ritual;
+        if (filter === 'Pact') return s.level > 0 && s.level <= (character.spellSlots?.['pact']?.level || 9);
         return (s.level || 0) === parseInt(filter);
     });
     const slots = character.spellSlots?.[filterLevel] || { current: 0, max: 0 };
@@ -42,25 +43,14 @@ const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate, isOwner, onUse })
     const handleCast = (spell, e) => {
         if(e) e.stopPropagation();
         
-        if (spell.level > 0) {
-            if (slots.current <= 0) {
-                alert("No spell slots left!");
-                return;
-            }
-            if (castSpell) castSpell(spell.level);
-        }
+        // Log the spell to Chat/Toast
+        onLogAction && onLogAction(`
+            <div class="font-bold text-amber-500">${spell.name}</div>
+            <div class="text-xs text-slate-300 mt-1">${spell.desc.substring(0, 150)}...</div>
+            <div class="text-[10px] text-slate-500 mt-1 uppercase">${spell.school} • ${spell.time} ${spell.components ? `• ${spell.components}` : ''}</div>
+        `);
 
-        const msg = `
-            <div class="flex flex-col gap-1">
-                <div class="font-bold text-amber-500 border-b border-slate-700 pb-1 mb-1 flex justify-between items-center">
-                    <span>${spell.name}</span>
-                    <span class="text-[10px] text-slate-500 uppercase">Spell</span>
-                </div>
-                    <div class="text-sm text-slate-300 leading-relaxed max-h-60 overflow-y-auto custom-scroll">${String(spell.desc || "No description available.").replace(/<[^>]*>?/gm, '')}</div>
-                ${spell.concentration ? '<div class="text-xs text-blue-400 font-bold mt-1">Concentration</div>' : ''}
-            </div>
-        `;
-        if (onLogAction) onLogAction(msg);
+        if (spell.level > 0 && castSpell) castSpell(spell.level);
     };
 
     const handleRoll = async (spell, type, e) => {
@@ -68,6 +58,16 @@ const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate, isOwner, onUse })
         if (!onDiceRoll) return;
 
         if (type === 'hit') {
+            if (String(spell.hit).includes('DC')) {
+                onLogAction && onLogAction(`
+                    <div class="bg-slate-800 p-2 rounded border-l-4 border-cyan-600">
+                        <div class="font-bold text-cyan-400">${character?.name || 'Character'} forces a Saving Throw!</div>
+                        <div class="text-sm text-slate-300 mt-1">${spell.name} requires a <span class="font-bold text-white">${spell.hit}</span> save.</div>
+                    </div>
+                `);
+                return;
+            }
+
             const roll = await onDiceRoll(20);
             const mod = parseInt(spell.hit) || 0;
             const total = roll + mod;
@@ -230,6 +230,7 @@ const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate, isOwner, onUse })
                         <div className="flex-1 min-w-0 cursor-pointer" onClick={() => hasText && setExpanded(!expanded)}>
                             <div className="font-bold text-slate-200 truncate flex items-center gap-2">
                                 {spell.name}
+                                {spell.components && <span className="text-[9px] text-slate-500 font-mono tracking-widest">{spell.components}</span>}
                                 {spell.concentration && <span className="text-[9px] bg-blue-900/50 text-blue-400 px-1 rounded border border-blue-800" title="Concentration">C</span>}
                                 {spell.ritual && <span className="text-[9px] bg-green-900/50 text-green-400 px-1 rounded border border-green-800" title="Ritual">R</span>}
                             </div>
@@ -343,8 +344,12 @@ const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate, isOwner, onUse })
 
             {/* Filter Bar */}
             <div className="flex gap-2 overflow-x-auto pb-2 mb-2 border-b border-slate-700 shrink-0 no-scrollbar">
-                {['All', 'Conc', 'Ritual', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9'].map(f => (
-                    <button key={f} onClick={() => { setFilter(f); if(!isNaN(f)) setFilterLevel(parseInt(f)); }} className={`px-3 py-1 rounded-full text-[10px] font-bold transition-colors whitespace-nowrap ${filter === f ? 'bg-amber-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}>
+                {['All', 'Conc', 'Ritual', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', ...(character.spellSlots?.['pact'] ? ['Pact'] : [])].map(f => (
+                    <button key={f} onClick={() => { 
+                        setFilter(f); 
+                        if (!isNaN(f)) setFilterLevel(parseInt(f));
+                        else if (f === 'Pact') setFilterLevel('pact'); 
+                    }} className={`px-3 py-1 rounded-full text-[10px] font-bold transition-colors whitespace-nowrap ${filter === f ? 'bg-amber-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}>
                         {f === '0' ? 'Cantrip' : f}
                     </button>
                 ))}
@@ -359,7 +364,7 @@ const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate, isOwner, onUse })
             <div className="space-y-2">
                 {filteredSpells.length === 0 ? (
                     <div className="text-center text-slate-500 py-8 italic border-2 border-dashed border-slate-800 rounded-xl">
-                        {filterLevel === 0 ? "No Cantrips known." : `No Level ${filterLevel} spells found.`}
+                        {filterLevel === 0 ? "No Cantrips known." : (filterLevel === 'pact' ? "No Pact spells found." : `No Level ${filterLevel} spells found.`)}
                     </div>
                 ) : (
                     filteredSpells.map((spell, i) => <SpellCard key={i} index={i} spell={spell} />)
