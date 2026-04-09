@@ -175,18 +175,4 @@ const SkillsTab = ({ onDiceRoll, onLogAction }) => {
     );
 };
 
-export default SkillsTab;>
-
-                            {/* Total Bonus */}
-                            <div className="col-span-1 md:col-span-2 text-right font-bold text-amber-500 text-sm">
-                                {total >= 0 ? '+' : ''}{total}
-                            </div>
-                        </div>
-                    );
-                })}
-            </div>
-        </div>
-    );
-};
-
 export default SkillsTab;
