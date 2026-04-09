@@ -53,7 +53,7 @@ const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate, isOwner, onUse })
         if (spell.level > 0 && castSpell) castSpell(spell.level);
     };
 
-    const handleRoll = async (spell, type, e) => {
+    const handleRoll = (spell, type, e) => {
         if(e) e.stopPropagation();
         if (!onDiceRoll) return;
 
@@ -68,62 +68,35 @@ const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate, isOwner, onUse })
                 return;
             }
 
-            const roll = await onDiceRoll(20);
             const mod = parseInt(spell.hit) || 0;
-            const total = roll + mod;
-            const isCrit = roll === 20;
-            
-            onLogAction && onLogAction(`
-                <div class="space-y-1">
-                    <div class="font-bold text-cyan-400 border-b border-cyan-900/50 pb-1 flex justify-between">
-                        <span>${spell.name} Attack</span>
-                        <span class="text-xs text-slate-500 font-normal self-end">Spell</span>
-                    </div>
-                    <div class="flex items-center gap-2 text-sm text-slate-300">
-                        <span class="bg-slate-800 px-2 py-1 rounded text-xs font-mono">d20 ${mod >= 0 ? '+' : ''}${mod}</span>
-                        <span>➜</span>
-                        <span class="font-mono text-slate-400">${roll}</span>
-                        <span>=</span>
-                        <span class="text-2xl font-bold ${isCrit ? 'text-green-400 glow' : 'text-white'}">${total}</span>
-                    </div>
-                </div>
-            `);
+            const formula = `1d20${mod >= 0 ? '+' : ''}${mod}`;
+            onDiceRoll(formula, {
+                weaponName: spell.name,
+                alias: 'Spell Attack'
+            });
         } 
         else if (type === 'dmg') {
+            if (!spell.dmg) return;
             const regex = /(\d+)d(\d+)(?:\s*([+-])\s*(\d+))?/;
-            // FIX: Added safety check for spell.dmg
-            const match = spell.dmg ? spell.dmg.match(regex) : null;
+            const match = spell.dmg.match(regex);
             
             if (match) {
-                const [fullStr, count, die, sign, modVal] = match;
+                const [fullStr] = match;
                 const typeLabel = spell.dmg.replace(fullStr, '').trim();
                 
-                let rollTotal = 0;
-                const rolls = [];
-                for(let i=0; i<parseInt(count); i++) {
-                    const r = await onDiceRoll(parseInt(die));
-                    rolls.push(r);
-                    rollTotal += r;
-                }
-                if(modVal) rollTotal += (sign === '-' ? -1 : 1) * parseInt(modVal);
-
-                onLogAction && onLogAction(`
-                    <div class="space-y-1">
-                        <div class="font-bold text-indigo-400 border-b border-indigo-900/50 pb-1 flex justify-between">
-                            <span>${spell.name} Damage</span>
-                            <span class="text-xs text-slate-500 font-normal self-end">${typeLabel}</span>
-                        </div>
-                        <div class="flex flex-wrap items-center gap-2 text-sm text-slate-300">
-                            <span class="bg-slate-800 px-2 py-1 rounded text-xs font-mono">${fullStr}</span>
-                            <span>➜</span>
-                            <span class="font-mono text-xs text-slate-400">[${rolls.join('+')}]${modVal ? (sign + modVal) : ''}</span>
-                            <span>=</span>
-                            <span class="text-2xl font-bold text-indigo-300">${rollTotal}</span>
-                        </div>
-                    </div>
-                `);
+                onDiceRoll(fullStr, {
+                    actionType: 'damage',
+                    weaponName: spell.name,
+                    alias: 'Spell Damage',
+                    damageType: typeLabel
+                });
             } else {
-                onLogAction && onLogAction(`<div class="font-bold text-indigo-300">${spell.name}: ${spell.dmg}</div>`);
+                onDiceRoll('1d0', {
+                    actionType: 'damage',
+                    weaponName: spell.name,
+                    alias: 'Spell Damage',
+                    damageType: spell.dmg
+                });
             }
         }
     };

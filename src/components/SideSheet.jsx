@@ -28,6 +28,27 @@ const SideSheet = ({ characterId, onClose, role, onDiceRoll }) => {
     const [miniSearchQuery, setMiniSearchQuery] = useState("");
     const [isSearchingMinis, setIsSearchingMinis] = useState(false);
     const [editableName, setEditableName] = useState('');
+    const [sheetWidth, setSheetWidth] = useState(550);
+
+    const handleMouseDown = useCallback((e) => {
+        e.preventDefault();
+        const startX = e.clientX;
+        const startWidth = sheetWidth;
+
+        const handleMouseMove = (moveEvent) => {
+            const deltaX = startX - moveEvent.clientX;
+            const newWidth = Math.max(400, Math.min(1000, startWidth + deltaX));
+            setSheetWidth(newWidth);
+        };
+
+        const handleMouseUp = () => {
+            document.removeEventListener('mousemove', handleMouseMove);
+            document.removeEventListener('mouseup', handleMouseUp);
+        };
+
+        document.addEventListener('mousemove', handleMouseMove);
+        document.addEventListener('mouseup', handleMouseUp);
+    }, [sheetWidth]);
 
     const handleMiniSearch = async (overrideQuery, typeFallback) => {
         const q = overrideQuery !== undefined ? overrideQuery : miniSearchQuery;
@@ -166,7 +187,14 @@ const SideSheet = ({ characterId, onClose, role, onDiceRoll }) => {
     }, [displayId, modifiedData, liveHp]);
 
     return (
-        <div className="absolute top-0 right-0 bottom-0 w-[550px] bg-slate-900 border-l border-slate-700 shadow-2xl z-[80] flex flex-col animate-in slide-in-from-right duration-300">
+        <div 
+            className="absolute top-0 right-0 bottom-0 bg-slate-900 border-l border-slate-700 shadow-2xl z-[80] flex flex-col animate-in slide-in-from-right duration-300"
+            style={{ width: `${sheetWidth}px` }}
+        >
+            <div 
+                className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-amber-500/50 z-10"
+                onMouseDown={handleMouseDown}
+            />
             <div className="p-4 border-b border-slate-700 flex items-center gap-4 shrink-0">
                 <input 
                     type="text"

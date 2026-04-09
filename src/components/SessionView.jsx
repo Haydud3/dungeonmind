@@ -501,13 +501,36 @@ const SessionView = ({
                                                                 return null;
                                                             };
 
+                                                            if (rollData.actionType === 'use' || (rollData.formula === '1d0' && rollData.total === 0 && rollData.alias)) {
+                                                                return (
+                                                                    <div className="bg-slate-800 border border-slate-700 rounded-lg p-3 w-full max-w-sm shadow-xl flex flex-col items-start text-left relative overflow-hidden">
+                                                                        {msg.type === 'roll-private' && (
+                                                                            <button 
+                                                                                onClick={() => role === 'dm' && onEditMessage(msg.id, msg.content, 'roll-public')}
+                                                                                className={`absolute top-2 right-2 ${role === 'dm' ? 'text-amber-500 hover:text-amber-400 cursor-pointer' : 'text-slate-500 cursor-default'}`} 
+                                                                                title={role === 'dm' ? "Click to reveal roll to players" : "Private DM Roll"}
+                                                                            >
+                                                                                <Icon name="eye-off" size={14} />
+                                                                            </button>
+                                                                        )}
+                                                                        <div className="font-bold text-amber-500 text-sm">{rollData.characterName}</div>
+                                                                        <div className="font-bold text-indigo-300 text-base">{rollData.alias || rollData.weaponName || 'Used Feature'}</div>
+                                                                        {rollData.description && <div className="text-slate-400 text-xs mt-1 whitespace-pre-wrap">{rollData.description}</div>}
+                                                                    </div>
+                                                                );
+                                                            }
+
                                                             if (hasDetails) {
                                                                 return (
                                                                     <div className="bg-slate-800 border border-slate-700 rounded-lg p-3 w-full max-w-sm shadow-xl flex flex-col items-start text-left relative overflow-hidden">
                                                                         {msg.type === 'roll-private' && (
-                                                                            <div className="absolute top-2 right-2 text-slate-500" title="Private DM Roll">
+                                                                            <button 
+                                                                                onClick={() => role === 'dm' && onEditMessage(msg.id, msg.content, 'roll-public')}
+                                                                                className={`absolute top-2 right-2 ${role === 'dm' ? 'text-amber-500 hover:text-amber-400 cursor-pointer' : 'text-slate-500 cursor-default'}`} 
+                                                                                title={role === 'dm' ? "Click to reveal roll to players" : "Private DM Roll"}
+                                                                            >
                                                                                 <Icon name="eye-off" size={14} />
-                                                                            </div>
+                                                                            </button>
                                                                         )}
                                                                         <div className="font-bold text-amber-500 text-sm">{rollData.characterName}</div>
                                                                         {rollData.weaponName && <div className="font-bold text-slate-200 text-base">{rollData.weaponName}</div>}
@@ -531,9 +554,13 @@ const SessionView = ({
                                                             return (
                                                                 <div className="bg-slate-800/80 border border-slate-700/50 rounded-lg p-2 w-full max-w-sm flex flex-col items-start relative overflow-hidden">
                                                                     {msg.type === 'roll-private' && (
-                                                                        <div className="absolute top-2 right-2 text-slate-500" title="Private DM Roll">
+                                                                        <button 
+                                                                            onClick={() => role === 'dm' && onEditMessage(msg.id, msg.content, 'roll-public')}
+                                                                            className={`absolute top-2 right-2 ${role === 'dm' ? 'text-amber-500 hover:text-amber-400 cursor-pointer' : 'text-slate-500 cursor-default'}`} 
+                                                                            title={role === 'dm' ? "Click to reveal roll to players" : "Private DM Roll"}
+                                                                        >
                                                                             <Icon name="eye-off" size={12} />
-                                                                        </div>
+                                                                        </button>
                                                                     )}
                                                                     <div className="text-slate-400 text-xs break-all">{rollData.characterName} rolled {rollData.formula}</div>
                                                                     <div className="flex items-baseline gap-2 mt-1 flex-wrap">

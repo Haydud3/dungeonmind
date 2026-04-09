@@ -250,10 +250,12 @@ function DungeonMindApp() {
           
           let totalNatural = 0;
           let rolls = [];
-          for(let i=0; i<count; i++) {
-              const r = Math.floor(Math.random() * sides) + 1;
-              rolls.push(r);
-              totalNatural += r;
+          if (sides > 0) {
+              for(let i=0; i<count; i++) {
+                  const r = Math.floor(Math.random() * sides) + 1;
+                  rolls.push(r);
+                  totalNatural += r;
+              }
           }
           
           // Ensure totalNatural and result are always finite numbers before storing in state
@@ -285,30 +287,43 @@ function DungeonMindApp() {
           
           setDiceLog(prev => [rollLog, ...prev].slice(0, 50));
           
-          const newAnimations = rolls.map(r => ({ die: sides, result: r }));
-          if (rollTimeoutRef.current) clearTimeout(rollTimeoutRef.current);
-          setRollingDice(newAnimations);
-          rollTimeoutRef.current = setTimeout(() => setRollingDice(null), 4000);
+          const isUseAction = options.actionType === 'use' || sides === 0 || strFormula === '1d0';
 
-          const naturalClass = (sides === 20 && safeTotalNatural === 20 && count === 1) ? "text-green-400" : (sides === 20 && safeTotalNatural === 1 && count === 1) ? "text-red-400" : "text-slate-300";
-          const rollsStr = rolls.length > 1 ? rolls.join(' + ') : rolls[0];
-          const toastHtml = `
-                <div class="space-y-1 text-left w-full">
-                    <div class="font-bold text-amber-500 border-b border-amber-900/50 pb-1 flex justify-between">
-                        <span>${options.weaponName || options.alias || 'Dice Roll'}</span>
-                        <span class="text-xs text-slate-500 font-normal self-end">${options.actionType || 'Roll'}</span>
+          if (!isUseAction) {
+              const newAnimations = rolls.map(r => ({ die: sides, result: r }));
+              if (rollTimeoutRef.current) clearTimeout(rollTimeoutRef.current);
+              setRollingDice(newAnimations);
+              rollTimeoutRef.current = setTimeout(() => setRollingDice(null), 4000);
+
+              const naturalClass = (sides === 20 && safeTotalNatural === 20 && count === 1) ? "text-green-400" : (sides === 20 && safeTotalNatural === 1 && count === 1) ? "text-red-400" : "text-slate-300";
+              const rollsStr = rolls.length > 1 ? rolls.join(' + ') : rolls[0];
+              const toastHtml = `
+                    <div class="space-y-1 text-left w-full">
+                        <div class="font-bold text-amber-500 border-b border-amber-900/50 pb-1 flex justify-between">
+                            <span>${options.weaponName || options.alias || 'Dice Roll'}</span>
+                            <span class="text-xs text-slate-500 font-normal self-end">${options.actionType || 'Roll'}</span>
+                        </div>
+                        <div class="flex flex-wrap items-center gap-2 text-sm text-slate-300 mt-1 w-full">
+                            <span class="bg-slate-800 px-2 py-1 rounded text-xs font-mono break-all">${strFormula}</span>
+                            <span>➜</span>
+                            <span class="font-mono text-xs ${naturalClass} break-words">[${rollsStr}]${mod !== 0 ? (mod > 0 ? '+' : '') + mod : ''}</span>
+                            <span>=</span>
+                            <span class="text-xl font-bold ${naturalClass.includes('green') ? 'text-green-400 glow' : naturalClass.includes('red') ? 'text-red-500' : 'text-white'}">${safeResult}</span>
+                        </div>
                     </div>
-                    <div class="flex flex-wrap items-center gap-2 text-sm text-slate-300 mt-1 w-full">
-                        <span class="bg-slate-800 px-2 py-1 rounded text-xs font-mono break-all">${strFormula}</span>
-                        <span>➜</span>
-                        <span class="font-mono text-xs ${naturalClass} break-words">[${rollsStr}]${mod !== 0 ? (mod > 0 ? '+' : '') + mod : ''}</span>
-                        <span>=</span>
-                        <span class="text-xl font-bold ${naturalClass.includes('green') ? 'text-green-400 glow' : naturalClass.includes('red') ? 'text-red-500' : 'text-white'}">${safeResult}</span>
+              `;
+              if (addLogEntry) {
+                  addLogEntry({ message: toastHtml, id: Date.now() });
+              }
+          } else if (addLogEntry) {
+              // Simpler log for 'use' actions
+              const useHtml = `
+                    <div class="space-y-1 text-left w-full">
+                        <div class="font-bold text-indigo-300">Used: ${options.alias || 'Feature'}</div>
+                        ${options.description ? `<div class="text-xs text-slate-400 mt-1 whitespace-pre-wrap">${options.description}</div>` : ''}
                     </div>
-                </div>
-          `;
-          if (addLogEntry) {
-              addLogEntry({ message: toastHtml, id: Date.now() });
+              `;
+              addLogEntry({ message: useHtml, id: Date.now() });
           }
 
           const payload = {

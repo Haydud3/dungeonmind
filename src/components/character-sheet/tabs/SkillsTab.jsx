@@ -84,22 +84,10 @@ const SkillsTab = ({ onDiceRoll, onLogAction }) => {
                         return (
                             <div 
                                 key={stat} 
-                                onClick={async () => {
+                                onClick={() => {
                                     if (!onDiceRoll) return;
-                                    const roll = await onDiceRoll(20, { alias: `${stat.toUpperCase()} Save` });
-                                    const final = roll + total;
-                                    onLogAction && onLogAction(`
-                                        <div class="font-bold text-white border-b border-red-900/50 pb-1 mb-1 flex justify-between">
-                                            <span>${stat.toUpperCase()} Save</span>
-                                        </div>
-                                        <div class="flex items-center gap-2 text-sm text-slate-300">
-                                            <span class="font-mono bg-slate-800 px-1 rounded">d20(${roll})</span>
-                                            <span>+</span>
-                                            <span class="text-xs text-slate-400">${total}</span>
-                                            <span>=</span>
-                                            <span class="text-xl text-red-400 font-bold">${final}</span>
-                                        </div>
-                                    `);
+                                    const formula = `1d20${total >= 0 ? '+' : ''}${total}`;
+                                    onDiceRoll(formula, { alias: `${stat.toUpperCase()} Save` });
                                 }}
                                 className="bg-slate-900/50 p-2 rounded border border-slate-700 flex flex-col items-center cursor-pointer hover:border-amber-500 hover:bg-slate-800 transition-all active:scale-95"
                             >
@@ -174,6 +162,20 @@ const SkillsTab = ({ onDiceRoll, onLogAction }) => {
                                 <span>{abilityMod >= 0 ? '+' : ''}{abilityMod}</span>
                                 {isProf && <span className="text-green-400">+{profBonus}</span>}
                             </div>
+
+                            {/* Total Bonus */}
+                            <div className="col-span-1 md:col-span-2 text-right font-bold text-amber-500 text-sm">
+                                {total >= 0 ? '+' : ''}{total}
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
+};
+
+export default SkillsTab;>
 
                             {/* Total Bonus */}
                             <div className="col-span-1 md:col-span-2 text-right font-bold text-amber-500 text-sm">

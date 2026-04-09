@@ -320,7 +320,9 @@ export const parseDndBeyondJson = (json) => {
 
     characterSheet.features = [
         ...(data.race?.racialTraits || []).map(t => mapFeature(t, 'Race')),
-        ...(data.classes || []).flatMap(c => (c.classFeatures || []).map(f => mapFeature(f, 'Class'))),
+        ...(data.classes || []).flatMap(c => (c.classFeatures || [])
+            .filter(f => c.level >= (f.definition?.requiredLevel || 0))
+            .map(f => mapFeature(f, 'Class'))),
         ...(data.feats || []).map(f => mapFeature(f, 'Feat'))
     ];
 
@@ -336,8 +338,17 @@ export const parseDndBeyondJson = (json) => {
     };
 
     // Senses (bulletproof version)
+    const dvMod = allMods.find(m => m.subType === 'darkvision');
+    let dvRange = 0;
+    if (dvMod) {
+        dvRange = dvMod.fixedValue || dvMod.value || 0;
+    } else {
+        const dvTrait = (data.race?.racialTraits || []).find(t => t?.definition?.name === "Darkvision");
+        const match = dvTrait?.definition?.description?.match(/(\d+)\s*feet/);
+        if (match) dvRange = parseInt(match[1]);
+    }
     characterSheet.senses = {
-        darkvision: (data.race?.racialTraits || []).find(t => t?.definition?.name === "Darkvision")?.definition?.description?.match(/(\d+)\s*feet/)?.[1] || 0
+        darkvision: dvRange
     };
 
     // Spells
@@ -426,8 +437,16 @@ export const parseDndBeyondJson = (json) => {
     // Actions from `data.actions` (class features, racial traits, etc.)
     const rawActions = [
         ...(data.actions?.race || []),
-        ...(data.actions?.class || []),
-        ...(data.actions?.item || []),
+        ...(data.actions?.class?.filter(a => {
+            const cls = data.classes?.find(c => c.classFeatures?.some(f => f.definition?.id === a.componentId));
+            if (!cls) return true;
+            const feature = cls.classFeatures.find(f => f.definition?.id === a.componentId);
+            return cls.level >= (feature?.definition?.requiredLevel || 0);
+        }) || []),
+        ...(data.actions?.item?.filter(a => {
+            const item = data.inventory?.find(i => i.id === a.componentId);
+            return item ? item.equipped : true;
+        }) || []),
         ...(data.actions?.feat || [])
     ];
 
@@ -469,7 +488,7 @@ export const parseDndBeyondJson = (json) => {
         id: 'unarmed-strike',
         name: "Unarmed Strike",
         hit: characterSheet.profBonus + baseStrMod,
-        dmg: `1${baseStrMod !== 0 ? (baseStrMod > 0 ? '+' : '') + baseStrMod : ''}`,
+        dmg: Math.max(0, 1 + baseStrMod).toString(),
         type: 'Action',
         category: 'Attack',
         range: '5 ft',

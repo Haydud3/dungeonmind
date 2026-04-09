@@ -28,8 +28,8 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
     // --- 1. DATA GATHERING & MERGING ---
     
     // A. Inventory (Smart Sync: Only Equipped & Combat-Ready Items)
-    const inventoryActions = (character.inventory || [])
-        .filter(item => item.combat) // Removed item.equipped requirement
+    const inventoryActions = (character?.inventory || [])
+        .filter(item => item.combat && item.equipped) // Added item.equipped requirement
         .map(item => ({
             ...item.combat,
             name: item.name,
@@ -39,7 +39,7 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
         }));
 
     // B. Spells (Directly from Spellbook)
-    const spellActions = (character.spells || [])
+    const spellActions = (character?.spells || [])
         .filter(spell => {
             const t = (spell.time || "").toLowerCase();
             return spell.hit || spell.dmg || t.includes("bonus") || t.includes("reaction") || String(spell.hit).includes("DC");
@@ -58,7 +58,7 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
         }));
 
     // C. Custom Features
-    const customActions = (character.customActions || []).map(act => ({
+    const customActions = (character?.customActions || []).map(act => ({
         ...act,
         id: `custom-${act.name}`,
         source: "custom"
@@ -90,27 +90,49 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
     const otherFeatures = allActions.filter(a => !reactions.includes(a) && !bonusActions.includes(a) && !attacks.includes(a));
 
     // --- 4. HANDLERS ---
+    const toggleUse = (actionId) => {
+        // Only works for custom actions
+        const newActions = [...(character?.customActions || [])];
+        const idx = newActions.findIndex(a => `custom-${a.name}` === actionId);
+        if (idx > -1 && newActions[idx].uses) {
+            const uses = newActions[idx].uses;
+            if (uses.current > 0) uses.current--;
+            else uses.current = uses.max;
+            updateInfo('customActions', newActions);
+        }
+    };
+
     const handleRoll = async (action, type, e) => {
         if(e) e.stopPropagation();
         
         // Log the usage to Chat/Toast
         if (type === 'use') {
-            onLogAction && onLogAction(`
-                <div class="font-bold text-indigo-300">${action.name}</div>
-                <div class="text-xs text-slate-400 mt-1">${action.desc || action.notes || ""}</div>
-            `);
+            if (action.uses && action.uses.current > 0) {
+                toggleUse(action.id);
+            }
+            if (onDiceRoll) {
+                onDiceRoll('1d0', {
+                    alias: action.name,
+                    description: action.desc || action.notes || "",
+                    actionType: 'use'
+                });
+            } else if (onLogAction) {
+                onLogAction(`
+                    <div class="font-bold text-indigo-300">${action.name}</div>
+                    <div class="text-xs text-slate-400 mt-1">${action.desc || action.notes || ""}</div>
+                `);
+            }
         }
 
         // Then handle the actual dice roll logic
         if (type === 'hit') {
             if (!onDiceRoll) return alert("Dice connection missing.");
             if (String(action.hit).includes('DC')) {
-                onLogAction && onLogAction(`
-                    <div class="bg-slate-800 p-2 rounded border-l-4 border-cyan-600">
-                        <div class="font-bold text-cyan-400">${character?.name || 'Character'} forces a Saving Throw!</div>
-                        <div class="text-sm text-slate-300 mt-1">${action.name} requires a <span class="font-bold text-white">${action.hit}</span> save.</div>
-                    </div>
-                `);
+                onDiceRoll('1d0', {
+                    alias: 'Saving Throw',
+                    description: `${action.name} requires a ${action.hit} save.`,
+                    actionType: 'use'
+                });
                 return;
             }
 
@@ -124,9 +146,24 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
         else if (type === 'dmg') {
             if (!onDiceRoll) return alert("Dice connection missing.");
             if (!action.dmg) {
-                onLogAction && onLogAction(`<div class="font-bold text-indigo-300">${action.name}</div>`);
+                onDiceRoll('1d0', {
+                    alias: action.name,
+                    actionType: 'use'
+                });
                 return;
             }
+            
+            // Handle flat 0 damage
+            if (action.dmg === '0' || action.dmg === 0) {
+                onDiceRoll('1d0', {
+                    actionType: 'damage',
+                    weaponName: action.name,
+                    alias: 'Damage Roll',
+                    damageType: action.notes || ''
+                });
+                return;
+            }
+
             onDiceRoll(action.dmg, {
                 actionType: 'damage',
                 weaponName: action.name,
@@ -136,27 +173,15 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
         } 
     };
 
-    const toggleUse = (actionId) => {
-        // Only works for custom actions
-        const newActions = [...(character.customActions || [])];
-        const idx = newActions.findIndex(a => `custom-${a.name}` === actionId);
-        if (idx > -1 && newActions[idx].uses) {
-            const uses = newActions[idx].uses;
-            if (uses.current > 0) uses.current--;
-            else uses.current = uses.max;
-            updateInfo('customActions', newActions);
-        }
-    };
-
     const deleteAction = (action) => {
         if(action.source !== 'custom') return alert("This is a Spell or Item. Remove it from those tabs.");
         if(!confirm(`Delete ${action.name}?`)) return;
-        updateInfo('customActions', character.customActions.filter(a => a.name !== action.name));
+        updateInfo('customActions', (character?.customActions || []).filter(a => a.name !== action.name));
     };
 
     const addAction = () => {
         if (!newAction.name) return;
-        updateInfo('customActions', [...(character.customActions||[]), newAction]);
+        updateInfo('customActions', [...(character?.customActions||[]), newAction]);
         setShowAdd(false);
         setNewAction({ name: "", hit: "", dmg: "", type: "Action", category: "Attack", notes: "" });
     };
@@ -168,7 +193,7 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
     };
 
     const saveEdit = () => {
-        const newActions = [...(character.customActions || [])];
+        const newActions = [...(character?.customActions || [])];
         const idx = newActions.findIndex(a => `custom-${a.name}` === editingId);
         if (idx > -1) {
             newActions[idx] = { ...newActions[idx], ...editForm };
@@ -334,7 +359,7 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
                     {/* START CHANGE: Attacks per Action Label */}
                     <div className="flex justify-between items-baseline mb-2 pl-1 border-b border-slate-800 pb-1">
                         <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Attacks</h4>
-                        <span className="text-[10px] font-bold text-slate-400">Attacks per Action: <span className="text-white">{character.attacksPerAction || 1}</span></span>
+                        <span className="text-[10px] font-bold text-slate-400">Attacks per Action: <span className="text-white">{character?.attacksPerAction || 1}</span></span>
                     </div>
                     {/* END CHANGE */}
                     {attacks.map((a) => <ActionRow key={a.id} action={a} />)}

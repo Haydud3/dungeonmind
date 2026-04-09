@@ -133,7 +133,7 @@ const DiceTray = ({ diceLog = [], handleDiceRoll, onClose }) => {
                             {log.formulaDisplay === '1d0' && log.result === 0 && log.alias ? (
                                 <div className="flex flex-col">
                                     <span className="font-bold text-indigo-300">Used: {log.alias}</span>
-                                    {log.description && <span className="text-[10px] text-slate-400 mt-1">{log.description}</span>}
+                                    {log.description && <span className="text-[10px] text-slate-400 mt-1 whitespace-pre-wrap">{log.description}</span>}
                                 </div>
                             ) : (
                                 <>

@@ -60,19 +60,6 @@ const JournalPageEditor = ({
     // We define a Custom Toolbar ID to link the HTML container to Quill
     const TOOLBAR_ID = "journal-toolbar-container";
 
-    useEffect(() => {
-        const resolve = async () => {
-            if (page.content) {
-                // We resolve the content before pasting it to Quill
-                const html = await resolveChunkedHtml(page.content);
-                setResolvedContent(html);
-            } else {
-                setResolvedContent("");
-            }
-        };
-        resolve();
-    }, [page.id, page.content]);
-
     const lastLoadedPageRef = useRef(null);
 
     useEffect(() => {

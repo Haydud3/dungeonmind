@@ -59,7 +59,8 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
         setIsImporting(true);
         setImportStatus("Fetching from D&D Beyond...");
         try {
-            const response = await fetch(`/dndbeyond-api/character/v5/character/${refreshCharacter.dndBeyondId}`);
+            const encodedUrl = encodeURIComponent(`https://character-service.dndbeyond.com/character/v5/character/${refreshCharacter.dndBeyondId}`);
+            const response = await fetch(`https://corsproxy.io/?${encodedUrl}`);
             if (!response.ok) throw new Error(`Fetch failed: ${response.status}`);
             const jsonData = await response.json();
             const parsedData = parseDndBeyondJson(jsonData);
@@ -404,14 +405,6 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
                                             <p className="text-xs text-slate-400">Build from scratch.</p>
                                         </div>
 
-                                        {/* D&D BEYOND */}
-                                        <div onClick={() => fileInputRef.current.click()} className="bg-slate-800 border-2 border-slate-700 hover:border-red-500 rounded-xl p-6 cursor-pointer group transition-all hover:-translate-y-1">
-                                            <div className="w-16 h-16 bg-red-900/30 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform"><Icon name="file-text" size={32}/></div>
-                                            <h3 className="font-bold text-xl text-white mb-2">PDF/JSON Import</h3>
-                                            <p className="text-xs text-slate-400">D&D Beyond or ICE 5e.</p>
-                                            <input type="file" accept=".pdf,.json" className="hidden" ref={fileInputRef} onChange={handleFileImport}/>
-                                        </div>
-
                                         {/* AI FORGE */}
                                         {/* START CHANGE: Update onClick to use setShowForge instead of setShowAiCreator */}
                                         <div onClick={() => { setShowCreationMenu(false); setShowForge(true); }} className="bg-slate-800 border-2 border-slate-700 hover:border-purple-500 rounded-xl p-6 cursor-pointer group transition-all hover:-translate-y-1">
@@ -469,20 +462,13 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
             {/* START CHANGE: D&D Beyond Importer Modal */}
             {showDndBeyondImport && (
                 <div className="fixed inset-0 z-[60] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
-                    <div className="max-w-2xl w-full bg-slate-900 rounded-xl overflow-hidden shadow-2xl border border-slate-700 h-[80vh] relative">
-                        <button onClick={() => setShowDndBeyondImport(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white z-10"><Icon name="x" size={24}/></button>
-                        <DndBeyondImporter 
-                            onImport={(charData) => {
-                                if (charData) handleNewCharacter(charData);
-                                setShowDndBeyondImport(false);
-                            }} 
-                            onComplete={(charData) => {
-                                if (charData) handleNewCharacter(charData);
-                                setShowDndBeyondImport(false);
-                            }}
-                            onCancel={() => setShowDndBeyondImport(false)} 
-                        />
-                    </div>
+                    <DndBeyondImporter 
+                        onImport={(charData) => {
+                            if (charData) handleNewCharacter(charData);
+                            setShowDndBeyondImport(false);
+                        }} 
+                        onCancel={() => setShowDndBeyondImport(false)} 
+                    />
                 </div>
             )}
             {/* END CHANGE */}

@@ -18,9 +18,9 @@ const DndBeyondImporter = ({ onImport, onCancel }) => { // Changed prop from onC
     setError('');
 
     try {
-      // NOTE: We are using a proxy configured in `vite.config.js` to bypass CORS.
-      // The request is sent to our local server and forwarded to D&D Beyond.
-      const response = await fetch(`/dndbeyond-api/character/v5/character/${characterId}`);
+      // Use corsproxy.io for GitHub Pages compatibility
+      const encodedUrl = encodeURIComponent(`https://character-service.dndbeyond.com/character/v5/character/${characterId}`);
+      const response = await fetch(`https://corsproxy.io/?${encodedUrl}`);
       if (!response.ok) {
         throw new Error(`Failed to fetch character (Status: ${response.status}). Is the sheet public and the URL correct?`);
       }

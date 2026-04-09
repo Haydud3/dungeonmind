@@ -152,10 +152,12 @@ export const NewCampaignProvider = ({ children }) => {
         await addDoc(chatRef, message);
     };
 
-    const editMessage = async (messageId, newContent) => {
+    const editMessage = async (messageId, newContent, newType = null) => {
         if (!gameParams?.code) return;
         const messageRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'chat', messageId);
-        await updateDoc(messageRef, { content: newContent });
+        const updates = { content: newContent };
+        if (newType) updates.type = newType;
+        await updateDoc(messageRef, updates);
     };
 
     const deleteMessage = async (messageId) => {
