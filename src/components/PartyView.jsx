@@ -274,6 +274,7 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
                     <SheetContainer 
                         // Pass the full viewingCharacter object instead of just the ID
                         character={viewingCharacter}
+                        isOwner={role === 'dm' || viewingCharacter.ownerId === user?.uid}
                         onSave={handleSheetSave} 
                         onDiceRoll={async (formula, options) => {
                             if (onDiceRoll) {
@@ -291,6 +292,7 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
                         onLogAction={onLogAction}
                         onBack={() => setViewingCharacterId(null)} 
                         role={role}
+                        onOpenDiceTray={onOpenDiceTray}
                     />
                 </div>
             </div>
@@ -345,7 +347,7 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
                                     </div>
                                 </div>
                             </div>
-                            {role === 'dm' && (
+                            {(role === 'dm' || p.ownerId === user?.uid) && (
                                 <div className="absolute top-2 left-2 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                                     <button onClick={(e) => handleDelete(p.id, e)} className="p-2 bg-red-900/80 text-white rounded hover:bg-red-700" title="Delete"><Icon name="trash-2" size={14}/></button>
                                     {p.dndBeyondId && (

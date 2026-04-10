@@ -10,8 +10,8 @@ import { useNewCampaign } from '../contexts/NewCampaignProvider';
 import { searchGithubModels } from '../utils/miniManifest';
 
 // START CHANGE: Add generateNpc to props
-const NpcView = ({ data, setData, role, setChatInput, setView, onPossess, aiHelper, apiKey, edition, onDiceRoll, diceLog, generateNpc }) => {
-    const { updateCampaign } = useNewCampaign();
+const NpcView = ({ data, setData, role, setChatInput, setView, onPossess, aiHelper, apiKey, edition, onDiceRoll, diceLog, generateNpc, onOpenDiceTray }) => {
+    const { updateCampaign, user } = useNewCampaign();
     // View State
     const [viewingNpcId, setViewingNpcId] = useState(null);
     const [editableName, setEditableName] = useState('');
@@ -390,6 +390,7 @@ const NpcView = ({ data, setData, role, setChatInput, setView, onPossess, aiHelp
                         role={role}
                         // ---------------------------
                         onOpenModelPicker={() => openModelPickerForExisting(viewingNpcId)}
+                        onOpenDiceTray={onOpenDiceTray}
                     />
                     {showModelPicker && npcForModelSelection && (
                         <div className="absolute inset-0 z-[10000] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">

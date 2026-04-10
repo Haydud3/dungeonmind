@@ -437,23 +437,27 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
           )}
         </group>
 
-        {showNameplates && (
+        {showNameplates && (() => {
+          const nameText = token.name || "Unknown";
+          const textWidthApprox = Math.max(safeSize * 1.4, nameText.length * safeSize * 0.14 * 0.6 + safeSize * 0.4);
+
+          return (
           <Billboard position={nameplatePos}>
             <group>
                 {/* Turn Indicator Glow */}
                 {isActiveTurn && (
-                    <RoundedBox args={[safeSize * 1.5, safeSize * 0.38, 0.01]} radius={safeSize * 0.08} smoothness={4} position={[0, 0, -0.02]}>
+                    <RoundedBox args={[textWidthApprox + safeSize * 0.1, safeSize * 0.38, 0.01]} radius={safeSize * 0.08} smoothness={4} position={[0, 0, -0.02]}>
                         <meshStandardMaterial ref={nameplateGlowRef} color={baseColor} emissive={baseColor} emissiveIntensity={0.5} transparent opacity={opacity * 0.8} depthTest={true} />
                     </RoundedBox>
                 )}
 
                 {/* Stone Plaque Background */}
-                <RoundedBox args={[safeSize * 1.4, safeSize * 0.28, 0.02]} radius={safeSize * 0.05} smoothness={4} position={[0, 0, -0.01]}>
+                <RoundedBox args={[textWidthApprox, safeSize * 0.28, 0.02]} radius={safeSize * 0.05} smoothness={4} position={[0, 0, -0.01]}>
                     <meshStandardMaterial color="#1e293b" roughness={0.7} metalness={0.3} transparent opacity={opacity * 0.9} depthTest={true} />
                 </RoundedBox>
                 
                 {/* Metal Inner Border */}
-                <RoundedBox args={[safeSize * 1.35, safeSize * 0.23, 0.02]} radius={safeSize * 0.04} smoothness={4} position={[0, 0, -0.005]}>
+                <RoundedBox args={[textWidthApprox - safeSize * 0.05, safeSize * 0.23, 0.02]} radius={safeSize * 0.04} smoothness={4} position={[0, 0, -0.005]}>
                     <meshStandardMaterial color="#0f172a" roughness={0.4} metalness={0.8} transparent opacity={opacity * 0.9} depthTest={true} />
                 </RoundedBox>
 
@@ -467,9 +471,8 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
                     fontWeight="bold"
                     fillOpacity={opacity}
                     depthTest={true}
-                    maxWidth={safeSize * 1.3}
                 >
-                    {token.name || "Unknown"}
+                    {nameText}
                 </Text>
 
                 {/* ELEVATION */}
@@ -528,7 +531,8 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
                 )}
             </group>
         </Billboard>
-      )}
+          );
+        })()}
     </group>
     </group>
   );

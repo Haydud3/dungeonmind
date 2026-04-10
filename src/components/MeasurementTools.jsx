@@ -7,23 +7,55 @@ const RulerTool = ({ getTerrainHeight, gridSize }) => {
     const { controls } = useThree();
     const [points, setPoints] = useState([]);
     const [cursorPos, setCursorPos] = useState(null);
+    
+    // Add Linger and Fade
+    const [isFading, setIsFading] = useState(false);
+    const [opacity, setOpacity] = useState(1);
+    const lingerTimerRef = useRef(null);
+
+    useFrame((state, delta) => {
+        if (isFading) {
+            if (opacity > 0) {
+                setOpacity(prev => Math.max(0, prev - delta * 1.5)); // Fade out over ~0.66 seconds
+            } else if (points.length > 0) {
+                setPoints([]);
+                setIsFading(false);
+                setOpacity(1);
+            }
+        }
+    });
 
     useEffect(() => {
-        if (controls) controls.enabled = points.length === 0;
+        if (controls) controls.enabled = points.length === 0 || isFading;
         return () => {
             if (controls) controls.enabled = true;
+            if (lingerTimerRef.current) clearTimeout(lingerTimerRef.current);
         };
-    }, [points, controls]);
+    }, [points, isFading, controls]);
 
     const handlePointerDown = e => {
         if (e.button !== 0) return;
         e.stopPropagation();
+
+        if (lingerTimerRef.current) {
+            clearTimeout(lingerTimerRef.current);
+            lingerTimerRef.current = null;
+        }
+
         const pt = e.point.clone();
         pt.y = getTerrainHeight(pt.x, pt.z) + 0.1;
-        setPoints(p => [...p, pt]);
+
+        if (isFading || opacity < 1) {
+            setIsFading(false);
+            setOpacity(1);
+            setPoints([pt]);
+        } else {
+            setPoints(p => [...p, pt]);
+        }
     };
 
     const handlePointerMove = e => {
+        if (isFading) return;
         e.stopPropagation();
         const pt = e.point.clone();
         pt.y = getTerrainHeight(pt.x, pt.z) + 0.1;
@@ -33,8 +65,20 @@ const RulerTool = ({ getTerrainHeight, gridSize }) => {
     const handleContextMenu = e => {
         e.preventDefault();
         e.stopPropagation();
-        setPoints([]);
-        setCursorPos(null);
+        if (points.length > 0 && !isFading) {
+            setCursorPos(null);
+            lingerTimerRef.current = setTimeout(() => {
+                setIsFading(true);
+            }, 1500); // Linger for 1.5 seconds before fading
+        } else if (points.length === 0) {
+            // Already empty, do nothing
+        } else {
+             // Force clear if they right click again while lingering/fading
+             if (lingerTimerRef.current) clearTimeout(lingerTimerRef.current);
+             setIsFading(false);
+             setOpacity(1);
+             setPoints([]);
+        }
     };
 
     const segments = [];
@@ -46,9 +90,9 @@ const RulerTool = ({ getTerrainHeight, gridSize }) => {
         totalDist += dist;
         segments.push(
             <group key={`segment-${i}`}>
-                <Line points={[start, end]} color="#f59e0b" lineWidth={3} dashed dashScale={5} depthTest={false} renderOrder={300} />
-                <Html position={end.clone().add(new THREE.Vector3(0, 0.3, 0))} center>
-                    <div className="bg-slate-900/80 text-amber-400 text-xs font-bold px-2 py-0.5 rounded-full shadow-lg whitespace-nowrap">
+                <Line points={[start, end]} color="#f59e0b" lineWidth={3} dashed dashScale={5} depthTest={false} renderOrder={300} transparent opacity={opacity} />
+                <Html position={end.clone().add(new THREE.Vector3(0, 0.3, 0))} center style={{ opacity }}>
+                    <div className="bg-slate-900/80 text-amber-400 text-xs font-bold px-2 py-0.5 rounded-full shadow-lg whitespace-nowrap" style={{ opacity }}>
                         {Math.round((dist / gridSize) * 5)} ft
                     </div>
                 </Html>
@@ -56,15 +100,15 @@ const RulerTool = ({ getTerrainHeight, gridSize }) => {
         );
     }
 
-    if (points.length > 0 && cursorPos) {
+    if (points.length > 0 && cursorPos && !isFading) {
         const lastPoint = points[points.length - 1];
         const currentSegmentDist = lastPoint.distanceTo(cursorPos);
         const currentTotal = totalDist + currentSegmentDist;
         segments.push(
             <group key="current-segment">
-                <Line points={[lastPoint, cursorPos]} color="#f59e0b" lineWidth={3} dashed dashScale={5} depthTest={false} renderOrder={300} />
-                <Html position={cursorPos.clone().add(new THREE.Vector3(0, 0.3, 0))} center>
-                    <div className="bg-slate-900/80 text-amber-400 text-xs font-bold px-2 py-0.5 rounded-full shadow-lg whitespace-nowrap">
+                <Line points={[lastPoint, cursorPos]} color="#f59e0b" lineWidth={3} dashed dashScale={5} depthTest={false} renderOrder={300} transparent opacity={opacity} />
+                <Html position={cursorPos.clone().add(new THREE.Vector3(0, 0.3, 0))} center style={{ opacity }}>
+                    <div className="bg-slate-900/80 text-amber-400 text-xs font-bold px-2 py-0.5 rounded-full shadow-lg whitespace-nowrap" style={{ opacity }}>
                         {Math.round((currentTotal / gridSize) * 5)} ft
                     </div>
                 </Html>

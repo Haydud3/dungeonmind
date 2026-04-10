@@ -13,7 +13,7 @@ import SpellsTab from './tabs/SpellsTab';
 import DmNotesTab from './tabs/DmNotesTab';
 import RollToast from './widgets/RollToast';
 
-function SheetContainer({ character, onSave, onDiceRoll, diceLog, onLogAction, onBack, role, isNpc = false, onOpenModelPicker, data }) {
+function SheetContainer({ character, onSave, onDiceRoll, diceLog, onLogAction, onBack, role, isNpc = false, onOpenModelPicker, data, isOwner: isOwnerProp, onOpenDiceTray }) {
   const { loadCharacter, updateCharacter } = useCharacterStore();
   const isDirty = useCharacterStore((state) => state.isDirty);
   const storeCharacter = useCharacterStore((state) => state.character);
@@ -41,11 +41,11 @@ function SheetContainer({ character, onSave, onDiceRoll, diceLog, onLogAction, o
 
   // Determine if the current user is the owner of this character
   // This logic needs to be robust, considering both player characters and NPCs
-  const isOwner = role === 'dm' || 
+  const isOwner = isOwnerProp !== undefined ? isOwnerProp : (role === 'dm' || 
     (data?.user?.uid && (
       (isNpc && character.ownerId === data.user.uid) || 
       (!isNpc && (character.ownerId === data.user.uid || data.campaign?.assignments?.[data.user.uid] === character.id))
-    ));
+    )));
 
   if (!character || !character.name) {
     return (
@@ -67,7 +67,7 @@ function SheetContainer({ character, onSave, onDiceRoll, diceLog, onLogAction, o
       />
 
       {/* Make sure RollToast is imported and placed here, or in App.jsx */}
-      <RollToast />
+      {role === 'dm' && <RollToast />}
 
       {/* Tabs Navigation */}
       <div className="flex-none bg-slate-900 border-t border-b border-slate-800 shadow-inner z-20">

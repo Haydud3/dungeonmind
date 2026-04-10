@@ -6,7 +6,7 @@ import { searchGithubModels } from '../utils/miniManifest';
 import Icon from './Icon';
 import { subscribeToMap, updateMap } from '../utils/mapService';
 
-const SideSheet = ({ characterId, onClose, role, onDiceRoll }) => {
+const SideSheet = ({ characterId, onClose, role, onDiceRoll, onOpenDiceTray }) => {
     const { campaign: data, user, updateCampaign, gameParams } = useNewCampaign();
     const activeMapId = data?.activeMapId;
     
@@ -221,6 +221,7 @@ const SideSheet = ({ characterId, onClose, role, onDiceRoll }) => {
                     onLogAction={(msg) => addLogEntry({ message: msg, id: Date.now() })}
                     isOwner={isOwner}
                         onOpenModelPicker={role === 'dm' ? handleOpenModelPicker : undefined}
+                    onOpenDiceTray={onOpenDiceTray}
                 />
                 {showModelPicker && character && (
                 <div className="fixed inset-0 z-[110] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">

@@ -32,9 +32,9 @@ Quill.register(ChunkedImage, true);
 import { useNewCampaign } from '../contexts/NewCampaignProvider';
 
 const HandoutEditor = ({ onCancel, onLocalReveal }) => {
-    const { campaign, updateCampaign, deleteHandout } = useNewCampaign();
+    const { campaign, updateCampaign, deleteHandout, user } = useNewCampaign();
     const savedHandouts = campaign?.handouts || [];
-    const role = (campaign && campaign.dmIds?.includes(campaign.hostId)) ? 'dm' : 'player';
+    const role = (campaign && campaign.dmIds?.includes(user?.uid)) ? 'dm' : 'player';
     const [activeTab, setActiveTab] = useState(role === 'dm' ? 'compose' : 'history');
     const toast = useToast();
     
@@ -281,7 +281,7 @@ const HandoutEditor = ({ onCancel, onLocalReveal }) => {
                                     {savedHandouts
                                         .filter(h => !h.isDraft || (role === 'player' && h.revealed))
                                         .map((h) => (
-                                        <div key={h.id} className="bg-slate-900 border border-slate-800 p-4 rounded-xl hover:border-blue-500 transition-all cursor-pointer group" onClick={() => onLocalReveal(h)}>
+                                        <div key={h.id} className="bg-slate-900 border border-slate-800 p-4 rounded-xl hover:border-blue-500 transition-all cursor-pointer group" onClick={() => role === 'dm' ? loadHandout(h) : onLocalReveal(h)}>
                                             <div className="flex justify-between items-start mb-2">
                                                 <h4 className="font-bold text-slate-200 truncate flex items-center gap-2">
                                                     {h.title}

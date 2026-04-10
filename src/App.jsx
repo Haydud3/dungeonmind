@@ -511,6 +511,7 @@ function DungeonMindApp() {
                   edition={data.config?.edition} 
                   onInitiative={handleInitiative} 
                   generatePlayer={generatePlayer} 
+                  onOpenDiceTray={() => setShowTools(p => !p)}
                   onLogAction={(msg) => {
                       if (effectiveRole !== 'dm') {
                           sendChatMessage(msg, 'chat-public');
@@ -536,7 +537,7 @@ function DungeonMindApp() {
               {currentView === 'sheet' && (
                   <div className="flex-1 h-full overflow-hidden">
                       <SheetContainer 
-                          characterId={data.assignments?.[user?.uid]} 
+                          character={data.players?.find(p => String(p.id) === String(data.assignments?.[user?.uid])) || data.players?.find(p => p.ownerId === user?.uid)} 
                           onSave={savePlayer} 
                           onDiceRoll={handleDiceRoll} 
                           diceLog={diceLog}
@@ -545,6 +546,7 @@ function DungeonMindApp() {
                           // ---------------------------
                           isOwner={true}
                           onLogAction={(msg) => addLogEntry({ message: msg, id: Date.now() })}
+                          onOpenDiceTray={() => setShowTools(p => !p)}
                       />
                   </div>
               )}
@@ -583,6 +585,7 @@ function DungeonMindApp() {
                       role={effectiveRole}
                       onDiceRoll={handleDiceRoll}
                       user={user}
+                      onOpenDiceTray={() => setShowTools(p => !p)}
                   />
               )}
 
@@ -622,12 +625,12 @@ function DungeonMindApp() {
        </main>
        
        {showHandoutCreator && <HandoutEditor role={effectiveRole} campaignCode={gameParams?.code} savedHandouts={data.handouts || []} onSave={handleHandoutSave} onDelete={handleHandoutDelete} onCancel={() => setShowHandoutCreator(false)} onLocalReveal={(h) => { setLocalHandout(h); setShowHandoutCreator(false); }} />}
-       {showHandout && (localHandout || data.campaign?.activeHandout) && (
+       {showHandout && (localHandout || data?.activeHandout) && (
            <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm overflow-hidden" onClick={() => { setShowHandout(false); setLocalHandout(null); }}>
                <div 
                    className={`max-w-2xl w-full rounded-xl shadow-2xl relative flex flex-col max-h-[90vh] overflow-hidden ${
-                       (localHandout || data.campaign.activeHandout).theme === 'parchment' ? 'bg-[#f5e6c8] text-amber-900 border-4 border-amber-800' :
-                       (localHandout || data.campaign.activeHandout).theme === 'stone' ? 'bg-[#1c1917] text-slate-300 border-4 border-slate-700' :
+                       (localHandout || data?.activeHandout).theme === 'parchment' ? 'bg-[#f5e6c8] text-amber-900 border-4 border-amber-800' :
+                       (localHandout || data?.activeHandout).theme === 'stone' ? 'bg-[#1c1917] text-slate-300 border-4 border-slate-700' :
                        'bg-white text-black border-4 border-slate-200'
                    }`} 
                    onClick={e=>e.stopPropagation()}

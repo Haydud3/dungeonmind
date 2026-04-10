@@ -1621,7 +1621,11 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
                 >
                   {contextMenu.isHidden ? "Reveal to Players" : "Hide from Players"}
                 </button>
-                
+              </>
+            )}
+
+            {(role === 'dm' || contextMenu.isSharedControl || (contextMenu.characterId && allCharacters.find(c => String(c.id) === String(contextMenu.characterId))?.ownerId === user?.uid)) && (
+              <>
                 <div className="border-t border-slate-700 my-1"></div>
                 <div className="flex items-center justify-between px-4 py-1">
                     <span className="text-xs font-bold text-slate-400">Size</span>
@@ -1639,6 +1643,11 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
                         }} className="p-1.5 bg-slate-700 rounded hover:bg-slate-600"><Icon name="plus" size={12}/></button>
                     </div>
                 </div>
+              </>
+            )}
+            
+            {role === 'dm' && (
+              <>
                 <div className="border-t border-slate-700 my-1"></div>
                 
                 <button 
