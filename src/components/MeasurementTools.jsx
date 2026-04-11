@@ -138,20 +138,53 @@ const ShapeToolBase = ({ children, onHitTest, tokens, onCompleteSelection }) => 
     const [endPoint, setEndPoint] = useState(null);
     const [isDrawing, setIsDrawing] = useState(false);
     const [isFinalizing, setIsFinalizing] = useState(false);
+    
+    // Add Linger and Fade
+    const [isFading, setIsFading] = useState(false);
+    const [opacity, setOpacity] = useState(1);
+    const lingerTimerRef = useRef(null);
+
+    useFrame((state, delta) => {
+        if (isFading) {
+            if (opacity > 0) {
+                setOpacity(prev => Math.max(0, prev - delta * 1.5));
+            } else if (startPoint && endPoint) {
+                setStartPoint(null);
+                setEndPoint(null);
+                setIsFading(false);
+                setOpacity(1);
+            }
+        }
+    });
 
     useEffect(() => {
-        if (controls) controls.enabled = !startPoint;
+        if (controls) controls.enabled = (!startPoint && !isDrawing) || isFading;
         return () => {
             if (controls) controls.enabled = true;
+            if (lingerTimerRef.current) clearTimeout(lingerTimerRef.current);
         };
-    }, [startPoint, controls]);
+    }, [startPoint, isDrawing, isFading, controls]);
 
     const handlePointerDown = e => {
         if (e.button !== 0) return;
         e.stopPropagation();
         
+        if (lingerTimerRef.current) {
+            clearTimeout(lingerTimerRef.current);
+            lingerTimerRef.current = null;
+        }
+
+        if (isFading || opacity < 1) {
+            setIsFading(false);
+            setOpacity(1);
+            setStartPoint(null);
+            setEndPoint(null);
+            setIsDrawing(false);
+            setIsFinalizing(false);
+        }
+
         // If the shape is already drawn, the second click prepares to finalize
-        if (startPoint && endPoint && !isDrawing) {
+        if (startPoint && endPoint && !isDrawing && !isFading) {
             setIsFinalizing(true);
             return;
         }
@@ -162,7 +195,7 @@ const ShapeToolBase = ({ children, onHitTest, tokens, onCompleteSelection }) => 
     };
 
     const handlePointerMove = e => {
-        if (!startPoint || !isDrawing || isFinalizing) return;
+        if (!startPoint || !isDrawing || isFinalizing || isFading) return;
         e.stopPropagation();
         setEndPoint(e.point);
     };
@@ -173,6 +206,12 @@ const ShapeToolBase = ({ children, onHitTest, tokens, onCompleteSelection }) => 
 
         if (isDrawing) {
             setIsDrawing(false);
+            // Auto finalize to avoid requiring a second click
+            setIsFinalizing(true);
+            if (lingerTimerRef.current) clearTimeout(lingerTimerRef.current);
+            lingerTimerRef.current = setTimeout(() => {
+                 setIsFading(true);
+            }, 5000); // Linger for 5 seconds
         }
     };
 
@@ -182,7 +221,7 @@ const ShapeToolBase = ({ children, onHitTest, tokens, onCompleteSelection }) => 
 
         // Delaying finalization to the 'click' event ensures the shape mesh consumes the 
         // click before unmounting, preventing the canvas from firing onPointerMissed!
-        if (isFinalizing) {
+        if (isFinalizing && !isFading) {
             if (onHitTest && tokens && onCompleteSelection) {
                 const selectedIds = [];
                 tokens.forEach(t => {
@@ -196,21 +235,32 @@ const ShapeToolBase = ({ children, onHitTest, tokens, onCompleteSelection }) => 
             } else if (onCompleteSelection) {
                 onCompleteSelection([]);
             }
+            setIsFinalizing(false); // Reset finalizing state after check
         }
     };
 
     const handleContextMenu = e => {
         e.preventDefault();
         e.stopPropagation();
-        setStartPoint(null);
-        setEndPoint(null);
-        setIsDrawing(false);
-        setIsFinalizing(false);
+        if (startPoint && endPoint && !isFading) {
+            if (lingerTimerRef.current) clearTimeout(lingerTimerRef.current);
+            setIsFading(true);
+        } else if (!startPoint && !endPoint) {
+            // Do nothing
+        } else {
+            if (lingerTimerRef.current) clearTimeout(lingerTimerRef.current);
+            setStartPoint(null);
+            setEndPoint(null);
+            setIsDrawing(false);
+            setIsFinalizing(false);
+            setIsFading(false);
+            setOpacity(1);
+        }
     };
 
     return (
         <>
-            {startPoint && endPoint && children(startPoint, endPoint)}
+            {startPoint && endPoint && children(startPoint, endPoint, opacity)}
             <mesh
                 onPointerDown={handlePointerDown}
                 onPointerMove={handlePointerMove}
@@ -236,17 +286,17 @@ const CircleTool = ({ gridSize, tokens, onCompleteSelection }) => (
             return dist <= radius + 0.25; // 0.25 leniency grabs tokens slightly touching the edge
         }}
     >
-        {(start, end) => {
+        {(start, end, opacity) => {
             const radius = start.distanceTo(end);
             const radiusFt = Math.round((radius / gridSize) * 5);
             return (
                 <group position={[start.x, start.y + 0.1, start.z]}>
                     <mesh rotation={[-Math.PI / 2, 0, 0]}>
                         <ringGeometry args={[radius - 0.05, radius, 64]} />
-                        <meshBasicMaterial color="#3b82f6" side={THREE.DoubleSide} depthTest={false} />
+                        <meshBasicMaterial color="#3b82f6" side={THREE.DoubleSide} depthTest={false} transparent opacity={opacity} />
                     </mesh>
-                    <Html position={[0, 0.3, radius]} center>
-                        <div className="bg-slate-900/80 text-blue-300 text-xs font-bold px-2 py-0.5 rounded-full shadow-lg whitespace-nowrap">{radiusFt} ft</div>
+                    <Html position={[0, 0.3, radius]} center style={{ opacity }}>
+                        <div className="bg-slate-900/80 text-blue-300 text-xs font-bold px-2 py-0.5 rounded-full shadow-lg whitespace-nowrap" style={{ opacity }}>{radiusFt} ft</div>
                     </Html>
                 </group>
             );
@@ -272,7 +322,7 @@ const ConeTool = ({ gridSize, tokens, onCompleteSelection }) => (
             return diff <= Math.PI / 6 + 0.05; // 30 degrees + slight leniency = 60 degree cone
         }}
     >
-        {(start, end) => {
+        {(start, end, opacity) => {
             const vec = new THREE.Vector3().subVectors(end, start);
             const length = vec.length();
             const angle = Math.atan2(vec.x, vec.z);
@@ -281,10 +331,10 @@ const ConeTool = ({ gridSize, tokens, onCompleteSelection }) => (
                 <group position={[start.x, start.y + 0.1, start.z]} rotation={[0, angle, 0]}>
                     <mesh rotation={[-Math.PI / 2, 0, 0]}>
                         <circleGeometry args={[length, 32, -Math.PI / 2 - Math.PI / 6, Math.PI / 3]} />
-                        <meshBasicMaterial color="#10b981" side={THREE.DoubleSide} transparent opacity={0.5} depthTest={false} />
+                        <meshBasicMaterial color="#10b981" side={THREE.DoubleSide} transparent opacity={opacity * 0.5} depthTest={false} />
                     </mesh>
-                    <Html position={[0, 0.3, length / 2]} center>
-                        <div className="bg-slate-900/80 text-emerald-300 text-xs font-bold px-2 py-0.5 rounded-full shadow-lg whitespace-nowrap">{lengthFt} ft Cone</div>
+                    <Html position={[0, 0.3, length / 2]} center style={{ opacity }}>
+                        <div className="bg-slate-900/80 text-emerald-300 text-xs font-bold px-2 py-0.5 rounded-full shadow-lg whitespace-nowrap" style={{ opacity }}>{lengthFt} ft Cone</div>
                     </Html>
                 </group>
             );
@@ -304,7 +354,7 @@ const BoxTool = ({ gridSize, tokens, onCompleteSelection }) => (
             return tx >= minX && tx <= maxX && tz >= minZ && tz <= maxZ;
         }}
     >
-        {(start, end) => {
+        {(start, end, opacity) => {
             const width = Math.abs(start.x - end.x);
             const depth = Math.abs(start.z - end.z);
             const center = new THREE.Vector3().addVectors(start, end).multiplyScalar(0.5);
@@ -314,11 +364,11 @@ const BoxTool = ({ gridSize, tokens, onCompleteSelection }) => (
                 <group position={[center.x, start.y + 0.1, center.z]}>
                     <mesh rotation={[-Math.PI / 2, 0, 0]}>
                         <planeGeometry args={[width, depth]} />
-                        <meshBasicMaterial color="#a855f7" side={THREE.DoubleSide} transparent opacity={0.4} depthTest={false} />
+                        <meshBasicMaterial color="#a855f7" side={THREE.DoubleSide} transparent opacity={opacity * 0.4} depthTest={false} />
                     </mesh>
-                    <Line points={[[-width/2, 0, -depth/2], [width/2, 0, -depth/2], [width/2, 0, depth/2], [-width/2, 0, depth/2], [-width/2, 0, -depth/2]]} color="#a855f7" lineWidth={2} depthTest={false} />
-                    <Html position={[0, 0.3, 0]} center>
-                        <div className="bg-slate-900/80 text-purple-300 text-xs font-bold px-2 py-0.5 rounded-full shadow-lg whitespace-nowrap">{widthFt} x {depthFt} ft</div>
+                    <Line points={[[-width/2, 0, -depth/2], [width/2, 0, -depth/2], [width/2, 0, depth/2], [-width/2, 0, depth/2], [-width/2, 0, -depth/2]]} color="#a855f7" lineWidth={2} depthTest={false} transparent opacity={opacity} />
+                    <Html position={[0, 0.3, 0]} center style={{ opacity }}>
+                        <div className="bg-slate-900/80 text-purple-300 text-xs font-bold px-2 py-0.5 rounded-full shadow-lg whitespace-nowrap" style={{ opacity }}>{widthFt} x {depthFt} ft</div>
                     </Html>
                 </group>
             );

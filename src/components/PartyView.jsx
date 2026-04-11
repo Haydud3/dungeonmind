@@ -13,7 +13,7 @@ import { enrichCharacter } from '../utils/srdEnricher.js';
 import { useNewCampaign } from '../contexts/NewCampaignProvider';
 
 // START CHANGE: Add generatePlayer to props
-const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, onLogAction, edition, apiKey, generatePlayer }) => {
+const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, onLogAction, edition, apiKey, generatePlayer, onOpenDiceTray }) => {
     const { updateCampaign } = useNewCampaign();
     
     // FIX: Add a safety check. If data is missing, use an empty array.
@@ -47,6 +47,12 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
         if (!viewingCharacterId) return null;
         return (data?.players || []).find(p => String(p.id) === String(viewingCharacterId));
     }, [viewingCharacterId, data?.players]);
+
+    const isOwnerOf = (char) => {
+        if (!char) return false;
+        const myAssignedCharId = data?.assignments?.[user?.uid];
+        return String(char.ownerId) === String(user?.uid) || (myAssignedCharId && String(char.id) === String(myAssignedCharId));
+    };
 
     useEffect(() => {
         if (viewingCharacter) {
@@ -208,14 +214,14 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
         }
 
         // 2. Spectators (users with no character yet) can see everyone
-        const myChar = data.players?.find(p => p.ownerId === user?.uid);
+        const myChar = data.players?.find(p => isOwnerOf(p));
         if (!myChar) {
             openSheet(char);
             return;
         }
 
         // 3. Owners can see their own character
-        if (char.ownerId === user?.uid) {
+        if (isOwnerOf(char)) {
             openSheet(char);
             return;
         }
@@ -274,7 +280,7 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
                     <SheetContainer 
                         // Pass the full viewingCharacter object instead of just the ID
                         character={viewingCharacter}
-                        isOwner={role === 'dm' || viewingCharacter.ownerId === user?.uid}
+                        isOwner={role === 'dm' || isOwnerOf(viewingCharacter)}
                         onSave={handleSheetSave} 
                         onDiceRoll={async (formula, options) => {
                             if (onDiceRoll) {
@@ -347,7 +353,7 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
                                     </div>
                                 </div>
                             </div>
-                            {(role === 'dm' || p.ownerId === user?.uid) && (
+                            {(role === 'dm' || isOwnerOf(p)) && (
                                 <div className="absolute top-2 left-2 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                                     <button onClick={(e) => handleDelete(p.id, e)} className="p-2 bg-red-900/80 text-white rounded hover:bg-red-700" title="Delete"><Icon name="trash-2" size={14}/></button>
                                     {p.dndBeyondId && (
@@ -367,7 +373,7 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
                                         <p className="text-xs text-indigo-400 font-bold uppercase tracking-wider truncate">{p.race} {p.class} • LVL {p.level || 1}</p>
                                     </div>
                                 </div>
-                                {role === 'dm' && (
+                                {(role === 'dm' || isOwnerOf(p)) && (
                                     <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                                         {p.dndBeyondId && (
                                             <button onClick={(e) => { e.stopPropagation(); setRefreshCharacter(p); }} className="p-2 bg-blue-900/50 text-blue-400 rounded hover:bg-blue-700 hover:text-white transition-colors" title="Refresh from D&D Beyond"><Icon name="refresh-cw" size={16}/></button>

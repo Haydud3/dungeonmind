@@ -694,6 +694,12 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
       navigator.vibrate(50); // Haptic feedback on token long-press/right-click
     }
     
+    const char = allCharacters.find(c => String(c.id) === String(token.characterId));
+    const isOwner = char?.ownerId === user?.uid;
+    const myCharId = data?.assignments?.[user?.uid];
+    const myCharAssigned = myCharId && String(token.characterId) === String(myCharId);
+    const canControl = role === 'dm' || isOwner || myCharAssigned || token.isSharedControl;
+
     setContextMenu({
       x: e.clientX,
       y: e.clientY,
@@ -704,6 +710,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
       isSharedControl: token.isSharedControl,
       size: token.size || 1,
       name: token.name,
+      canControl: canControl,
     });
   };
 
@@ -1624,7 +1631,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
               </>
             )}
 
-            {(role === 'dm' || contextMenu.isSharedControl || (contextMenu.characterId && allCharacters.find(c => String(c.id) === String(contextMenu.characterId))?.ownerId === user?.uid)) && (
+            {contextMenu.canControl && (
               <>
                 <div className="border-t border-slate-700 my-1"></div>
                 <div className="flex items-center justify-between px-4 py-1">

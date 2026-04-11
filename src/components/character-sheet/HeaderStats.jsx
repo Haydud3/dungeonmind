@@ -9,7 +9,7 @@ const fileToBase64 = (file) => new Promise((resolve, reject) => {
     reader.onerror = error => reject(error);
 });
 
-const HeaderStats = ({ character: propCharacter, onDiceRoll, onLogAction, onBack, role, onOpenModelPicker }) => { // Keep all original props
+const HeaderStats = ({ character: propCharacter, onDiceRoll, onLogAction, onBack, role, onOpenModelPicker, onOpenDiceTray }) => { // Keep all original props
     const storeCharacter = useCharacterStore(state => state.character);
     const character = storeCharacter || propCharacter;
     const { updateHP, updateInfo, updateHitDice, updateExhaustion, toggleCondition, updateStat, takeShortRest, takeLongRest, setDeathSaves, updateDeathSaves } = useCharacterStore(); // Added setDeathSaves, updateDeathSaves

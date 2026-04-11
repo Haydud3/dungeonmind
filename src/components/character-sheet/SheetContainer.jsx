@@ -63,11 +63,12 @@ function SheetContainer({ character, onSave, onDiceRoll, diceLog, onLogAction, o
         onLogAction={onLogAction} 
         onBack={onBack} 
         role={role}
-        onOpenModelPicker={onOpenModelPicker} // Pass the prop down
+        onOpenModelPicker={onOpenModelPicker}
+        onOpenDiceTray={onOpenDiceTray}
       />
 
       {/* Make sure RollToast is imported and placed here, or in App.jsx */}
-      {role === 'dm' && <RollToast />}
+      <RollToast />
 
       {/* Tabs Navigation */}
       <div className="flex-none bg-slate-900 border-t border-b border-slate-800 shadow-inner z-20">
