@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { collection, addDoc, getDocs, query, orderBy, serverTimestamp, doc, deleteDoc, updateDoc } from 'firebase/firestore';
 import { db, appId } from '../firebase';
-import { storeChunkedMap, deleteChunkedMap } from '../utils/storageUtils';
+import { storeChunkedMap, deleteChunkedMap, retrieveChunkedMap } from '../utils/storageUtils';
 import Icon from './Icon';
 import MapGenerator from './MapGenerator';
 
@@ -25,12 +25,18 @@ const generateThumbnail = (dataUrl) => {
     });
 };
 
-const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, onSetBackground, onSetHeightmap, onGenerateMap, isSnapToGrid, setIsSnapToGrid, onNewBlankMap }) => {
+const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, onSetBackground, onSetHeightmap, onGenerateMap, onNewBlankMap }) => {
     const [assets, setAssets] = useState([]);
     const [isUploading, setIsUploading] = useState(false);
     const fileInputRef = useRef(null);
     const [activeTab, setActiveTab] = useState('library');
     const [selectedAsset, setSelectedAsset] = useState(null);
+
+    // Grid Auto-Detection States
+    const [isDetectingGrid, setIsDetectingGrid] = useState(false);
+    const [gridDetectionResult, setGridDetectionResult] = useState(null);
+    const [gridSubdivision, setGridSubdivision] = useState(1);
+    const workerRef = useRef(null);
 
     // Fetch all previously uploaded images from this campaign's folder
     const fetchAssets = async () => {
@@ -50,6 +56,21 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
             fetchAssets();
         }
     }, [campaignCode, activeTab]);
+
+    // Initialize the grid detection worker
+    useEffect(() => {
+        workerRef.current = new Worker(new URL('./gridDetection.worker.js', import.meta.url), { type: 'module' });
+        
+        workerRef.current.onmessage = (e) => {
+            const { type, payload } = e.data;
+            if (type === 'GRID_DETECTED') {
+                setIsDetectingGrid(false);
+                setGridDetectionResult(payload);
+                setGridSubdivision(1); // Reset subdivision
+            }
+        };
+        return () => workerRef.current?.terminate();
+    }, []);
 
     const handleUpload = async (e) => {
         const file = e.target.files[0];
@@ -153,9 +174,182 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
         }
     };
 
+    const handleAutoDetectGrid = async (overrideUrl) => {
+        const imageUrl = typeof overrideUrl === 'string' ? overrideUrl : mapData?.backgroundUrl;
+        if (!imageUrl) {
+            alert("Please set a map background first.");
+            return;
+        }
+        setIsDetectingGrid(true);
+        setGridDetectionResult(null);
+
+        try {
+            let finalUrl = imageUrl;
+            let objectUrl = null;
+
+            // Resolve chunked IDs from local storage or proxy external URLs
+            if (imageUrl.startsWith('chunked:')) {
+                const blob = await retrieveChunkedMap(imageUrl);
+                if (blob) {
+                    objectUrl = URL.createObjectURL(blob);
+                    finalUrl = objectUrl;
+                } else {
+                    throw new Error("Failed to retrieve chunked image");
+                }
+            } else if (finalUrl.startsWith('http')) {
+                let cleanUrl = finalUrl;
+                if (cleanUrl.includes('corsproxy.io/?')) cleanUrl = decodeURIComponent(cleanUrl.split('corsproxy.io/?')[1] || cleanUrl);
+                if (cleanUrl.includes('api.allorigins.win/raw?url=')) cleanUrl = decodeURIComponent(cleanUrl.split('api.allorigins.win/raw?url=')[1] || cleanUrl);
+                if (!cleanUrl.includes('firebasestorage.googleapis.com') && !cleanUrl.includes('wsrv.nl')) {
+                    finalUrl = `https://wsrv.nl/?url=${encodeURIComponent(cleanUrl)}&cors=1`;
+                } else {
+                    finalUrl = cleanUrl;
+                }
+            }
+
+            const img = new Image();
+            img.crossOrigin = "Anonymous"; // Crucial for reading pixel data
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                canvas.width = img.width;
+                canvas.height = img.height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0);
+                
+                const imageData = ctx.getImageData(0, 0, img.width, img.height);
+                workerRef.current.postMessage({
+                    type: 'DETECT_GRID',
+                    imageData: imageData.data,
+                    width: img.width,
+                    height: img.height
+                });
+
+                if (objectUrl) URL.revokeObjectURL(objectUrl);
+            };
+            img.onerror = () => {
+                console.error("Failed to load image for grid detection.");
+                setIsDetectingGrid(false);
+                alert("Could not load image. Cross-Origin Resource Sharing (CORS) might be preventing it.");
+                if (objectUrl) URL.revokeObjectURL(objectUrl);
+            };
+            img.src = finalUrl;
+        } catch (err) {
+            console.error("Failed to prepare image for grid detection:", err);
+            setIsDetectingGrid(false);
+        }
+    };
+
+    const handleApplyGridAlignment = (result, subdivision) => {
+        const { cellSize, offsetX, offsetY, imageWidth, imageHeight } = result;
+        
+        const subdividedCellSize = cellSize / subdivision;
+        const scale = mapData?.scale || 20;
+        
+        // Calculate the ratio: how many world units is one image pixel?
+        const unitsPerPixel = scale / imageHeight;
+        const newGridSize = subdividedCellSize * unitsPerPixel;
+
+        // Calculate world boundaries to map pixel offset to world offset
+        const worldWidth = imageWidth * unitsPerPixel;
+        const topLeftX = -worldWidth / 2;
+        const topLeftZ = -scale / 2; 
+
+        // The exact world intersection point for the detected top-left grid corner
+        const ix = topLeftX + (offsetX * unitsPerPixel);
+        const iz = topLeftZ + (offsetY * unitsPerPixel);
+
+        // The ((x % m) + m) % m formula ensures safe positive modulo. Shift to keep offsets near 0.
+        const modX = ((ix % newGridSize) + newGridSize) % newGridSize;
+        const modZ = ((iz % newGridSize) + newGridSize) % newGridSize;
+        const finalOffsetX = modX > newGridSize / 2 ? modX - newGridSize : modX;
+        const finalOffsetY = modZ > newGridSize / 2 ? modZ - newGridSize : modZ;
+
+        updateMap(campaignCode, activeMapId, {
+            gridSize: parseFloat(newGridSize.toFixed(4)),
+            gridOffsetX: parseFloat(finalOffsetX.toFixed(4)),
+            gridOffsetY: parseFloat(finalOffsetY.toFixed(4))
+        });
+
+        setGridDetectionResult(null);
+    };
+
     return (
         <div className="absolute top-0 right-0 bottom-0 w-80 bg-slate-900 border-l border-slate-700 shadow-2xl z-[80] flex flex-col animate-in slide-in-from-right duration-300">
-            <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-950">
+            
+            {/* Loading Overlay */}
+            {isDetectingGrid && (
+                <div className="absolute inset-0 z-[100] bg-slate-900/80 backdrop-blur-sm flex flex-col items-center justify-center text-center p-6">
+                    <Icon name="loader" className="animate-spin text-amber-500 mb-4" size={48} />
+                    <h3 className="text-xl font-bold text-white mb-2">Analyzing Frequencies...</h3>
+                    <p className="text-sm text-slate-400">Running Computer Vision Grid Detection</p>
+                </div>
+            )}
+
+            {/* Verification UI Overlay */}
+            {gridDetectionResult && (
+                <div className="absolute bottom-4 left-4 right-4 bg-slate-800 border border-amber-500 rounded-xl p-4 shadow-2xl z-[100] animate-in slide-in-from-bottom">
+                    <div className="flex justify-between items-center mb-4">
+                        <h3 className="font-bold text-amber-500 flex items-center gap-2">
+                            <Icon name="check-circle" size={18} /> Grid Detected
+                        </h3>
+                        <button onClick={() => setGridDetectionResult(null)} className="text-slate-400 hover:text-white">
+                            <Icon name="x" size={18} />
+                        </button>
+                    </div>
+                    
+                    <div className="grid grid-cols-3 gap-3 mb-4">
+                        <div className="bg-slate-900 p-2 rounded border border-slate-700 text-center">
+                            <div className="text-[10px] uppercase text-slate-500 font-bold mb-1">Cell Size</div>
+                            <div className="font-mono text-white text-base">{(gridDetectionResult.cellSize / gridSubdivision).toFixed(1)}<span className="text-[10px] text-slate-500 ml-1">px</span></div>
+                        </div>
+                        <div className="bg-slate-900 p-2 rounded border border-slate-700 text-center">
+                            <div className="text-[10px] uppercase text-slate-500 font-bold mb-1">Offset X</div>
+                            <div className="font-mono text-white text-base">{gridDetectionResult.offsetX.toFixed(1)}<span className="text-[10px] text-slate-500 ml-1">px</span></div>
+                        </div>
+                        <div className="bg-slate-900 p-2 rounded border border-slate-700 text-center">
+                            <div className="text-[10px] uppercase text-slate-500 font-bold mb-1">Offset Y</div>
+                            <div className="font-mono text-white text-base">{gridDetectionResult.offsetY.toFixed(1)}<span className="text-[10px] text-slate-500 ml-1">px</span></div>
+                        </div>
+                    </div>
+
+                    <div className="flex justify-between items-center mb-4 bg-slate-900 p-2 rounded border border-slate-700">
+                        <span className="text-xs font-bold text-slate-400">Subdivide Grid</span>
+                        <div className="flex gap-1">
+                            {[1, 2, 3, 4].map(num => (
+                                <button 
+                                    key={num}
+                                    onClick={() => setGridSubdivision(num)}
+                                    className={`px-3 py-1 text-xs font-bold rounded ${gridSubdivision === num ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}
+                                >
+                                    {num}x
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="flex justify-between items-center">
+                        <span className="text-xs font-bold text-slate-500">
+                            Confidence: <span className={gridDetectionResult.confidence > 0.7 ? "text-green-400" : gridDetectionResult.confidence > 0.4 ? "text-amber-400" : "text-red-400"}>{Math.round(gridDetectionResult.confidence * 100)}%</span>
+                        </span>
+                        <div className="flex gap-2">
+                            <button 
+                                onClick={() => setGridDetectionResult(null)}
+                                className="px-3 py-1.5 text-xs font-bold text-slate-400 hover:text-white bg-slate-900 rounded border border-slate-700 hover:border-slate-500"
+                            >
+                                Discard
+                            </button>
+                            <button 
+                                onClick={() => handleApplyGridAlignment(gridDetectionResult, gridSubdivision)}
+                                className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold rounded shadow"
+                            >
+                                Apply
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            <div className="flex-none p-4 border-b border-slate-800 flex justify-between items-center bg-slate-950">
                 <h3 className="font-bold text-amber-500 flex items-center gap-2"><Icon name="map" size={18} /> Map Editor</h3>
                 <div className="flex items-center">
                     <button onClick={() => onNewBlankMap()} className="text-slate-400 hover:text-white p-1" title="New Blank Map">
@@ -172,7 +366,7 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
             
             {activeTab === 'library' && (
                 <>
-                    <div className="p-4 border-b border-slate-800">
+                    <div className="flex-none p-4 border-b border-slate-800">
                         <input
                             type="file"
                             ref={fileInputRef}
@@ -186,43 +380,65 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                         </button>
                     </div>
 
-                    <div className="flex-1 overflow-y-auto custom-scroll p-4 grid grid-cols-2 gap-2 content-start">
-                        {assets.map((asset) => (
-                            <div key={asset.id} draggable 
-                                onDragStart={(e) => {
-                                    const payload = JSON.stringify({ format: 'dungeonmind-asset', url: asset.url });
-                                    e.dataTransfer.setData('application/dungeonmind-asset', payload);
-                                    e.dataTransfer.setData('text/plain', payload);
-                                }}
-                                className="aspect-square bg-slate-800 rounded border border-slate-700 overflow-hidden cursor-grab active:cursor-grabbing hover:border-amber-500 transition-colors relative group"
-                            >
-                                <img src={asset.thumbnail || asset.url} className="w-full h-full object-cover" alt={asset.name} draggable={false} />
-                                <div className="absolute inset-x-0 bottom-0 bg-black/60 text-[9px] text-white p-1 truncate opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">{asset.name}</div>
-                                <div className="absolute top-1 right-1 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                    <button onClick={(e) => { e.stopPropagation(); onSetBackground(asset); }} className="bg-black/80 text-amber-500 hover:text-white p-1.5 rounded shadow-md" title="Set as Map Background">
-                                        <Icon name="map" size={14}/>
-                                    </button>
-                                    <button onClick={(e) => { e.stopPropagation(); setSelectedAsset(asset); setActiveTab('generators'); }} className="bg-black/80 text-purple-400 hover:text-white p-1.5 rounded shadow-md" title="Generate Terrain">
-                                        <Icon name="mountain" size={14}/>
-                                    </button>
-                                     <button onClick={(e) => { e.stopPropagation(); setSelectedAsset(asset); setActiveTab('settings'); }} className="bg-black/80 text-cyan-400 hover:text-white p-1.5 rounded shadow-md" title="Map Settings">
-                                        <Icon name="settings" size={14}/>
-                                    </button>
-                                    <button onClick={(e) => { e.stopPropagation(); handleDeleteAsset(asset); }} className="bg-black/80 text-red-500 hover:text-white p-1.5 rounded shadow-md" title="Delete Asset">
-                                        <Icon name="trash" size={14}/>
-                                    </button>
+                    <div className="flex-1 min-h-0 overflow-y-auto custom-scroll p-4">
+                        <div className="grid grid-cols-2 gap-2">
+                            {assets.map((asset) => (
+                                <div key={asset.id} draggable 
+                                    onDragStart={(e) => {
+                                        const payload = JSON.stringify({ format: 'dungeonmind-asset', url: asset.url });
+                                        e.dataTransfer.setData('application/dungeonmind-asset', payload);
+                                        e.dataTransfer.setData('text/plain', payload);
+                                    }}
+                                    className="aspect-square bg-slate-800 rounded border border-slate-700 overflow-hidden cursor-grab active:cursor-grabbing hover:border-amber-500 transition-colors relative group"
+                                >
+                                    <img src={asset.thumbnail || asset.url} className="w-full h-full object-cover" alt={asset.name} draggable={false} />
+                                    <div className="absolute inset-x-0 bottom-0 bg-black/60 text-[9px] text-white p-1 truncate opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">{asset.name}</div>
+                                    <div className="absolute top-1 right-1 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <button onClick={async (e) => { 
+                                            e.stopPropagation(); 
+                                            const isNew = await onSetBackground(asset, false); 
+                                            setSelectedAsset(asset);
+                                            setActiveTab('settings');
+                                            if (isNew) {
+                                                handleAutoDetectGrid(asset.generatedMapUrl || asset.url);
+                                            }
+                                        }} className="bg-black/80 text-amber-500 hover:text-white p-1.5 rounded shadow-md" title="Set as Map Background">
+                                            <Icon name="map" size={14}/>
+                                        </button>
+                                        <button onClick={(e) => { e.stopPropagation(); setSelectedAsset(asset); setActiveTab('generators'); }} className="bg-black/80 text-purple-400 hover:text-white p-1.5 rounded shadow-md" title="Generate Terrain">
+                                            <Icon name="mountain" size={14}/>
+                                        </button>
+                                        <button onClick={(e) => { e.stopPropagation(); setSelectedAsset(asset); setActiveTab('settings'); }} className="bg-black/80 text-cyan-400 hover:text-white p-1.5 rounded shadow-md" title="Map Settings">
+                                            <Icon name="settings" size={14}/>
+                                        </button>
+                                        <button onClick={(e) => { e.stopPropagation(); handleDeleteAsset(asset); }} className="bg-black/80 text-red-500 hover:text-white p-1.5 rounded shadow-md" title="Delete Asset">
+                                            <Icon name="trash" size={14}/>
+                                        </button>
+                                    </div>
                                 </div>
-                            </div>
-                        ))}
-                        {assets.length === 0 && !isUploading && (
-                            <div className="col-span-2 text-center text-slate-500 text-sm mt-10 flex flex-col items-center"><Icon name="image" size={32} className="opacity-20 mb-2" /> No assets uploaded yet.</div>
-                        )}
+                            ))}
+                            {assets.length === 0 && !isUploading && (
+                                <div className="col-span-2 text-center text-slate-500 text-sm mt-10 flex flex-col items-center"><Icon name="image" size={32} className="opacity-20 mb-2" /> No assets uploaded yet.</div>
+                            )}
+                        </div>
                     </div>
                 </>
             )}
 
             {activeTab === 'settings' && selectedAsset && (
-                 <div className="flex-1 overflow-y-auto custom-scroll p-4 space-y-6">
+                 <div className="flex-1 min-h-0 overflow-y-auto custom-scroll p-4 space-y-6">
+                    
+                    <div>
+                        <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Grid Auto-Detect (AI)</label>
+                        <button 
+                            onClick={handleAutoDetectGrid}
+                            disabled={!mapData?.backgroundUrl || isDetectingGrid}
+                            className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold rounded flex items-center justify-center gap-2 transition-colors shadow"
+                        >
+                            <Icon name="scan" size={14} /> Detect Grid Size & Alignment
+                        </button>
+                    </div>
+
                     <div>
                         <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Environment & Lighting</label>
                         <select 
@@ -405,6 +621,31 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                     </div>
 
                     <div>
+                        <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Token Elevation Offset</label>
+                        <div className="flex items-center gap-2">
+                            <input 
+                                type="range" 
+                                min="-0.5" 
+                                max="0.5" 
+                                step="0.01" 
+                                value={mapData?.tokenElevationOffset ?? -0.04} 
+                                onChange={(e) => updateMap(campaignCode, activeMapId, { tokenElevationOffset: parseFloat(e.target.value) })}
+                                className="w-full accent-amber-500 flex-1"
+                            />
+                            <input 
+                                type="number" 
+                                step="0.01" 
+                                value={mapData?.tokenElevationOffset ?? -0.04} 
+                                onChange={(e) => {
+                                    const val = parseFloat(e.target.value);
+                                    if (!isNaN(val)) updateMap(campaignCode, activeMapId, { tokenElevationOffset: val });
+                                }}
+                                className="w-16 bg-slate-900 border border-slate-700 rounded p-1 text-xs text-white text-right outline-none focus:border-amber-500"
+                            />
+                        </div>
+                    </div>
+
+                    <div>
                         <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Grid Visibility</label>
                         <button
                             onClick={() => updateMap(campaignCode, activeMapId, { showGrid: mapData?.showGrid === false ? true : false })}
@@ -418,11 +659,11 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                     <div>
                         <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Token Snapping</label>
                         <button
-                            onClick={() => setIsSnapToGrid(!isSnapToGrid)}
-                            className={`w-full py-2 border rounded text-center text-xs font-bold transition-colors flex items-center justify-center gap-2 ${isSnapToGrid ? 'border-green-500 bg-green-900/20 text-green-400' : 'border-slate-600 text-slate-300 hover:border-green-500'}`}
+                            onClick={() => updateMap(campaignCode, activeMapId, { isSnapToGrid: mapData?.isSnapToGrid === false ? true : false })}
+                            className={`w-full py-2 border rounded text-center text-xs font-bold transition-colors flex items-center justify-center gap-2 ${mapData?.isSnapToGrid !== false ? 'border-green-500 bg-green-900/20 text-green-400' : 'border-slate-600 text-slate-300 hover:border-green-500'}`}
                         >
                             <Icon name="magnet" size={14} className="inline mr-1" />
-                            {isSnapToGrid ? 'Snap to Grid is ON' : 'Snap to Grid is OFF'}
+                            {mapData?.isSnapToGrid !== false ? 'Snap to Grid is ON' : 'Snap to Grid is OFF'}
                         </button>
                     </div>
 
@@ -491,7 +732,7 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
             )}
             
             {activeTab === 'generators' && selectedAsset && (
-                <div className="flex-1 overflow-y-auto custom-scroll p-4 space-y-6">
+                <div className="flex-1 min-h-0 overflow-y-auto custom-scroll p-4 space-y-6">
                     <MapGenerator 
                         mapData={mapData} 
                         onUpdateAssetLayer={(layerType, data) => handleUpdateAssetLayer(selectedAsset, layerType, data)} 

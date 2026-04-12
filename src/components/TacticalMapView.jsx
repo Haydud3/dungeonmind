@@ -101,7 +101,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
   const [wallContextMenu, setWallContextMenu] = useState(null);
   const [lightContextMenu, setLightContextMenu] = useState(null);
   const [activeTool, setActiveTool] = useState(null);
-  const [isSnapToGrid, setIsSnapToGrid] = useState(true);
+  const [isToolbarOpen, setIsToolbarOpen] = useState(true);
   const [viewMode, setViewMode] = useState('isometric');
   const [draggedTokenId, setDraggedTokenId] = useState(null);
   const [remountKey, setRemountKey] = useState(0);
@@ -147,12 +147,20 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
   const isAnyMenuOpenRef = useRef(false);
 
   useEffect(() => {
+      if (isFullscreen) {
+          document.body.classList.add('pseudo-fullscreen');
+      } else {
+          document.body.classList.remove('pseudo-fullscreen');
+          setIsIdle(false);
+          if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+      }
+      return () => document.body.classList.remove('pseudo-fullscreen');
+  }, [isFullscreen]);
+
+  useEffect(() => {
       const handleFullscreenChange = () => {
-          const isFs = !!document.fullscreenElement;
-          setIsFullscreen(isFs);
-          if (!isFs) {
-              setIsIdle(false);
-              if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+          if (!document.fullscreenElement) {
+              setIsFullscreen(false);
           }
       };
       document.addEventListener('fullscreenchange', handleFullscreenChange);
@@ -179,12 +187,18 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
   };
 
   const toggleFullscreen = () => {
-      if (!document.fullscreenElement) {
-          document.documentElement.requestFullscreen().catch(err => {
-              console.error(`Error attempting to enable fullscreen: ${err.message}`);
-          });
+      if (!isFullscreen) {
+          setIsFullscreen(true);
+          if (document.documentElement.requestFullscreen) {
+              document.documentElement.requestFullscreen().catch(err => {
+                  console.warn(`Native fullscreen not supported: ${err.message}`);
+              });
+          }
       } else {
-          document.exitFullscreen();
+          setIsFullscreen(false);
+          if (document.fullscreenElement && document.exitFullscreen) {
+              document.exitFullscreen().catch(e => console.warn(e));
+          }
       }
   };
 
@@ -290,6 +304,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
   const gridSize = mapData?.gridSize || 1;
   const showPlane = mapData?.backgroundUrl && mapData.backgroundUrl.trim() !== '';
   const showNameplates = mapData?.showNameplates !== false;
+  const isSnapToGrid = mapData?.isSnapToGrid !== false;
   
   const tokens = useMemo(() => mapData?.tokens || {}, [mapData]);
   
@@ -327,7 +342,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
           const finalZ = isSnapToGrid ? (isEvenSize ? Math.round((newZ - gridOffsetY) / gridSize) * gridSize + gridOffsetY : Math.floor((newZ - gridOffsetY) / gridSize) * gridSize + gridSize / 2 + gridOffsetY) : newZ;
 
           const terrainY = getTerrainHeight ? getTerrainHeight(finalX, finalZ) : 0;
-          const finalY = terrainY + (t.elevationOffset || 0) + 0.025;
+          const finalY = terrainY + (t.elevationOffset || 0) + (mapData?.tokenElevationOffset ?? -0.04);
 
           updateMap(campaignCode, activeMapId, {
               [`tokens.${id}.x`]: finalX,
@@ -679,7 +694,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
     const newTokenId = `token_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const tokenData = {
         id: newTokenId, characterId: finalNpc.id, name: finalNpc.name,
-        type: 'npc', x: dropX, y: terrainY + 0.025, z: dropZ,
+        type: 'npc', x: dropX, y: terrainY + (mapData?.tokenElevationOffset ?? -0.04), z: dropZ,
         image: finalNpc.image || '', size: finalNpc.size || 1, hp: finalNpc.hp
     };
 
@@ -816,7 +831,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
             id: newTokenId,
             name: 'New Token',
             type: 'npc',
-            x: dropX, y: terrainY + 0.025, z: dropZ,
+            x: dropX, y: terrainY + (mapData?.tokenElevationOffset ?? -0.04), z: dropZ,
             image: payload.url || payload.image || '',
             size: 1,
             isHidden: false
@@ -827,7 +842,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
             characterId: payload.id || null, 
             name: payload.name || 'Unknown',
             type: payload.type || 'npc',
-            x: dropX, y: terrainY + 0.025, z: dropZ,
+        x: dropX, y: terrainY + (mapData?.tokenElevationOffset ?? -0.04), z: dropZ,
             image: payload.image || '',
             size: payload.size || 1,
         };
@@ -928,8 +943,8 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
       await updateCampaign({ activeMapId: newMapId });
   };
 
-  const handleSetBackground = async (asset) => {
-    if (!campaignCode) return;
+  const handleSetBackground = async (asset, closeManager = true) => {
+    if (!campaignCode) return false;
 
     const assetUrl = asset.generatedMapUrl || asset.url;
     const assetName = asset.name;
@@ -939,6 +954,8 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
     
     const querySnapshot = await getDocs(q);
     
+    let isNew = false;
+
     if (!querySnapshot.empty) {
         const existingMap = querySnapshot.docs[0];
         const existingMapData = existingMap.data();
@@ -949,6 +966,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
         });
         await updateCampaign({ activeMapId: existingMap.id });
     } else {
+        isNew = true;
         const newMapId = doc(collection(db, 'a')).id;
         const defaultScale = 20; // Default scale for new maps
 
@@ -980,7 +998,10 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
         await createMap(campaignCode, newMapId, newMapData);
         await updateCampaign({ activeMapId: newMapId });
     }
-    setShowAssetManager(false);
+    if (closeManager !== false) {
+        setShowAssetManager(false);
+    }
+        return isNew;
   };
 
 
@@ -1050,6 +1071,14 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
                 getTerrainHeight={getTerrainHeight} 
                 gridSize={gridSize} 
                 tokens={tokensList}
+                measurements={mapData?.measurements || {}}
+                onSaveMeasurement={(m) => {
+                    const id = Date.now().toString();
+                    updateMap(campaignCode, activeMapId, { [`measurements.${id}`]: m });
+                }}
+                onDeleteMeasurement={(id) => {
+                    updateMap(campaignCode, activeMapId, { [`measurements.${id}`]: null });
+                }}
                 onCompleteSelection={(ids) => {
                     setSelectedTokenIds(ids);
                     setActiveTool(null);
@@ -1128,7 +1157,23 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
                 displayToken.modelYOffset = character.modelYOffset;
                 displayToken.conditions = character.conditions || token.conditions || [];
             } else {
+                displayToken.image = token.image || token.img;
                 displayToken.conditions = token.conditions || [];
+            }
+            
+            // Fix CORS for token images in WebGL using a dedicated image proxy
+            if (displayToken.image && displayToken.image.startsWith('http')) {
+                let cleanUrl = displayToken.image;
+                // Strip out old failing proxies if they were saved to the database
+                if (cleanUrl.includes('corsproxy.io/?')) cleanUrl = decodeURIComponent(cleanUrl.split('corsproxy.io/?')[1] || cleanUrl);
+                if (cleanUrl.includes('api.allorigins.win/raw?url=')) cleanUrl = decodeURIComponent(cleanUrl.split('api.allorigins.win/raw?url=')[1] || cleanUrl);
+                
+                // Proxy external images (excluding Firebase) through wsrv.nl to force permissive CORS headers
+                if (!cleanUrl.includes('firebasestorage.googleapis.com') && !cleanUrl.includes('wsrv.nl')) {
+                    displayToken.image = `https://wsrv.nl/?url=${encodeURIComponent(cleanUrl)}&cors=1`;
+                } else {
+                    displayToken.image = cleanUrl;
+                }
             }
             
             const isOwner = (character?.ownerId && String(character.ownerId) === String(user?.uid)) || 
@@ -1151,8 +1196,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
                     role={role}
                     getTerrainHeight={getTerrainHeight}
                     isSnapToGrid={isSnapToGrid}
-                    isTerrainReady={!activeTool && (!mapData.heightmapUrl || !!terrainData)}
-                    activeTool={activeTool}
+                    isTerrainReady={!mapData.heightmapUrl || !!terrainData}
                     draggedTokenId={draggedTokenId}
                     setDraggedTokenId={setDraggedTokenId}
                     viewMode={viewMode}
@@ -1163,6 +1207,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
                     isActiveTurn={activeCombatantId === token.id}
                     canControl={canControl}
                     shiftHeldRef={shiftHeldRef}
+                    tokenBaseOffset={mapData?.tokenElevationOffset ?? -0.04}
                 />
             );
         })}
@@ -1256,7 +1301,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
         <MapControls 
           makeDefault 
           maxPolarAngle={Math.PI / 2 - 0.05} // Prevent camera from going under the board
-          minDistance={3} // Limit max zoom in
+          minDistance={1} // Limit max zoom in
           maxDistance={40} // Limit max zoom out
           enableDamping={true} // Smooth camera movements
           enableRotate={false}
@@ -1298,12 +1343,21 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
       )}
 
       <div className={`absolute top-4 right-4 z-[70] flex flex-col items-end gap-3 ${uiOpacityClass}`}>
-        <div className="flex flex-col items-end gap-2">
-            <div className="flex gap-1 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-1 rounded-full shadow-2xl">
-                <ToolButton name="ruler" icon="ruler" isActive={activeTool === 'ruler'} onClick={() => { if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setActiveTool(p => p === 'ruler' ? null : 'ruler'); }} />
-                <ToolButton name="cone" icon="triangle" isActive={activeTool === 'cone'} onClick={() => { if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setActiveTool(p => p === 'cone' ? null : 'cone'); }} />
-                <ToolButton name="circle" icon="circle" isActive={activeTool === 'circle'} onClick={() => { if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setActiveTool(p => p === 'circle' ? null : 'circle'); }} />
-                <ToolButton name="box" icon="square" isActive={activeTool === 'box'} onClick={() => { if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setActiveTool(p => p === 'box' ? null : 'box'); }} />
+          <button 
+              onClick={() => setIsToolbarOpen(p => !p)} 
+              className="w-10 h-10 bg-slate-900/80 backdrop-blur border border-slate-700 hover:border-amber-500 hover:bg-slate-800 text-slate-400 hover:text-white rounded-full shadow-lg flex items-center justify-center transition-all z-[71]"
+              title={isToolbarOpen ? "Collapse Toolbar" : "Expand Toolbar"}
+          >
+              <Icon name={isToolbarOpen ? "chevron-up" : "chevron-down"} size={20} />
+          </button>
+
+          <div className={`flex flex-col items-end gap-3 transition-all duration-300 origin-top ${isToolbarOpen ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-4 pointer-events-none absolute top-12 right-0'}`}>
+            <div className="flex flex-col items-end gap-2">
+                <div className="flex gap-1 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-1 rounded-full shadow-2xl">
+                <ToolButton name="ruler" icon="ruler" isActive={activeTool === 'ruler' || activeTool === 'ruler-linger'} onClick={() => { if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setActiveTool(p => p === 'ruler' ? 'ruler-linger' : p === 'ruler-linger' ? null : 'ruler'); }} />
+                <ToolButton name="cone" icon="triangle" isActive={activeTool === 'cone' || activeTool === 'cone-linger'} onClick={() => { if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setActiveTool(p => p === 'cone' ? 'cone-linger' : p === 'cone-linger' ? null : 'cone'); }} />
+                <ToolButton name="circle" icon="circle" isActive={activeTool === 'circle' || activeTool === 'circle-linger'} onClick={() => { if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setActiveTool(p => p === 'circle' ? 'circle-linger' : p === 'circle-linger' ? null : 'circle'); }} />
+                <ToolButton name="box" icon="square" isActive={activeTool === 'box' || activeTool === 'box-linger'} onClick={() => { if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setActiveTool(p => p === 'box' ? 'box-linger' : p === 'box-linger' ? null : 'box'); }} />
             </div>
             
             {role === 'dm' && (
@@ -1383,18 +1437,19 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
 
         <div className="w-full h-px bg-slate-700/50 my-1"></div>
 
-        <div className="flex flex-col gap-2">
-            {onOpenDiceTray && <ToolButton name="Dice" icon="dices" onClick={onOpenDiceTray} isStandalone={true} />}
-            {onOpenHandouts && <ToolButton name="Handouts" icon="scroll" onClick={onOpenHandouts} isStandalone={true} />}
-            {onOpenChat && <ToolButton name="Chat" icon="message-circle" onClick={onOpenChat} isStandalone={true} />}
-            {onOpenJournal && <ToolButton name="Journal" icon="book" onClick={onOpenJournal} isStandalone={true} />}
-        </div>
+            <div className="flex flex-col gap-2">
+                {onOpenDiceTray && <ToolButton name="Dice" icon="dices" onClick={onOpenDiceTray} isStandalone={true} />}
+                {onOpenHandouts && <ToolButton name="Handouts" icon="scroll" onClick={onOpenHandouts} isStandalone={true} />}
+                {onOpenChat && <ToolButton name="Chat" icon="message-circle" onClick={onOpenChat} isStandalone={true} />}
+                {onOpenJournal && <ToolButton name="Journal" icon="book" onClick={onOpenJournal} isStandalone={true} />}
+            </div>
+          </div>
       </div>
 
       {/* Actors Manager Drawer */}
       {showTokenManager && role === 'dm' && (
         <div className="absolute top-0 right-0 bottom-0 w-80 bg-slate-900 border-l border-slate-700 shadow-2xl z-[80] flex flex-col animate-in slide-in-from-right duration-300">
-            <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-950">
+            <div className="flex-none p-4 border-b border-slate-800 flex justify-between items-center bg-slate-950">
                 <h3 className="font-bold text-indigo-500 flex items-center gap-2"><Icon name="users" size={18} /> Actors</h3>
                 <div className="flex items-center gap-2">
                     <div className="flex bg-slate-800 rounded p-1 border border-slate-700">
@@ -1405,7 +1460,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
                 </div>
             </div>
             
-            <div className="flex-1 overflow-y-auto custom-scroll p-4 space-y-6">
+            <div className="flex-1 min-h-0 overflow-y-auto custom-scroll p-4 space-y-6">
                 <div>
                   <h4 className="text-xs uppercase font-bold text-slate-500 mb-3 tracking-wider">Party</h4>
                   <div className={actorViewMode === 'grid' ? "grid grid-cols-2 gap-3" : "flex flex-col gap-2"}>
@@ -1517,8 +1572,6 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
                   prompt: prompt || ''
               });
           }}
-          isSnapToGrid={isSnapToGrid}
-          setIsSnapToGrid={setIsSnapToGrid}
           onNewBlankMap={handleNewBlankMap}
         />
       )}

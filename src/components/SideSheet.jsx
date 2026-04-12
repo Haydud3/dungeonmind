@@ -14,21 +14,21 @@ const SideSheet = ({ characterId, onClose, role, onDiceRoll, onOpenDiceTray }) =
     const actualCharId = isVirtual ? characterId.characterId : characterId;
     const tokenId = isVirtual ? characterId.tokenId : null;
     
-    // START CHANGE: Enhance isOwner logic to correctly identify the DM and the assigned player
-    const isOwner = role === 'dm' || 
-                    String(data?.assignments?.[user?.uid]) === String(actualCharId) || 
-                    data?.players?.some(p => String(p.id) === String(actualCharId) && p.ownerId === user?.uid);
-    // END CHANGE
-    
-    const addLogEntry = useCharacterStore((state) => state.addLogEntry);
-
     const [liveHp, setLiveHp] = useState(null);
+    const [isSharedControl, setIsSharedControl] = useState(false);
     const [showModelPicker, setShowModelPicker] = useState(false);
     const [availableModels, setAvailableModels] = useState([]);
     const [miniSearchQuery, setMiniSearchQuery] = useState("");
     const [isSearchingMinis, setIsSearchingMinis] = useState(false);
     const [editableName, setEditableName] = useState('');
     const [sheetWidth, setSheetWidth] = useState(550);
+
+    // START CHANGE: Enhance isOwner logic to correctly identify the DM and the assigned player
+    const isOwner = role === 'dm' || 
+                    isSharedControl ||
+                    String(data?.assignments?.[user?.uid]) === String(actualCharId) || 
+                    data?.players?.some(p => String(p.id) === String(actualCharId) && p.ownerId === user?.uid);
+    // END CHANGE
 
     const handleMouseDown = useCallback((e) => {
         e.preventDefault();
@@ -62,13 +62,16 @@ const SideSheet = ({ characterId, onClose, role, onDiceRoll, onOpenDiceTray }) =
 
     useEffect(() => {
         setLiveHp(null);
+        setIsSharedControl(false);
         if (!isVirtual || !tokenId || !gameParams?.code || !activeMapId) return;
 
         const unsub = subscribeToMap(gameParams.code, activeMapId, (map) => {
             if (map?.tokens?.[tokenId]) {
                 setLiveHp(map.tokens[tokenId].hp || null);
+                setIsSharedControl(!!map.tokens[tokenId].isSharedControl);
             } else {
                 setLiveHp(null);
+                setIsSharedControl(false);
             }
         });
         return () => unsub();

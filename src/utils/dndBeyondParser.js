@@ -263,8 +263,25 @@ export const parseDndBeyondJson = (json) => {
     };
 
     // Senses (bulletproof version)
+    const allMods = [
+        ...(data.modifiers?.race || []), ...(data.modifiers?.class || []), 
+        ...(data.modifiers?.background || []), ...(data.modifiers?.item || []), 
+        ...(data.modifiers?.feat || []), ...(data.modifiers?.condition || [])
+    ];
+    const dvMods = allMods.filter(m => m.subType === 'darkvision');
+    let dvRange = 0;
+    if (dvMods.length > 0) {
+        dvRange = Math.max(0, ...dvMods.map(m => m.fixedValue || m.value || 0));
+    }
+    
+    if (!dvRange) {
+        const dvTrait = (data.race?.racialTraits || []).find(t => t?.definition?.name === "Darkvision");
+        const match = dvTrait?.definition?.description?.match(/(\d+)\s*feet/);
+        if (match) dvRange = parseInt(match[1]);
+    }
+
     characterSheet.senses = {
-        darkvision: (data.race?.racialTraits || []).find(t => t?.definition?.name === "Darkvision")?.definition?.description?.match(/(\d+)\s*feet/)?.[1] || 0
+        darkvision: dvRange
     };
 
     // Spells

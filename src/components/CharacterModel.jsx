@@ -95,7 +95,7 @@ const GLTFModel = ({ url, scale, forceStatue, opacity = 1 }) => {
     }, [scene, forceStatue, statueMaterial, opacity]);
 
     return (
-        <Center>
+        <Center bottom>
             <primitive object={clonedScene} scale={scale} />
         </Center>
     );

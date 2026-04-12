@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
+const fs = require('fs');
+
+const content = `import React, { useState, useEffect, useRef } from 'react';
 import { useThree, useFrame } from '@react-three/fiber';
 import { Line, Text, Html } from '@react-three/drei';
 import * as THREE from 'three';
-import Icon from './Icon';
 
 const RulerTool = ({ getTerrainHeight, gridSize }) => {
     const { controls } = useThree();
@@ -86,7 +87,7 @@ const RulerTool = ({ getTerrainHeight, gridSize }) => {
         const dist = start.distanceTo(end);
         totalDist += dist;
         segments.push(
-            <group key={`segment-${i}`}>
+            <group key={\`segment-\${i}\`}>
                 <Line points={[start, end]} color="#f59e0b" lineWidth={3} dashed dashScale={5} depthTest={false} renderOrder={300} transparent opacity={opacity} />
                 <Html position={end.clone().add(new THREE.Vector3(0, 0.3, 0))} center style={{ opacity }}>
                     <div className="bg-slate-900/80 text-amber-400 text-xs font-bold px-2 py-0.5 rounded-full shadow-lg whitespace-nowrap pointer-events-none" style={{ opacity }}>
@@ -281,7 +282,7 @@ const ShapeToolBase = ({ children, onHitTest, tokens, onCompleteSelection, type,
     );
 };
 
-const renderCircle = (start, end, opacity, gridSize, onDelete) => {
+const renderCircle = (start, end, opacity, gridSize, onClick) => {
     const radius = start.distanceTo(end);
     const radiusFt = Math.round((radius / gridSize) * 5);
     return (
@@ -290,46 +291,35 @@ const renderCircle = (start, end, opacity, gridSize, onDelete) => {
                 <ringGeometry args={[Math.max(0.01, radius - 0.05), radius, 64]} />
                 <meshBasicMaterial color="#3b82f6" side={THREE.DoubleSide} depthTest={false} transparent opacity={opacity} />
             </mesh>
+            <mesh rotation={[-Math.PI / 2, 0, 0]} onClick={onClick} visible={false}>
+                 <circleGeometry args={[radius, 64]} />
+            </mesh>
             <Html position={[0, 0.3, radius]} center style={{ opacity }}>
-                <div className={`group bg-slate-900/80 text-blue-300 text-xs font-bold px-2 py-0.5 rounded-full shadow-lg whitespace-nowrap flex items-center gap-2 transition-all ${onDelete ? 'pointer-events-auto hover:bg-slate-800' : 'pointer-events-none'}`} style={{ opacity }}>
-                    <span>{radiusFt} ft</span>
-                    {onDelete && (
-                        <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDelete(); }} className="hidden group-hover:block text-slate-400 hover:text-red-400 transition-colors" title="Remove Measurement">
-                            <Icon name="x" size={12} />
-                        </button>
-                    )}
-                </div>
+                <div className="bg-slate-900/80 text-blue-300 text-xs font-bold px-2 py-0.5 rounded-full shadow-lg whitespace-nowrap pointer-events-none" style={{ opacity }}>{radiusFt} ft</div>
             </Html>
         </group>
     );
 };
 
-const renderCone = (start, end, opacity, gridSize, onDelete) => {
+const renderCone = (start, end, opacity, gridSize, onClick) => {
     const vec = new THREE.Vector3().subVectors(end, start);
     const length = vec.length();
     const angle = Math.atan2(vec.x, vec.z);
     const lengthFt = Math.round((length / gridSize) * 5);
     return (
         <group position={[start.x, start.y + 0.1, start.z]} rotation={[0, angle, 0]}>
-            <mesh rotation={[-Math.PI / 2, 0, 0]}>
+            <mesh rotation={[-Math.PI / 2, 0, 0]} onClick={onClick}>
                 <circleGeometry args={[length, 32, -Math.PI / 2 - Math.PI / 6, Math.PI / 3]} />
                 <meshBasicMaterial color="#10b981" side={THREE.DoubleSide} transparent opacity={opacity * 0.5} depthTest={false} />
             </mesh>
             <Html position={[0, 0.3, length / 2]} center style={{ opacity }}>
-                <div className={`group bg-slate-900/80 text-emerald-300 text-xs font-bold px-2 py-0.5 rounded-full shadow-lg whitespace-nowrap flex items-center gap-2 transition-all ${onDelete ? 'pointer-events-auto hover:bg-slate-800' : 'pointer-events-none'}`} style={{ opacity }}>
-                    <span>{lengthFt} ft Cone</span>
-                    {onDelete && (
-                        <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDelete(); }} className="hidden group-hover:block text-slate-400 hover:text-red-400 transition-colors" title="Remove Measurement">
-                            <Icon name="x" size={12} />
-                        </button>
-                    )}
-                </div>
+                <div className="bg-slate-900/80 text-emerald-300 text-xs font-bold px-2 py-0.5 rounded-full shadow-lg whitespace-nowrap pointer-events-none" style={{ opacity }}>{lengthFt} ft Cone</div>
             </Html>
         </group>
     );
 };
 
-const renderBox = (start, end, opacity, gridSize, onDelete) => {
+const renderBox = (start, end, opacity, gridSize, onClick) => {
     const width = Math.abs(start.x - end.x);
     const depth = Math.abs(start.z - end.z);
     const center = new THREE.Vector3().addVectors(start, end).multiplyScalar(0.5);
@@ -337,20 +327,13 @@ const renderBox = (start, end, opacity, gridSize, onDelete) => {
     const depthFt = Math.round((depth / gridSize) * 5);
     return (
         <group position={[center.x, start.y + 0.1, center.z]}>
-            <mesh rotation={[-Math.PI / 2, 0, 0]}>
+            <mesh rotation={[-Math.PI / 2, 0, 0]} onClick={onClick}>
                 <planeGeometry args={[width, depth]} />
                 <meshBasicMaterial color="#a855f7" side={THREE.DoubleSide} transparent opacity={opacity * 0.4} depthTest={false} />
             </mesh>
             <Line points={[[-width/2, 0, -depth/2], [width/2, 0, -depth/2], [width/2, 0, depth/2], [-width/2, 0, depth/2], [-width/2, 0, -depth/2]]} color="#a855f7" lineWidth={2} depthTest={false} transparent opacity={opacity} />
             <Html position={[0, 0.3, 0]} center style={{ opacity }}>
-                <div className={`group bg-slate-900/80 text-purple-300 text-xs font-bold px-2 py-0.5 rounded-full shadow-lg whitespace-nowrap flex items-center gap-2 transition-all ${onDelete ? 'pointer-events-auto hover:bg-slate-800' : 'pointer-events-none'}`} style={{ opacity }}>
-                    <span>{widthFt} x {depthFt} ft</span>
-                    {onDelete && (
-                        <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDelete(); }} className="hidden group-hover:block text-slate-400 hover:text-red-400 transition-colors" title="Remove Measurement">
-                            <Icon name="x" size={12} />
-                        </button>
-                    )}
-                </div>
+                <div className="bg-slate-900/80 text-purple-300 text-xs font-bold px-2 py-0.5 rounded-full shadow-lg whitespace-nowrap pointer-events-none" style={{ opacity }}>{widthFt} x {depthFt} ft</div>
             </Html>
         </group>
     );
@@ -423,14 +406,15 @@ export const MeasurementTools = ({ activeTool, getTerrainHeight, gridSize, token
         if (!m) return null;
         const start = new THREE.Vector3(m.start.x, m.start.y, m.start.z);
         const end = new THREE.Vector3(m.end.x, m.end.y, m.end.z);
-        const handleDelete = () => {
+        const handleClick = (e) => {
+            e.stopPropagation();
             if (onDeleteMeasurement) onDeleteMeasurement(id);
         };
         
         switch (m.type) {
-            case 'circle': return <group key={id}>{renderCircle(start, end, 1, gridSize, handleDelete)}</group>;
-            case 'cone': return <group key={id}>{renderCone(start, end, 1, gridSize, handleDelete)}</group>;
-            case 'box': return <group key={id}>{renderBox(start, end, 1, gridSize, handleDelete)}</group>;
+            case 'circle': return <group key={id}>{renderCircle(start, end, 1, gridSize, handleClick)}</group>;
+            case 'cone': return <group key={id}>{renderCone(start, end, 1, gridSize, handleClick)}</group>;
+            case 'box': return <group key={id}>{renderBox(start, end, 1, gridSize, handleClick)}</group>;
             default: return null;
         }
     });
@@ -453,3 +437,6 @@ export const MeasurementTools = ({ activeTool, getTerrainHeight, gridSize, token
         </>
     );
 };
+`;
+
+fs.writeFileSync('src/components/MeasurementTools.jsx', content);

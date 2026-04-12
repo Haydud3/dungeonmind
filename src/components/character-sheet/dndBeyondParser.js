@@ -338,18 +338,25 @@ export const parseDndBeyondJson = (json) => {
     };
 
     // Senses (bulletproof version)
-    const dvMod = allMods.find(m => m.subType === 'darkvision');
-    let dvRange = 0;
-    if (dvMod) {
-        dvRange = dvMod.fixedValue || dvMod.value || 0;
-    } else {
-        const dvTrait = (data.race?.racialTraits || []).find(t => t?.definition?.name === "Darkvision");
-        const match = dvTrait?.definition?.description?.match(/(\d+)\s*feet/);
-        if (match) dvRange = parseInt(match[1]);
+    let darkvision = 0;
+    // 1. Check modifiers from all sources (race, class, item, etc.)
+    const senseMods = allMods.filter(m => m.subType === 'darkvision');
+    if (senseMods.length > 0) {
+        darkvision = Math.max(darkvision, ...senseMods.map(m => m.fixedValue || m.value || 0));
     }
-    characterSheet.senses = {
-        darkvision: dvRange
-    };
+
+    // 2. Check racial traits by name, as this is a common pattern.
+    (data.race?.racialTraits || []).forEach(trait => {
+        const name = trait.definition?.name?.toLowerCase() || '';
+        const desc = trait.definition?.description || '';
+        if (name.includes('darkvision')) {
+            const match = desc.match(/(\d+)\s*feet/);
+            if (match) darkvision = Math.max(darkvision, parseInt(match[1], 10));
+        }
+    });
+
+    // Assign to top level of character sheet, which is what the UI expects
+    characterSheet.darkvision = darkvision;
 
     // Spells
     const classInfo = data.classes?.[0]; // bulletproof version
@@ -513,7 +520,7 @@ export const parseDndBeyondJson = (json) => {
     console.log("DndBeyondParser: Final characterSheet object:", characterSheet);
 
     // NEW DEBUG: Add checks for critical properties
-    const criticalProperties = ['name', 'level', 'class', 'race', 'hp', 'stats', 'modifiers', 'profBonus'];
+    const criticalProperties = ['name', 'level', 'class', 'race', 'hp', 'stats', 'modifiers', 'profBonus', 'darkvision'];
     criticalProperties.forEach(prop => {
         if (!characterSheet[prop]) {
             console.warn(`DndBeyondParser: Critical property '${prop}' is missing or empty in the final characterSheet. Current value:`, characterSheet[prop]);

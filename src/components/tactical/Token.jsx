@@ -28,7 +28,7 @@ const TokenImage = ({ imageUrl, size, opacity }) => {
         return new THREE.TextureLoader().load(imageUrl);
     }, [imageUrl]);
     return (
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.051, 0]}>
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.0075, 0]}>
             <circleGeometry args={[size * 0.45, 32]} />
             <meshBasicMaterial map={texture} transparent opacity={opacity} />
         </mesh>
@@ -36,7 +36,7 @@ const TokenImage = ({ imageUrl, size, opacity }) => {
 }
 
 // Interactive 3D Token
-const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gridOffsetY = 0, isSelected, onSelect, onContextMenu, role, getTerrainHeight, isSnapToGrid, isTerrainReady, activeTool, draggedTokenId, setDraggedTokenId, viewMode, showNameplates, selectedTokenIds, groupDragData, onGroupDragEnd, isActiveTurn, canControl, shiftHeldRef }) => {
+const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gridOffsetY = 0, isSelected, onSelect, onContextMenu, role, getTerrainHeight, isSnapToGrid, isTerrainReady, activeTool, draggedTokenId, setDraggedTokenId, viewMode, showNameplates, selectedTokenIds, groupDragData, onGroupDragEnd, isActiveTurn, canControl, shiftHeldRef, tokenBaseOffset = -0.04 }) => {
   const meshRef = useRef();
   const visualsRef = useRef();
   const rotationRef = useRef();
@@ -72,30 +72,32 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
   const startMouseY = useRef(0);
   const dragStartPos = useRef(new THREE.Vector3());
   const velocity = useRef(new THREE.Vector3());
-  const previousPos = useRef(new THREE.Vector3(token.x || 0, token.y || 0.025, token.z || 0));
+  const previousPos = useRef(new THREE.Vector3(token.x || 0, token.y || 0.001, token.z || 0));
   const targetRotationY = useRef(token.rotationY || 0);
   const dragControlsRef = useRef();
   const longPressTimer = useRef();
   const touchStartPos = useRef({ x: 0, y: 0 });
   const isWaitingForSync = useRef(false);
   const syncTarget = useRef(new THREE.Vector3());
+  const hasInitialized = useRef(false);
 
   // START CHANGE: Make token position reactive to props
   useEffect(() => {
     if (meshRef.current && !isLeftDragging.current) {
-        const targetPosition = new THREE.Vector3(token.x || 0, token.y || 0.025, token.z || 0);
+        const targetPosition = new THREE.Vector3(token.x || 0, token.y || tokenBaseOffset, token.z || 0);
 
         if (isWaitingForSync.current) {
-            if (targetPosition.distanceTo(syncTarget.current) < 0.1) {
+            if (targetPosition.distanceTo(syncTarget.current) < 0.01) {
                 isWaitingForSync.current = false;
             } else {
                 return; // Wait for Firebase to catch up
             }
         }
 
-        // If the token is very far from its target (e.g., on first render), teleport it.
-        if (meshRef.current.position.distanceTo(targetPosition) > 10) {
+        // If the token is far from its target (e.g., on first render), teleport it.
+        if (!hasInitialized.current || meshRef.current.position.distanceTo(targetPosition) > 2) {
             meshRef.current.position.copy(targetPosition);
+            hasInitialized.current = true;
         }
     }
   }, [token.x, token.y, token.z, token.id]);
@@ -119,7 +121,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
           visualsRef.current.position.x = 0;
           visualsRef.current.position.z = 0;
 
-          let targetPosition = new THREE.Vector3(token.x || 0, token.y || 0.025, token.z || 0);
+          let targetPosition = new THREE.Vector3(token.x || 0, token.y || tokenBaseOffset, token.z || 0);
 
           if (isWaitingForSync.current) {
               targetPosition.copy(syncTarget.current);
@@ -128,7 +130,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
           if (isSelected && groupDragData?.current?.activeTokenId && groupDragData.current.activeTokenId !== token.id) {
               targetPosition.add(groupDragData.current.delta);
               const terrainY = getTerrainHeight ? getTerrainHeight(targetPosition.x, targetPosition.z) : 0;
-              targetPosition.y = terrainY + (token.elevationOffset || 0) + 0.025;
+              targetPosition.y = terrainY + (token.elevationOffset || 0) + tokenBaseOffset;
           }
 
           const p = meshRef.current.position;
@@ -164,7 +166,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
       }
 
       const terrainY = getTerrainHeight(displayX, displayZ);
-      const targetY = terrainY + (token.elevationOffset || 0) + 0.025;
+      const targetY = terrainY + (token.elevationOffset || 0) + tokenBaseOffset;
       
       meshRef.current.position.y = targetY; // Stick to terrain locally
       
@@ -219,6 +221,44 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
     targetRotationY.current = token.rotationY || 0;
   }, [token.rotationY]);
 
+  const isRotatingToken = useRef(false);
+  const lastPointerX = useRef(0);
+
+  const handleNameplatePointerDown = (e) => {
+    if (!canControl || activeTool) return;
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    if (e.nativeEvent) e.nativeEvent.stopPropagation();
+    isRotatingToken.current = true;
+    lastPointerX.current = e.clientX;
+    if (controls) controls.enabled = false;
+    e.target.setPointerCapture(e.pointerId);
+  };
+
+  const handleNameplatePointerMove = (e) => {
+    if (!isRotatingToken.current || !meshRef.current) return;
+    e.stopPropagation();
+    if (e.nativeEvent) e.nativeEvent.stopPropagation();
+
+    const deltaX = e.clientX - lastPointerX.current;
+    lastPointerX.current = e.clientX;
+    
+    // Dragging left (negative deltaX) rotates clockwise (negative Y rotation).
+    // Dragging right (positive deltaX) rotates counter-clockwise (positive Y rotation).
+    targetRotationY.current += deltaX * 0.02;
+  };
+
+  const handleNameplatePointerUp = (e) => {
+    if (!isRotatingToken.current) return;
+    e.stopPropagation();
+    if (e.nativeEvent) e.nativeEvent.stopPropagation();
+    isRotatingToken.current = false;
+    e.target.releasePointerCapture(e.pointerId);
+    if (controls) controls.enabled = true;
+    
+    updateTokenPosition(token.id, { rotationY: targetRotationY.current });
+  };
+
   const handlePointerDown = (e) => {
     if (!isTerrainReady) return;
     if (e.button === 2) {
@@ -266,7 +306,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
         hasDragged.current = true;
       }
       const deltaY = -(e.clientY - startMouseY.current) * 0.05;
-      meshRef.current.position.y = Math.max(0.025, dragStartY.current + deltaY);
+      meshRef.current.position.y = Math.max(0.001, dragStartY.current + deltaY);
     } else if (e.pointerType === 'touch' && longPressTimer.current) {
       const dx = e.clientX - touchStartPos.current.x;
       const dy = e.clientY - touchStartPos.current.y;
@@ -295,7 +335,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
           const x = isSnapToGrid ? (isEvenSize ? Math.round((p.x - gridOffsetX) / gridSize) * gridSize + gridOffsetX : Math.floor((p.x - gridOffsetX) / gridSize) * gridSize + gridSize / 2 + gridOffsetX) : p.x;
           const z = isSnapToGrid ? (isEvenSize ? Math.round((p.z - gridOffsetY) / gridSize) * gridSize + gridOffsetY : Math.floor((p.z - gridOffsetY) / gridSize) * gridSize + gridSize / 2 + gridOffsetY) : p.z;
           const terrainY = getTerrainHeight ? getTerrainHeight(x, z) : 0;
-          const offset = p.y - terrainY - 0.025;
+          const offset = p.y - terrainY - tokenBaseOffset;
           const isFlying = Math.abs(offset) > 0.1;
           
           meshRef.current.position.set(x, p.y, z);
@@ -362,13 +402,13 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
     <group 
       ref={meshRef} 
       scale={[scale, scale, scale]}
-      onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerUp}
-      onPointerOver={(e) => { e.stopPropagation(); if (isTerrainReady) setHover(true); }}
-      onPointerOut={(e) => { if (isTerrainReady) setHover(false); }}
-      onClick={(e) => { e.stopPropagation(); if (isTerrainReady) onSelect(token.id, e.shiftKey); }}
-      onContextMenu={(e) => {
+      onPointerDown={activeTool ? undefined : handlePointerDown}
+      onPointerMove={activeTool ? undefined : handlePointerMove}
+      onPointerUp={activeTool ? undefined : handlePointerUp}
+      onPointerOver={activeTool ? undefined : (e) => { e.stopPropagation(); if (isTerrainReady) setHover(true); }}
+      onPointerOut={activeTool ? undefined : (e) => { if (isTerrainReady) setHover(false); }}
+      onClick={activeTool ? undefined : (e) => { e.stopPropagation(); if (isTerrainReady) onSelect(token.id, e.shiftKey); }}
+      onContextMenu={activeTool ? undefined : (e) => {
         e.stopPropagation();
         if (e.nativeEvent) e.nativeEvent.preventDefault();
         if (canControl && !hasDragged.current) {
@@ -380,7 +420,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
         <group ref={rotationRef}>
           {showModel && (
             <Suspense fallback={null}>
-              <group position={[0, (token.modelYOffset || 0) * safeSize, 0]}>
+              <group position={[0, 0.0075 + ((token.modelYOffset || 0) * safeSize), 0]}>
                 <CharacterModel modelUrl={token.modelUrl} scale={(token.modelScale || 1) * safeSize} forceStatue={token.forceStatue} opacity={opacity} />
               </group>
             </Suspense>
@@ -393,7 +433,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
                         <TokenImage imageUrl={resolvedImage} size={safeSize} opacity={opacity} />
                     </Suspense>
                 ) : (
-                  <mesh position={[0, 0.051, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+                <mesh position={[0, 0.0075, 0]} rotation={[-Math.PI / 2, 0, 0]}>
                       <circleGeometry args={[safeSize * 0.45, 32]} />
                       <meshStandardMaterial color="#1e293b" transparent opacity={opacity} />
                       <Text
@@ -413,24 +453,24 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
           )}
 
           {/* Stone Pedestal Base */}
-          <mesh position={[0, 0.02, 0]}>
-            <cylinderGeometry args={[safeSize * 0.48, safeSize * 0.5, 0.04, 32]} />
+          <mesh position={[0, -0.0025, 0]}>
+            <cylinderGeometry args={[safeSize * 0.48, safeSize * 0.5, 0.015, 32]} />
             <meshStandardMaterial color="#334155" roughness={0.9} metalness={0.1} transparent={true} opacity={opacity} />
           </mesh>
           
           {/* Inner colored accent ring */}
-          <mesh position={[0, 0.045, 0]}>
-            <cylinderGeometry args={[safeSize * 0.46, safeSize * 0.46, 0.01, 32]} />
+          <mesh position={[0, 0.006, 0]}>
+            <cylinderGeometry args={[safeSize * 0.46, safeSize * 0.46, 0.002, 32]} />
             <meshStandardMaterial color={baseColor} roughness={0.5} metalness={0.2} emissive={baseColor} emissiveIntensity={hovered ? 0.5 : 0.1} transparent={true} opacity={opacity} />
           </mesh>
 
-          <mesh position={[0, 0.05, safeSize * 0.45]} rotation={[Math.PI / 2, 0, 0]}>
+          <mesh position={[0, 0.006, safeSize * 0.45]} rotation={[Math.PI / 2, 0, 0]}>
             <coneGeometry args={[safeSize * 0.15, safeSize * 0.2, 3]} />
             <meshStandardMaterial color={baseColor} roughness={0.5} metalness={0.2} emissive={baseColor} emissiveIntensity={hovered ? 0.5 : 0.1} transparent={true} opacity={opacity} />
           </mesh>
 
           {isSelected && (
-            <mesh position={[0, -0.06, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+            <mesh position={[0, 0.001, 0]} rotation={[-Math.PI / 2, 0, 0]}>
               <ringGeometry args={[safeSize * 0.55, safeSize * 0.6, 32]} />
               <meshBasicMaterial color="#3b82f6" transparent opacity={0.8} />
             </mesh>
@@ -443,10 +483,17 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
 
           return (
           <Billboard position={nameplatePos}>
-            <group>
+            <group
+                onPointerDown={handleNameplatePointerDown}
+                onPointerMove={handleNameplatePointerMove}
+                onPointerUp={handleNameplatePointerUp}
+                onPointerOut={(e) => { handleNameplatePointerUp(e); document.body.style.cursor = 'auto'; }}
+                onPointerOver={(e) => { e.stopPropagation(); if (canControl && !activeTool) document.body.style.cursor = 'ew-resize'; }}
+                onClick={(e) => e.stopPropagation()}
+            >
                 {/* Turn Indicator Glow */}
                 {isActiveTurn && (
-                    <RoundedBox args={[textWidthApprox + safeSize * 0.1, safeSize * 0.38, 0.01]} radius={safeSize * 0.08} smoothness={4} position={[0, 0, -0.02]}>
+                    <RoundedBox args={[textWidthApprox + safeSize * 0.1, safeSize * 0.38, 0.01]} radius={safeSize * 0.05} smoothness={4} position={[0, 0, -0.02]}>
                         <meshStandardMaterial ref={nameplateGlowRef} color={baseColor} emissive={baseColor} emissiveIntensity={0.5} transparent opacity={opacity * 0.8} depthTest={true} />
                     </RoundedBox>
                 )}
@@ -556,7 +603,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
         </Html>
       </group>
 
-      {canControl ? (
+      {canControl && !activeTool ? (
         <DragControls
           ref={dragControlsRef}
           axisLock="y"
@@ -621,7 +668,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
               }
 
               const terrainY = getTerrainHeight ? getTerrainHeight(snapX, snapZ) : 0;
-              const targetY = terrainY + (token.elevationOffset || 0) + 0.025;
+              const targetY = terrainY + (token.elevationOffset || 0) + tokenBaseOffset;
               
               meshRef.current.position.set(snapX, targetY, snapZ);
               syncTarget.current.set(snapX, targetY, snapZ);

@@ -138,8 +138,8 @@ const BioTab = ({ onOpenModelPicker }) => {
                             <label className="text-xs text-slate-400">Y-Offset ({modelYOffset})</label>
                             <input
                                 type="range"
-                                min="-2"
-                                max="2"
+                                min="-10"
+                                max="10"
                                 step="0.1"
                                 value={modelYOffset}
                                 onChange={handleYOffsetChange}

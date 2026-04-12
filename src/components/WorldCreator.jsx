@@ -29,7 +29,7 @@ const splitImage = (image) => {
 
 // The AI Ingestion Pixel Scanner
 const scanFeatures = (architectUrl, illuminationUrl, scale = 20) => {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
         const archImg = new Image();
         const illImg = new Image();
         let loaded = 0;
@@ -38,170 +38,56 @@ const scanFeatures = (architectUrl, illuminationUrl, scale = 20) => {
             if (++loaded < 2) return;
             
             const canvas = document.createElement('canvas');
-            canvas.width = archImg.width;
-            canvas.height = archImg.height;
+            canvas.width = Math.max(1, archImg.width, illImg.width);
+            canvas.height = Math.max(1, archImg.height, illImg.height);
             const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
-            ctx.drawImage(archImg, 0, 0);
-            const archData = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+            let archData = null;
+            let illData = null;
 
-            ctx.drawImage(illImg, 0, 0);
-            const illData = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+            if (archImg.width > 0 && archImg.src !== "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7") {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(archImg, 0, 0, canvas.width, canvas.height);
+                archData = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+            }
 
-            const walls = {};
-            const lights = {};
+            if (illImg.width > 0 && illImg.src !== "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7") {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(illImg, 0, 0, canvas.width, canvas.height);
+                illData = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+            }
 
-            // Downsample scan resolution to avoid millions of 3D objects
-            const stepX = Math.max(1, Math.floor(canvas.width / 150));
-            const stepY = Math.max(1, Math.floor(canvas.height / 150));
-            
             const aspect = canvas.width / canvas.height || 1;
 
-            const get3DCoord = (px, py) => ({
-                x: (px / canvas.width - 0.5) * (scale * aspect),
-                y: 0,
-                z: (py / canvas.height - 0.5) * scale
+            const worker = new Worker(new URL('./featureExtraction.worker.js', import.meta.url), { type: 'module' });
+            
+            worker.onmessage = (e) => {
+                const { type, payload } = e.data;
+                if (type === 'FEATURES_EXTRACTED') {
+                    resolve(payload);
+                    worker.terminate();
+                }
+            };
+
+            worker.onerror = (err) => {
+                console.error("Feature Extraction Worker error:", err);
+                reject(err);
+                worker.terminate();
+            };
+
+            worker.postMessage({
+                type: 'EXTRACT_FEATURES',
+                archData,
+                illData,
+                width: canvas.width,
+                height: canvas.height,
+                scale,
+                aspect
             });
-
-            const getPixelType = (r, g, b) => {
-                if (r > 150 && g < 100 && b < 100) return 'wall';
-                if (r < 100 && g < 100 && b > 150) return 'door';
-                if (r < 100 && g > 150 && b > 150) return 'window';
-                return null;
-            };
-
-            const cols = Math.ceil(canvas.width / stepX);
-            const rows = Math.ceil(canvas.height / stepY);
-            const grid = Array(rows).fill(null).map(() => Array(cols).fill(null));
-
-            for (let gy = 0; gy < rows; gy++) {
-                for (let gx = 0; gx < cols; gx++) {
-                    const x = Math.min(gx * stepX, canvas.width - 1);
-                    const y = Math.min(gy * stepY, canvas.height - 1);
-                    const i = (y * canvas.width + x) * 4;
-                    grid[gy][gx] = getPixelType(archData[i], archData[i+1], archData[i+2]);
-                }
-            }
-
-            let wallCounter = 0;
-            const addSegment = (type, x1, y1, x2, y2) => {
-                if (x1 === x2 && y1 === y2) return;
-                const id = `${type}_gen_${wallCounter++}`;
-                const px1 = Math.min(x1 * stepX, canvas.width);
-                const py1 = Math.min(y1 * stepY, canvas.height);
-                const px2 = Math.min(x2 * stepX, canvas.width);
-                const py2 = Math.min(y2 * stepY, canvas.height);
-                walls[id] = { id, type, points: [get3DCoord(px1, py1), get3DCoord(px2, py2)] };
-                if (type === 'door' || type === 'window') walls[id].isOpen = false;
-            };
-
-            const getType = (x, y) => (x >= 0 && x < cols && y >= 0 && y < rows) ? grid[y][x] : null;
-            const featureTypes = ['wall', 'door', 'window'];
-
-            for (const t of featureTypes) {
-                for (let gy = 0; gy <= rows; gy++) {
-                    let startX = null;
-                    let currentDir = null;
-                    const commit = (x) => {
-                        if (startX !== null) addSegment(t, startX, gy, x, gy);
-                        startX = null;
-                        currentDir = null;
-                    };
-                    for (let gx = 0; gx <= cols; gx++) {
-                        const isTBelow = getType(gx, gy) === t;
-                        const isTAbove = getType(gx, gy - 1) === t;
-                        let edgeDir = null;
-                        if (isTBelow && !isTAbove) edgeDir = 1;
-                        else if (isTAbove && !isTBelow) edgeDir = -1;
-                        if (edgeDir !== currentDir) {
-                            commit(gx);
-                            if (edgeDir) { startX = gx; currentDir = edgeDir; }
-                        }
-                    }
-                    commit(cols);
-                }
-                for (let gx = 0; gx <= cols; gx++) {
-                    let startY = null;
-                    let currentDir = null;
-                    const commit = (y) => {
-                        if (startY !== null) addSegment(t, gx, startY, gx, y);
-                        startY = null;
-                        currentDir = null;
-                    };
-                    for (let gy = 0; gy <= rows; gy++) {
-                        const isTRight = getType(gx, gy) === t;
-                        const isTLeft = getType(gx - 1, gy) === t;
-                        let edgeDir = null;
-                        if (isTRight && !isTLeft) edgeDir = 1;
-                        else if (isTLeft && !isTRight) edgeDir = -1;
-                        if (edgeDir !== currentDir) {
-                            commit(gy);
-                            if (edgeDir) { startY = gy; currentDir = edgeDir; }
-                        }
-                    }
-                    commit(rows);
-                }
-            }
-
-            const gridW = Math.ceil(canvas.width / stepX);
-            const gridH = Math.ceil(canvas.height / stepY);
-            const isLight = new Array(gridW * gridH).fill(false);
-            const visited = new Array(gridW * gridH).fill(false);
-
-            for (let gy = 0; gy < gridH; gy++) {
-                for (let gx = 0; gx < gridW; gx++) {
-                    const x = Math.min(gx * stepX, canvas.width - 1);
-                    const y = Math.min(gy * stepY, canvas.height - 1);
-                    const i = (y * canvas.width + x) * 4;
-                    if (illData[i] > 150 && illData[i+1] > 150 && illData[i+2] < 100) {
-                        isLight[gy * gridW + gx] = true;
-                    }
-                }
-            }
-
-            let lightCounter = 0;
-            for (let gy = 0; gy < gridH; gy++) {
-                for (let gx = 0; gx < gridW; gx++) {
-                    const idx = gy * gridW + gx;
-                    if (isLight[idx] && !visited[idx]) {
-                        const queue = [[gx, gy]];
-                        visited[idx] = true;
-                        let sumX = 0, sumY = 0, count = 0;
-                        let minX = gx, maxX = gx, minY = gy, maxY = gy;
-                        while (queue.length > 0) {
-                            const [cx, cy] = queue.shift();
-                            sumX += cx; sumY += cy; count++;
-                            minX = Math.min(minX, cx); maxX = Math.max(maxX, cx);
-                            minY = Math.min(minY, cy); maxY = Math.max(maxY, cy);
-                            for (let dy = -1; dy <= 1; dy++) {
-                                for (let dx = -1; dx <= 1; dx++) {
-                                    if (dx === 0 && dy === 0) continue;
-                                    const nx = cx + dx, ny = cy + dy;
-                                    if (nx >= 0 && nx < gridW && ny >= 0 && ny < gridH) {
-                                        const nIdx = ny * gridW + nx;
-                                        if (isLight[nIdx] && !visited[nIdx]) {
-                                            visited[nIdx] = true;
-                                            queue.push([nx, ny]);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        if (count > 2) {
-                            const px = (sumX / count) * stepX;
-                            const py = (sumY / count) * stepY;
-                            const coord = get3DCoord(px, py);
-                            const avgDiameterPx = ((maxX - minX) * stepX + (maxY - minY) * stepY) / 2;
-                            const mapUnitsDiameter = avgDiameterPx / (canvas.height / scale);
-                            const radiusFt = Math.max(10, Math.min(100, Math.round((mapUnitsDiameter / 2) * 5)));
-                            const lightId = `light_gen_${lightCounter++}`;
-                            lights[lightId] = { id: lightId, position: { x: coord.x, y: 1, z: coord.z }, color: '#fef08a', radius: radiusFt, intensity: 1.5 };
-                        }
-                    }
-                }
-            }
-            resolve({ walls, lights: Object.values(lights) });
         };
+        
+        archImg.crossOrigin = "Anonymous";
+        illImg.crossOrigin = "Anonymous";
         archImg.onload = processPixels; illImg.onload = processPixels;
         archImg.src = architectUrl; illImg.src = illuminationUrl;
     });

@@ -59,6 +59,7 @@ const CharacterCreator = ({ aiHelper, apiKey, onComplete, onCancel, edition = '2
             "class": "String",
             "level": Number,
             "profBonus": Number,
+            "darkvision": Number,
             "stats": { "str": 10, "dex": 10, "con": 10, "int": 10, "wis": 10, "cha": 10 },
             "hp": { "current": Number, "max": Number },
             "currency": { "cp": 0, "sp": 0, "ep": 0, "gp": 15, "pp": 0 },

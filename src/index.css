@@ -490,6 +490,8 @@ h1, h2, h3, .fantasy-font { font-family: 'Cinzel', serif; }
 
 /* --- FULLSCREEN FIXES --- */
 :fullscreen #app-sidebar,
-:fullscreen #mobile-nav {
+:fullscreen #mobile-nav,
+.pseudo-fullscreen #app-sidebar,
+.pseudo-fullscreen #mobile-nav {
     display: none !important;
 }
