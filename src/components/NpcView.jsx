@@ -34,10 +34,14 @@ const NpcView = ({ data, setData, role, setChatInput, setView, onPossess, aiHelp
     const [viewMode, setViewMode] = useState('grid');
     // START CHANGE: Add Forge State
     const [showForge, setShowForge] = useState(false);
+    const [forgeTab, setForgeTab] = useState('generate');
     const [forgeName, setForgeName] = useState('');
     const [forgeContext, setForgeContext] = useState('');
     const [isForging, setIsForging] = useState(false);
     // END CHANGE
+    // Paste Text State
+    const [pasteTextContent, setPasteTextContent] = useState('');
+    const [isParsingText, setIsParsingText] = useState(false);
     // Compendium State
     const [showCompendium, setShowCompendium] = useState(false);
     const [compendiumSearch, setCompendiumSearch] = useState("");
@@ -147,6 +151,83 @@ const NpcView = ({ data, setData, role, setChatInput, setView, onPossess, aiHelp
         setIsForging(false);
     };
     // END CHANGE
+
+    const handlePasteTextSubmit = async () => {
+        if (!pasteTextContent.trim()) return;
+        setIsParsingText(true);
+        
+        const prompt = `You are a D&D 5e parser. The user will paste raw text from a monster stat block. Extract the stats, actions, HP, AC, and spells, and return it in this exact JSON format. DO NOT WRAP IN MARKDOWN. Only return valid JSON.
+{
+  "name": "Monster Name",
+  "race": "Size Type (Alignment)",
+  "class": "Monster",
+  "level": "CR",
+  "hp": { "current": 20, "max": 20 },
+  "ac": 15,
+  "speed": "30 ft.",
+  "stats": { "str": 10, "dex": 10, "con": 10, "int": 10, "wis": 10, "cha": 10 },
+  "senses": { "darkvision": "60 ft.", "passivePerception": 10 },
+  "bio": { "backstory": "Imported from text.", "appearance": "" },
+  "inventory": [
+    { "name": "Item Name", "qty": 1, "equipped": true, "baseAc": 13, "acBonus": 1, "desc": "Description" }
+  ],
+  "spells": [
+    { "name": "Spell Name", "level": 1, "time": "1A", "desc": "Spell desc" }
+  ],
+  "customActions": [
+    { "name": "Action Name", "desc": "Action description", "type": "Action", "hit": "+5", "dmg": "1d6+3" }
+  ],
+  "features": [
+    { "name": "Trait Name", "desc": "Trait description", "source": "Trait" }
+  ]
+}
+
+Instructions:
+- Include all spells from 'Spellcasting' in the "spells" array.
+- Include any 'Special Equipment' (like Staff of Defense) or armor mentioned in AC (like Mage Armor) in the "inventory" array.
+- If an item provides an AC bonus (like a shield or magic item), include "acBonus": X.
+- If an item is base armor (like Leather Armor), include "baseAc": X.
+- Ensure armor, shields, and wielded weapons are marked "equipped": true.
+- Include all Actions, Bonus Actions, and Reactions in "customActions", ensuring the "type" field matches appropriately (e.g., "Action", "Bonus Action", "Reaction").
+
+Raw Statblock:
+${pasteTextContent}`;
+
+        try {
+            const resultText = await aiHelper([{ role: 'user', content: prompt }]);
+            let parsedData = {};
+            try {
+                const jsonMatch = resultText.match(/\{[\s\S]*\}/);
+                if (jsonMatch) {
+                    parsedData = JSON.parse(jsonMatch[0]);
+                } else {
+                    parsedData = JSON.parse(resultText);
+                }
+                
+                // Enrich the extracted data using the 5e SRD
+                const enrichedData = await enrichCharacter(parsedData);
+                
+                const finalNpc = { ...enrichedData, quirk: "Parsed from Text", isHidden: true, id: Date.now() };
+                
+                setShowForge(false);
+                setPasteTextContent('');
+                
+                setNpcForModelSelection(finalNpc);
+                setAvailableModels([]);
+                setIsNewNpc(true);
+                setShowModelPicker(true);
+                setMiniSearchQuery(finalNpc.name);
+                handleMiniSearch(finalNpc.name, finalNpc.race);
+            } catch (e) {
+                alert("Failed to parse the AI response into a valid NPC. Check the text format.");
+                console.error("AI Parse Error:", e, resultText);
+            }
+        } catch (e) {
+            alert("AI request failed.");
+            console.error(e);
+        }
+        setIsParsingText(false);
+    };
 
     const handleNameSave = () => {
         if (viewingNpc && editableName && viewingNpc.name !== editableName) {
@@ -636,8 +717,8 @@ const NpcView = ({ data, setData, role, setChatInput, setView, onPossess, aiHelp
                             ) : (
                                 <>
                                     <p className="text-slate-400 mb-8">How shall this creature arrive?</p>
-                                    <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-                                        <div onClick={createManualNpc} className="bg-slate-800 border-2 border-slate-700 hover:border-green-500 rounded-xl p-4 cursor-pointer group transition-all hover:-translate-y-1">
+                                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+                                        <div onClick={createManualNpc} className="bg-slate-800 border-2 border-slate-700 hover:border-green-500 rounded-xl p-4 cursor-pointer group transition-all hover:-translate-y-1 col-span-2 md:col-span-1">
                                             <div className="w-12 h-12 bg-green-900/30 text-green-500 rounded-full flex items-center justify-center mx-auto mb-2"><Icon name="pencil" size={24}/></div>
                                             <h3 className="font-bold text-white">Manual</h3>
                                             <p className="text-[10px] text-slate-400">Blank sheet.</p>
@@ -659,8 +740,13 @@ const NpcView = ({ data, setData, role, setChatInput, setView, onPossess, aiHelp
                                             <p className="text-[10px] text-slate-400">Import + SRD Enrich.</p>
                                             <input type="file" accept=".pdf" className="hidden" ref={fileInputRef} onChange={handlePdfImport}/>
                                         </div>
+                                        <div onClick={() => { setShowCreationMenu(false); setForgeTab('paste'); setShowForge(true); }} className="bg-slate-800 border-2 border-slate-700 hover:border-orange-500 rounded-xl p-4 cursor-pointer group transition-all hover:-translate-y-1">
+                                            <div className="w-12 h-12 bg-orange-900/30 text-orange-500 rounded-full flex items-center justify-center mx-auto mb-2"><Icon name="clipboard" size={24}/></div>
+                                            <h3 className="font-bold text-white">Paste Text</h3>
+                                            <p className="text-[10px] text-slate-400">Parse raw statblock.</p>
+                                        </div>
                                         {/* START CHANGE: Open new Forge Modal instead of old Creator */}
-                                        <div onClick={() => { setShowCreationMenu(false); setShowForge(true); }} className="bg-slate-800 border-2 border-slate-700 hover:border-purple-500 rounded-xl p-4 cursor-pointer group transition-all hover:-translate-y-1">
+                                        <div onClick={() => { setShowCreationMenu(false); setForgeTab('generate'); setShowForge(true); }} className="bg-slate-800 border-2 border-slate-700 hover:border-purple-500 rounded-xl p-4 cursor-pointer group transition-all hover:-translate-y-1">
                                             <div className="w-12 h-12 bg-purple-900/30 text-purple-500 rounded-full flex items-center justify-center mx-auto mb-2"><Icon name="sparkles" size={24}/></div>
                                             <h3 className="font-bold text-white">AI Forge</h3>
                                         {/* END CHANGE */}
@@ -720,33 +806,66 @@ const NpcView = ({ data, setData, role, setChatInput, setView, onPossess, aiHelp
                 </div>
             )}
 
-            {/* START CHANGE: Context-Aware Forge Modal */}
+            {/* START CHANGE: Context-Aware Forge Modal (Combined with Paste Text) */}
             {showForge && (
                 <div className="fixed inset-0 z-50 bg-slate-900/90 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div className="bg-slate-800 border border-slate-600 rounded-lg shadow-2xl w-full max-w-md p-6 animate-in zoom-in-95 duration-200">
-                        <div className="flex justify-between items-center mb-6 border-b border-slate-700 pb-2">
-                            <h3 className="text-xl font-bold text-white flex items-center gap-2"><Icon name="skull" className="text-red-500"/> Bestiary Forge</h3>
+                    <div className="bg-slate-800 border border-slate-600 rounded-lg shadow-2xl w-full max-w-2xl p-6 animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
+                        <div className="flex justify-between items-center mb-6 border-b border-slate-700 pb-2 shrink-0">
+                            <div className="flex gap-6">
+                                <button onClick={() => setForgeTab('generate')} className={`text-xl font-bold flex items-center gap-2 transition-colors ${forgeTab === 'generate' ? 'text-white' : 'text-slate-500 hover:text-slate-300'}`}>
+                                    <Icon name="sparkles" className={forgeTab === 'generate' ? "text-purple-500" : ""} /> AI Generate
+                                </button>
+                                <span className="text-slate-600 text-xl">|</span>
+                                <button onClick={() => setForgeTab('paste')} className={`text-xl font-bold flex items-center gap-2 transition-colors ${forgeTab === 'paste' ? 'text-white' : 'text-slate-500 hover:text-slate-300'}`}>
+                                    <Icon name="clipboard" className={forgeTab === 'paste' ? "text-orange-500" : ""} /> Paste Text
+                                </button>
+                            </div>
                             <button onClick={() => setShowForge(false)} className="text-slate-400 hover:text-white"><Icon name="x"/></button>
                         </div>
-                        {isForging ? (
-                            <div className="text-center py-8">
-                                <Icon name="loader-2" size={48} className="animate-spin text-red-500 mx-auto mb-4"/>
-                                <p className="text-red-300 font-bold animate-pulse">Consulting the Archives...</p>
-                                <p className="text-xs text-slate-500 mt-2">Checking Lore for stats...</p>
-                            </div>
+                        
+                        {forgeTab === 'generate' ? (
+                            isForging ? (
+                                <div className="text-center py-8">
+                                    <Icon name="loader-2" size={48} className="animate-spin text-purple-500 mx-auto mb-4"/>
+                                    <p className="text-purple-300 font-bold animate-pulse">Consulting the Archives...</p>
+                                    <p className="text-xs text-slate-500 mt-2">Checking Lore for stats...</p>
+                                </div>
+                            ) : (
+                                <div className="space-y-4">
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-400 mb-1">Name / Creature Type</label>
+                                        <input autoFocus className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white" placeholder="e.g. Glasstaff OR Redbrand Ruffian" value={forgeName} onChange={e => setForgeName(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleForgeSubmit()}/>
+                                        <p className="text-[10px] text-slate-500 mt-1">If this name appears in your PDFs, we use those stats!</p>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-400 mb-1">Context (Optional)</label>
+                                        <input className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white" placeholder="e.g. CR 4, fire themed" value={forgeContext} onChange={e => setForgeContext(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleForgeSubmit()}/>
+                                    </div>
+                                    <button onClick={handleForgeSubmit} disabled={!forgeName.trim()} className="w-full bg-purple-800 hover:bg-purple-700 text-white font-bold py-3 rounded flex justify-center items-center gap-2 mt-4"><Icon name="hammer" size={18}/> Forge Monster</button>
+                                </div>
+                            )
                         ) : (
-                            <div className="space-y-4">
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-400 mb-1">Name / Creature Type</label>
-                                    <input autoFocus className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white" placeholder="e.g. Glasstaff OR Redbrand Ruffian" value={forgeName} onChange={e => setForgeName(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleForgeSubmit()}/>
-                                    <p className="text-[10px] text-slate-500 mt-1">If this name appears in your PDFs, we use those stats!</p>
+                            isParsingText ? (
+                                <div className="text-center py-12 flex-1 flex flex-col justify-center">
+                                    <Icon name="loader-2" size={48} className="animate-spin text-orange-500 mx-auto mb-4"/>
+                                    <p className="text-orange-300 font-bold animate-pulse">Parsing Statblock...</p>
+                                    <p className="text-xs text-slate-500 mt-2">The DungeonMind is extracting the stats.</p>
                                 </div>
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-400 mb-1">Context (Optional)</label>
-                                    <input className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white" placeholder="e.g. CR 4, fire themed" value={forgeContext} onChange={e => setForgeContext(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleForgeSubmit()}/>
+                            ) : (
+                                <div className="space-y-4 flex-1 flex flex-col min-h-0">
+                                    <div className="flex-1 flex flex-col min-h-0">
+                                        <label className="block text-xs font-bold text-slate-400 mb-2">Raw Text</label>
+                                        <textarea 
+                                            autoFocus 
+                                            className="flex-1 w-full bg-slate-900 border border-slate-600 rounded p-3 text-white text-sm font-mono custom-scroll resize-none min-h-[200px]" 
+                                            placeholder="Paste the raw text from D&D Beyond or a PDF here..." 
+                                            value={pasteTextContent} 
+                                            onChange={e => setPasteTextContent(e.target.value)} 
+                                        />
+                                    </div>
+                                    <button onClick={handlePasteTextSubmit} disabled={!pasteTextContent.trim()} className="w-full bg-orange-700 hover:bg-orange-600 text-white font-bold py-3 rounded flex justify-center items-center gap-2 shrink-0"><Icon name="wand-2" size={18}/> Extract NPC</button>
                                 </div>
-                                <button onClick={handleForgeSubmit} disabled={!forgeName.trim()} className="w-full bg-red-800 hover:bg-red-700 text-white font-bold py-3 rounded flex justify-center items-center gap-2 mt-4"><Icon name="hammer" size={18}/> Forge Monster</button>
-                            </div>
+                            )
                         )}
                     </div>
                 </div>
