@@ -355,10 +355,125 @@ function DungeonMindApp() {
           return 0;
       }
   };
-  const queryAiService = async () => console.log('queryAiService called');
+
+  const queryAiService = async (messages) => {
+      console.log('queryAiService called with provider:', aiProvider);
+      
+      try {
+          if (aiProvider === 'puter') {
+              if (!window.puter) {
+                  throw new Error("Puter.js script is missing or blocked.");
+              }
+              // Puter expects the chat format
+              const response = await window.puter.ai.chat(messages, { model: puterModel });
+              return response?.message?.content || response;
+          }
+          
+          // Add OpenAI / Gemini logic here later
+          return "AI Provider not fully configured yet.";
+          
+      } catch (error) {
+          console.error("AI Service Error:", error);
+          // Return a safe string so Firebase doesn't crash
+          return `[System: The AI is currently unreachable. Error: ${error.message}]`;
+      }
+  };
+
   const handleInitiative = () => console.log('handleInitiative called');
-  const generatePlayer = () => console.log('generatePlayer called');
-  const generateNpc = () => console.log('generateNpc called');
+
+  // Strict Template to mirror dndBeyondParser.js output
+  const DND_BEYOND_SCHEMA = JSON.stringify({
+      name: "string", avatarUrl: "", race: "string", class: "string", level: 1, xp: 0,
+      classes: [{ name: "string", subclass: null, level: 1 }],
+      hp: { max: 10, current: 10, temp: 0 },
+      stats: { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 },
+      modifiers: { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 },
+      speed: 30, profBonus: 2, initiative: 0, ac: 10, acFormula: "10 + DEX",
+      proficiencies: { armor: "string", weapons: "string", tools: "string", languages: "string" },
+      skills: { Acrobatics: false, Athletics: true },
+      savingThrows: { str: true, dex: false, con: false, int: false, wis: false, cha: false },
+      defenses: { resistances: "", immunities: "", vulnerabilities: "" },
+      inventory: [{ name: "Weapon", quantity: 1, description: "", equipped: true, weight: 2, combat: { hit: 5, dmg: "1d8+3", type: "Action", category: "Attack", range: "5 ft", notes: "Slashing" } }],
+      customActions: [{ name: "Action", desc: "Desc", hit: "5", dmg: "1d6", type: "Action", category: "Feature" }],
+      features: [{ name: "Feature", description: "Desc", source: "Class" }],
+      spells: [], spellSlots: {},
+      bio: { appearance: "", traits: "", ideals: "", bonds: "", flaws: "", backstory: "" }
+  });
+
+  // Failsafe: LLMs are bad at math. Recalculate basic modifiers before passing the sheet on.
+  const sanitizeAiCharacter = (char) => {
+      if (!char) return null;
+      if (char.stats) {
+          char.modifiers = {
+              str: Math.floor(((char.stats.str || 10) - 10) / 2),
+              dex: Math.floor(((char.stats.dex || 10) - 10) / 2),
+              con: Math.floor(((char.stats.con || 10) - 10) / 2),
+              int: Math.floor(((char.stats.int || 10) - 10) / 2),
+              wis: Math.floor(((char.stats.wis || 10) - 10) / 2),
+              cha: Math.floor(((char.stats.cha || 10) - 10) / 2)
+          };
+      }
+      if (typeof char.hp === 'number') char.hp = { max: char.hp, current: char.hp, temp: 0 };
+      else if (!char.hp) char.hp = { max: 10, current: 10, temp: 0 };
+      
+      char.conditions = char.conditions || [];
+      char.spellSlots = char.spellSlots || {};
+      return char;
+  };
+
+  // Helper to generate an image and convert it to a Base64 string for storage
+  const generatePortrait = async (char) => {
+      if (window.puter && aiProvider === 'puter') {
+          try {
+              const race = char.race || 'Humanoid';
+              const charClass = char.class || 'Creature';
+              const appearance = char.bio?.appearance || '';
+              
+              const imagePrompt = `D&D Beyond official digital character illustration of a ${race} ${charClass}. ${appearance.substring(0, 150)}. 2D fantasy character concept art, flat colors, solid white background, stylized token art, not photorealistic.`;
+              
+              const imgEl = await window.puter.ai.txt2img(imagePrompt, { model: 'dall-e-3' });
+              const response = await fetch(imgEl.src);
+              const blob = await response.blob();
+              return await new Promise((resolve) => {
+                  const reader = new FileReader();
+                  reader.onloadend = () => resolve(reader.result);
+                  reader.readAsDataURL(blob);
+              });
+          } catch (e) {
+              console.error("Image generation failed", e);
+          }
+      }
+      return "";
+  };
+
+  const generatePlayer = async (name, contextStr) => {
+      const prompt = `Generate a D&D 5e player character JSON for ${name}. Context: ${contextStr}.\nCRITICAL INSTRUCTION: Output ONLY pure JSON matching EXACTLY this schema. Do not add markdown or backticks:\n${DND_BEYOND_SCHEMA}`;
+      const res = await queryAiService([{ role: 'user', content: prompt }]);
+      try { 
+          const char = sanitizeAiCharacter(JSON.parse(res.match(/\{[\s\S]*\}/)[0])); 
+          if (char) {
+              const img = await generatePortrait(char);
+              if (img) { char.image = img; char.avatarUrl = img; }
+          }
+          return char;
+      } 
+      catch (e) { return null; }
+  };
+
+  const generateNpc = async (name, contextStr) => {
+      const prompt = `Generate a D&D 5e monster/NPC JSON for ${name}. Context: ${contextStr}.\nCRITICAL INSTRUCTION: Output ONLY pure JSON matching EXACTLY this schema. Do not add markdown or backticks:\n${DND_BEYOND_SCHEMA}`;
+      const res = await queryAiService([{ role: 'user', content: prompt }]);
+      try { 
+          const char = sanitizeAiCharacter(JSON.parse(res.match(/\{[\s\S]*\}/)[0])); 
+          if (char) {
+              const img = await generatePortrait(char);
+              if (img) { char.image = img; char.avatarUrl = img; }
+          }
+          return char;
+      } 
+      catch (e) { return null; }
+  };
+
   const savePlayer = () => console.log('savePlayer called');
   const handleHandoutSave = () => console.log('handleHandoutSave called');
   const handleHandoutDelete = () => console.log('handleHandoutDelete called');

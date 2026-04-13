@@ -617,7 +617,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
               imageUrl = `https://www.dnd5eapi.co${m.image}`;
           } else if (window.puter) {
               try {
-                  const imgEl = await window.puter.ai.txt2img(`fantasy rpg token portrait of a ${m.name} ${m.type}, white background, high quality`);
+                  const imgEl = await window.puter.ai.txt2img(`D&D Beyond official digital character illustration of a ${m.name} (${m.type}). 2D fantasy character concept art, flat colors, solid white background, stylized token art, not photorealistic.`, { model: 'dall-e-3' });
                   const response = await fetch(imgEl.src);
                   const blob = await response.blob();
                   imageUrl = await new Promise((resolve) => {

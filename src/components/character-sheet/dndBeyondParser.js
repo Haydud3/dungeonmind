@@ -138,7 +138,13 @@ export const parseDndBeyondJson = (json) => {
     // Stats & Modifiers (bulletproof version)
     (data.stats || []).forEach(stat => {
         const statName = ABILITY_ID_MAP[stat.id];
-        const score = (stat.value || 0) + ((data.bonusStats || []).find(bs => bs.id === stat.id)?.value || 0);
+        let score = (stat.value || 0) + ((data.bonusStats || []).find(bs => bs.id === stat.id)?.value || 0);
+        
+        const override = (data.overrideStats || []).find(os => os.id === stat.id)?.value;
+        if (override !== undefined && override !== null) {
+            score = override;
+        }
+        
         characterSheet.stats[statName] = score;
         characterSheet.modifiers[statName] = getAbilityModifier(score);
     });
@@ -213,7 +219,11 @@ export const parseDndBeyondJson = (json) => {
 
     // HP (bulletproof version)
     const conMod = characterSheet.modifiers.con || 0;
-    const maxHp = (data.baseHitPoints || 0) + (data.bonusHitPoints || 0) + (data.overrideHitPoints || 0) + (conMod * characterSheet.level);
+    let maxHp = (data.baseHitPoints || 0) + (data.bonusHitPoints || 0) + (conMod * characterSheet.level);
+    if (data.overrideHitPoints !== undefined && data.overrideHitPoints !== null && data.overrideHitPoints !== 0) {
+        maxHp = data.overrideHitPoints;
+    }
+    
     characterSheet.hp = {
         max: maxHp,
         current: maxHp - (data.removedHitPoints || 0),
@@ -323,7 +333,10 @@ export const parseDndBeyondJson = (json) => {
         ...(data.classes || []).flatMap(c => (c.classFeatures || [])
             .filter(f => c.level >= (f.definition?.requiredLevel || 0))
             .map(f => mapFeature(f, 'Class'))),
-        ...(data.feats || []).map(f => mapFeature(f, 'Feat'))
+        ...(data.feats || []).map(f => mapFeature(f, 'Feat')),
+        ...(data.options?.race || []).map(o => mapFeature(o, 'Race Option')),
+        ...(data.options?.class || []).map(o => mapFeature(o, 'Class Option')),
+        ...(data.options?.feat || []).map(o => mapFeature(o, 'Feat Option'))
     ];
 
     // Bio
@@ -404,7 +417,9 @@ export const parseDndBeyondJson = (json) => {
         const activation = actMap[def.activation?.activationType] || 'Action';
 
         spellsByLevel[level].push({
-            ...def,
+                name: def.name || 'Unknown Spell',
+                level: level,
+                school: def.school || 'Unknown',
             desc: parseDndBeyondSnippets(def.description || def.snippet || '', characterSheet, def),
             time: `${def.activation?.activationTime || ''} ${activation}`.trim(),
             range: rangeStr,
@@ -412,16 +427,15 @@ export const parseDndBeyondJson = (json) => {
             dmg: dmgString,
             concentration: def.concentration || false,
             ritual: def.ritual || false,
-            components: def.components ? def.components.map(c => c===1?'V':(c===2?'S':(c===3?'M':''))).filter(Boolean).join(', ') : ''
+                components: def.components ? (Array.isArray(def.components) ? def.components.map(c => c===1?'V':(c===2?'S':(c===3?'M':''))).filter(Boolean).join(', ') : def.components) : ''
         });
     });
     characterSheet.spells = Object.values(spellsByLevel).flat();
-    characterSheet.spellsByLevel = spellsByLevel;
     
     // Spell Slots
     if (classInfo?.definition?.canCastSpells && classInfo?.definition?.spellRules) { 
         if (data.pactMagic?.length > 0) {
-            const pactSlotInfo = classInfo.definition.spellRules?.levelSpellSlots?.[classInfo.level - 1] || [];
+            const pactSlotInfo = classInfo.definition.spellRules?.levelSpellSlots?.[classInfo.level] || [];
             const slotLevel = pactSlotInfo.findIndex(s => s > 0) + 1;
             if (slotLevel > 0) {
                 const total = pactSlotInfo[slotLevel - 1];
@@ -430,7 +444,7 @@ export const parseDndBeyondJson = (json) => {
             }
         }
         if (data.spellSlots?.length > 0) {
-            const regularSlots = classInfo.definition.spellRules?.levelSpellSlots?.[classInfo.level - 1] || [];
+            const regularSlots = classInfo.definition.spellRules?.levelSpellSlots?.[classInfo.level] || [];
             regularSlots.forEach((total, index) => {
                 const level = index + 1;
                 if (total > 0) {

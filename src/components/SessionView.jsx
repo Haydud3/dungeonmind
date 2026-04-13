@@ -23,9 +23,8 @@ const SessionView = ({
     const context = useNewCampaign();
     if (!context) return null;
 
-    const { campaign, chatLog, user, gameParams, sendMessage, editMessage, deleteMessage, clearChat, saveJournalPage } = context;
+    const { campaign, chatLog, journal_pages, loreChunks, user, gameParams, sendMessage, editMessage, deleteMessage, clearChat, saveJournalPage } = context;
     const data = campaign;
-    const loreChunks = campaign?.loreChunks || [];
     const players = campaign?.players || [];
     const castList = buildCastList(campaign || {}); // Guard against null campaign
     const myCharId = campaign?.assignments?.[user?.uid];
@@ -201,7 +200,7 @@ const SessionView = ({
             
             // START CHANGE: Pass the 'players' and 'castList' variables into the functions
             // 'players' is the 4th argument, 'castList' is the 5th argument of buildPrompt
-            const aiContext = retrieveContext(query, loreChunks || [], data?.journal_pages || {}, players, role, myCharId);
+            const aiContext = retrieveContext(query, loreChunks || [], journal_pages || {}, players, role, myCharId);
             
             const isPublic = (type === 'ai-public');
             const prompt = buildPrompt(query, aiContext, recentChat, isPublic, castList);
@@ -214,7 +213,12 @@ const SessionView = ({
             if (aiHelper) {
                 const answer = await aiHelper([{ role: 'user', content: prompt }]);
                 setGhostMessage(null);
-                onSendMessage(answer, type, null); 
+                
+                if (answer && typeof answer === 'string') {
+                    onSendMessage(answer, type, null); 
+                } else {
+                    onSendMessage("The DungeonMind is currently unreachable. (Connection blocked or AI returned no response)", 'system', null);
+                }
             } else {
                 setGhostMessage(null);
             }
@@ -277,7 +281,7 @@ const SessionView = ({
         const newPage = {
             id: newPageId,
             title: `Session Recap - ${new Date().toLocaleDateString()}`,
-            content: summary,
+            content: (summary && typeof summary === 'string') ? summary : "<i>The Scribe's quill broke. The AI was unreachable or blocked by the network.</i>",
             timestamp: Date.now()
         };
         

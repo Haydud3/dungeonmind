@@ -13,7 +13,7 @@ import { enrichCharacter } from '../utils/srdEnricher.js';
 import { useNewCampaign } from '../contexts/NewCampaignProvider';
 
 // START CHANGE: Add generatePlayer to props
-const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, onLogAction, edition, apiKey, generatePlayer, onOpenDiceTray }) => {
+const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, onLogAction, edition, apiKey, onOpenDiceTray }) => {
     const { updateCampaign } = useNewCampaign();
     
     // FIX: Add a safety check. If data is missing, use an empty array.
@@ -21,11 +21,6 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
 
     const [showCreationMenu, setShowCreationMenu] = useState(false);
     const [viewMode, setViewMode] = useState('grid');
-    // START CHANGE: Add Forge State
-    const [showForge, setShowForge] = useState(false);
-    const [forgeName, setForgeName] = useState('');
-    const [forgeContext, setForgeContext] = useState('');
-    const [isForging, setIsForging] = useState(false);
     // START CHANGE: Add state for D&D Beyond Importer
     const [showDndBeyondImport, setShowDndBeyondImport] = useState(false);
     const [refreshCharacter, setRefreshCharacter] = useState(null);
@@ -118,26 +113,6 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
         setIsImporting(false);
     };
 
-
-
-    // START CHANGE: New Forge Handler
-    const handleForgeSubmit = async () => {
-        if (!forgeName.trim()) return;
-        setIsForging(true);
-        const instruction = forgeContext ? `Class/Race/Vibe: ${forgeContext}` : "Create a standard Level 1 adventurer.";
-        const newChar = await generatePlayer(forgeName, instruction);
-        if (newChar) {
-            handleNewCharacter({
-                ...newChar,
-                xp: 0, level: 1, maxHp: newChar.hp, currentHp: newChar.hp,
-                conditions: [], spellSlots: {}, isPublic: true
-            });
-            setShowForge(false); setForgeName(''); setForgeContext('');
-        } else { alert("The Forge failed."); }
-        setIsForging(false);
-    };
-    // END CHANGE
-
     const handleNameSave = () => {
         if (viewingCharacter && editableName && viewingCharacter.name !== editableName) {
             handleSheetSave({ ...viewingCharacter, name: editableName });
@@ -201,7 +176,6 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
         updateCampaign({ players: newPlayers });
         // END CHANGE
 
-        setShowForge(false);
         setShowCreationMenu(false);
     };
 
@@ -251,19 +225,6 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
         setShowCreationMenu(false);
     };
     // END CHANGE
-
-    const createManualCharacter = () => {
-        const blankChar = {
-            name: "New Hero",
-            race: "Human",
-            class: "Fighter",
-            level: 1,
-            hp: { current: 10, max: 10, temp: 0 },
-            stats: { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 },
-            bio: {}
-        };
-        handleNewCharacter(blankChar);
-    };
 
     const handleDelete = (id, e) => {
         e.stopPropagation();
@@ -404,30 +365,15 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
                                 </div>
                             ) : (
                                 <>
-                                    <p className="text-slate-400 mb-8">Choose your method of creation.</p>
-                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                                        {/* MANUAL */}
-                                        <div onClick={createManualCharacter} className="bg-slate-800 border-2 border-slate-700 hover:border-green-500 rounded-xl p-6 cursor-pointer group transition-all hover:-translate-y-1">
-                                            <div className="w-16 h-16 bg-green-900/30 text-green-500 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform"><Icon name="pencil" size={32}/></div>
-                                            <h3 className="font-bold text-xl text-white mb-2">Manual</h3>
-                                            <p className="text-xs text-slate-400">Build from scratch.</p>
-                                        </div>
-
-                                        {/* AI FORGE */}
-                                        {/* START CHANGE: Update onClick to use setShowForge instead of setShowAiCreator */}
-                                        <div onClick={() => { setShowCreationMenu(false); setShowForge(true); }} className="bg-slate-800 border-2 border-slate-700 hover:border-purple-500 rounded-xl p-6 cursor-pointer group transition-all hover:-translate-y-1">
-                                            <div className="w-16 h-16 bg-purple-900/30 text-purple-500 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform"><Icon name="sparkles" size={32}/></div>
-                                            <h3 className="font-bold text-xl text-white mb-2">AI Forge</h3>
-                                            <p className="text-xs text-slate-400">Generate instantly.</p>
-                                        </div>
-                                        {/* END CHANGE */}
-                                        {/* START CHANGE: Add D&D Beyond URL Import Option */}
-                                        <div onClick={() => { setShowCreationMenu(false); setShowDndBeyondImport(true); }} className="bg-slate-800 border-2 border-slate-700 hover:border-red-500 rounded-xl p-6 cursor-pointer group transition-all hover:-translate-y-1">
-                                            <div className="w-16 h-16 bg-red-900/30 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform"><Icon name="link" size={32}/></div>
-                                            <h3 className="font-bold text-xl text-white mb-2">D&D Beyond URL</h3>
-                                            <p className="text-xs text-slate-400">Import from public URL.</p>
-                                        </div>
-                                        {/* END CHANGE */}
+                                    <p className="text-slate-300 mb-6 text-sm max-w-md mx-auto leading-relaxed">
+                                        To ensure accurate stats, spells, and rules integration, please create your character on D&D Beyond first, set the sheet to Public, and import the URL here.
+                                    </p>
+                                    <div className="flex justify-center max-w-sm mx-auto">
+                                        <button onClick={() => { setShowCreationMenu(false); setShowDndBeyondImport(true); }} className="w-full bg-slate-800 border-2 border-slate-700 hover:border-red-500 rounded-xl p-8 cursor-pointer group transition-all hover:-translate-y-1 block text-left">
+                                            <div className="w-20 h-20 bg-red-900/30 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform"><Icon name="link" size={40}/></div>
+                                            <h3 className="font-bold text-2xl text-white mb-2 text-center">Import Character</h3>
+                                            <p className="text-sm text-slate-400 text-center">via D&D Beyond URL</p>
+                                        </button>
                                     </div>
                                 </>
                             )}
@@ -481,39 +427,6 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
             )}
             {/* END CHANGE */}
 
-            {/* AI CREATOR / FORGE */}
-            {/* START CHANGE: New Context-Aware Forge Modal */}
-            {showForge && (
-                <div className="fixed inset-0 z-50 bg-slate-900/90 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div className="bg-slate-800 border border-slate-600 rounded-lg shadow-2xl w-full max-w-md p-6 animate-in zoom-in-95 duration-200">
-                        <div className="flex justify-between items-center mb-6 border-b border-slate-700 pb-2">
-                            <h3 className="text-xl font-bold text-white flex items-center gap-2"><Icon name="sparkles" className="text-indigo-400"/> Character Forge</h3>
-                            <button onClick={() => setShowForge(false)} className="text-slate-400 hover:text-white"><Icon name="x"/></button>
-                        </div>
-                        {isForging ? (
-                            <div className="text-center py-8">
-                                <Icon name="loader-2" size={48} className="animate-spin text-indigo-500 mx-auto mb-4"/>
-                                <p className="text-indigo-300 font-bold animate-pulse">Consulting the Archives...</p>
-                                <p className="text-xs text-slate-500 mt-2">Checking Lore & Rules...</p>
-                            </div>
-                        ) : (
-                            <div className="space-y-4">
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-400 mb-1">Name</label>
-                                    <input autoFocus className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white" placeholder="e.g. Sildar Hallwinter" value={forgeName} onChange={e => setForgeName(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleForgeSubmit()}/>
-                                    <p className="text-[10px] text-slate-500 mt-1">If this name exists in your PDF/Journal, the AI will use that history!</p>
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-400 mb-1">Concept (Optional)</label>
-                                    <input className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white" placeholder="e.g. Dwarf Cleric" value={forgeContext} onChange={e => setForgeContext(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleForgeSubmit()}/>
-                                </div>
-                                <button onClick={handleForgeSubmit} disabled={!forgeName.trim()} className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded flex justify-center items-center gap-2 mt-4"><Icon name="hammer" size={18}/> Forge Hero</button>
-                            </div>
-                        )}
-                    </div>
-                </div>
-            )}
-            {/* END CHANGE */}
         </div>
     );
 };

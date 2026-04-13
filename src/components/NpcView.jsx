@@ -131,8 +131,18 @@ const NpcView = ({ data, setData, role, setChatInput, setView, onPossess, aiHelp
         const newNpc = await generateNpc(forgeName, instruction);
         
         if (newNpc) {
-            handleNpcComplete({ ...newNpc, quirk: "Forged from Lore" });
-            setShowForge(false); setForgeName(''); setForgeContext('');
+            const finalNpc = { ...newNpc, quirk: "Forged from Lore" };
+            
+            setShowForge(false); 
+            setForgeName(''); 
+            setForgeContext('');
+            
+            setNpcForModelSelection(finalNpc);
+            setAvailableModels([]);
+            setIsNewNpc(true);
+            setShowModelPicker(true);
+            setMiniSearchQuery(finalNpc.name);
+            handleMiniSearch(finalNpc.name, finalNpc.race);
         } else { alert("The Forge failed."); }
         setIsForging(false);
     };
@@ -177,7 +187,7 @@ const NpcView = ({ data, setData, role, setChatInput, setView, onPossess, aiHelp
                 imageUrl = `https://www.dnd5eapi.co${m.image}`;
             } else if (window.puter) {
                 try {
-                    const imgEl = await window.puter.ai.txt2img(`fantasy rpg token portrait of a ${m.name} ${m.type}, white background, high quality`);
+                    const imgEl = await window.puter.ai.txt2img(`D&D Beyond official digital character illustration of a ${m.name} (${m.type}). 2D fantasy character concept art, flat colors, solid white background, stylized token art, not photorealistic.`, { model: 'dall-e-3' });
                     imageUrl = await processPuterImage(imgEl);
                 } catch (e) { console.error("Image gen failed", e); }
             }
@@ -193,7 +203,67 @@ const NpcView = ({ data, setData, role, setChatInput, setView, onPossess, aiHelp
                 truesight: m.senses?.truesight || ""
             };
 
+            const getMod = (score) => Math.floor((score - 10) / 2);
+            const modifiers = {
+                str: getMod(m.strength), dex: getMod(m.dexterity), con: getMod(m.constitution),
+                int: getMod(m.intelligence), wis: getMod(m.wisdom), cha: getMod(m.charisma)
+            };
+
+            const savingThrows = { str: false, dex: false, con: false, int: false, wis: false, cha: false };
+            const skills = {};
+            (m.proficiencies || []).forEach(p => {
+                if (p.proficiency.index.startsWith('saving-throw-')) {
+                    savingThrows[p.proficiency.index.replace('saving-throw-', '')] = true;
+                } else if (p.proficiency.index.startsWith('skill-')) {
+                    skills[p.proficiency.name.replace('Skill: ', '')] = true;
+                }
+            });
+
+            const mapAction = (a, type) => {
+                let dmgString = (a.damage || []).map(d => `${d.damage_dice || ''} ${d.damage_type?.name || ''}`).join(' + ').trim();
+                let hitString = a.attack_bonus ? `+${a.attack_bonus}` : "";
+                let dcString = a.dc ? `DC ${a.dc.dc_value} ${a.dc.dc_type?.name || ''}` : "";
+                let desc = a.desc || "";
+                if (dcString && !hitString) hitString = dcString;
+                else if (dcString) desc = `**${dcString}**: ` + desc;
+                return {
+                    name: a.name + (a.usage ? ` (${a.usage.type} ${a.usage.times || a.usage.dice || ''})` : ""),
+                    desc: desc,
+                    type: type,
+                    category: "Attack",
+                    hit: hitString,
+                    dmg: dmgString
+                };
+            };
+
+            const spells = [];
+            const spellSlots = {};
+            (m.special_abilities || []).forEach(sa => {
+                if (sa.spellcasting) {
+                    if (sa.spellcasting.slots) {
+                        Object.entries(sa.spellcasting.slots).forEach(([lvl, count]) => {
+                            spellSlots[lvl] = { current: count, max: count };
+                        });
+                    }
+                    if (sa.spellcasting.spells) {
+                        sa.spellcasting.spells.forEach(sp => {
+                            spells.push({
+                                name: sp.name,
+                                level: sp.level,
+                                desc: sp.usage ? `Usage: ${sp.usage.type} ${sp.usage.times || ''}` : 'See SRD for details.',
+                                time: 'Action',
+                                range: 'Self',
+                                hit: sp.level > 0 ? `DC ${sa.spellcasting.dc || 10}` : '',
+                                dmg: ''
+                            });
+                        });
+                    }
+                }
+            });
+
             const newNpc = {
+                id: Date.now(),
+                isHidden: true,
                 name: m.name,
                 race: `${m.size} ${m.type} (${m.alignment})`,
                 class: "Monster",
@@ -201,36 +271,36 @@ const NpcView = ({ data, setData, role, setChatInput, setView, onPossess, aiHelp
                 hp: { current: m.hit_points, max: m.hit_points },
                 ac: acVal,
                 speed: speedStr,
-                stats: {
-                    str: m.strength, dex: m.dexterity, con: m.constitution,
-                    int: m.intelligence, wis: m.wisdom, cha: m.charisma
+                stats: { str: m.strength, dex: m.dexterity, con: m.constitution, int: m.intelligence, wis: m.wisdom, cha: m.charisma },
+                modifiers: modifiers,
+                profBonus: m.proficiency_bonus || 2,
+                initiative: modifiers.dex,
+                savingThrows: savingThrows,
+                skills: skills,
+                proficiencies: { armor: '', weapons: '', tools: '', languages: m.languages || '' },
+                defenses: {
+                    resistances: (m.damage_resistances || []).join(', '),
+                    immunities: [...(m.damage_immunities || []), ...(m.condition_immunities?.map(c => c.name) || [])].join(', '),
+                    vulnerabilities: (m.damage_vulnerabilities || []).join(', ')
                 },
                 senses: sensesObj,
                 image: imageUrl,
                 quirk: "SRD Import",
-                bio: { 
-                    backstory: `Imported from D&D 5e API.\nXP: ${m.xp}\nLanguages: ${m.languages}`,
-                    appearance: `A ${m.size} ${m.type}.` 
-                },
-                customActions: (m.actions || []).map(a => {
-                    let dmgString = "";
-                    if (a.damage && a.damage[0] && a.damage[0].damage_dice) {
-                        dmgString = a.damage[0].damage_dice;
-                        if(a.damage[0].damage_type?.name) dmgString += ` ${a.damage[0].damage_type.name}`;
-                    }
-                    return {
-                        name: a.name,
-                        desc: a.desc,
-                        type: "Action",
-                        hit: a.attack_bonus ? `+${a.attack_bonus}` : "",
-                        dmg: dmgString 
-                    };
-                }),
+                bio: { backstory: `Imported from D&D 5e API.\nXP: ${m.xp}`, appearance: `A ${m.size} ${m.type}.` },
+                customActions: [
+                    ...(m.actions || []).map(a => mapAction(a, 'Action')),
+                    ...(m.legendary_actions || []).map(a => mapAction(a, 'Legendary Action')),
+                    ...(m.reactions || []).map(a => mapAction(a, 'Reaction'))
+                ],
                 features: (m.special_abilities || []).map(f => ({ name: f.name, desc: f.desc, source: "Trait" })),
-                legendaryActions: (m.legendary_actions || []).map(l => ({ name: l.name, desc: l.desc }))
+                spells: spells,
+                spellSlots: spellSlots
             };
 
-            setNpcForModelSelection(newNpc);
+            // Enrich the imported monster with SRD descriptions for missing spells and actions
+            const enrichedNpc = await enrichCharacter(newNpc);
+
+            setNpcForModelSelection(enrichedNpc);
             setAvailableModels([]);
             setIsNewNpc(true);
             setShowCompendium(false);
@@ -271,7 +341,7 @@ const NpcView = ({ data, setData, role, setChatInput, setView, onPossess, aiHelp
         }
         if (isNewNpc) {
             handleNpcComplete(finalNpc);
-            alert(`Imported ${finalNpc.name} from SRD!`);
+            alert(`Successfully summoned ${finalNpc.name}!`);
         } else {
             handleSheetSave(finalNpc);
             alert(`Updated 3D model for ${finalNpc.name}!`);

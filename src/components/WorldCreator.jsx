@@ -136,7 +136,7 @@ Bottom-Left (Architect Mask): Pure Black background. Use THICK, SOLID, UN-ALIASE
 Bottom-Right (Illumination): Pure Black background. Pure Yellow (#FFFF00) solid circles representing light source origins (e.g., torches, lanterns, campfires, glowing crystals).
 Constraints: All 4 quadrants must be exactly the same size and perfectly aligned.`;
 
-            const imgElement = await window.puter.ai.txt2img(imageGenPrompt);
+            const imgElement = await window.puter.ai.txt2img(imageGenPrompt, { model: 'dall-e-3' });
             
             // 3. Process Master Sheet
             const panels = splitImage(imgElement);
