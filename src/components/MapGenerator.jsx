@@ -139,6 +139,7 @@ const MapGenerator = ({ onUpdateAssetLayer, mapData }) => {
     const [images, setImages] = useState({
         baseMap: null,
         heightMap: null,
+        normalMap: null,
         architectMask: null,
         illuminationMask: null
     });
@@ -148,6 +149,7 @@ const MapGenerator = ({ onUpdateAssetLayer, mapData }) => {
     const prompts = {
         baseMap: "System Role: You are the DungeonMind Architect Engine. Generate a detailed top-down TTRPG battlemap. NO text or labels.",
         heightMap: "System Role: You are the DungeonMind Architect Engine. Generate a colored topographical heightmap of the previous battlemap (use colors to represent elevation). NO text or labels.",
+        normalMap: "System Role: You are the DungeonMind Architect Engine. Generate a tangent-space normal map of the previous battlemap (using standard purple/blue/green hues for XYZ vectors). NO text or labels.",
         architectMask: "System Role: You are the DungeonMind Architect Engine. Generate an Architect Mask of the previous battlemap: Pure Black background. Use THICK, SOLID, UN-ALIASED strokes for features: Pure Red (#FF0000) for impassable Walls. Pure Blue (#0000FF) for Doors. Pure Cyan (#00FFFF) for Windows. Do NOT use gradients or soft edges here!",
         illuminationMask: "System Role: You are the DungeonMind Architect Engine. Generate Illumination Data of the previous battlemap: Pure Black background. Pure Yellow (#FFFF00) solid circles representing light source origins (e.g., torches, lanterns, campfires, glowing crystals)."
     };
@@ -175,7 +177,7 @@ const MapGenerator = ({ onUpdateAssetLayer, mapData }) => {
             const scale = mapData?.scale || 20;
             const dataUrl = images[layerType];
 
-            if (layerType === 'baseMap' || layerType === 'heightMap') {
+            if (layerType === 'baseMap' || layerType === 'heightMap' || layerType === 'normalMap') {
                 const url = await storeChunkedMap(dataUrl, `generated_${layerType}_${Date.now()}.png`);
                 await onUpdateAssetLayer(layerType, url);
             } else if (layerType === 'architectMask' || layerType === 'illuminationMask') {
@@ -225,7 +227,18 @@ const MapGenerator = ({ onUpdateAssetLayer, mapData }) => {
                 onCopy={handleCopy} 
             />
             <Section 
-                title="3. Architect Mask" 
+                title="3. Normal Map" 
+                promptText={prompts.normalMap} 
+                layerType="normalMap" 
+                image={images.normalMap} 
+                onDrop={handleDrop} 
+                onApply={handleApply} 
+                isProcessing={isProcessing.normalMap} 
+                copied={copied} 
+                onCopy={handleCopy} 
+            />
+            <Section 
+                title="4. Architect Mask" 
                 promptText={prompts.architectMask} 
                 layerType="architectMask" 
                 image={images.architectMask} 
@@ -236,7 +249,7 @@ const MapGenerator = ({ onUpdateAssetLayer, mapData }) => {
                 onCopy={handleCopy} 
             />
             <Section 
-                title="4. Illumination Data" 
+                title="5. Illumination Data" 
                 promptText={prompts.illuminationMask} 
                 layerType="illuminationMask" 
                 image={images.illuminationMask} 

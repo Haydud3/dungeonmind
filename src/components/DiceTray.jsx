@@ -25,7 +25,6 @@ const DiceTray = ({ diceLog = [], handleDiceRoll, onClose }) => {
         });
 
         if (formulaParts.length === 0) {
-            // Default to 1d20 if nothing selected but they click roll
             formulaParts.push('1d20');
         }
 
@@ -34,33 +33,7 @@ const DiceTray = ({ diceLog = [], handleDiceRoll, onClose }) => {
             formula += modifier > 0 ? ` + ${modifier}` : ` - ${Math.abs(modifier)}`;
         }
 
-        // We'll roll the combined formula. 
-        // Note: handleDiceRoll currently handles one basic formula like "XdY + Z". 
-        // Wait, if App.jsx handleDiceRoll uses a simple regex `(\d*)d(\d+)\s*(?:([+-])\s*(\d+))?`, it can only roll one type of die at a time!
-        // To support "2d6 + 1d4", handleDiceRoll in App.jsx needs an update, OR DiceTray handles the math and sends it.
-        // The user asked for D&D Beyond style multi-rolling. 
-        
-        // For now, let's fire off separate rolls for each die type if there are multiple, OR we can roll them here.
-        // But handleDiceRoll broadcasts the result. So firing multiple handleDiceRoll is easiest without changing App.jsx regex.
-        
-        // Actually, if we just iterate and roll:
-        let totalTotal = 0;
-        let totalMod = modifier;
-        
-        Object.entries(pool).forEach(([sides, count], index) => {
-            if (count > 0) {
-                // Only apply modifier to the last roll to avoid double-adding it, or just apply it to the first.
-                const isLast = index === Object.keys(pool).filter(k => pool[k] > 0).length - 1;
-                const currentMod = isLast ? modifier : 0;
-                const form = `${count}d${sides}${currentMod !== 0 ? (currentMod > 0 ? '+' + currentMod : currentMod) : ''}`;
-                handleDiceRoll(form);
-            }
-        });
-        
-        if (Object.keys(pool).every(k => pool[k] === 0)) {
-            handleDiceRoll(`1d20${modifier !== 0 ? (modifier > 0 ? '+' + modifier : modifier) : ''}`);
-        }
-
+        handleDiceRoll(formula, { alias: 'Custom Roll' });
         clearPool();
     };
 

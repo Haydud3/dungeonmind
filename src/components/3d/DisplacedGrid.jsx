@@ -2,7 +2,7 @@ import React, { useMemo } from 'react';
 import * as THREE from 'three';
 import { useTexture } from '@react-three/drei';
 
-const DisplacedGridContent = ({ mapData, aspect, resolvedHeightmapUrl }) => {
+const DisplacedGridContent = ({ mapData, aspect, resolvedHeightmapUrl, resolvedNormalMapUrl }) => {
     const { scale = 20, gridSize = 1, heightScale = 1, gridOffsetX = 0, gridOffsetY = 0, gridColor = '#ffffff', gridThickness = 1 } = mapData;
     const width = scale * aspect;
     const height = scale;
@@ -11,6 +11,9 @@ const DisplacedGridContent = ({ mapData, aspect, resolvedHeightmapUrl }) => {
     const subdivisions = isLowPerf ? 128 : 256;
 
     const heightmapTexture = useTexture(resolvedHeightmapUrl);
+    
+    const safeNormalMapUrl = resolvedNormalMapUrl || "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="; 
+    const normalMapTexture = useTexture(safeNormalMapUrl);
 
     const gridTexture = useMemo(() => {
         if (!gridSize || gridSize <= 0) return null;
@@ -56,6 +59,8 @@ const DisplacedGridContent = ({ mapData, aspect, resolvedHeightmapUrl }) => {
                 displacementMap={heightmapTexture}
                 displacementScale={heightScale}
                 displacementBias={0.01}
+                normalMap={resolvedNormalMapUrl ? normalMapTexture : null}
+                normalScale={new THREE.Vector2(1, 1)}
                 transparent={true}
                 roughness={1}
                 metalness={0}
@@ -67,7 +72,7 @@ const DisplacedGridContent = ({ mapData, aspect, resolvedHeightmapUrl }) => {
     );
 };
 
-export const DisplacedGrid = ({ mapData, aspect, resolvedHeightmapUrl }) => {
+export const DisplacedGrid = ({ mapData, aspect, resolvedHeightmapUrl, resolvedNormalMapUrl }) => {
     if (!resolvedHeightmapUrl) return null;
-    return <DisplacedGridContent mapData={mapData} aspect={aspect} resolvedHeightmapUrl={resolvedHeightmapUrl} />;
+    return <DisplacedGridContent mapData={mapData} aspect={aspect} resolvedHeightmapUrl={resolvedHeightmapUrl} resolvedNormalMapUrl={resolvedNormalMapUrl} />;
 };

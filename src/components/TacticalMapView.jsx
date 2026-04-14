@@ -213,6 +213,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
 
   const resolvedBackgroundUrl = useResolvedUrl(mapData?.backgroundUrl);
   const resolvedHeightmapUrl = useResolvedUrl(mapData?.heightmapUrl);
+  const resolvedNormalMapUrl = useResolvedUrl(mapData?.normalMapUrl);
 
   useEffect(() => {
     if (!resolvedBackgroundUrl) {
@@ -961,6 +962,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
         const existingMapData = existingMap.data();
         await updateMap(campaignCode, existingMap.id, {
             heightmapUrl: asset.generatedHeightmapUrl || existingMap.data().heightmapUrl || null,
+            normalMapUrl: asset.generatedNormalMapUrl || existingMap.data().normalMapUrl || null,
             walls: asset.generatedFeatures?.walls || existingMap.data().walls || {},
             lights: asset.generatedFeatures?.lights || existingMap.data().lights || {}
         });
@@ -987,7 +989,8 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
         const newMapData = {
             name: assetName ? assetName.replace(/\.[^/.]+$/, "") : "New Map",
             backgroundUrl: assetUrl,
-            heightmapUrl: asset.generatedHeightmapUrl || null, // Keep existing generated features
+            heightmapUrl: asset.generatedHeightmapUrl || null,
+            normalMapUrl: asset.generatedNormalMapUrl || null,
             walls: { ...(asset.generatedFeatures?.walls || {}), ...generatedBoundaryWalls }, // Merge generated walls
             lights: asset.generatedFeatures?.lights || {},
             gridSize: 1,
@@ -1055,6 +1058,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
         
         {/* Lighting setup */}
         <ambientLight color={envSetting.ambient.color} intensity={envSetting.ambient.intensity * lightingMultiplier} />
+        <hemisphereLight color="#ffffff" groundColor="#444444" intensity={0.4 * lightingMultiplier} />
         <directionalLight color={envSetting.dir.color} position={envSetting.dir.position} intensity={envSetting.dir.intensity * lightingMultiplier} />
         
         {mapData?.environment === 'rain' && (
@@ -1091,6 +1095,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
                 <Heightmap 
                     heightmapUrl={mapData.heightmapUrl}
                     backgroundUrl={mapData.backgroundUrl}
+                    normalMapUrl={mapData.normalMapUrl}
                     heightScale={mapData.heightScale || 1}
                     scale={mapData.scale || 20}
                     aspect={aspect}
@@ -1117,6 +1122,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
                         mapData={mapData}
                         aspect={aspect}
                         resolvedHeightmapUrl={resolvedHeightmapUrl}
+                        resolvedNormalMapUrl={resolvedNormalMapUrl}
                     />
                 </Suspense>
             ) : (
@@ -1200,6 +1206,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
                     draggedTokenId={draggedTokenId}
                     setDraggedTokenId={setDraggedTokenId}
                     viewMode={viewMode}
+                    activeTool={activeTool}
                     showNameplates={showNameplates}
                     selectedTokenIds={selectedTokenIds}
                     groupDragData={groupDragData}
@@ -1243,21 +1250,22 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
             role={role}
         />}
 
+        <MapLights 
+            lights={mapData?.lights} 
+            selectedLights={selectedLights}
+            onContextMenu={handleLightContextMenu} 
+            role={role} 
+            gridSize={gridSize} 
+            showLightRadius={isPlacingLights || isDeleting} 
+            onDelete={isDeleting && role === 'dm' ? (lightId) => {
+                const newLights = { ...mapData.lights };
+                delete newLights[lightId];
+                updateMap(campaignCode, activeMapId, { lights: newLights });
+            } : null}
+        />
+
         {role === 'dm' && (
             <>
-                <MapLights 
-                    lights={mapData?.lights} 
-                    selectedLights={selectedLights}
-                    onContextMenu={handleLightContextMenu} 
-                    role={role} 
-                    gridSize={gridSize} 
-                    showLightRadius={isPlacingLights || isDeleting} 
-                    onDelete={isDeleting ? (lightId) => {
-                        const newLights = { ...mapData.lights };
-                        delete newLights[lightId];
-                        updateMap(campaignCode, activeMapId, { lights: newLights });
-                    } : null}
-                />
                 <WallDrawingController
                     isEnabled={isDrawingWalls}
                     getTerrainHeight={getTerrainHeight}
@@ -1310,7 +1318,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
         <ZoomHandler zoomRef={zoomRef} />
       </Canvas>
 
-      <div className={`absolute top-4 left-4 z-[70] flex flex-col items-start gap-2 ${uiOpacityClass}`}>
+      <div className={`absolute top-4 left-4 vtt-safe-top vtt-safe-left z-[70] flex flex-col items-start gap-2 ${uiOpacityClass}`}>
         <div className="h-10 px-3 bg-slate-900/80 backdrop-blur border border-slate-700 rounded-lg shadow-lg flex items-center gap-2 cursor-help" title={`Connected to Realm: ${campaignCode}`}>
             <div className="w-2 h-2 rounded-full shadow-[0_0_10px_rgba(34,197,94,0.5)] bg-green-500"></div>
             <span className="text-sm font-bold text-amber-500 fantasy-font tracking-widest">{campaignCode}</span>
@@ -1342,7 +1350,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
           <CombatTrackerSidebar combat={data?.campaign?.combat} updateCampaign={updateCampaign} tokens={tokensList} role={role} campaignCode={campaignCode} activeMapId={activeMapId} campaignData={data?.campaign} allCharacters={allCharacters} data={data} onOpenSheet={onOpenSheet} className={uiOpacityClass} onClose={() => setShowInitiativeTracker(false)} />
       )}
 
-      <div className={`absolute top-4 right-4 z-[70] flex flex-col items-end gap-3 ${uiOpacityClass}`}>
+      <div className={`absolute top-4 right-4 vtt-safe-top vtt-safe-right z-[70] flex flex-col items-end gap-3 ${uiOpacityClass}`}>
           <button 
               onClick={() => setIsToolbarOpen(p => !p)} 
               className="w-10 h-10 bg-slate-900/80 backdrop-blur border border-slate-700 hover:border-amber-500 hover:bg-slate-800 text-slate-400 hover:text-white rounded-full shadow-lg flex items-center justify-center transition-all z-[71]"
@@ -1435,7 +1443,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
             </div>
         )}
 
-        <div className="w-full h-px bg-slate-700/50 my-1"></div>
+        <div className="w-8 h-px bg-slate-700/50 my-1 mr-1"></div>
 
             <div className="flex flex-col gap-2">
                 {onOpenDiceTray && <ToolButton name="Dice" icon="dices" onClick={onOpenDiceTray} isStandalone={true} />}

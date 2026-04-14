@@ -495,3 +495,15 @@ h1, h2, h3, .fantasy-font { font-family: 'Cinzel', serif; }
 .pseudo-fullscreen #mobile-nav {
     display: none !important;
 }
+
+/* Hide safe-area padding globally during fullscreen to allow map edge-to-edge drawing */
+.pseudo-fullscreen .pt-safe { padding-top: 0 !important; }
+.pseudo-fullscreen .pb-safe { padding-bottom: 0 !important; }
+.pseudo-fullscreen .pl-safe { padding-left: 0 !important; }
+.pseudo-fullscreen .pr-safe { padding-right: 0 !important; }
+
+/* When fullscreen removes root padding, UI elements need their own safe area offsets */
+.pseudo-fullscreen .vtt-safe-top { top: calc(1rem + env(safe-area-inset-top, 0px)) !important; }
+.pseudo-fullscreen .vtt-safe-bottom { bottom: calc(1rem + env(safe-area-inset-bottom, 0px)) !important; }
+.pseudo-fullscreen .vtt-safe-left { left: calc(1rem + env(safe-area-inset-left, 0px)) !important; }
+.pseudo-fullscreen .vtt-safe-right { right: calc(1rem + env(safe-area-inset-right, 0px)) !important; }

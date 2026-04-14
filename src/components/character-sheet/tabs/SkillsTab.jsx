@@ -55,20 +55,11 @@ const SkillsTab = ({ onDiceRoll, onLogAction }) => {
         if (!onDiceRoll) return;
         const { abilityMod, isProf, total } = calculateSkill(skill);
 
-        // Roll the 3D dice first
-        const roll = await onDiceRoll(20, { alias: skill.name });
-        if (typeof roll !== 'number') return;
-
-        const finalResult = roll + total;
-
-        // Send to Chat/Toast
-        onLogAction && onLogAction(`
-            <div class="font-bold text-white border-b border-slate-700 pb-1 mb-1">${skill.name} Check</div>
-            <div class="text-sm">
-                ${roll} (d20) + ${total} (mod) = <span class="text-amber-500 font-bold">${finalResult}</span>
-            </div>
-            <div class="text-[10px] text-slate-500">Proficiency: ${isProf ? 'Yes' : 'No'}</div>
-        `);
+        const formula = `1d20${total >= 0 ? '+' : ''}${total}`;
+        await onDiceRoll(formula, { 
+            alias: `${skill.name} Check`,
+            description: `Proficiency: ${isProf ? 'Yes' : 'No'}`
+        });
     };
 
     return (

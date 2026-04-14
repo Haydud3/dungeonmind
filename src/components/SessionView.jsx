@@ -489,9 +489,10 @@ const SessionView = ({
                                                             const naturalClass = isCrit ? "text-green-400 font-bold" : isFumble ? "text-red-400 font-bold" : "text-slate-300";
                                                             
                                                             const hasDetails = rollData.weaponName || rollData.damageType || rollData.actionType || rollData.alias;
+                                                            const isDamageRoll = rollData.actionType === 'damage' || rollData.actionType === 'spell' || !!rollData.damageType || (rollData.alias && rollData.alias.toLowerCase().includes('damage'));
                                                             
                                                             const renderApplyDamage = () => {
-                                                                if (role === 'dm') {
+                                                                if (role === 'dm' && isDamageRoll) {
                                                                     return (
                                                                         <button 
                                                                             onClick={() => handleApplyDamage(rollData.total)}
@@ -581,7 +582,8 @@ const SessionView = ({
                                                             // Fallback for old HTML messages
                                                             const html = msg.content;
                                                             const damageMatch = msg.content && (msg.content.match(/Rolled\s+(\d+)/i) || msg.content.match(/data-total="(\d+)"/));
-                                                            if (role === 'dm' && damageMatch) {
+                                                            const isHtmlDamage = msg.content && (msg.content.toLowerCase().includes('damage') || msg.content.toLowerCase().includes('dmg'));
+                                                            if (role === 'dm' && damageMatch && isHtmlDamage) {
                                                                 const dmg = parseInt(damageMatch[1]);
                                                                 return (
                                                                     <div>

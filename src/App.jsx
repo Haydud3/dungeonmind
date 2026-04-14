@@ -231,34 +231,42 @@ function DungeonMindApp() {
   // --- HELPER FUNCTIONS ---
   const handleDiceRoll = (formula, options = {}) => {
       try {
-          let strFormula = String(formula).trim();
+          let strFormula = String(formula).trim().toLowerCase();
           if (/^\d+$/.test(strFormula)) {
               strFormula = `1d${strFormula}`;
           }
           
-          const match = strFormula.match(/(\d*)d(\d+)\s*(?:([+-])\s*(\d+))?/i);
-          if (!match) {
+          let totalNatural = 0;
+          let rollsDetails = [];
+          let mod = 0;
+
+          // Parse formula: split by + or - and keep operators
+          const parts = strFormula.replace(/\s+/g, '').split(/(?=[+-])/);
+          if (parts.length === 0 || parts[0] === '') {
               console.error("Invalid dice formula", formula);
               return 0;
           }
-          
-          const count = parseInt(match[1]) || 1;
-          const sides = parseInt(match[2]) || 1; // Ensure sides is at least 1
-          const sign = match[3];
-          const modValue = parseInt(match[4]) || 0;
-          const mod = sign === '-' ? -modValue : modValue;
-          
-          let totalNatural = 0;
-          let rolls = [];
-          if (sides > 0) {
-              for(let i=0; i<count; i++) {
-                  const r = Math.floor(Math.random() * sides) + 1;
-                  rolls.push(r);
-                  totalNatural += r;
+
+          parts.forEach(part => {
+              const sign = part.startsWith('-') ? -1 : 1;
+              const cleanPart = part.replace(/^[+-]/, '');
+              
+              if (cleanPart.includes('d')) {
+                  const [c, s] = cleanPart.split('d');
+                  const count = parseInt(c) || 1;
+                  const sides = parseInt(s) || 1;
+                  
+                  for(let i=0; i<count; i++) {
+                      const r = Math.floor(Math.random() * sides) + 1;
+                      rollsDetails.push({ side: sides, result: r, sign });
+                      totalNatural += r * sign;
+                  }
+              } else if (cleanPart) {
+                  mod += (parseInt(cleanPart) || 0) * sign;
               }
-          }
+          });
           
-          // Ensure totalNatural and result are always finite numbers before storing in state
+          const rolls = rollsDetails.map(r => r.result * r.sign);
           const safeTotalNatural = Number.isFinite(totalNatural) ? totalNatural : 0;
           const safeResult = Number.isFinite(totalNatural + mod) ? (totalNatural + mod) : 0;
 
@@ -276,7 +284,7 @@ function DungeonMindApp() {
 
           const rollLog = {
               id: Date.now().toString() + Math.random().toString(36).substring(2, 5),
-              die: `${count}d${sides}`,
+              die: strFormula,
               formulaDisplay: options.alias || strFormula,
               natural: safeTotalNatural,
               rolls: rolls,
@@ -287,16 +295,18 @@ function DungeonMindApp() {
           
           setDiceLog(prev => [rollLog, ...prev].slice(0, 50));
           
-          const isUseAction = options.actionType === 'use' || sides === 0 || strFormula === '1d0';
+          const isUseAction = options.actionType === 'use' || rollsDetails.some(r => r.side === 0) || strFormula === '1d0';
 
           if (!isUseAction) {
-              const newAnimations = rolls.map(r => ({ die: sides, result: r }));
+              const newAnimations = rollsDetails.map(r => ({ die: r.side, result: r.result }));
               if (rollTimeoutRef.current) clearTimeout(rollTimeoutRef.current);
               setRollingDice(newAnimations);
               rollTimeoutRef.current = setTimeout(() => setRollingDice(null), 4000);
 
-              const naturalClass = (sides === 20 && safeTotalNatural === 20 && count === 1) ? "text-green-400" : (sides === 20 && safeTotalNatural === 1 && count === 1) ? "text-red-400" : "text-slate-300";
-              const rollsStr = rolls.length > 1 ? rolls.join(' + ') : rolls[0];
+              const isCrit = rollsDetails.length === 1 && rollsDetails[0].side === 20 && rollsDetails[0].result === 20;
+              const isFumble = rollsDetails.length === 1 && rollsDetails[0].side === 20 && rollsDetails[0].result === 1;
+              const naturalClass = isCrit ? "text-green-400" : isFumble ? "text-red-400" : "text-slate-300";
+              const rollsStr = rolls.length > 1 ? rolls.join(' + ').replace(/\+ -/g, '- ') : rolls[0];
               const toastHtml = `
                     <div class="space-y-1 text-left w-full">
                         <div class="font-bold text-amber-500 border-b border-amber-900/50 pb-1 flex justify-between">

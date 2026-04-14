@@ -43,41 +43,43 @@ const LightNode = ({ light, onContextMenu, role, gridSize, showLightRadius, onDe
 
     return (
         <group position={[light.position.x, light.position.y || 1, light.position.z]} userData={{ isLight: true, lightId: light.id }}>
-            <mesh 
-                renderOrder={200}
-                visible={role === 'dm'} // Always visible for DM
-                onClick={(e) => {
-                    if (onDelete) {
+            <pointLight color={light.color || "#fef08a"} intensity={2.5} distance={radiusInMapUnits * 1.5} decay={2} />
+            {role === 'dm' && (
+                <mesh 
+                    renderOrder={200}
+                    onClick={(e) => {
+                        if (onDelete) {
+                            e.stopPropagation();
+                            onDelete(light.id);
+                        }
+                    }}
+                    onContextMenu={(e) => {
+                        if (onDelete) return;
                         e.stopPropagation();
-                        onDelete(light.id);
-                    }
-                }}
-                onContextMenu={(e) => {
-                    if (onDelete) return;
-                    e.stopPropagation();
-                    if (onContextMenu) onContextMenu(e, light.id);
-                }}
-                onPointerOver={(e) => {
-                    if (onDelete || showLightRadius) {
-                        e.stopPropagation();
-                        setHover(light.id);
-                    }
-                }}
-                onPointerOut={(e) => {
-                    if (onDelete || showLightRadius) {
-                        e.stopPropagation();
-                        setHover(null);
-                    }
-                }}
-                onTouchStart={handleTouchStart}
-                onTouchMove={handleTouchMove}
-                onTouchEnd={handleTouchEnd}
-                onTouchCancel={handleTouchEnd}
-            >
-                <sphereGeometry args={[0.4]} />
-                <meshBasicMaterial color={light.color || "#fef08a"} transparent opacity={hovered === light.id ? 1 : 0.8} depthTest={false} />
-            </mesh>
-            {showLightRadius && (
+                        if (onContextMenu) onContextMenu(e, light.id);
+                    }}
+                    onPointerOver={(e) => {
+                        if (onDelete || showLightRadius) {
+                            e.stopPropagation();
+                            setHover(light.id);
+                        }
+                    }}
+                    onPointerOut={(e) => {
+                        if (onDelete || showLightRadius) {
+                            e.stopPropagation();
+                            setHover(null);
+                        }
+                    }}
+                    onTouchStart={handleTouchStart}
+                    onTouchMove={handleTouchMove}
+                    onTouchEnd={handleTouchEnd}
+                    onTouchCancel={handleTouchEnd}
+                >
+                    <sphereGeometry args={[0.4]} />
+                    <meshBasicMaterial color={light.color || "#fef08a"} transparent opacity={hovered === light.id ? 1 : 0.8} depthTest={false} />
+                </mesh>
+            )}
+            {role === 'dm' && showLightRadius && (
                 <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.9, 0]} renderOrder={200}>
                     <ringGeometry args={[Math.max(0.1, radiusInMapUnits - 0.1), radiusInMapUnits, 32]} />
                     <meshBasicMaterial color={light.color || "#fef08a"} transparent opacity={0.3} depthTest={false} />
@@ -91,7 +93,7 @@ export const MapLights = ({ lights, onContextMenu, role, gridSize = 1, showLight
     const [hovered, setHover] = useState(null);
     useCursor(hovered, 'pointer', 'auto');
 
-    if (!lights || role !== 'dm') return null;
+    if (!lights) return null;
 
     return (
         <group>

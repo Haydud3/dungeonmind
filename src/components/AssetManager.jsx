@@ -145,6 +145,9 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
         } else if (layerType === 'heightMap') {
             updates.generatedHeightmapUrl = data;
             mapUpdates.heightmapUrl = data;
+        } else if (layerType === 'normalMap') {
+            updates.generatedNormalMapUrl = data;
+            mapUpdates.normalMapUrl = data;
         } else if (layerType === 'architectMask') {
             const currentFeatures = asset.generatedFeatures || { walls: {}, lights: [] };
             updates.generatedFeatures = { ...currentFeatures, walls: data.walls };
@@ -169,7 +172,7 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
         await updateDoc(assetRef, updates);
         
         // Only apply to the current map if we are currently viewing this asset
-        if (mapData?.backgroundUrl === asset.generatedMapUrl || mapData?.backgroundUrl === asset.url || mapData?.backgroundUrl === data || mapUpdates.walls || mapUpdates.lights || mapUpdates.heightmapUrl) {
+        if (mapData?.backgroundUrl === asset.generatedMapUrl || mapData?.backgroundUrl === asset.url || mapData?.backgroundUrl === data || mapUpdates.walls || mapUpdates.lights || mapUpdates.heightmapUrl || mapUpdates.normalMapUrl) {
             updateMap(campaignCode, activeMapId, mapUpdates);
         }
     };
@@ -727,6 +730,12 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                         <button onClick={() => updateMap(campaignCode, activeMapId, { heightmapUrl: null, heightScale: 1 })} className="w-full py-2 border border-red-900/50 rounded text-center text-xs font-bold text-red-400 hover:bg-red-900/20 hover:text-red-300 hover:border-red-500 mt-4 transition-colors">
                             <Icon name="trash-2" size={14} className="inline mr-1" /> Remove Heightmap
                         </button>
+                        
+                        {mapData?.normalMapUrl && (
+                            <button onClick={() => updateMap(campaignCode, activeMapId, { normalMapUrl: null })} className="w-full py-2 border border-red-900/50 rounded text-center text-xs font-bold text-red-400 hover:bg-red-900/20 hover:text-red-300 hover:border-red-500 mt-4 transition-colors">
+                                <Icon name="trash-2" size={14} className="inline mr-1" /> Remove Normal Map
+                            </button>
+                        )}
                     </div>
                 </div>
             )}

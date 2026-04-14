@@ -18,7 +18,7 @@ export const CombatRibbon = ({ combat, tokens, role, className = "" }) => {
     ];
 
     return (
-        <div className={`absolute top-4 left-1/2 -translate-x-1/2 z-[60] flex items-center gap-4 bg-slate-900/90 backdrop-blur border border-slate-700 p-2 rounded-2xl shadow-2xl ${className}`}>
+        <div className={`absolute top-4 vtt-safe-top left-1/2 -translate-x-1/2 z-[60] flex items-center gap-4 bg-slate-900/90 backdrop-blur border border-slate-700 p-2 rounded-2xl shadow-2xl ${className}`}>
 
             <div className="flex items-center gap-2 overflow-hidden max-w-[60vw]">
                 {displayOrder.map((c, i) => {
@@ -152,7 +152,7 @@ export const CombatTrackerSidebar = ({ combat, updateCampaign, tokens, role, cam
     };
 
     return (
-        <div className={`absolute top-44 left-4 bottom-24 w-72 bg-slate-900/95 backdrop-blur border border-slate-700 shadow-2xl rounded-xl z-[60] flex flex-col overflow-hidden transition-all ${className} ${combat.active ? 'border-amber-500/30' : 'border-slate-700'}`}>
+        <div className={`absolute top-44 vtt-safe-left left-4 bottom-24 w-72 bg-slate-900/95 backdrop-blur border border-slate-700 shadow-2xl rounded-xl z-[60] flex flex-col overflow-hidden transition-all ${className} ${combat.active ? 'border-amber-500/30' : 'border-slate-700'}`}>
             <div className="p-3 bg-slate-800 border-b border-slate-700 flex justify-between items-center shrink-0">
                 <h3 className="font-bold text-amber-500 flex items-center gap-2"><Icon name="sword" size={16}/> Initiative</h3>
                 {role === 'dm' && (
