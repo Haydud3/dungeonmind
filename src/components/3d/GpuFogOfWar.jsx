@@ -3,6 +3,10 @@ import { useThree, useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { checkLineOfSight } from '../../utils/losUtils';
 
+// Pre-allocate buffer outside component to avoid GC spikes during FOW calculation
+const MAX_SHADOW_VERTICES = 10000 * 6; // up to 10k wall segments
+const shadowVertexBuffer = new Float32Array(MAX_SHADOW_VERTICES * 3);
+
 export const GpuFogOfWar = ({ enabled, walls, lights, gridSize, mapData, aspect, resolvedHeightmapUrl, playerVisionSources, role, fowWallsEnabled }) => {
     const { gl } = useThree();
     const scale = mapData?.scale || 20;
@@ -86,8 +90,14 @@ export const GpuFogOfWar = ({ enabled, walls, lights, gridSize, mapData, aspect,
         side: THREE.DoubleSide
     }), []);
 
+    const fowNeedsUpdate = useRef(true);
+    useEffect(() => {
+        fowNeedsUpdate.current = true;
+    }, [walls, lights, playerVisionSources, enabled, fowWallsEnabled, role, gridSize]);
+
     useFrame((state, delta) => {
-        if (!fowCamera) return;
+        if (!fowCamera || !fowNeedsUpdate.current) return;
+        fowNeedsUpdate.current = false;
 
         const oldColor = gl.getClearColor(new THREE.Color());
         const oldAlpha = gl.getClearAlpha();

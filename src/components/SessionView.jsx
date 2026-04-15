@@ -29,7 +29,7 @@ const SessionView = ({
     const castList = buildCastList(campaign || {}); // Guard against null campaign
     const myCharId = campaign?.assignments?.[user?.uid];
 
-    const saveMessageToJournal = (content) => {
+    const saveMessageToJournal = useCallback((content) => {
         const newPageId = Date.now().toString();
         const newPage = {
             id: newPageId,
@@ -38,7 +38,7 @@ const SessionView = ({
             timestamp: Date.now()
         };
         saveJournalPage(newPageId, newPage);
-    };
+    }, [saveJournalPage]);
 
     // ... (rest of the component)
 // END CHANGE
@@ -73,7 +73,7 @@ const SessionView = ({
     };
 
     // START CHANGE: Apply Damage Handler
-    const handleApplyDamage = async (amount) => {
+    const handleApplyDamage = useCallback(async (amount) => {
         const { selectedTokenIds } = useCharacterStore.getState();
         if (!selectedTokenIds || selectedTokenIds.length === 0) return alert("No target selected!");
 
@@ -154,7 +154,7 @@ const SessionView = ({
         } else {
             alert("No active map found.");
         }
-    };
+    }, [data, gameParams, context]);
     // END CHANGE
 
     // START CHANGE: Enhanced Formatter with Table Support
@@ -321,22 +321,22 @@ const SessionView = ({
         setEditingId(null);
     };
 
-    const visibleMessages = chatLog.filter(msg => {
-        if (msg.type === 'chat-public' || msg.type === 'ai-public') return true;
-        if (msg.role === 'system') return true;
-        if (msg.senderId === user?.uid || msg.targetId === user?.uid) return true;
-        if (msg.type === 'ai-private' && msg.senderId === user?.uid) return true;
-        if (role === 'dm') return true; 
-        if (msg.type === 'roll-public') return true;
-        if (msg.type === 'roll-private' && (role === 'dm' || msg.senderId === user?.uid)) return true;
-        return false;
-    });
-
-    // START CHANGE: Append Ghost Message if it exists
-    if (ghostMessage) {
-        visibleMessages.push(ghostMessage);
-    }
-    // END CHANGE
+    const visibleMessages = useMemo(() => {
+        const msgs = chatLog.filter(msg => {
+            if (msg.type === 'chat-public' || msg.type === 'ai-public') return true;
+            if (msg.role === 'system') return true;
+            if (msg.senderId === user?.uid || msg.targetId === user?.uid) return true;
+            if (msg.type === 'ai-private' && msg.senderId === user?.uid) return true;
+            if (role === 'dm') return true; 
+            if (msg.type === 'roll-public') return true;
+            if (msg.type === 'roll-private' && (role === 'dm' || msg.senderId === user?.uid)) return true;
+            return false;
+        });
+        if (ghostMessage) {
+            msgs.push(ghostMessage);
+        }
+        return msgs;
+    }, [chatLog, user?.uid, role, ghostMessage]);
 
     const getMessageStyle = (msg) => {
         if (msg.role === 'ai') return "border-l-4 border-amber-500 bg-amber-900/10"; 

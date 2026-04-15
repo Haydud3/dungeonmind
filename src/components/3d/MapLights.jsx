@@ -1,8 +1,10 @@
 import React, { useState, useRef } from 'react';
+import { useFrame } from '@react-three/fiber';
 import { useCursor } from '@react-three/drei';
 
 const LightNode = ({ light, onContextMenu, role, gridSize, showLightRadius, onDelete, hovered, setHover }) => {
     const touchStartPos = useRef({ x: 0, y: 0 });
+    const pointLightRef = useRef();
     const longPressTimer = useRef(null);
 
     const handleTouchStart = (e) => {
@@ -41,10 +43,29 @@ const LightNode = ({ light, onContextMenu, role, gridSize, showLightRadius, onDe
 
     const radiusInMapUnits = (light.radius || 15) / 5 * gridSize; 
 
+    // Add a dynamic flicker effect to lights (more intense for orange/yellow flame colors)
+    useFrame((state) => {
+        if (pointLightRef.current) {
+            const t = state.clock.elapsedTime;
+            // Base subtle pulse for all lights
+            let flicker = Math.sin(t * 10) * 0.05 + Math.sin(t * 23) * 0.05;
+            
+            // If the light is orange or yellow (like a torch/candle), make it flicker more erratically
+            const isFlame = light.color === '#fb923c' || light.color === '#fef08a' || light.color === '#fde047';
+            if (isFlame) {
+                flicker += Math.sin(t * 45) * 0.05 + Math.random() * 0.1;
+            }
+            
+            // Prevent intensity from dropping too low or spiking too high
+            const baseIntensity = light.intensity || 2.5;
+            pointLightRef.current.intensity = baseIntensity + flicker;
+        }
+    });
+
     return (
         <group position={[light.position.x, light.position.y || 1, light.position.z]} userData={{ isLight: true, lightId: light.id }}>
-            <pointLight color={light.color || "#fef08a"} intensity={2.5} distance={radiusInMapUnits * 1.5} decay={2} />
-            {role === 'dm' && (
+            <pointLight ref={pointLightRef} color={light.color || "#fef08a"} intensity={2.5} distance={radiusInMapUnits * 1.5} decay={2} />
+            {role === 'dm' && showLightRadius && !light.isTokenLight && (
                 <mesh 
                     renderOrder={200}
                     onClick={(e) => {
@@ -59,16 +80,12 @@ const LightNode = ({ light, onContextMenu, role, gridSize, showLightRadius, onDe
                         if (onContextMenu) onContextMenu(e, light.id);
                     }}
                     onPointerOver={(e) => {
-                        if (onDelete || showLightRadius) {
-                            e.stopPropagation();
-                            setHover(light.id);
-                        }
+                        e.stopPropagation();
+                        setHover(light.id);
                     }}
                     onPointerOut={(e) => {
-                        if (onDelete || showLightRadius) {
-                            e.stopPropagation();
-                            setHover(null);
-                        }
+                        e.stopPropagation();
+                        setHover(null);
                     }}
                     onTouchStart={handleTouchStart}
                     onTouchMove={handleTouchMove}
@@ -82,7 +99,7 @@ const LightNode = ({ light, onContextMenu, role, gridSize, showLightRadius, onDe
             {role === 'dm' && showLightRadius && (
                 <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.9, 0]} renderOrder={200}>
                     <ringGeometry args={[Math.max(0.1, radiusInMapUnits - 0.1), radiusInMapUnits, 32]} />
-                    <meshBasicMaterial color={light.color || "#fef08a"} transparent opacity={0.3} depthTest={false} />
+                    <meshBasicMaterial color={light.color || "#fef08a"} transparent opacity={light.isTokenLight ? 0.15 : 0.3} depthTest={false} />
                 </mesh>
             )}
         </group>

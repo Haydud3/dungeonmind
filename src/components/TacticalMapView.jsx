@@ -43,6 +43,7 @@ import { WallDrawingController } from './3d/controllers/WallDrawingController';
 import { Rain } from './3d/Rain';
 import { DropZone } from './ui/DropZone';
 import { DisplacedGrid } from './3d/DisplacedGrid';
+import { ToolButton } from './ui/ToolButton';
 
 // Helper function to generate boundary walls
 const generateBoundaryWalls = (mapScale, mapAspect) => {
@@ -72,7 +73,7 @@ const generateBoundaryWalls = (mapScale, mapAspect) => {
     return walls;
 };
 
-export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet, role, onOpenHandouts, onOpenChat, onOpenJournal, onOpenDiceTray }) {
+export default React.memo(function TacticalMapView({ campaignCode, activeMapId, onOpenSheet, role, onOpenHandouts, onOpenChat, onOpenJournal, onOpenDiceTray }) {
   const { campaign, updateCampaign, user } = useNewCampaign();
   const data = campaign;
   const cameraControllerRef = useRef();
@@ -354,8 +355,8 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
       });
   }, [selectedTokenIds, isSnapToGrid, gridSize, getTerrainHeight, campaignCode, activeMapId, mapData?.gridOffsetX, mapData?.gridOffsetY]);
 
-  const tokensList = Object.values(tokens).filter(Boolean); // Filter out null/undefined tokens
-  const allCharacters = [...(data?.players || []), ...(data?.npcs || [])];
+  const tokensList = useMemo(() => Object.values(tokens).filter(Boolean), [tokens]); // Filter out null/undefined tokens
+  const allCharacters = useMemo(() => [...(data?.players || []), ...(data?.npcs || [])], [data?.players, data?.npcs]);
 
   // Calculate Player Vision Sources (Used by both Fog Renderer and CPU Visibility checks)
   const playerVisionSources = useMemo(() => {
@@ -469,6 +470,25 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
       return visibleIds;
   }, [mapData?.walls, playerVisionSources, role]);
 
+  // Calculate combined lights (map lights + dynamic token lights)
+  const combinedLights = useMemo(() => {
+      const allLights = { ...(mapData?.lights || {}) };
+      tokensList.forEach(t => {
+          if (t.light && t.light.radius > 0) {
+              if (role !== 'dm' && t.isHidden) return; // Hide light if token is hidden from players
+              allLights[`token_light_${t.id}`] = {
+                  id: `token_light_${t.id}`,
+                  position: { x: t.x || 0, y: (t.y || 0) + 1, z: t.z || 0 }, // Elevate light slightly
+                  color: t.light.color || '#ffaa00',
+                  radius: t.light.radius,
+                  intensity: 1.5,
+                  isTokenLight: true
+              };
+          }
+      });
+      return allLights;
+  }, [mapData?.lights, tokensList, role]);
+
   // CPU-based Line of Sight / Token Visibility Filter
   const visibleTokenIds = useMemo(() => {
       if (role === 'dm') return new Set(tokensList.map(t => t.id)); // DM sees everything
@@ -500,11 +520,11 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
               }
 
               // Condition 2: Is the target illuminated by a light source AND does the player have line of sight to it?
-              if (mapData?.lights && mapData?.fowEnabled !== false) {
+              if (combinedLights && mapData?.fowEnabled !== false) {
                   // First, check if the player has LOS to the target token. If not, no light can make it visible to them.
                   if (checkLineOfSight(src, targetPt, wallsArray)) {
                       // Now, check if any light source illuminates the target token.
-                      for (const light of Object.values(mapData.lights)) {
+                      for (const light of Object.values(combinedLights)) {
                           const lightRange = (light.radius || 15) / 5 * gridSize;
                           const lightPt = { x: light.position.x, z: light.position.z };
                           const distToLight = Math.sqrt(Math.pow(lightPt.x - targetPt.x, 2) + Math.pow(lightPt.z - targetPt.z, 2));
@@ -521,6 +541,26 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
       });
       return visibleIds;
   }, [tokensList, role, playerVisionSources, mapData?.walls, mapData?.lights, mapData?.fowEnabled, allCharacters, user?.uid, data?.assignments, gridSize]);
+
+  // Calculate which 3D lights are visible to the players (prevents unseen lights from shining through walls via normal maps)
+  const visibleLights = useMemo(() => {
+      if (!combinedLights) return {};
+      if (role === 'dm' || mapData?.fowEnabled === false) return combinedLights;
+
+      const filteredLights = {};
+      const wallsArray = Object.values(mapData?.walls || {});
+
+      Object.values(combinedLights).forEach(light => {
+          const lightPt = { x: light.position.x, z: light.position.z };
+          for (const src of playerVisionSources) {
+              if (checkLineOfSight(src, lightPt, wallsArray)) {
+                  filteredLights[light.id] = light;
+                  break;
+              }
+          }
+      });
+      return filteredLights;
+  }, [mapData?.lights, mapData?.walls, mapData?.fowEnabled, playerVisionSources, role]);
 
   // Extract active combatant early so the Camera Director can hook into it
   const activeCombatantId = mapData && data?.campaign?.combat?.active && data?.campaign?.combat?.combatants?.length 
@@ -1049,7 +1089,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
           setWallContextMenu(null);
           setLightContextMenu(null);
         }}
-        onContextMenu={(e) => { e.preventDefault(); setWallContextMenu(null); setLightContextMenu(null); }}
+        onContextMenu={(e) => { e.preventDefault(); }}
       >
         <DropZone onMapDrop={handleDrop} />
         {/* Explicitly set the 3D scene background color */}
@@ -1241,7 +1281,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
             enabled={mapData?.fowEnabled} 
             fowWallsEnabled={mapData?.fowWallsEnabled}
             walls={mapData?.walls} 
-            lights={mapData?.lights}
+            lights={combinedLights}
             gridSize={gridSize}
             mapData={mapData}
             aspect={aspect}
@@ -1251,7 +1291,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
         />}
 
         <MapLights 
-            lights={mapData?.lights} 
+            lights={visibleLights} 
             selectedLights={selectedLights}
             onContextMenu={handleLightContextMenu} 
             role={role} 
@@ -1694,6 +1734,29 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
 
             {contextMenu.canControl && (
               <>
+                {(() => {
+                    const setTokenLight = (radius, color) => {
+                        const updates = {};
+                        const ids = selectedTokenIds.includes(contextMenu.tokenId) && selectedTokenIds.length > 1 ? selectedTokenIds : [contextMenu.tokenId];
+                        ids.forEach(id => updates[`tokens.${id}.light`] = radius ? { radius, color } : null);
+                        updateMap(campaignCode, activeMapId, updates);
+                        setContextMenu(null);
+                    };
+                    return (
+                        <>
+                            <div className="border-t border-slate-700 my-1"></div>
+                            <div className="px-4 py-1 text-xs uppercase font-bold text-slate-500">Light Source</div>
+                            <div className="flex flex-wrap gap-1 px-4 py-1 mb-1">
+                                <button onClick={() => setTokenLight(0, null)} className="p-1.5 bg-slate-800 border border-slate-700 hover:bg-slate-700 hover:border-slate-500 rounded text-xs transition-colors" title="None">🌑</button>
+                                <button onClick={() => setTokenLight(5, '#fef08a')} className="p-1.5 bg-slate-800 border border-slate-700 hover:bg-slate-700 hover:border-amber-500 rounded text-xs transition-colors" title="Candle (5ft)">🕯️</button>
+                                <button onClick={() => setTokenLight(20, '#fb923c')} className="p-1.5 bg-slate-800 border border-slate-700 hover:bg-slate-700 hover:border-orange-500 rounded text-xs transition-colors" title="Torch (20ft)">🏮</button>
+                                <button onClick={() => setTokenLight(30, '#fde047')} className="p-1.5 bg-slate-800 border border-slate-700 hover:bg-slate-700 hover:border-yellow-400 rounded text-xs transition-colors" title="Lantern (30ft)">💡</button>
+                                <button onClick={() => setTokenLight(20, '#22d3ee')} className="p-1.5 bg-slate-800 border border-slate-700 hover:bg-slate-700 hover:border-cyan-400 rounded text-xs transition-colors" title="Light Spell (20ft)">❇️</button>
+                            </div>
+                        </>
+                    );
+                })()}
+
                 <div className="border-t border-slate-700 my-1"></div>
                 <div className="flex items-center justify-between px-4 py-1">
                     <span className="text-xs font-bold text-slate-400">Size</span>
@@ -1817,28 +1880,49 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
                 onContextMenu={(e) => { e.preventDefault(); setLightContextMenu(null); }}
             ></div>
             <div 
-                className="fixed z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-2xl py-1 text-sm text-slate-200 min-w-[150px] overflow-hidden"
+                className="fixed z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-2xl py-1 text-sm text-slate-200 min-w-[200px] overflow-hidden"
                 style={{ top: lightContextMenu.y, left: lightContextMenu.x }}
                 onContextMenu={(e) => e.preventDefault()}
             >
-                <div className="text-xs uppercase font-bold text-slate-500 px-4 py-1">Light Source</div>
+                <div className="text-xs uppercase font-bold text-slate-500 px-4 py-1 flex justify-between items-center">
+                    Light Source
+                    <button onClick={() => setLightContextMenu(null)} className="text-slate-400 hover:text-white"><Icon name="x" size={14}/></button>
+                </div>
+                <div className="border-t border-slate-700 my-1"></div>
+                
+                <div className="flex items-center justify-between px-4 py-2">
+                    <span className="text-slate-300 text-xs font-bold">Color</span>
+                    <input 
+                        type="color" 
+                        value={mapData.lights[lightContextMenu.lightId]?.color || '#fef08a'} 
+                        onChange={(e) => {
+                            updateMap(campaignCode, activeMapId, { [`lights.${lightContextMenu.lightId}.color`]: e.target.value });
+                        }}
+                        className="w-8 h-8 rounded cursor-pointer bg-slate-900 border border-slate-700 p-0.5"
+                    />
+                </div>
+
+                <div className="px-4 py-2">
+                    <div className="flex justify-between items-center mb-1">
+                        <span className="text-slate-300 text-xs font-bold">Radius (ft)</span>
+                        <span className="text-xs text-amber-500 font-bold tabular-nums">{mapData.lights[lightContextMenu.lightId]?.radius || 30}</span>
+                    </div>
+                    <input 
+                        type="range" 
+                        min="5" 
+                        max="120" 
+                        step="5" 
+                        value={mapData.lights[lightContextMenu.lightId]?.radius || 30} 
+                        onChange={(e) => {
+                            updateMap(campaignCode, activeMapId, { [`lights.${lightContextMenu.lightId}.radius`]: Number(e.target.value) });
+                        }}
+                        className="w-full accent-amber-500"
+                    />
+                </div>
+                
                 <div className="border-t border-slate-700 my-1"></div>
                 <button 
-                    className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors text-amber-400"
-                    onClick={() => {
-                        const light = mapData.lights[lightContextMenu.lightId];
-                        const currentRadiusFt = light?.radius || 30;
-                        const newRadius = window.prompt("Enter new light radius in feet (e.g. 15, 30, 60):", currentRadiusFt);
-                        if (newRadius && !isNaN(newRadius)) {
-                            updateMap(campaignCode, activeMapId, { [`lights.${lightContextMenu.lightId}.radius`]: Number(newRadius) });
-                        }
-                        setLightContextMenu(null);
-                    }}
-                >
-                    Change Radius
-                </button>
-                <button 
-                    className="w-full text-left px-4 py-2 hover:bg-red-900/50 text-red-400 transition-colors"
+                    className="w-full text-left px-4 py-2 hover:bg-red-900/50 text-red-400 transition-colors flex items-center gap-2"
                     onClick={() => {
                         const newLights = { ...mapData.lights };
                         delete newLights[lightContextMenu.lightId];
@@ -1846,7 +1930,7 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
                         setLightContextMenu(null);
                     }}
                 >
-                    Delete Light
+                    <Icon name="trash-2" size={14}/> Delete Light
                 </button>
             </div>
         </>
@@ -1935,6 +2019,4 @@ export default function TacticalMapView({ campaignCode, activeMapId, onOpenSheet
       )}
     </div>
   );
-}
-
-import { ToolButton } from './ui/ToolButton';
+});
