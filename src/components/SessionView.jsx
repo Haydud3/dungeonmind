@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import Icon from './Icon';
 import { retrieveContext, buildPrompt, buildCastList } from '../utils/loreEngine';
 // START CHANGE: Import Character Store for Targeting
