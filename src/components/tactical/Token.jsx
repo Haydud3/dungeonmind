@@ -59,17 +59,15 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
 
   useCursor(hovered, 'pointer', 'auto');
 
-  const isPc = token.type === 'pc' || token.characterId;
-  const baseColor = isPc ? "#22c55e" : "#ef4444";
+  const isPc = token.type === 'pc';
+  const baseColor = token.color || (isPc ? "#22c55e" : "#ef4444");
   const size = (token.size || 1) * gridSize;
   const safeSize = !Number.isFinite(size) || size < 0.001 ? gridSize : size;
   const scale = hovered ? 1.1 : 1;
 
-  const isRightDragging = useRef(false);
-  const hasDragged = useRef(false);
-  const dragStartY = useRef(0);
   const isLeftDragging = useRef(false);
-  const startMouseY = useRef(0);
+  const isRightDragging = useRef(false); // Add this line to define isRightDragging
+  const hasDragged = useRef(false);
   const dragStartPos = useRef(new THREE.Vector3());
   const velocity = useRef(new THREE.Vector3());
   const previousPos = useRef(new THREE.Vector3(token.x || 0, token.y || 0.001, token.z || 0));
@@ -138,7 +136,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
           p.lerp(targetPosition, 0.15); // Follow smoothly
 
           // Update rotation smoothly as well
-          const targetRotY = token.rotationY || 0;
+          const targetRotY = isRotatingToken.current ? targetRotationY.current : (token.rotationY || 0);
           const diff = targetRotY - rotationRef.current.rotation.y;
           rotationRef.current.rotation.y += Math.atan2(Math.sin(diff), Math.cos(diff)) * 0.15;
           return; // Skip the rest of the logic if we're just observing
@@ -245,7 +243,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
     
     // Dragging left (negative deltaX) rotates clockwise (negative Y rotation).
     // Dragging right (positive deltaX) rotates counter-clockwise (positive Y rotation).
-    targetRotationY.current += deltaX * 0.02;
+    targetRotationY.current += deltaX * 0.05;
   };
 
   const handleNameplatePointerUp = (e) => {
@@ -253,27 +251,18 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
     e.stopPropagation();
     if (e.nativeEvent) e.nativeEvent.stopPropagation();
     isRotatingToken.current = false;
-    e.target.releasePointerCapture(e.pointerId);
+    if (e.target.hasPointerCapture(e.pointerId)) {
+        e.target.releasePointerCapture(e.pointerId);
+    }
     if (controls) controls.enabled = true;
+    document.body.style.cursor = 'auto';
     
     updateTokenPosition(token.id, { rotationY: targetRotationY.current });
   };
 
   const handlePointerDown = (e) => {
     if (!isTerrainReady) return;
-    if (e.button === 2) {
-      e.stopPropagation();
-      // Stop the native event so the MarqueeSelector doesn't accidentally trigger
-      // when you are right-clicking a token to change its elevation.
-      if (e.nativeEvent) e.nativeEvent.stopPropagation();
-      if (!canControl) return; // Prevent elevation change if not controllable
-      e.target.setPointerCapture(e.pointerId);
-      isRightDragging.current = true;
-      hasDragged.current = false;
-      dragStartY.current = meshRef.current.position.y;
-      startMouseY.current = e.clientY;
-      if (controls) controls.enabled = false;
-    } else if (e.pointerType === 'touch') {
+    if (e.pointerType === 'touch') {
       touchStartPos.current = { x: e.clientX, y: e.clientY };
       
       const startWorldPos = new THREE.Vector3();
@@ -300,14 +289,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
   };
 
   const handlePointerMove = (e) => {
-    if (isRightDragging.current) {
-      e.stopPropagation();
-      if (Math.abs(e.clientY - startMouseY.current) > 5) {
-        hasDragged.current = true;
-      }
-      const deltaY = -(e.clientY - startMouseY.current) * 0.05;
-      meshRef.current.position.y = Math.max(0.001, dragStartY.current + deltaY);
-    } else if (e.pointerType === 'touch' && longPressTimer.current) {
+    if (e.pointerType === 'touch' && longPressTimer.current) {
       const dx = e.clientX - touchStartPos.current.x;
       const dy = e.clientY - touchStartPos.current.y;
       if (Math.sqrt(dx * dx + dy * dy) > 10) {
@@ -321,44 +303,6 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
     if (e.pointerType === 'touch' && longPressTimer.current) {
       clearTimeout(longPressTimer.current);
       longPressTimer.current = null;
-    }
-    if (isRightDragging.current) {
-      e.stopPropagation();
-      e.target.releasePointerCapture(e.pointerId);
-      isRightDragging.current = false;
-      if (controls) controls.enabled = true;
-      
-      if (hasDragged.current && meshRef.current) {
-          const p = meshRef.current.position;
-          const tokenSize = token.size || 1;
-          const isEvenSize = Math.round(tokenSize) % 2 === 0;
-          const x = isSnapToGrid ? (isEvenSize ? Math.round((p.x - gridOffsetX) / gridSize) * gridSize + gridOffsetX : Math.floor((p.x - gridOffsetX) / gridSize) * gridSize + gridSize / 2 + gridOffsetX) : p.x;
-          const z = isSnapToGrid ? (isEvenSize ? Math.round((p.z - gridOffsetY) / gridSize) * gridSize + gridOffsetY : Math.floor((p.z - gridOffsetY) / gridSize) * gridSize + gridSize / 2 + gridOffsetY) : p.z;
-          const terrainY = getTerrainHeight ? getTerrainHeight(x, z) : 0;
-          const offset = p.y - terrainY - tokenBaseOffset;
-          const isFlying = Math.abs(offset) > 0.1;
-          
-          meshRef.current.position.set(x, p.y, z);
-          syncTarget.current.set(x, p.y, z);
-          isWaitingForSync.current = true;
-          
-          setSaveStatus('saving');
-          const updates = { 
-              x, 
-              y: p.y, 
-              z,
-              elevationOffset: isFlying ? offset : 0
-          };
-          console.log("[Token3D] Right-drag ended, requesting position update:", updates);
-          updateTokenPosition(token.id, updates).then(() => {
-              console.log("[Token3D] Right-drag position update successful!");
-              setSaveStatus('saved');
-              setTimeout(() => setSaveStatus(null), 2000);
-          }).catch(err => {
-              console.error("[Token3D] Right-drag position update failed:", err);
-              setSaveStatus(null);
-          });
-      }
     }
   };
 
@@ -487,7 +431,9 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
                 onPointerDown={handleNameplatePointerDown}
                 onPointerMove={handleNameplatePointerMove}
                 onPointerUp={handleNameplatePointerUp}
-                onPointerOut={(e) => { handleNameplatePointerUp(e); document.body.style.cursor = 'auto'; }}
+                onPointerOut={(e) => { 
+                    if (!isRotatingToken.current) document.body.style.cursor = 'auto'; 
+                }}
                 onPointerOver={(e) => { e.stopPropagation(); if (canControl && !activeTool) document.body.style.cursor = 'ew-resize'; }}
                 onClick={(e) => e.stopPropagation()}
             >
@@ -611,6 +557,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
           onDragStart={() => {
             if (controls) controls.enabled = false;
             isLeftDragging.current = true;
+            hasDragged.current = true;
             
             const worldPos = new THREE.Vector3();
             if (meshRef.current) meshRef.current.getWorldPosition(worldPos);
@@ -641,6 +588,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
           onDragEnd={() => {
             console.log("[Token3D] onDragEnd triggered for", token.id);
             if (controls) controls.enabled = true;
+            hasDragged.current = false;
             isLeftDragging.current = false;
             
             if (rulerRef.current) rulerRef.current.visible = false;

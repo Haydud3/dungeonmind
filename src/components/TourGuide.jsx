@@ -3,12 +3,13 @@ import Icon from './Icon';
 
 const TourGuide = ({ onClose, setView }) => {
     const steps = [
-        { title: "Welcome to DungeonMind", content: "Your AI-enhanced TTRPG assistant. This tool combines chat, journaling, and world-building into one synced dashboard.", view: 'session' },
-        { title: "The Session Hub", content: "Chat with the AI, roll dice, and interact with the world. Click the 'Book' icon in the top right to save the current chat directly to your Journal.", view: 'session' },
-        { title: "Journal Pro", content: "The new Journal supports full rich text. Insert images, grid tables, bold text, and more. It looks exactly like the final document while you type.", view: 'journal' },
-        { title: "The World Tab", content: "Your Campaign Bible and Atlas. DMs can define the 'Truths' of the world here, which the AI reads to stay in character.", view: 'world' },
-        { title: "NPC Registry", content: "Create fully fleshed-out characters with stats, quirks, and secrets. You can even click 'Chat' to speak *as* that NPC.", view: 'npcs' },
-        { title: "DM Tools", content: "In Settings, configure the AI model, edition (5e 2014 vs 2024), and even upload a PDF sourcebook for the AI to read.", view: 'settings' }
+        { title: "Welcome to DungeonMind", content: "Your AI-enhanced TTRPG assistant. This tool combines a 3D tactical map, smart chat, dynamic journaling, and world-building into one synced dashboard.", view: 'session' },
+        { title: "Tactical Map (VTT)", content: "A fully integrated 3D Virtual Tabletop. Drag and drop tokens, draw walls, place dynamic lights, and explore with real-time Line of Sight and Fog of War. Right-click tokens for advanced controls.", view: 'map' },
+        { title: "Party & Heroes", content: "Manage player characters here. Import character sheets directly from D&D Beyond or PDFs, track HP, and roll dice directly from their sheets.", view: 'party' },
+        { title: "The Bestiary", content: "Your custom monster manual. Import creatures from the 5e API, paste raw stat blocks, or use the AI Forge to generate entirely new enemies on the fly. You can also assign 3D minis!", view: 'npcs' },
+        { title: "The Archives (Lore)", content: "Feed the DungeonMind. Upload your campaign PDFs and sourcebooks here. The AI will automatically read and remember the lore to answer your questions perfectly in the chat.", view: 'lore' },
+        { title: "Smart Journaling", content: "Create rich-text handouts and secret DM notes. You can toggle visibility for specific players, track your campaign, and even ask the AI to help you write.", view: 'journal' },
+        { title: "Session Hub & Dice", content: "Chat with the AI, whisper to players, and roll dice using the built-in tray. DMs can generate smart session recaps or apply damage directly from the chat log!", view: 'session' }
     ];
 
     const [currentStep, setCurrentStep] = useState(0);

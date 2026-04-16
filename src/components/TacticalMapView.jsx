@@ -101,6 +101,9 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
   const [isDeleting, setIsDeleting] = useState(false);
   const [wallContextMenu, setWallContextMenu] = useState(null);
   const [lightContextMenu, setLightContextMenu] = useState(null);
+  const tokenMenuRef = useRef(null);
+  const wallMenuRef = useRef(null);
+  const lightMenuRef = useRef(null);
   const [activeTool, setActiveTool] = useState(null);
   const [isToolbarOpen, setIsToolbarOpen] = useState(true);
   const [viewMode, setViewMode] = useState('isometric');
@@ -745,6 +748,80 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
     setShowModelPicker(false);
   };
 
+  const [tokenMenuDisplayPosition, setTokenMenuDisplayPosition] = useState({ x: 0, y: 0 });
+  const [wallMenuDisplayPosition, setWallMenuDisplayPosition] = useState({ x: 0, y: 0 });
+  const [lightMenuDisplayPosition, setLightMenuDisplayPosition] = useState({ x: 0, y: 0 });
+
+  // Effect for token context menu positioning
+  useEffect(() => {
+    if (contextMenu && tokenMenuRef.current) {
+      // Use requestAnimationFrame to ensure DOM is rendered before measuring
+      requestAnimationFrame(() => {
+        const menuWidth = tokenMenuRef.current.offsetWidth;
+        const menuHeight = tokenMenuRef.current.offsetHeight;
+        const viewportWidth = window.innerWidth;
+        const viewportHeight = window.innerHeight;
+
+        let newX = contextMenu.x;
+        let newY = contextMenu.y;
+
+        if (newX + menuWidth > viewportWidth) {
+          newX = viewportWidth - menuWidth - 10; // 10px padding from right edge
+        }
+        if (newY + menuHeight > viewportHeight) {
+          newY = viewportHeight - menuHeight - 10; // 10px padding from bottom edge
+        }
+        setTokenMenuDisplayPosition({ x: Math.max(0, newX), y: Math.max(0, newY) });
+      });
+    }
+  }, [contextMenu]);
+
+  // Effect for wall context menu positioning
+  useEffect(() => {
+    if (wallContextMenu && wallMenuRef.current) {
+      requestAnimationFrame(() => {
+        const menuWidth = wallMenuRef.current.offsetWidth;
+        const menuHeight = wallMenuRef.current.offsetHeight;
+        const viewportWidth = window.innerWidth;
+        const viewportHeight = window.innerHeight;
+
+        let newX = wallContextMenu.x;
+        let newY = wallContextMenu.y;
+
+        if (newX + menuWidth > viewportWidth) {
+          newX = viewportWidth - menuWidth - 10;
+        }
+        if (newY + menuHeight > viewportHeight) {
+          newY = viewportHeight - menuHeight - 10;
+        }
+        setWallMenuDisplayPosition({ x: Math.max(0, newX), y: Math.max(0, newY) });
+      });
+    }
+  }, [wallContextMenu]);
+
+  // Effect for light context menu positioning
+  useEffect(() => {
+    if (lightContextMenu && lightMenuRef.current) {
+      requestAnimationFrame(() => {
+        const menuWidth = lightMenuRef.current.offsetWidth;
+        const menuHeight = lightMenuRef.current.offsetHeight;
+        const viewportWidth = window.innerWidth;
+        const viewportHeight = window.innerHeight;
+
+        let newX = lightContextMenu.x;
+        let newY = lightContextMenu.y;
+
+        if (newX + menuWidth > viewportWidth) {
+          newX = viewportWidth - menuWidth - 10;
+        }
+        if (newY + menuHeight > viewportHeight) {
+          newY = viewportHeight - menuHeight - 10;
+        }
+        setLightMenuDisplayPosition({ x: Math.max(0, newX), y: Math.max(0, newY) });
+      });
+    }
+  }, [lightContextMenu]);
+
   const handleContextMenu = (e, token) => {
     if (typeof navigator !== 'undefined' && navigator.vibrate) {
       navigator.vibrate(50); // Haptic feedback on token long-press/right-click
@@ -767,6 +844,8 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       size: token.size || 1,
       name: token.name,
       canControl: canControl,
+      color: token.color,
+      type: token.type,
     });
   };
 
@@ -1635,11 +1714,12 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           ></div>
           
           <div 
+            ref={tokenMenuRef}
             className="fixed z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-2xl py-1 text-sm text-slate-200 min-w-[150px] overflow-hidden"
-            style={{ top: contextMenu.y, left: contextMenu.x }}
+            style={{ top: tokenMenuDisplayPosition.y, left: tokenMenuDisplayPosition.x, maxHeight: 'calc(100vh - 20px)', overflowY: 'auto' }}
             onContextMenu={(e) => e.preventDefault()}
           >
-            {contextMenu.characterId && (
+            {contextMenu.characterId && onOpenSheet && (
               <button 
                 className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors"
                 onClick={() => {
@@ -1759,6 +1839,48 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
 
                 <div className="border-t border-slate-700 my-1"></div>
                 <div className="flex items-center justify-between px-4 py-1">
+                    <span className="text-xs font-bold text-slate-400">Elevation</span>
+                    <div className="flex items-center gap-1">
+                        <button onClick={() => {
+                            const token = mapData.tokens[contextMenu.tokenId];
+                            if (!token) return;
+                            const newElevation = (token.elevationOffset || 0) - 1;
+                            const terrainY = getTerrainHeight(token.x, token.z);
+                            const tokenBaseOffset = mapData?.tokenElevationOffset ?? -0.04;
+                            const newY = terrainY + newElevation + tokenBaseOffset;
+                            updateMap(campaignCode, activeMapId, { [`tokens.${contextMenu.tokenId}.elevationOffset`]: newElevation, [`tokens.${contextMenu.tokenId}.y`]: newY });
+                            setContextMenu(prev => ({ ...prev, elevationOffset: newElevation }));
+                        }} className="p-1.5 bg-slate-700 rounded hover:bg-slate-600"><Icon name="minus" size={12}/></button>
+                        <span className="text-sm font-bold w-12 text-center tabular-nums">{Math.round((contextMenu.elevationOffset || 0) * 5)} ft</span>
+                        <button onClick={() => {
+                            const token = mapData.tokens[contextMenu.tokenId];
+                            if (!token) return;
+                            const newElevation = (token.elevationOffset || 0) + 1;
+                            const terrainY = getTerrainHeight(token.x, token.z);
+                            const tokenBaseOffset = mapData?.tokenElevationOffset ?? -0.04;
+                            const newY = terrainY + newElevation + tokenBaseOffset;
+                            updateMap(campaignCode, activeMapId, { [`tokens.${contextMenu.tokenId}.elevationOffset`]: newElevation, [`tokens.${contextMenu.tokenId}.y`]: newY });
+                            setContextMenu(prev => ({ ...prev, elevationOffset: newElevation }));
+                        }} className="p-1.5 bg-slate-700 rounded hover:bg-slate-600"><Icon name="plus" size={12}/></button>
+                    </div>
+                </div>
+
+                <div className="border-t border-slate-700 my-1"></div>
+                <div className="flex items-center justify-between px-4 py-1">
+                    <span className="text-xs font-bold text-slate-400">Ring Color</span>
+                    <input 
+                        type="color" 
+                        value={contextMenu.color || (contextMenu.type === 'pc' ? "#22c55e" : "#ef4444")}
+                        onChange={(e) => {
+                            const newColor = e.target.value;
+                            updateMap(campaignCode, activeMapId, { [`tokens.${contextMenu.tokenId}.color`]: newColor });
+                            setContextMenu({ ...contextMenu, color: newColor }); // Keep menu open and update color instantly
+                        }}
+                        className="w-6 h-6 p-0 border-0 rounded cursor-pointer bg-slate-800"
+                    />
+                </div>
+                <div className="border-t border-slate-700 my-1"></div>
+                <div className="flex items-center justify-between px-4 py-1">
                     <span className="text-xs font-bold text-slate-400">Size</span>
                     <div className="flex items-center gap-1">
                         <button onClick={() => {
@@ -1809,12 +1931,13 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
         <>
             <div 
                 className="fixed inset-0 z-40" 
-                onClick={() => setWallContextMenu(null)} 
+                onClick={() => setWallContextMenu(null)}
                 onContextMenu={(e) => { e.preventDefault(); setWallContextMenu(null); }}
             ></div>
             <div 
+                ref={wallMenuRef}
                 className="fixed z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-2xl py-1 text-sm text-slate-200 min-w-[150px] overflow-hidden"
-                style={{ top: wallContextMenu.y, left: wallContextMenu.x }}
+                style={{ top: wallMenuDisplayPosition.y, left: wallMenuDisplayPosition.x, maxHeight: 'calc(100vh - 20px)', overflowY: 'auto' }}
                 onContextMenu={(e) => e.preventDefault()}
             >
                 <div className="text-xs uppercase font-bold text-slate-500 px-4 py-1">Set Type</div>
@@ -1876,12 +1999,13 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
         <>
             <div 
                 className="fixed inset-0 z-40" 
-                onClick={() => setLightContextMenu(null)} 
+                onClick={() => setLightContextMenu(null)}
                 onContextMenu={(e) => { e.preventDefault(); setLightContextMenu(null); }}
             ></div>
             <div 
+                ref={lightMenuRef}
                 className="fixed z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-2xl py-1 text-sm text-slate-200 min-w-[200px] overflow-hidden"
-                style={{ top: lightContextMenu.y, left: lightContextMenu.x }}
+                style={{ top: lightMenuDisplayPosition.y, left: lightMenuDisplayPosition.x, maxHeight: 'calc(100vh - 20px)', overflowY: 'auto' }}
                 onContextMenu={(e) => e.preventDefault()}
             >
                 <div className="text-xs uppercase font-bold text-slate-500 px-4 py-1 flex justify-between items-center">
