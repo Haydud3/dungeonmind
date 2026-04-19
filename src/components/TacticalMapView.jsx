@@ -1,6 +1,6 @@
 import React, { useState, useEffect, Suspense, useRef, useCallback, useMemo } from 'react';
 import { Canvas, useThree, useFrame } from '@react-three/fiber';
-import { MapControls, Grid, useTexture, DragControls, Html, useCursor, Line, Text, RoundedBox, Billboard } from '@react-three/drei';
+import { MapControls, Grid, useTexture, DragControls, Html, useCursor, Line, Text, RoundedBox, Billboard, useProgress } from '@react-three/drei';
 import * as THREE from 'three';
 import { subscribeToMap, updateMap, createMap } from '../utils/mapService';
 import { useNewCampaign } from '../contexts/NewCampaignProvider';
@@ -35,12 +35,14 @@ import { CombatCameraDirector } from './3d/CombatCameraDirector';
 import { ArchitectPenController } from './3d/controllers/ArchitectPenController';
 import { LightPlacementController } from './3d/controllers/LightPlacementController';
 import { MapLights } from './3d/MapLights';
+import { MapPings } from './3d/MapPings';
 
 import { GpuFogOfWar } from './3d/GpuFogOfWar';
 
 import { ZoomHandler } from './3d/ZoomHandler';
 import { WallDrawingController } from './3d/controllers/WallDrawingController';
-import { Rain } from './3d/Rain';
+import { WeatherParticles } from './3d/WeatherParticles';
+import { PostProcessingEffects } from './3d/PostProcessingEffects';
 import { DropZone } from './ui/DropZone';
 import { DisplacedGrid } from './3d/DisplacedGrid';
 import { ToolButton } from './ui/ToolButton';
@@ -71,6 +73,50 @@ const generateBoundaryWalls = (mapScale, mapAspect) => {
     walls[generateWallId()] = { id: generateWallId(), type: 'wall', points: [topLeft, bottomLeft] }; // Left wall
     walls[generateWallId()] = { id: generateWallId(), type: 'wall', points: [topRight, bottomRight] }; // Right wall
     return walls;
+};
+
+const LoadingOverlay = ({ activeMapId, isMapDataReady }) => {
+    const { active, progress, loaded, total } = useProgress();
+    const [prevMapId, setPrevMapId] = useState(activeMapId);
+    const [isForced, setIsForced] = useState(true);
+
+    if (activeMapId !== prevMapId) {
+        setPrevMapId(activeMapId);
+        setIsForced(true);
+    }
+
+    useEffect(() => {
+        if (isForced && isMapDataReady) {
+            const timer = setTimeout(() => setIsForced(false), 500);
+            return () => clearTimeout(timer);
+        }
+    }, [isForced, isMapDataReady]);
+    
+    const show = active || isForced || !isMapDataReady;
+
+    return (
+        <div className={`absolute inset-0 z-50 flex items-center justify-center bg-slate-950 text-white pointer-events-none transition-opacity duration-500 ${show ? 'opacity-100' : 'opacity-0'}`}>
+            <div className="flex flex-col items-center gap-6">
+                {/* Spinning Hexagon Ring */}
+                <div className="relative w-24 h-24">
+                    <div className="absolute inset-0 border-t-4 border-amber-500 border-r-4 border-r-transparent rounded-full animate-spin"></div>
+                    <div className="absolute inset-2 border-b-4 border-emerald-500 border-l-4 border-l-transparent rounded-full animate-spin" style={{ animationDirection: 'reverse', animationDuration: '1.5s' }}></div>
+                    <div className="absolute inset-0 flex items-center justify-center">
+                        <Icon name="hexagon" size={32} className="text-amber-500 animate-pulse" />
+                    </div>
+                </div>
+                
+                {/* Text and Bar */}
+                <div className="flex flex-col items-center gap-2">
+                    <div className="text-2xl font-bold font-serif text-amber-500 tracking-wider">Summoning Realm</div>
+                    <div className="w-64 h-1.5 bg-slate-800 rounded-full overflow-hidden shadow-inner">
+                        <div className="h-full bg-gradient-to-r from-amber-600 to-amber-400 transition-all duration-300 ease-out" style={{ width: `${progress}%` }}></div>
+                    </div>
+                    <div className="text-xs text-slate-500 font-mono tracking-widest">{loaded} / {total || 1} Assets</div>
+                </div>
+            </div>
+        </div>
+    );
 };
 
 export default React.memo(function TacticalMapView({ campaignCode, activeMapId, onOpenSheet, role, onOpenHandouts, onOpenChat, onOpenJournal, onOpenDiceTray }) {
@@ -105,6 +151,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
   const wallMenuRef = useRef(null);
   const lightMenuRef = useRef(null);
   const [activeTool, setActiveTool] = useState(null);
+  const [activeMeasurementStyle, setActiveMeasurementStyle] = useState('default');
   const [isToolbarOpen, setIsToolbarOpen] = useState(true);
   const [viewMode, setViewMode] = useState('isometric');
   const [draggedTokenId, setDraggedTokenId] = useState(null);
@@ -383,60 +430,85 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       return relevantTokens.map(t => {
           const character = allCharacters.find(c => String(c.id) === String(t.characterId));
           if (!character) return null;
-          if (mapData?.fowEnabled === false) return { id: t.id, x: t.x || 0, z: t.z || 0, range: 9999 };
           
-          let visionRange = 5; 
-          let parsedDv = 0;
-
-          if (typeof character?.senses === 'object' && character.senses !== null && !Array.isArray(character.senses)) {
-              const dv = character.senses.darkvision || character.senses.Darkvision;
-              if (dv) {
-                  const match = String(dv).match(/(\d+)/);
-                  if (match) parsedDv = parseInt(match[1], 10);
-              }
-          }
-          if (character?.darkvision) {
-              const match = String(character.darkvision).match(/(\d+)/);
-              if (match) parsedDv = Math.max(parsedDv, parseInt(match[1], 10));
-          }
-
-          if (parsedDv === 0 && character?.senses) {
-              let sensesStr = "";
-              if (typeof character.senses === 'string') {
-                  sensesStr = character.senses;
-              } else if (Array.isArray(character.senses)) {
-                  sensesStr = character.senses.map(s => typeof s === 'object' ? JSON.stringify(s) : String(s)).join(" ");
-              } else if (typeof character.senses === 'object') {
-                  sensesStr = Object.values(character.senses).map(String).join(" ");
-              }
-              
-              if (sensesStr.toLowerCase().includes('darkvision')) {
-                  const match = sensesStr.match(/darkvision[^0-9a-z]*(\d+)/i) || sensesStr.match(/(\d+)[^0-9a-z]*darkvision/i);
-                  if (match) parsedDv = parseInt(match[1], 10);
-                  else parsedDv = 60;
-              }
-          }
-
-          if (parsedDv === 0 && Array.isArray(character?.features)) {
-              const dvFeature = character.features.find(f => f.name?.toLowerCase().includes('darkvision'));
-              if (dvFeature) {
-                  const desc = typeof dvFeature === 'object' ? (dvFeature.desc || JSON.stringify(dvFeature)) : String(dvFeature);
-                  const matches = desc.match(/\b(30|60|90|120|150)\b/);
-                  if (matches) {
-                      parsedDv = parseInt(matches[1], 10);
-                  } else {
-                      const match = desc.match(/(\d+)/);
-                      if (match) parsedDv = parseInt(match[1], 10);
-                      else parsedDv = 60;
+          const parseSense = (senseName) => {
+              let val = 0;
+              if (typeof character?.senses === 'object' && character.senses !== null && !Array.isArray(character.senses)) {
+                  const s = character.senses[senseName] || character.senses[senseName.charAt(0).toUpperCase() + senseName.slice(1)];
+                  if (s) {
+                      const match = String(s).match(/(\d+)/);
+                      if (match) val = parseInt(match[1], 10);
                   }
               }
+              if (character?.[senseName]) {
+                  const match = String(character[senseName]).match(/(\d+)/);
+                  if (match) val = Math.max(val, parseInt(match[1], 10));
+              }
+              if (val === 0 && character?.senses) {
+                  let sensesStr = "";
+                  if (typeof character.senses === 'string') {
+                      sensesStr = character.senses;
+                  } else if (Array.isArray(character.senses)) {
+                      sensesStr = character.senses.map(s => typeof s === 'object' ? JSON.stringify(s) : String(s)).join(" ");
+                  } else if (typeof character.senses === 'object') {
+                      sensesStr = Object.values(character.senses).map(String).join(" ");
+                  }
+                  
+                  if (sensesStr.toLowerCase().includes(senseName)) {
+                      const regex1 = new RegExp(`${senseName}[^0-9a-z]*(\\d+)`, 'i');
+                      const regex2 = new RegExp(`(\\d+)[^0-9a-z]*${senseName}`, 'i');
+                      const match = sensesStr.match(regex1) || sensesStr.match(regex2);
+                      if (match) val = parseInt(match[1], 10);
+                      else val = 60;
+                  }
+              }
+              if (val === 0 && Array.isArray(character?.features)) {
+                  const feature = character.features.find(f => f.name?.toLowerCase().includes(senseName));
+                  if (feature) {
+                      const desc = typeof feature === 'object' ? (feature.desc || JSON.stringify(feature)) : String(feature);
+                      const matches = desc.match(/\b(30|60|90|120|150)\b/);
+                      if (matches) {
+                          val = parseInt(matches[1], 10);
+                      } else {
+                          const match = desc.match(/(\d+)/);
+                          if (match) val = parseInt(match[1], 10);
+                          else val = 60;
+                      }
+                  }
+              }
+              return val;
+          };
+
+          let parsedDv = parseSense('darkvision');
+          let parsedBlindsight = parseSense('blindsight');
+          let parsedTruesight = parseSense('truesight');
+          let parsedTremorsense = parseSense('tremorsense');
+
+          let visionRange = 5;
+          if (parsedDv > visionRange) visionRange = parsedDv;
+          if (parsedBlindsight > visionRange) visionRange = parsedBlindsight;
+          if (parsedTruesight > visionRange) visionRange = parsedTruesight;
+          if (parsedTremorsense > visionRange) visionRange = parsedTremorsense;
+
+          if (mapData?.fowEnabled === false) {
+              return { 
+                  id: t.id, x: t.x || 0, y: t.y || 0, z: t.z || 0, 
+                  range: 9999, // Max map vision
+                  darkvision: 9999, // Can see everything in LOS
+                  blindsight: (parsedBlindsight / 5) * gridSize,
+                  truesight: (parsedTruesight / 5) * gridSize,
+                  tremorsense: (parsedTremorsense / 5) * gridSize
+              };
           }
 
-          if (parsedDv > visionRange) {
-              visionRange = parsedDv;
-          }
-
-          return { id: t.id, x: t.x || 0, y: t.y || 0, z: t.z || 0, range: (visionRange / 5) * gridSize };
+          return { 
+              id: t.id, x: t.x || 0, y: t.y || 0, z: t.z || 0, 
+              range: (visionRange / 5) * gridSize,
+              darkvision: (parsedDv / 5) * gridSize,
+              blindsight: (parsedBlindsight / 5) * gridSize,
+              truesight: (parsedTruesight / 5) * gridSize,
+              tremorsense: (parsedTremorsense / 5) * gridSize
+          };
       }).filter(Boolean);
   }, [tokensList, role, user?.uid, data?.assignments, allCharacters, gridSize, data?.players, mapData?.fowEnabled]);
 
@@ -515,17 +587,42 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
 
           // Check visibility from each of the player's vision sources
           for (const src of playerVisionSources) {
-              // Condition 1: Is the target within darkvision range AND there is line of sight?
               const dist = Math.sqrt(Math.pow(src.x - targetPt.x, 2) + Math.pow(src.z - targetPt.z, 2));
-              if (dist <= src.range && checkLineOfSight(src, targetPt, wallsArray)) {
+              
+              const truesightRange = src.truesight ?? 0;
+              const blindsightRange = src.blindsight ?? 0;
+              const tremorsenseRange = src.tremorsense ?? 0;
+              const baseVisionRange = src.darkvision ?? src.range;
+
+              // Optimization: We check LOS only once if needed
+              const hasLOS = checkLineOfSight(src, targetPt, wallsArray);
+
+              const canSeeWithTruesight = dist <= truesightRange && hasLOS;
+              const canSeeWithBlindsight = dist <= blindsightRange && hasLOS;
+              const canSeeWithTremorsense = dist <= tremorsenseRange && (t.elevationOffset || 0) === 0; // Ignores LOS but requires target to be on ground
+              
+              const isTargetInvisible = (t.conditions || []).some(c => (typeof c === 'string' ? c : c.name)?.toLowerCase() === 'invisible') ||
+                                        (character?.conditions || []).some(c => (typeof c === 'string' ? c : c.name)?.toLowerCase() === 'invisible');
+
+              if (canSeeWithTruesight || canSeeWithBlindsight || canSeeWithTremorsense) {
                   visibleIds.add(t.id);
                   return; // Visible, no need to check further for this token
+              }
+
+              if (isTargetInvisible) {
+                  continue; // Cannot see with regular vision/darkvision/light
+              }
+
+              // Condition 1: Is the target within darkvision/base range AND there is line of sight?
+              if (dist <= baseVisionRange && hasLOS) {
+                  visibleIds.add(t.id);
+                  return; // Visible
               }
 
               // Condition 2: Is the target illuminated by a light source AND does the player have line of sight to it?
               if (combinedLights && mapData?.fowEnabled !== false) {
                   // First, check if the player has LOS to the target token. If not, no light can make it visible to them.
-                  if (checkLineOfSight(src, targetPt, wallsArray)) {
+                  if (hasLOS) {
                       // Now, check if any light source illuminates the target token.
                       for (const light of Object.values(combinedLights)) {
                           const lightRange = (light.radius || 15) / 5 * gridSize;
@@ -535,7 +632,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                           // A token is illuminated if it's within a light's range AND the light has LOS to it.
                           if (distToLight <= lightRange && checkLineOfSight(lightPt, targetPt, wallsArray)) {
                               visibleIds.add(t.id);
-                              return; // Visible, no need to check further for this token
+                              return; // Visible
                           }
                       }
                   }
@@ -1139,6 +1236,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       onDrop={(e) => e.preventDefault()}
       onMouseMove={handleMouseMove}
     >
+      <LoadingOverlay activeMapId={activeMapId} isMapDataReady={!!mapData && isAspectReady && (!mapData.heightmapUrl || !!terrainData)} />
       <Canvas 
         frameloop="always"
         camera={{ position: [0, 8, 8], fov: 50 }} 
@@ -1180,13 +1278,16 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
         <hemisphereLight color="#ffffff" groundColor="#444444" intensity={0.4 * lightingMultiplier} />
         <directionalLight color={envSetting.dir.color} position={envSetting.dir.position} intensity={envSetting.dir.intensity * lightingMultiplier} />
         
-        {mapData?.environment === 'rain' && (
-            <Rain 
-                viewMode={viewMode} 
-                mapScale={mapData?.scale || 20} 
-                aspect={aspect} 
-            />
-        )}
+        <WeatherParticles 
+            environment={mapData?.environment} 
+            viewMode={viewMode} 
+            mapScale={mapData?.scale || 20} 
+            aspect={aspect} 
+        />
+        <PostProcessingEffects 
+            environment={mapData?.environment} 
+            lightingMultiplier={lightingMultiplier} 
+        />
 
         <Suspense fallback={null}>
             <MeasurementTools 
@@ -1195,9 +1296,10 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                 gridSize={gridSize} 
                 tokens={tokensList}
                 measurements={mapData?.measurements || {}}
+                activeStyle={activeMeasurementStyle}
                 onSaveMeasurement={(m) => {
                     const id = Date.now().toString();
-                    updateMap(campaignCode, activeMapId, { [`measurements.${id}`]: m });
+                    updateMap(campaignCode, activeMapId, { [`measurements.${id}`]: { ...m, style: activeMeasurementStyle } });
                 }}
                 onDeleteMeasurement={(id) => {
                     updateMap(campaignCode, activeMapId, { [`measurements.${id}`]: null });
@@ -1292,6 +1394,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                 // Strip out old failing proxies if they were saved to the database
                 if (cleanUrl.includes('corsproxy.io/?')) cleanUrl = decodeURIComponent(cleanUrl.split('corsproxy.io/?')[1] || cleanUrl);
                 if (cleanUrl.includes('api.allorigins.win/raw?url=')) cleanUrl = decodeURIComponent(cleanUrl.split('api.allorigins.win/raw?url=')[1] || cleanUrl);
+                if (cleanUrl.includes('api.allorigins.win/raw?url=')) cleanUrl = decodeURIComponent(cleanUrl.split('api.allorigins.win/raw?url=')[1] || cleanUrl);
                 
                 // Proxy external images (excluding Firebase) through wsrv.nl to force permissive CORS headers
                 if (!cleanUrl.includes('firebasestorage.googleapis.com') && !cleanUrl.includes('wsrv.nl')) {
@@ -1381,6 +1484,14 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                 delete newLights[lightId];
                 updateMap(campaignCode, activeMapId, { lights: newLights });
             } : null}
+        />
+
+        <MapPings 
+            pings={mapData?.pings || {}} 
+            campaignCode={campaignCode} 
+            activeMapId={activeMapId} 
+            getTerrainHeight={getTerrainHeight}
+            userColor={role === 'dm' ? "#ef4444" : "#3b82f6"}
         />
 
         {role === 'dm' && (
@@ -1481,12 +1592,25 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           <div className={`flex flex-col items-end gap-3 transition-all duration-300 origin-top ${isToolbarOpen ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-4 pointer-events-none absolute top-12 right-0'}`}>
             <div className="flex flex-col items-end gap-2">
                 <div className="flex gap-1 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-1 rounded-full shadow-2xl">
+                <ToolButton name="freehand" icon="pen-tool" isActive={activeTool === 'freehand' || activeTool === 'freehand-linger'} onClick={() => { if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setActiveTool(p => p === 'freehand' ? 'freehand-linger' : p === 'freehand-linger' ? null : 'freehand'); }} title="Draw" />
                 <ToolButton name="ruler" icon="ruler" isActive={activeTool === 'ruler' || activeTool === 'ruler-linger'} onClick={() => { if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setActiveTool(p => p === 'ruler' ? 'ruler-linger' : p === 'ruler-linger' ? null : 'ruler'); }} />
                 <ToolButton name="cone" icon="triangle" isActive={activeTool === 'cone' || activeTool === 'cone-linger'} onClick={() => { if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setActiveTool(p => p === 'cone' ? 'cone-linger' : p === 'cone-linger' ? null : 'cone'); }} />
                 <ToolButton name="circle" icon="circle" isActive={activeTool === 'circle' || activeTool === 'circle-linger'} onClick={() => { if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setActiveTool(p => p === 'circle' ? 'circle-linger' : p === 'circle-linger' ? null : 'circle'); }} />
                 <ToolButton name="box" icon="square" isActive={activeTool === 'box' || activeTool === 'box-linger'} onClick={() => { if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setActiveTool(p => p === 'box' ? 'box-linger' : p === 'box-linger' ? null : 'box'); }} />
             </div>
             
+            {/* Template Style Picker */}
+            {activeTool && activeTool.includes('-linger') && activeTool !== 'ruler-linger' && (
+                <div className="flex gap-1 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-1 rounded-full shadow-2xl animate-in slide-in-from-top-2">
+                    <ToolButton name="style-default" icon="mouse-pointer-2" isActive={activeMeasurementStyle === 'default'} onClick={() => setActiveMeasurementStyle('default')} title="Standard" />
+                    <ToolButton name="style-fire" icon="flame" isActive={activeMeasurementStyle === 'fire'} onClick={() => setActiveMeasurementStyle('fire')} title="Fire" />
+                    <ToolButton name="style-ice" icon="snowflake" isActive={activeMeasurementStyle === 'ice'} onClick={() => setActiveMeasurementStyle('ice')} title="Ice" />
+                    <ToolButton name="style-web" icon="box-select" isActive={activeMeasurementStyle === 'web'} onClick={() => setActiveMeasurementStyle('web')} title="Web" />
+                    <ToolButton name="style-poison" icon="skull" isActive={activeMeasurementStyle === 'poison'} onClick={() => setActiveMeasurementStyle('poison')} title="Poison" />
+                    <ToolButton name="style-radiant" icon="sun" isActive={activeMeasurementStyle === 'radiant'} onClick={() => setActiveMeasurementStyle('radiant')} title="Radiant" />
+                </div>
+            )}
+
             {role === 'dm' && (
                 <div className="flex gap-1 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-1 rounded-full shadow-2xl">
                     <ToolButton name="architect" icon="pen-tool" isActive={isArchitectMode} onClick={() => { setActiveTool(null); setIsDrawingWalls(false); setIsPlacingLights(false); setIsArchitectMode(p => !p); }} />

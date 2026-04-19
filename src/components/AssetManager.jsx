@@ -203,6 +203,7 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                 let cleanUrl = finalUrl;
                 if (cleanUrl.includes('corsproxy.io/?')) cleanUrl = decodeURIComponent(cleanUrl.split('corsproxy.io/?')[1] || cleanUrl);
                 if (cleanUrl.includes('api.allorigins.win/raw?url=')) cleanUrl = decodeURIComponent(cleanUrl.split('api.allorigins.win/raw?url=')[1] || cleanUrl);
+                if (cleanUrl.includes('api.allorigins.win/raw?url=')) cleanUrl = decodeURIComponent(cleanUrl.split('api.allorigins.win/raw?url=')[1] || cleanUrl);
                 if (!cleanUrl.includes('firebasestorage.googleapis.com') && !cleanUrl.includes('wsrv.nl')) {
                     finalUrl = `https://wsrv.nl/?url=${encodeURIComponent(cleanUrl)}&cors=1`;
                 } else {
@@ -454,6 +455,10 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                             <option value="sunset">Sunset / Sunrise</option>
                             <option value="fog">Thick Fog</option>
                             <option value="rain">Dreary Rain</option>
+                            <option value="snow">Light Snow</option>
+                            <option value="ash">Volcanic Ash</option>
+                            <option value="spores">Magical Spores</option>
+                            <option value="swamp">Gloomy Swamp</option>
                         </select>
                         
                         <label className="block text-[10px] uppercase font-bold text-slate-500 mb-2 tracking-wider">Brightness Multiplier</label>

@@ -18,9 +18,9 @@ const DndBeyondImporter = ({ onImport, onCancel }) => { // Changed prop from onC
     setError('');
 
     try {
-      // Use corsproxy.io for GitHub Pages compatibility
+      // Use api.allorigins.win for GitHub Pages compatibility
       const encodedUrl = encodeURIComponent(`https://character-service.dndbeyond.com/character/v5/character/${characterId}`);
-      const response = await fetch(`https://corsproxy.io/?${encodedUrl}`);
+      const response = await fetch(`https://api.allorigins.win/raw?url=${encodedUrl}`);
       if (!response.ok) {
         throw new Error(`Failed to fetch character (Status: ${response.status}). Is the sheet public and the URL correct?`);
       }

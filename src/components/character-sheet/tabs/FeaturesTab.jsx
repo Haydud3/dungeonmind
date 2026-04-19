@@ -104,9 +104,18 @@ const FeaturesTab = ({ onUse, isOwner }) => {
                                     <div className="text-[10px] text-amber-500 uppercase font-bold tracking-wider mb-2">{feat.source}</div>
                                 </div>
                                 <div className="flex gap-2">
-                                    <button onClick={() => onUse && onUse(feat, 'Feature')} className="px-3 py-1 bg-slate-700 hover:bg-indigo-600 text-slate-300 hover:text-white rounded text-[10px] font-bold transition-colors">
-                                        Use
-                                    </button>
+                                    {feat.name.toLowerCase().includes('rage') && character.conditions?.includes('Raging') ? (
+                                        <button onClick={() => toggleCondition('Raging')} className="px-3 py-1 bg-red-900 hover:bg-red-800 text-red-200 hover:text-white rounded text-[10px] font-bold transition-colors">
+                                            End Rage
+                                        </button>
+                                    ) : (
+                                        <button onClick={() => {
+                                            if (onUse) onUse(feat, 'Feature');
+                                            if (feat.name.toLowerCase().includes('rage')) toggleCondition('Raging');
+                                        }} className="px-3 py-1 bg-slate-700 hover:bg-indigo-600 text-slate-300 hover:text-white rounded text-[10px] font-bold transition-colors">
+                                            Use
+                                        </button>
+                                    )}
                                     <button onClick={() => handleDelete(i)} className="text-slate-600 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity p-1"><Icon name="trash-2" size={16}/></button>
                                 </div>
                             </div>

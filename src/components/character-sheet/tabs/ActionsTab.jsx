@@ -17,7 +17,7 @@ const CORE_COMBAT_ACTIONS = [
 
 // UPDATE: Added isOwner
 const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
-    const { character, updateInfo } = useCharacterStore();
+    const { character, updateInfo, toggleCondition } = useCharacterStore();
     const [showAdd, setShowAdd] = useState(false);
     const [newAction, setNewAction] = useState({ name: "", hit: "", dmg: "", type: "Action", category: "Attack", notes: "" });
     
@@ -109,6 +109,9 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
         if (type === 'use') {
             if (action.uses && action.uses.current > 0) {
                 toggleUse(action.id);
+            }
+            if (action.name.toLowerCase().includes('rage')) {
+                toggleCondition('Raging');
             }
             if (onDiceRoll) {
                 onDiceRoll('1d0', {
@@ -271,9 +274,17 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
 
                             {/* UPDATE: Hide USE Button if not owner */}
                             {isOwner && (!action.hit && !action.dmg) && (
-                                <button onClick={(e) => handleRoll(action, 'use', e)} className="h-7 px-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-xs font-bold uppercase border border-indigo-500 shadow-md transition-colors">
-                                    USE
-                                </button>
+                                <>
+                                    {action.name.toLowerCase().includes('rage') && character.conditions?.includes('Raging') ? (
+                                        <button onClick={(e) => { e.stopPropagation(); toggleCondition('Raging'); }} className="h-7 px-3 bg-red-900 hover:bg-red-800 text-red-200 rounded text-xs font-bold uppercase border border-red-800 shadow-md transition-colors">
+                                            END RAGE
+                                        </button>
+                                    ) : (
+                                        <button onClick={(e) => handleRoll(action, 'use', e)} className="h-7 px-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-xs font-bold uppercase border border-indigo-500 shadow-md transition-colors">
+                                            USE
+                                        </button>
+                                    )}
+                                </>
                             )}
                             
                             {/* Edit/Delete Toggle */}

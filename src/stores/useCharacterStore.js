@@ -245,9 +245,13 @@ export const useCharacterStore = create((set, get) => ({
     takeLongRest: () => set((state) => {
         if (!state.character) return {};
         const char = { ...state.character };
-        char.hp.current = char.hp.max; // Full HP
-        char.hitDice.current = char.hitDice.max; // All Hit Dice back
-        Object.keys(char.spellSlots || {}).forEach(lvl => { char.spellSlots[lvl].current = char.spellSlots[lvl].max; }); // All Spell Slots back
+        if (char.hp && char.hp.max) char.hp.current = char.hp.max; // Full HP
+        if (char.hitDice && char.hitDice.max) char.hitDice.current = char.hitDice.max; // All Hit Dice back
+        Object.keys(char.spellSlots || {}).forEach(lvl => { 
+            if (char.spellSlots[lvl]) {
+                char.spellSlots[lvl].current = char.spellSlots[lvl].max || 0; 
+            }
+        }); // All Spell Slots back
         char.exhaustion = 0; // No exhaustion
         char.conditions = []; // Clear all conditions
         char.deathSaves = { successes: 0, failures: 0 }; // Reset death saves

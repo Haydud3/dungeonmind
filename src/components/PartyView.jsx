@@ -61,7 +61,7 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
         setImportStatus("Fetching from D&D Beyond...");
         try {
             const encodedUrl = encodeURIComponent(`https://character-service.dndbeyond.com/character/v5/character/${refreshCharacter.dndBeyondId}`);
-            const response = await fetch(`https://corsproxy.io/?${encodedUrl}`);
+            const response = await fetch(`https://api.allorigins.win/raw?url=${encodedUrl}`);
             if (!response.ok) throw new Error(`Fetch failed: ${response.status}`);
             const jsonData = await response.json();
             const parsedData = parseDndBeyondJson(jsonData);

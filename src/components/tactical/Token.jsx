@@ -1,10 +1,11 @@
 import React, { useState, useEffect, Suspense, useRef, useMemo } from 'react';
 import { useThree, useFrame } from '@react-three/fiber';
-import { DragControls, Html, useCursor, Text, RoundedBox, Billboard } from '@react-three/drei';
+import { DragControls, Html, useCursor, Text, RoundedBox, Billboard, Line } from '@react-three/drei';
 import * as THREE from 'three';
 import CharacterModel from '../CharacterModel';
 import { retrieveChunkedMap } from '../../utils/storageUtils';
 import Icon from '../Icon';
+import { ConditionParticles } from '../3d/ConditionParticles';
 
 const CONDITION_ICONS = {
   Blinded: { icon: 'eye-off', color: '#64748b' },
@@ -46,6 +47,32 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
   const [resolvedImage, setResolvedImage] = useState(null);
   const polarAngleRef = useRef(0);
   const [saveStatus, setSaveStatus] = useState(null); // 'saving' | 'saved' | null
+
+  // --- WAYPOINTS LOGIC ---
+  const [waypoints, setWaypoints] = useState([]);
+  const totalWaypointDistRef = useRef(0);
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.code === 'Space' && isLeftDragging.current) {
+        e.preventDefault();
+        const worldPos = new THREE.Vector3();
+        if (meshRef.current) meshRef.current.getWorldPosition(worldPos);
+        
+        setWaypoints(prev => {
+          const lastPt = prev.length > 0 ? prev[prev.length - 1] : dragStartPos.current;
+          const distSq = lastPt.distanceToSquared(worldPos);
+          if (distSq < 0.1) return prev; // Too close
+          
+          totalWaypointDistRef.current += Math.sqrt(distSq);
+          return [...prev, worldPos.clone()];
+        });
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+  // --- END WAYPOINTS LOGIC ---
 
   const rulerRef = useRef();
   const rulerLabelRef = useRef();
@@ -169,26 +196,30 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
       meshRef.current.position.y = targetY; // Stick to terrain locally
       
       // --- Ruler and Velocity Logic (for local drag only) ---
-      const start = dragStartPos.current;
+      const activeStart = waypoints.length > 0 ? waypoints[waypoints.length - 1] : dragStartPos.current;
       const end = new THREE.Vector3(displayX, targetY, displayZ);
-      const distSq = end.clone().sub(start).lengthSq();
+      const distSq = end.clone().sub(activeStart).lengthSq();
       
-      if (distSq > 0.01) {
-          const dist = Math.sqrt(distSq);
+      const totalDist = totalWaypointDistRef.current + Math.sqrt(distSq);
+
+      if (totalDist > 0.1) {
+          const activeSegmentDist = Math.sqrt(distSq);
           if (rulerRef.current) {
-              rulerRef.current.scale.y = dist;
-              rulerRef.current.position.copy(start).lerp(end, 0.5);
-              rulerRef.current.position.y = Math.max(start.y, end.y) + 0.1;
-              const dir = end.clone().sub(start).normalize();
-              rulerRef.current.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+              rulerRef.current.scale.y = activeSegmentDist;
+              rulerRef.current.position.copy(activeStart).lerp(end, 0.5);
+              rulerRef.current.position.y = Math.max(activeStart.y, end.y) + 0.1;
+              const dir = end.clone().sub(activeStart).normalize();
+              if (dir.lengthSq() > 0) {
+                  rulerRef.current.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+              }
               rulerRef.current.visible = true;
           }
           if (rulerLabelRef.current) {
-              rulerLabelRef.current.position.copy(start).lerp(end, 0.5);
-              rulerLabelRef.current.position.y = Math.max(start.y, end.y) + 0.4;
+              rulerLabelRef.current.position.copy(activeStart).lerp(end, 0.5);
+              rulerLabelRef.current.position.y = Math.max(activeStart.y, end.y) + 0.4;
               rulerLabelRef.current.visible = true;
               if (rulerTextRef.current) {
-                  rulerTextRef.current.innerText = `${Math.round((dist / gridSize) * 5)} ft`;
+                  rulerTextRef.current.innerText = `${Math.round((totalDist / gridSize) * 5)} ft`;
               rulerTextRef.current.style.display = 'block';
               }
           }
@@ -419,6 +450,8 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
               <meshBasicMaterial color="#3b82f6" transparent opacity={0.8} />
             </mesh>
           )}
+
+          <ConditionParticles conditions={token.conditions} size={safeSize} />
         </group>
 
         {showNameplates && (() => {
@@ -532,6 +565,22 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
 
   return (
     <group>
+      {waypoints.map((wp, i) => {
+          const startWp = i === 0 ? dragStartPos.current : waypoints[i - 1];
+          return (
+              <Line 
+                  key={`wp-${i}`} 
+                  points={[startWp, wp]} 
+                  color="#f59e0b" 
+                  lineWidth={3} 
+                  depthTest={false} 
+                  transparent 
+                  opacity={0.6} 
+                  renderOrder={100}
+              />
+          );
+      })}
+
       <mesh ref={rulerRef} visible={false} raycast={() => null}>
         <cylinderGeometry args={[0.08, 0.08, 1, 8]} />
         <meshBasicMaterial color="#f59e0b" transparent opacity={0.6} depthTest={false} />
@@ -566,6 +615,8 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
             previousPos.current.copy(worldPos);
             velocity.current.set(0, 0, 0);
             setDraggedTokenId(token.id);
+            setWaypoints([]);
+            totalWaypointDistRef.current = 0;
 
             const isGroupDrag = shiftHeldRef.current && selectedTokenIds && selectedTokenIds.includes(token.id) && selectedTokenIds.length > 1;
 
@@ -594,6 +645,8 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
             if (rulerRef.current) rulerRef.current.visible = false;
             if (rulerLabelRef.current) rulerLabelRef.current.visible = false;
             if (rulerTextRef.current) rulerTextRef.current.style.display = 'none';
+            setWaypoints([]);
+            totalWaypointDistRef.current = 0;
             
             if (meshRef.current && dragControlsRef.current) {
               const worldPos = new THREE.Vector3();
