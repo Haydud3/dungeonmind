@@ -8,6 +8,8 @@ import { enrichCharacter } from '../utils/srdEnricher.js';
 
 import { useNewCampaign } from '../contexts/NewCampaignProvider';
 import { searchGithubModels } from '../utils/miniManifest';
+import { Client } from "@gradio/client";
+import { retrieveChunkedMap, storeChunkedMap } from '../utils/storageUtils';
 
 // START CHANGE: Add generateNpc to props
 const NpcView = ({ data, setData, role, setChatInput, setView, onPossess, aiHelper, apiKey, edition, onDiceRoll, diceLog, generateNpc, onOpenDiceTray }) => {
@@ -396,6 +398,121 @@ ${pasteTextContent}`;
         setIsLoadingCompendium(false);
     };
 
+    const [isForging3D, setIsForging3D] = useState(false);
+    const [forge3DStatus, setForge3DStatus] = useState("");
+
+    const handleForge3D = async (npcForModel) => {
+        if (!npcForModel) return;
+        try {
+            setIsForging3D(true);
+            setForge3DStatus("The Forge is hot... Sculpting 3D mesh (this may take a minute).");
+            
+            let imageBlob = null;
+            let imageUrl = npcForModel.image;
+            if (!imageUrl) {
+                alert("No image available to forge a 3D mini.");
+                setIsForging3D(false);
+                return;
+            }
+
+            if (imageUrl.startsWith('chunked:')) {
+                const result = await retrieveChunkedMap(imageUrl);
+                if (result) {
+                    if (typeof result === 'string') {
+                        const res = await fetch(result);
+                        imageBlob = await res.blob();
+                    } else if (result instanceof Blob) {
+                        imageBlob = result;
+                    }
+                }
+            } else {
+                const res = await fetch(imageUrl);
+                imageBlob = await res.blob();
+            }
+
+            if (!imageBlob) throw new Error("Could not prepare image blob.");
+            
+            setForge3DStatus("Connecting to AI Forge... (May take 30-60s)");
+            let app = null;
+            const hfToken = import.meta.env.VITE_HF_TOKEN || localStorage.getItem('hf_token');
+            const options = hfToken ? { hf_token: hfToken } : {};
+            
+            try {
+                setForge3DStatus(`Waking up VAST-AI/TripoSG...`);
+                app = await Client.connect("VAST-AI/TripoSG", options);
+            } catch (e) {
+                console.warn(`Space VAST-AI/TripoSG is asleep or unavailable.`, e);
+            }
+            
+            if (!app) {
+                throw new Error("The 3D Forge AI server is currently asleep or overloaded. Please try again later, or add a Hugging Face token in your Settings to wake it up!");
+            }
+            
+            setForge3DStatus("Starting Forge Session...");
+            try {
+                await app.predict("/start_session", {});
+            } catch (e) {
+                console.warn("Failed to start session, may not be required", e);
+            }
+            
+            setForge3DStatus("Sculpting 3D Mesh... Please wait. (1/2)");
+            const meshResult = await app.predict("/image_to_3d", {
+                image: imageBlob,
+                seed: 0,
+                num_inference_steps: 8,
+                guidance_scale: 0,
+                simplify: true,
+                target_face_num: 10000
+            });
+
+            if (!meshResult.data || !meshResult.data[0]) {
+                throw new Error("Invalid response from AI during 3D generation.");
+            }
+
+            setForge3DStatus("Texturing 3D Mesh... Please wait. (2/2)");
+            const textureResult = await app.predict("/run_texture", {
+                image: imageBlob,
+                mesh_path: meshResult.data[0],
+                seed: 0
+            });
+
+            if (!textureResult.data || !textureResult.data[0]) {
+                throw new Error("Invalid response from AI during texturing.");
+            }
+
+            let glbUrl = "";
+            const glbOutput = textureResult.data[0];
+            if (typeof glbOutput === 'string') glbUrl = glbOutput;
+            else if (glbOutput && glbOutput.url) glbUrl = glbOutput.url;
+            else if (glbOutput && glbOutput.path) {
+                glbUrl = `https://vast-ai-triposg.hf.space/file=${glbOutput.path}`;
+            } else {
+                 throw new Error("Invalid response from AI.");
+            }
+
+            setForge3DStatus("Downloading 3D Mesh...");
+            const glbRes = await fetch(glbUrl);
+            const glbBlob = await glbRes.blob();
+            
+            setForge3DStatus("Saving to DungeonMind...");
+            const glbBase64 = await new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result);
+                reader.readAsDataURL(glbBlob);
+            });
+
+            const newChunkedUrl = await storeChunkedMap(glbBase64, (npcForModel.name || "npc") + "_mini.glb");
+            
+            handleModelSelect({ url: newChunkedUrl, scale: 1, yOffset: 0 });
+            
+        } catch (e) {
+            console.error(e);
+            alert("3D Forge Failed: " + e.message);
+        } finally {
+            setIsForging3D(false);
+        }
+    };
+
     const openModelPickerForExisting = (npcId) => {
         const npc = (data?.npcs || []).find(n => String(n.id) === String(npcId));
         if (!npc) return;
@@ -592,7 +709,15 @@ ${pasteTextContent}`;
                                         </div>
                                     ))}
                                     
-                                    <div onClick={() => handleModelSelect(null)} className="bg-slate-800 border border-slate-700 border-dashed rounded-lg p-2 cursor-pointer hover:border-blue-500 hover:bg-slate-700 transition-all group flex flex-col items-center justify-center">
+                                    <div onClick={() => handleForge3D(npcForModelSelection)} className="bg-slate-800 border border-purple-500/50 border-dashed rounded-lg p-2 cursor-pointer hover:border-purple-500 hover:bg-slate-700 transition-all group flex flex-col items-center justify-center shadow-[0_0_15px_rgba(168,85,247,0.15)] hover:shadow-[0_0_20px_rgba(168,85,247,0.3)]">
+                                        <div className="w-16 h-16 bg-slate-900 rounded-full mb-2 flex items-center justify-center border border-purple-500/30 group-hover:border-purple-500 group-hover:scale-110 transition-transform">
+                                            <Icon name="sparkles" size={24} className="text-purple-500 group-hover:text-purple-400"/>
+                                        </div>
+                                        <div className="font-bold text-sm text-purple-400 group-hover:text-purple-300 text-center">Forge 3D Mini</div>
+                                        <div className="text-[10px] text-purple-500/70 text-center flex items-center gap-1">AI Generate <a href="https://huggingface.co/spaces/VAST-AI/TripoSG" target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} className="hover:text-purple-300" title="Powered by VAST-AI/TripoSG"><Icon name="external-link" size={10} /></a></div>
+                                    </div>
+                                
+                                <div onClick={() => handleModelSelect(null)} className="bg-slate-800 border border-slate-700 border-dashed rounded-lg p-2 cursor-pointer hover:border-blue-500 hover:bg-slate-700 transition-all group flex flex-col items-center justify-center">
                                         <div className="w-16 h-16 bg-slate-900 rounded-full mb-2 flex items-center justify-center border border-slate-700 group-hover:border-blue-500/50">
                                             <Icon name="image" size={24} className="text-slate-500 group-hover:text-blue-400"/>
                                         </div>
@@ -898,6 +1023,11 @@ ${pasteTextContent}`;
                         <div className="p-6 overflow-y-auto custom-scroll bg-slate-950 flex-1">
                             {isSearchingMinis ? (
                                 <div className="text-center py-10 text-amber-500"><Icon name="loader" size={32} className="animate-spin mx-auto mb-2"/> Searching the Repository...</div>
+                            ) : isForging3D ? (
+                                <div className="text-center py-10 text-purple-500">
+                                    <Icon name="loader-2" size={48} className="animate-spin mx-auto mb-4"/>
+                                    <p className="font-bold animate-pulse">{forge3DStatus}</p>
+                                </div>
                             ) : (
                                 <>
                                     <p className="text-slate-400 mb-4 text-sm">We found {availableModels.length} compatible 3D models.</p>
@@ -911,6 +1041,14 @@ ${pasteTextContent}`;
                                         <div className="text-[10px] text-slate-500 truncate">Scale: {model.scale}x</div>
                                     </div>
                                 ))}
+                                
+                                <div onClick={() => handleForge3D(npcForModelSelection)} className="bg-slate-800 border border-purple-500/50 border-dashed rounded-lg p-2 cursor-pointer hover:border-purple-500 hover:bg-slate-700 transition-all group flex flex-col items-center justify-center shadow-[0_0_15px_rgba(168,85,247,0.15)] hover:shadow-[0_0_20px_rgba(168,85,247,0.3)]">
+                                    <div className="w-16 h-16 bg-slate-900 rounded-full mb-2 flex items-center justify-center border border-purple-500/30 group-hover:border-purple-500 group-hover:scale-110 transition-transform">
+                                        <Icon name="sparkles" size={24} className="text-purple-500 group-hover:text-purple-400"/>
+                                    </div>
+                                    <div className="font-bold text-sm text-purple-400 group-hover:text-purple-300 text-center">Forge 3D Mini</div>
+                                    <div className="text-[10px] text-purple-500/70 text-center flex items-center gap-1">AI Generate <a href="https://huggingface.co/spaces/VAST-AI/TripoSG" target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} className="hover:text-purple-300" title="Powered by VAST-AI/TripoSG"><Icon name="external-link" size={10} /></a></div>
+                                </div>
                                 
                                 <div onClick={() => handleModelSelect(null)} className="bg-slate-800 border border-slate-700 border-dashed rounded-lg p-2 cursor-pointer hover:border-blue-500 hover:bg-slate-700 transition-all group flex flex-col items-center justify-center">
                                     <div className="w-16 h-16 bg-slate-900 rounded-full mb-2 flex items-center justify-center border border-slate-700 group-hover:border-blue-500/50">

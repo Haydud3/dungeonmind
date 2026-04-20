@@ -9,6 +9,9 @@ import DndBeyondImporter from './character-sheet/DndBeyondImporter';
 import { parseDndBeyondJson } from './character-sheet/dndBeyondParser.js';
 // END CHANGE
 import { enrichCharacter } from '../utils/srdEnricher.js';
+import { searchGithubModels } from '../utils/miniManifest';
+import { Client } from "@gradio/client";
+import { retrieveChunkedMap, storeChunkedMap } from '../utils/storageUtils';
 
 import { useNewCampaign } from '../contexts/NewCampaignProvider';
 
@@ -30,6 +33,14 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
     const [isImporting, setIsImporting] = useState(false);
     const [importStatus, setImportStatus] = useState("Initializing...");
     const fileInputRef = useRef(null);
+
+    const [characterForModelSelection, setCharacterForModelSelection] = useState(null);
+    const [showModelPicker, setShowModelPicker] = useState(false);
+    const [availableModels, setAvailableModels] = useState([]);
+    const [miniSearchQuery, setMiniSearchQuery] = useState("");
+    const [isSearchingMinis, setIsSearchingMinis] = useState(false);
+    const [isForging3D, setIsForging3D] = useState(false);
+    const [forge3DStatus, setForge3DStatus] = useState("");
 
     // --- STALE STATE FIX ---
     // We use a Ref to hold the latest data to prevent overwriting updates
@@ -234,6 +245,125 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
         updateCampaign({ players: newPlayers });
     };
 
+    const handleMiniSearch = async (overrideQuery, typeFallback) => {
+        const q = overrideQuery !== undefined ? overrideQuery : miniSearchQuery;
+        if (!q) return;
+        setIsSearchingMinis(true);
+        let results = await searchGithubModels(q);
+        if (results.length === 0 && typeFallback) results = await searchGithubModels(typeFallback);
+        setAvailableModels(results);
+        setIsSearchingMinis(false);
+    };
+
+    const handleForge3D = async (charForModel) => {
+        if (!charForModel) return;
+        try {
+            setIsForging3D(true);
+            setForge3DStatus("The Forge is hot... Sculpting 3D mesh (this may take a minute).");
+            
+            let imageBlob = null;
+            let imageUrl = charForModel.image;
+            if (!imageUrl) {
+                alert("No image available to forge a 3D mini.");
+                setIsForging3D(false);
+                return;
+            }
+
+            if (imageUrl.startsWith('chunked:')) {
+                const result = await retrieveChunkedMap(imageUrl);
+                if (result) {
+                    if (typeof result === 'string') {
+                        const res = await fetch(result);
+                        imageBlob = await res.blob();
+                    } else if (result instanceof Blob) {
+                        imageBlob = result;
+                    }
+                }
+            } else {
+                const res = await fetch(imageUrl);
+                imageBlob = await res.blob();
+            }
+
+            if (!imageBlob) throw new Error("Could not prepare image blob.");
+            
+            setForge3DStatus("Connecting to AI... (May take 30-60s)");
+            const app = await Client.connect("stabilityai/TripoSR");
+            
+            setForge3DStatus("Sculpting 3D Mesh... Please wait.");
+            const result = await app.predict("/predict", [
+                imageBlob,
+                true, // Remove Background
+                85    // Foreground Ratio
+            ]);
+            
+            let glbUrl = "";
+            const glbOutput = result.data[0];
+            if (typeof glbOutput === 'string') glbUrl = glbOutput;
+            else if (glbOutput && glbOutput.url) glbUrl = glbOutput.url;
+            else if (glbOutput && glbOutput.path) {
+                glbUrl = "https://stabilityai-triposr.hf.space/file=" + glbOutput.path;
+            } else {
+                 throw new Error("Invalid response from AI.");
+            }
+
+            setForge3DStatus("Downloading 3D Mesh...");
+            const glbRes = await fetch(glbUrl);
+            const glbBlob = await glbRes.blob();
+            
+            setForge3DStatus("Saving to DungeonMind...");
+            const glbBase64 = await new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result);
+                reader.readAsDataURL(glbBlob);
+            });
+
+            const newChunkedUrl = await storeChunkedMap(glbBase64, (charForModel.name || "char") + "_mini.glb");
+            
+            handleModelSelect({ url: newChunkedUrl, scale: 1, yOffset: 0 });
+            
+        } catch (e) {
+            console.error(e);
+            alert("3D Forge Failed: " + e.message);
+        } finally {
+            setIsForging3D(false);
+        }
+    };
+
+    const handleModelSelect = (model, forceStatue = false) => {
+        const finalChar = { ...characterForModelSelection };
+        if (model) {
+            finalChar.modelUrl = model.url;
+            finalChar.modelScale = model.scale;
+            finalChar.modelYOffset = model.yOffset;
+            finalChar.forceStatue = forceStatue;
+        } else {
+            delete finalChar.modelUrl;
+            delete finalChar.modelScale;
+            delete finalChar.modelYOffset;
+            delete finalChar.forceStatue;
+        }
+        
+        handleSheetSave(finalChar);
+        alert(`Updated 3D model for ${finalChar.name}!`);
+        if (viewingCharacterId === finalChar.id) {
+            useCharacterStore.getState().loadCharacter(finalChar);
+        }
+        
+        setCharacterForModelSelection(null);
+        setShowModelPicker(false);
+    };
+
+    const openModelPickerForExisting = (charId) => {
+        const currentData = dataRef.current || {};
+        const char = (currentData.players || []).find(n => String(n.id) === String(charId));
+        if (!char) return;
+        setCharacterForModelSelection(char);
+        setAvailableModels([]);
+        setShowModelPicker(true);
+        setMiniSearchQuery(char.name);
+        handleMiniSearch(char.name, char.race);
+    };
+
     if (viewingCharacterId) {
         return (
             <div className="flex flex-col h-full w-full bg-slate-950">
@@ -259,8 +389,85 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
                         onLogAction={onLogAction}
                         onBack={() => setViewingCharacterId(null)} 
                         role={role}
+                        onOpenModelPicker={() => openModelPickerForExisting(viewingCharacterId)}
                         onOpenDiceTray={onOpenDiceTray}
                     />
+                    {showModelPicker && characterForModelSelection && (
+                        <div className="absolute inset-0 z-[10000] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
+                        <div className="max-w-2xl w-full bg-slate-900 rounded-xl border border-slate-700 shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
+                            <div className="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-800">
+                                <h3 className="font-bold text-white flex items-center gap-2"><Icon name="box" size={18}/> Select 3D Mini: {characterForModelSelection.name}</h3>
+                                <button onClick={() => { setCharacterForModelSelection(null); setShowModelPicker(false); }} className="text-slate-400 hover:text-white"><Icon name="x" size={20}/></button>
+                            </div>
+                            <div className="p-4 border-b border-slate-700 bg-slate-900 flex gap-2">
+                                <input 
+                                    autoFocus
+                                    value={miniSearchQuery} 
+                                    onChange={e => setMiniSearchQuery(e.target.value)} 
+                                    onKeyDown={e => e.key === 'Enter' && handleMiniSearch()}
+                                    placeholder="Search 3D Models (e.g. Dragon, Goblin)..." 
+                                    className="flex-1 bg-slate-950 border border-slate-600 rounded px-3 py-2 text-white outline-none focus:border-amber-500"
+                                />
+                                <button 
+                                    onClick={() => handleMiniSearch()} 
+                                    disabled={isSearchingMinis} 
+                                    className="bg-amber-600 hover:bg-amber-500 px-4 rounded text-white font-bold flex items-center justify-center"
+                                >
+                                    {isSearchingMinis ? <Icon name="loader" size={18} className="animate-spin"/> : <Icon name="search" size={18}/>}
+                                </button>
+                            </div>
+                            <div className="p-6 overflow-y-auto custom-scroll bg-slate-950 flex-1">
+                                {isSearchingMinis ? (
+                                    <div className="text-center py-10 text-amber-500"><Icon name="loader" size={32} className="animate-spin mx-auto mb-2"/> Searching the Repository...</div>
+                                ) : isForging3D ? (
+                                    <div className="text-center py-10 text-purple-500">
+                                        <Icon name="loader-2" size={48} className="animate-spin mx-auto mb-4"/>
+                                        <p className="font-bold animate-pulse">{forge3DStatus}</p>
+                                    </div>
+                                ) : (
+                                    <>
+                                        <p className="text-slate-400 mb-4 text-sm">We found {availableModels.length} compatible 3D models.</p>
+                                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                                    {availableModels.map((model, i) => (
+                                        <div key={i} className="bg-slate-800 border border-slate-700 rounded-lg p-2 flex flex-col justify-between transition-all group">
+                                            <div>
+                                                <div className="aspect-square bg-slate-900 rounded-md mb-2 overflow-hidden border border-slate-700 relative">
+                                                {model.thumb ? <img src={model.thumb} className="w-full h-full object-cover" /> : <Icon name="box" size={32} className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-slate-600"/>}
+                                            </div>
+                                                <div className="font-bold text-sm text-slate-200 truncate">{model.name}</div>
+                                                <div className="text-[10px] text-slate-500 truncate">Scale: {model.scale}x</div>
+                                            </div>
+                                            <div className="flex gap-2 mt-2">
+                                                <button onClick={() => handleModelSelect(model)} className="flex-1 text-center text-xs px-2 py-1.5 bg-amber-700 hover:bg-amber-600 rounded text-white font-bold transition-colors">Select</button>
+                                                <button onClick={() => handleModelSelect(model, true)} className="text-center text-xs p-1.5 bg-slate-700 hover:bg-slate-600 rounded text-slate-300 hover:text-white transition-colors" title="Select as stone statue">
+                                                    <Icon name="gem" size={14}/>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                    
+                                    <div onClick={() => handleForge3D(characterForModelSelection)} className="bg-slate-800 border border-purple-500/50 border-dashed rounded-lg p-2 cursor-pointer hover:border-purple-500 hover:bg-slate-700 transition-all group flex flex-col items-center justify-center shadow-[0_0_15px_rgba(168,85,247,0.15)] hover:shadow-[0_0_20px_rgba(168,85,247,0.3)]">
+                                        <div className="w-16 h-16 bg-slate-900 rounded-full mb-2 flex items-center justify-center border border-purple-500/30 group-hover:border-purple-500 group-hover:scale-110 transition-transform">
+                                            <Icon name="sparkles" size={24} className="text-purple-500 group-hover:text-purple-400"/>
+                                        </div>
+                                        <div className="font-bold text-sm text-purple-400 group-hover:text-purple-300 text-center">Forge 3D Mini</div>
+                                        <div className="text-[10px] text-purple-500/70 text-center">AI Generate (Free)</div>
+                                    </div>
+                                    
+                                    <div onClick={() => handleModelSelect(null)} className="bg-slate-800 border border-slate-700 border-dashed rounded-lg p-2 cursor-pointer hover:border-blue-500 hover:bg-slate-700 transition-all group flex flex-col items-center justify-center">
+                                        <div className="w-16 h-16 bg-slate-900 rounded-full mb-2 flex items-center justify-center border border-slate-700 group-hover:border-blue-500/50">
+                                            <Icon name="image" size={24} className="text-slate-500 group-hover:text-blue-400"/>
+                                        </div>
+                                        <div className="font-bold text-sm text-slate-200 group-hover:text-blue-400 text-center">2D Token Only</div>
+                                        <div className="text-[10px] text-slate-500 text-center">Skip 3D Model</div>
+                                    </div>
+                                </div>
+                                    </>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                    )}
                 </div>
             </div>
         );

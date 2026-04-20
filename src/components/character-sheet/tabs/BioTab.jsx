@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useCharacterStore } from '../../../stores/useCharacterStore';
 import { storeChunkedMap } from '../../../utils/storageUtils';
+import { Client } from "@gradio/client";
 import Icon from '../../Icon';
 import ModelViewer from '../../ModelViewer';
 
@@ -17,6 +18,106 @@ const BioTab = ({ onOpenModelPicker }) => {
     const [isUploading, setIsUploading] = useState(false);
     const [modelScale, setModelScale] = useState(character.modelScale || 1);
     const [modelYOffset, setModelYOffset] = useState(character.modelYOffset || 0);
+
+    const [isForging3D, setIsForging3D] = useState(false);
+    const [forge3DStatus, setForge3DStatus] = useState("");
+
+    const handleForge3D = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        try {
+            setIsForging3D(true);
+            setForge3DStatus("The Forge is hot... Sculpting 3D mesh (this may take a minute).");
+            
+            const imageBlob = file;
+            
+            setForge3DStatus("Connecting to AI Forge... (May take 30-60s)");
+            let app = null;
+            const hfToken = import.meta.env.VITE_HF_TOKEN || localStorage.getItem('hf_token');
+            const options = hfToken ? { hf_token: hfToken } : {};
+            
+            try {
+                setForge3DStatus(`Waking up VAST-AI/TripoSG...`);
+                app = await Client.connect("VAST-AI/TripoSG", options);
+            } catch (e) {
+                console.warn(`Space VAST-AI/TripoSG is asleep or unavailable.`, e);
+            }
+
+            if (!app) {
+                throw new Error("The 3D Forge AI server is currently asleep or overloaded. Please try again later, or add a Hugging Face token in your Settings to wake it up!");
+            }
+            
+            setForge3DStatus("Starting Forge Session...");
+            try {
+                await app.predict("/start_session", {});
+            } catch (e) {
+                console.warn("Failed to start session, may not be required", e);
+            }
+            
+            setForge3DStatus("Sculpting 3D Mesh... Please wait. (1/2)");
+            const meshResult = await app.predict("/image_to_3d", {
+                image: imageBlob,
+                seed: 0,
+                num_inference_steps: 8,
+                guidance_scale: 0,
+                simplify: true,
+                target_face_num: 10000
+            });
+
+            if (!meshResult.data || !meshResult.data[0]) {
+                throw new Error("Invalid response from AI during 3D generation.");
+            }
+
+            setForge3DStatus("Texturing 3D Mesh... Please wait. (2/2)");
+            const textureResult = await app.predict("/run_texture", {
+                image: imageBlob,
+                mesh_path: meshResult.data[0],
+                seed: 0
+            });
+
+            if (!textureResult.data || !textureResult.data[0]) {
+                throw new Error("Invalid response from AI during texturing.");
+            }
+
+            let glbUrl = "";
+            const glbOutput = textureResult.data[0];
+            if (typeof glbOutput === 'string') glbUrl = glbOutput;
+            else if (glbOutput && glbOutput.url) glbUrl = glbOutput.url;
+            else if (glbOutput && glbOutput.path) {
+                glbUrl = `https://vast-ai-triposg.hf.space/file=${glbOutput.path}`;
+            } else {
+                 throw new Error("Invalid response from AI.");
+            }
+
+            setForge3DStatus("Downloading 3D Mesh...");
+            const glbRes = await fetch(glbUrl);
+            const glbBlob = await glbRes.blob();
+            
+            setForge3DStatus("Saving to DungeonMind...");
+            const glbBase64 = await new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result);
+                reader.readAsDataURL(glbBlob);
+            });
+
+            const newChunkedUrl = await storeChunkedMap(glbBase64, (character.name || "char") + "_mini.glb");
+            
+            updateInfo('modelUrl', newChunkedUrl);
+            updateInfo('modelScale', 1);
+            updateInfo('modelYOffset', 0);
+            setModelScale(1);
+            setModelYOffset(0);
+            
+            alert(`Successfully forged 3D mini for ${character.name}!`);
+        } catch (err) {
+            console.error(err);
+            alert("3D Forge Failed: " + err.message);
+        } finally {
+            setIsForging3D(false);
+            e.target.value = null;
+        }
+    };
 
     const updateBio = (field, val) => {
         const newBio = { ...bio, [field]: val };
@@ -84,7 +185,7 @@ const BioTab = ({ onOpenModelPicker }) => {
             {/* 3D Model Upload */}
             <div className="bg-slate-800 p-4 rounded-xl border border-slate-700">
                 <h4 className="text-sm font-bold text-slate-400 uppercase mb-3 border-b border-slate-700 pb-1">3D Token Model</h4>
-                <div className="flex items-center gap-4">
+                <div className="flex flex-wrap items-center gap-2">
                     <input type="file" accept=".glb,.gltf" id="model-upload" className="hidden" onChange={handleModelUpload} disabled={isUploading} />
                     <label htmlFor="model-upload" className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2 px-4 rounded cursor-pointer flex items-center gap-2">
                         {isUploading ? <Icon name="loader" className="animate-spin" /> : <Icon name="upload-cloud" />}
@@ -96,6 +197,27 @@ const BioTab = ({ onOpenModelPicker }) => {
                             Search Minis
                         </button>
                     )}
+                    <input type="file" accept="image/*" id="forge-upload" className="hidden" onChange={handleForge3D} disabled={isForging3D} />
+                    <label htmlFor="forge-upload" className={`bg-purple-900/50 hover:bg-purple-800 text-purple-400 hover:text-white border border-purple-500/30 font-bold py-2 px-4 rounded cursor-pointer flex items-center gap-2 transition-colors shadow-[0_0_15px_rgba(168,85,247,0.15)] hover:shadow-[0_0_20px_rgba(168,85,247,0.3)] ${isForging3D ? 'opacity-50 pointer-events-none' : ''}`}>
+                        <Icon name={isForging3D ? "loader" : "sparkles"} className={isForging3D ? "animate-spin" : ""} />
+                        {isForging3D ? "Forging..." : "Forge 3D Mini"}
+                    </label>
+                    <a href="https://huggingface.co/spaces/VAST-AI/TripoSG" target="_blank" rel="noopener noreferrer" className="flex items-center justify-center p-2 text-purple-500 hover:text-purple-400 transition-colors" title="Powered by VAST-AI/TripoSG">
+                        <Icon name="external-link" size={18} />
+                    </a>
+                </div>
+                
+                <div className="mt-3 bg-slate-900/50 rounded-lg p-3 border border-slate-700/50">
+                    <div className="flex items-start gap-2">
+                        <Icon name="info" size={16} className="text-blue-400 mt-0.5 shrink-0" />
+                        <div className="text-xs text-slate-400">
+                            <p className="font-bold text-slate-300 mb-1">How to forge a great 3D mini:</p>
+                            <p>Upload a clear, front-facing image of your character. The AI will extrude it into a full 3D mesh. For best results, ensure the image features a <span className="text-amber-400">straight-on view with the desired pose</span>, like standard token art. {forge3DStatus && <span className="text-purple-400 font-bold ml-1">{forge3DStatus}</span>}</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="flex items-center gap-4 mt-4">
                     <div className="text-xs text-slate-400 flex-1">
                         {character.modelUrl ? (
                             <div className="flex items-center justify-between">

@@ -25,6 +25,8 @@ const SettingsView = ({
     // START CHANGE: Local state for Character Integration to prevent input locking
     const [localCharUrl, setLocalCharUrl] = useState(myChar?.externalSheetUrl || "");
     const [localUseExternal, setLocalUseExternal] = useState(myChar?.useExternalSheet || false);
+    const [hfToken, setHfToken] = useState(() => localStorage.getItem('hf_token') || '');
+    const [forgeEngine, setForgeEngine] = useState(() => localStorage.getItem('forge_engine') || 'stabilityai/TripoSR');
 
     // Sync local state if props change (e.g. on initial load)
     React.useEffect(() => {
@@ -367,6 +369,37 @@ const SettingsView = ({
                                 {/* END CHANGE */}
                             </div>
                         )}
+
+                        <div className="pt-4 border-t border-slate-700 mt-6">
+                            <label className="block text-xs uppercase font-bold text-slate-500 mb-1">Hugging Face Access Token (Optional)</label>
+                            <input 
+                                type="password" 
+                                value={hfToken} 
+                                onChange={(e) => {
+                                    setHfToken(e.target.value);
+                                    localStorage.setItem('hf_token', e.target.value);
+                                }}
+                                placeholder="hf_..."
+                                className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white font-mono mb-1"
+                            />
+                            <div className="text-xs text-slate-500">Provides priority access to the 3D Forge (TripoSR) to wake the server if it's asleep.</div>
+                        </div>
+
+                        <div className="pt-4 border-t border-slate-700 mt-6">
+                            <label className="block text-xs uppercase font-bold text-slate-500 mb-1">3D Forge Engine</label>
+                            <select 
+                                value={forgeEngine} 
+                                onChange={(e) => {
+                                    setForgeEngine(e.target.value);
+                                    localStorage.setItem('forge_engine', e.target.value);
+                                }}
+                                className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white mb-1 outline-none focus:border-purple-500"
+                            >
+                                <option value="VAST-AI/TripoSG">TripoSG (High Quality, Best)</option>
+                                <option value="stabilityai/TripoSR">TripoSR (Fast Fallback)</option>
+                            </select>
+                            <div className="text-xs text-slate-500">Select the AI engine used to forge 3D tokens.</div>
+                        </div>
                     </div>
                         </div>
                     </div>

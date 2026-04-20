@@ -382,7 +382,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
       onPointerUp={activeTool ? undefined : handlePointerUp}
       onPointerOver={activeTool ? undefined : (e) => { e.stopPropagation(); if (isTerrainReady) setHover(true); }}
       onPointerOut={activeTool ? undefined : (e) => { if (isTerrainReady) setHover(false); }}
-      onClick={activeTool ? undefined : (e) => { e.stopPropagation(); if (isTerrainReady) onSelect(token.id, e.shiftKey); }}
+      onClick={activeTool ? undefined : (e) => { e.stopPropagation(); if (e.button === 2) return; if (isTerrainReady) onSelect(token.id, e.shiftKey); }}
       onContextMenu={activeTool ? undefined : (e) => {
         e.stopPropagation();
         if (e.nativeEvent) e.nativeEvent.preventDefault();
@@ -618,7 +618,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
             setWaypoints([]);
             totalWaypointDistRef.current = 0;
 
-            const isGroupDrag = shiftHeldRef.current && selectedTokenIds && selectedTokenIds.includes(token.id) && selectedTokenIds.length > 1;
+            const isGroupDrag = selectedTokenIds && selectedTokenIds.includes(token.id) && selectedTokenIds.length > 1;
 
             if (isGroupDrag) {
                 if (groupDragData) {

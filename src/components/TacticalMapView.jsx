@@ -8,7 +8,8 @@ import { useCharacterStore } from '../stores/useCharacterStore';
 import AssetManager from './AssetManager';
 import { MeasurementTools } from './MeasurementTools';
 import Icon from './Icon';
-import { retrieveChunkedMap } from '../utils/storageUtils';
+import { Client } from "@gradio/client";
+import { retrieveChunkedMap, storeChunkedMap } from '../utils/storageUtils';
 import CharacterModel from './CharacterModel';
 import Token3D from './tactical/Token';
 import CameraController from '../utils/CameraController';
@@ -365,9 +366,14 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       latestTokensRef.current = tokens;
   }, [tokens]);
 
+  const tokensList = useMemo(() => Object.values(tokens).filter(Boolean), [tokens]); // Filter out null/undefined tokens
+  const allCharacters = useMemo(() => [...(data?.players || []), ...(data?.npcs || [])], [data?.players, data?.npcs]);
+
   const groupDragData = useRef({ activeTokenId: null, delta: new THREE.Vector3() });
 
   const handleGroupDragEnd = useCallback((leaderId, delta) => {
+      const updates = {};
+
       selectedTokenIds.forEach(id => {
           if (id === leaderId) return;
           const t = latestTokensRef.current[id];
@@ -396,17 +402,16 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           const terrainY = getTerrainHeight ? getTerrainHeight(finalX, finalZ) : 0;
           const finalY = terrainY + (t.elevationOffset || 0) + (mapData?.tokenElevationOffset ?? -0.04);
 
-          updateMap(campaignCode, activeMapId, {
-              [`tokens.${id}.x`]: finalX,
-              [`tokens.${id}.y`]: finalY,
-              [`tokens.${id}.z`]: finalZ,
-              [`tokens.${id}.elevationOffset`]: t.elevationOffset || 0,
-          });
+          updates[`tokens.${id}.x`] = finalX;
+          updates[`tokens.${id}.y`] = finalY;
+          updates[`tokens.${id}.z`] = finalZ;
+          updates[`tokens.${id}.elevationOffset`] = t.elevationOffset || 0;
       });
-  }, [selectedTokenIds, isSnapToGrid, gridSize, getTerrainHeight, campaignCode, activeMapId, mapData?.gridOffsetX, mapData?.gridOffsetY]);
-
-  const tokensList = useMemo(() => Object.values(tokens).filter(Boolean), [tokens]); // Filter out null/undefined tokens
-  const allCharacters = useMemo(() => [...(data?.players || []), ...(data?.npcs || [])], [data?.players, data?.npcs]);
+      
+      if (Object.keys(updates).length > 0) {
+          updateMap(campaignCode, activeMapId, updates);
+      }
+  }, [selectedTokenIds, isSnapToGrid, gridSize, getTerrainHeight, campaignCode, activeMapId, mapData?.gridOffsetX, mapData?.gridOffsetY, mapData?.tokenElevationOffset, role, allCharacters, user?.uid, data?.assignments]);
 
   // Calculate Player Vision Sources (Used by both Fog Renderer and CPU Visibility checks)
   const playerVisionSources = useMemo(() => {
@@ -817,6 +822,121 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       setIsLoadingCompendium(false);
   };
 
+  const [isForging3D, setIsForging3D] = useState(false);
+  const [forge3DStatus, setForge3DStatus] = useState("");
+
+  const handleForge3D = async (npcForModel) => {
+      if (!npcForModel) return;
+      try {
+          setIsForging3D(true);
+          setForge3DStatus("The Forge is hot... Sculpting 3D mesh (this may take a minute).");
+          
+          let imageBlob = null;
+          let imageUrl = npcForModel.image;
+          if (!imageUrl) {
+              alert("No image available to forge a 3D mini.");
+              setIsForging3D(false);
+              return;
+          }
+
+          if (imageUrl.startsWith('chunked:')) {
+              const result = await retrieveChunkedMap(imageUrl);
+              if (result) {
+                  if (typeof result === 'string') {
+                      const res = await fetch(result);
+                      imageBlob = await res.blob();
+                  } else if (result instanceof Blob) {
+                      imageBlob = result;
+                  }
+              }
+          } else {
+              const res = await fetch(imageUrl);
+              imageBlob = await res.blob();
+          }
+
+          if (!imageBlob) throw new Error("Could not prepare image blob.");
+          
+          setForge3DStatus("Connecting to AI Forge... (May take 30-60s)");
+          let app = null;
+          const hfToken = import.meta.env.VITE_HF_TOKEN || localStorage.getItem('hf_token');
+          const options = hfToken ? { hf_token: hfToken } : {};
+          
+          try {
+              setForge3DStatus(`Waking up VAST-AI/TripoSG...`);
+              app = await Client.connect("VAST-AI/TripoSG", options);
+          } catch (e) {
+              console.warn(`Space VAST-AI/TripoSG is asleep or unavailable.`, e);
+          }
+          
+          if (!app) {
+              throw new Error("The 3D Forge AI server is currently asleep or overloaded. Please try again later, or add a Hugging Face token in your Settings to wake it up!");
+          }
+          
+          setForge3DStatus("Starting Forge Session...");
+          try {
+              await app.predict("/start_session", {});
+          } catch (e) {
+              console.warn("Failed to start session, may not be required", e);
+          }
+          
+          setForge3DStatus("Sculpting 3D Mesh... Please wait. (1/2)");
+          const meshResult = await app.predict("/image_to_3d", {
+              image: imageBlob,
+              seed: 0,
+              num_inference_steps: 8,
+              guidance_scale: 0,
+              simplify: true,
+              target_face_num: 10000
+          });
+
+          if (!meshResult.data || !meshResult.data[0]) {
+              throw new Error("Invalid response from AI during 3D generation.");
+          }
+
+          setForge3DStatus("Texturing 3D Mesh... Please wait. (2/2)");
+          const textureResult = await app.predict("/run_texture", {
+              image: imageBlob,
+              mesh_path: meshResult.data[0],
+              seed: 0
+          });
+
+          if (!textureResult.data || !textureResult.data[0]) {
+              throw new Error("Invalid response from AI during texturing.");
+          }
+
+          let glbUrl = "";
+          const glbOutput = textureResult.data[0];
+          if (typeof glbOutput === 'string') glbUrl = glbOutput;
+          else if (glbOutput && glbOutput.url) glbUrl = glbOutput.url;
+          else if (glbOutput && glbOutput.path) {
+              glbUrl = `https://vast-ai-triposg.hf.space/file=${glbOutput.path}`;
+          } else {
+               throw new Error("Invalid response from AI.");
+          }
+
+          setForge3DStatus("Downloading 3D Mesh...");
+          const glbRes = await fetch(glbUrl);
+          const glbBlob = await glbRes.blob();
+          
+          setForge3DStatus("Saving to DungeonMind...");
+          const glbBase64 = await new Promise((resolve) => {
+              const reader = new FileReader();
+              reader.onloadend = () => resolve(reader.result);
+              reader.readAsDataURL(glbBlob);
+          });
+
+          const newChunkedUrl = await storeChunkedMap(glbBase64, (npcForModel.name || "npc") + "_mini.glb");
+          
+          handleModelSelect({ url: newChunkedUrl, scale: 1, yOffset: 0 });
+          
+      } catch (e) {
+          console.error(e);
+          alert("3D Forge Failed: " + e.message);
+      } finally {
+          setIsForging3D(false);
+      }
+  };
+
   const handleModelSelect = async (model) => {
     if (!pendingNpc) return;
     const finalNpc = { ...pendingNpc };
@@ -1179,8 +1299,8 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
         await updateMap(campaignCode, existingMap.id, {
             heightmapUrl: asset.generatedHeightmapUrl || existingMap.data().heightmapUrl || null,
             normalMapUrl: asset.generatedNormalMapUrl || existingMap.data().normalMapUrl || null,
-            walls: asset.generatedFeatures?.walls || existingMap.data().walls || {},
-            lights: asset.generatedFeatures?.lights || existingMap.data().lights || {}
+            walls: existingMapData.walls || asset.generatedFeatures?.walls || {},
+            lights: existingMapData.lights || asset.generatedFeatures?.lights || {}
         });
         await updateCampaign({ activeMapId: existingMap.id });
     } else {
@@ -1451,9 +1571,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
             playerDoorVisibility={mapData?.playerDoorVisibility}
             visibleDoorWindowIds={visibleDoorWindowIds} // Pass calculated visibility for doors/windows
             onDelete={isDeleting ? (wallId) => {
-                const newWalls = { ...mapData.walls };
-                delete newWalls[wallId];
-                updateMap(campaignCode, activeMapId, { walls: newWalls });
+                updateMap(campaignCode, activeMapId, { [`walls.${wallId}`]: null });
             } : null}
         />
 
@@ -1480,9 +1598,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
             gridSize={gridSize} 
             showLightRadius={isPlacingLights || isDeleting} 
             onDelete={isDeleting && role === 'dm' ? (lightId) => {
-                const newLights = { ...mapData.lights };
-                delete newLights[lightId];
-                updateMap(campaignCode, activeMapId, { lights: newLights });
+                updateMap(campaignCode, activeMapId, { [`lights.${lightId}`]: null });
             } : null}
         />
 
@@ -1628,26 +1744,24 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                     
                     <ToolButton name="delete" icon="trash-2" isActive={isDeleting} onClick={() => {
                         if (isDeleting && (selectedWalls.length > 0 || selectedLights.length > 0 || selectedTokenIds.length > 0)) {
-                            let wallsObj = { ...mapData?.walls };
-                            let lightsObj = { ...mapData?.lights };
-                            let tokensObj = { ...mapData?.tokens };
+                            let updates = {};
                             let changed = false;
 
                             if (selectedWalls.length > 0) {
-                                selectedWalls.forEach(id => delete wallsObj[id]);
+                                selectedWalls.forEach(id => updates[`walls.${id}`] = null);
                                 changed = true;
                             }
                             if (selectedLights.length > 0) {
-                                selectedLights.forEach(id => delete lightsObj[id]);
+                                selectedLights.forEach(id => updates[`lights.${id}`] = null);
                                 changed = true;
                             }
                             if (selectedTokenIds.length > 0) {
-                                selectedTokenIds.forEach(id => delete tokensObj[id]);
+                                selectedTokenIds.forEach(id => updates[`tokens.${id}`] = null);
                                 changed = true;
                             }
 
                             if (changed) {
-                                updateMap(campaignCode, activeMapId, { walls: wallsObj, lights: lightsObj, tokens: tokensObj });
+                                updateMap(campaignCode, activeMapId, updates);
                                 setSelectedWalls([]);
                                 setSelectedLights([]);
                                 setSelectedTokenIds([]);
@@ -1866,7 +1980,17 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
               <button 
                 className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors text-blue-400 font-bold"
                 onClick={() => {
-                  updateMap(campaignCode, activeMapId, { [`tokens.${contextMenu.tokenId}.elevationOffset`]: 0 });
+                  const idsToUpdate = selectedTokenIds.includes(contextMenu.tokenId) && selectedTokenIds.length > 1 ? selectedTokenIds : [contextMenu.tokenId];
+                  const updates = {};
+                  idsToUpdate.forEach(id => {
+                      const t = mapData.tokens[id];
+                      if (!t) return;
+                      const terrainY = getTerrainHeight(t.x, t.z);
+                      const tokenBaseOffset = mapData?.tokenElevationOffset ?? -0.04;
+                      updates[`tokens.${id}.elevationOffset`] = 0;
+                      updates[`tokens.${id}.y`] = terrainY + tokenBaseOffset;
+                  });
+                  updateMap(campaignCode, activeMapId, updates);
                   setContextMenu(null);
                 }}
               >
@@ -1883,7 +2007,10 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                     const currentName = contextMenu.name || "Token";
                     const newName = window.prompt("Enter new token name:", currentName);
                     if (newName) { // check for null (cancel)
-                        updateMap(campaignCode, activeMapId, { [`tokens.${contextMenu.tokenId}.name`]: newName });
+                      const idsToUpdate = selectedTokenIds.includes(contextMenu.tokenId) && selectedTokenIds.length > 1 ? selectedTokenIds : [contextMenu.tokenId];
+                      const updates = {};
+                      idsToUpdate.forEach(id => updates[`tokens.${id}.name`] = newName);
+                      updateMap(campaignCode, activeMapId, updates);
                     }
                     setContextMenu(null);
                   }}
@@ -1927,7 +2054,10 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                 <button 
                   className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors"
                   onClick={() => {
-                    updateMap(campaignCode, activeMapId, { [`tokens.${contextMenu.tokenId}.isHidden`]: !contextMenu.isHidden });
+                    const idsToUpdate = selectedTokenIds.includes(contextMenu.tokenId) && selectedTokenIds.length > 1 ? selectedTokenIds : [contextMenu.tokenId];
+                    const updates = {};
+                    idsToUpdate.forEach(id => updates[`tokens.${id}.isHidden`] = !contextMenu.isHidden);
+                    updateMap(campaignCode, activeMapId, updates);
                     setContextMenu(null);
                   }}
                 >
@@ -1966,25 +2096,45 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                     <span className="text-xs font-bold text-slate-400">Elevation</span>
                     <div className="flex items-center gap-1">
                         <button onClick={() => {
-                            const token = mapData.tokens[contextMenu.tokenId];
-                            if (!token) return;
-                            const newElevation = (token.elevationOffset || 0) - 1;
-                            const terrainY = getTerrainHeight(token.x, token.z);
-                            const tokenBaseOffset = mapData?.tokenElevationOffset ?? -0.04;
-                            const newY = terrainY + newElevation + tokenBaseOffset;
-                            updateMap(campaignCode, activeMapId, { [`tokens.${contextMenu.tokenId}.elevationOffset`]: newElevation, [`tokens.${contextMenu.tokenId}.y`]: newY });
-                            setContextMenu(prev => ({ ...prev, elevationOffset: newElevation }));
+                            const idsToUpdate = selectedTokenIds.includes(contextMenu.tokenId) && selectedTokenIds.length > 1 ? selectedTokenIds : [contextMenu.tokenId];
+                            const updates = {};
+                            let newElevationForMenu = contextMenu.elevationOffset || 0;
+                            idsToUpdate.forEach(id => {
+                                const token = mapData.tokens[id];
+                                if (!token) return;
+                                const newElevation = (token.elevationOffset || 0) - 1;
+                                const terrainY = getTerrainHeight(token.x, token.z);
+                                const tokenBaseOffset = mapData?.tokenElevationOffset ?? -0.04;
+                                const newY = terrainY + newElevation + tokenBaseOffset;
+                                updates[`tokens.${id}.elevationOffset`] = newElevation;
+                                updates[`tokens.${id}.y`] = newY;
+                                if (id === contextMenu.tokenId) newElevationForMenu = newElevation;
+                            });
+                            if (Object.keys(updates).length > 0) {
+                                updateMap(campaignCode, activeMapId, updates);
+                            }
+                            setContextMenu(prev => ({ ...prev, elevationOffset: newElevationForMenu }));
                         }} className="p-1.5 bg-slate-700 rounded hover:bg-slate-600"><Icon name="minus" size={12}/></button>
                         <span className="text-sm font-bold w-12 text-center tabular-nums">{Math.round((contextMenu.elevationOffset || 0) * 5)} ft</span>
                         <button onClick={() => {
-                            const token = mapData.tokens[contextMenu.tokenId];
-                            if (!token) return;
-                            const newElevation = (token.elevationOffset || 0) + 1;
-                            const terrainY = getTerrainHeight(token.x, token.z);
-                            const tokenBaseOffset = mapData?.tokenElevationOffset ?? -0.04;
-                            const newY = terrainY + newElevation + tokenBaseOffset;
-                            updateMap(campaignCode, activeMapId, { [`tokens.${contextMenu.tokenId}.elevationOffset`]: newElevation, [`tokens.${contextMenu.tokenId}.y`]: newY });
-                            setContextMenu(prev => ({ ...prev, elevationOffset: newElevation }));
+                            const idsToUpdate = selectedTokenIds.includes(contextMenu.tokenId) && selectedTokenIds.length > 1 ? selectedTokenIds : [contextMenu.tokenId];
+                            const updates = {};
+                            let newElevationForMenu = contextMenu.elevationOffset || 0;
+                            idsToUpdate.forEach(id => {
+                                const token = mapData.tokens[id];
+                                if (!token) return;
+                                const newElevation = (token.elevationOffset || 0) + 1;
+                                const terrainY = getTerrainHeight(token.x, token.z);
+                                const tokenBaseOffset = mapData?.tokenElevationOffset ?? -0.04;
+                                const newY = terrainY + newElevation + tokenBaseOffset;
+                                updates[`tokens.${id}.elevationOffset`] = newElevation;
+                                updates[`tokens.${id}.y`] = newY;
+                                if (id === contextMenu.tokenId) newElevationForMenu = newElevation;
+                            });
+                            if (Object.keys(updates).length > 0) {
+                                updateMap(campaignCode, activeMapId, updates);
+                            }
+                            setContextMenu(prev => ({ ...prev, elevationOffset: newElevationForMenu }));
                         }} className="p-1.5 bg-slate-700 rounded hover:bg-slate-600"><Icon name="plus" size={12}/></button>
                     </div>
                 </div>
@@ -1997,8 +2147,11 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                         value={contextMenu.color || (contextMenu.type === 'pc' ? "#22c55e" : "#ef4444")}
                         onChange={(e) => {
                             const newColor = e.target.value;
-                            updateMap(campaignCode, activeMapId, { [`tokens.${contextMenu.tokenId}.color`]: newColor });
-                            setContextMenu({ ...contextMenu, color: newColor }); // Keep menu open and update color instantly
+                            const idsToUpdate = selectedTokenIds.includes(contextMenu.tokenId) && selectedTokenIds.length > 1 ? selectedTokenIds : [contextMenu.tokenId];
+                            const updates = {};
+                            idsToUpdate.forEach(id => updates[`tokens.${id}.color`] = newColor);
+                            updateMap(campaignCode, activeMapId, updates);
+                            setContextMenu(prev => ({ ...prev, color: newColor })); // Keep menu open and update color instantly
                         }}
                         className="w-6 h-6 p-0 border-0 rounded cursor-pointer bg-slate-800"
                     />
@@ -2009,14 +2162,20 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                     <div className="flex items-center gap-1">
                         <button onClick={() => {
                             const newSize = Math.max(0.5, (contextMenu.size || 1) - 0.5);
-                            updateMap(campaignCode, activeMapId, { [`tokens.${contextMenu.tokenId}.size`]: newSize });
-                            setContextMenu({ ...contextMenu, size: newSize }); // Keeps menu open!
+                            const idsToUpdate = selectedTokenIds.includes(contextMenu.tokenId) && selectedTokenIds.length > 1 ? selectedTokenIds : [contextMenu.tokenId];
+                            const updates = {};
+                            idsToUpdate.forEach(id => updates[`tokens.${id}.size`] = newSize);
+                            updateMap(campaignCode, activeMapId, updates);
+                            setContextMenu(prev => ({ ...prev, size: newSize })); // Keeps menu open!
                         }} className="p-1.5 bg-slate-700 rounded hover:bg-slate-600"><Icon name="minus" size={12}/></button>
                         <span className="text-sm font-bold w-6 text-center tabular-nums">{contextMenu.size || 1}</span>
                         <button onClick={() => {
                             const newSize = (contextMenu.size || 1) + 0.5;
-                            updateMap(campaignCode, activeMapId, { [`tokens.${contextMenu.tokenId}.size`]: newSize });
-                            setContextMenu({ ...contextMenu, size: newSize }); // Keeps menu open!
+                            const idsToUpdate = selectedTokenIds.includes(contextMenu.tokenId) && selectedTokenIds.length > 1 ? selectedTokenIds : [contextMenu.tokenId];
+                            const updates = {};
+                            idsToUpdate.forEach(id => updates[`tokens.${id}.size`] = newSize);
+                            updateMap(campaignCode, activeMapId, updates);
+                            setContextMenu(prev => ({ ...prev, size: newSize })); // Keeps menu open!
                         }} className="p-1.5 bg-slate-700 rounded hover:bg-slate-600"><Icon name="plus" size={12}/></button>
                     </div>
                 </div>
@@ -2107,9 +2266,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                 <button 
                     className="w-full text-left px-4 py-2 hover:bg-red-900/50 text-red-400 transition-colors"
                     onClick={() => {
-                        const newWalls = { ...mapData.walls };
-                        delete newWalls[wallContextMenu.wallId];
-                        updateMap(campaignCode, activeMapId, { walls: newWalls });
+                        updateMap(campaignCode, activeMapId, { [`walls.${wallContextMenu.wallId}`]: null });
                         setWallContextMenu(null);
                     }}
                 >
@@ -2172,9 +2329,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                 <button 
                     className="w-full text-left px-4 py-2 hover:bg-red-900/50 text-red-400 transition-colors flex items-center gap-2"
                     onClick={() => {
-                        const newLights = { ...mapData.lights };
-                        delete newLights[lightContextMenu.lightId];
-                        updateMap(campaignCode, activeMapId, { lights: newLights });
+                        updateMap(campaignCode, activeMapId, { [`lights.${lightContextMenu.lightId}`]: null });
                         setLightContextMenu(null);
                     }}
                 >
@@ -2237,9 +2392,13 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                   <div className="p-6 overflow-y-auto custom-scroll bg-slate-950 flex-1">
                       {isSearchingMinis ? (
                           <div className="text-center py-10 text-amber-500"><Icon name="loader" size={32} className="animate-spin mx-auto mb-2"/> Searching the Repository...</div>
+                      ) : isForging3D ? (
+                          <div className="text-center py-10 text-purple-500">
+                              <Icon name="loader-2" size={48} className="animate-spin mx-auto mb-4"/>
+                              <p className="font-bold animate-pulse">{forge3DStatus}</p>
+                          </div>
                       ) : (
-                          <>
-                              <p className="text-slate-400 mb-4 text-sm">We found {availableModels.length} compatible 3D models.</p>
+                          <>                              <p className="text-slate-400 mb-4 text-sm">We found {availableModels.length} compatible 3D models.</p>
                       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                           {availableModels.map((model, i) => (
                               <div key={i} onClick={() => handleModelSelect(model)} className="bg-slate-800 border border-slate-700 rounded-lg p-2 cursor-pointer hover:border-amber-500 hover:bg-slate-700 transition-all group">
