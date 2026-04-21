@@ -347,7 +347,8 @@ function DungeonMindApp() {
               actionType: options.actionType || null,
               weaponName: options.weaponName || null,
               damageType: options.damageType || null,
-              alias: options.alias || null
+              alias: options.alias || null,
+              description: options.description || null
           };
 
           sendMessage({

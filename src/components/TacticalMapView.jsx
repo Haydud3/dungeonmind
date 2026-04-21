@@ -536,11 +536,13 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                   z: (wall.points[0].z + wall.points[1].z) / 2,
               };
 
+              const wallsToCheck = mapData?.fowWallsEnabled !== false ? mapData.walls : null;
+
               for (const source of playerVisionSources) {
                   const dist = Math.sqrt(Math.pow(source.x - wallMidpoint.x, 2) + Math.pow(source.z - wallMidpoint.z, 2));
 
                   // Check if within vision range and if there's line of sight
-                  if (dist <= source.range && checkLineOfSight(source, wallMidpoint, mapData.walls)) {
+                  if (dist <= source.range && checkLineOfSight(source, wallMidpoint, wallsToCheck, wall.id)) {
                       visibleIds.add(wall.id);
                       break; // This door/window is visible, no need to check other sources
                   }
@@ -548,7 +550,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           }
       });
       return visibleIds;
-  }, [mapData?.walls, playerVisionSources, role]);
+  }, [mapData?.walls, mapData?.fowWallsEnabled, playerVisionSources, role]);
 
   // Calculate combined lights (map lights + dynamic token lights)
   const combinedLights = useMemo(() => {
@@ -587,7 +589,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
               return;
           }
 
-          const wallsArray = Object.values(mapData?.walls || {});
+          const wallsArray = mapData?.fowWallsEnabled !== false ? Object.values(mapData?.walls || {}) : [];
           const targetPt = { x: t.x || 0, z: t.z || 0 };
 
           // Check visibility from each of the player's vision sources
@@ -645,7 +647,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           }
       });
       return visibleIds;
-  }, [tokensList, role, playerVisionSources, mapData?.walls, mapData?.lights, mapData?.fowEnabled, allCharacters, user?.uid, data?.assignments, gridSize]);
+  }, [tokensList, role, playerVisionSources, mapData?.walls, mapData?.lights, mapData?.fowEnabled, mapData?.fowWallsEnabled, allCharacters, user?.uid, data?.assignments, gridSize]);
 
   // Calculate which 3D lights are visible to the players (prevents unseen lights from shining through walls via normal maps)
   const visibleLights = useMemo(() => {
@@ -653,7 +655,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       if (role === 'dm' || mapData?.fowEnabled === false) return combinedLights;
 
       const filteredLights = {};
-      const wallsArray = Object.values(mapData?.walls || {});
+      const wallsArray = mapData?.fowWallsEnabled !== false ? Object.values(mapData?.walls || {}) : [];
 
       Object.values(combinedLights).forEach(light => {
           const lightPt = { x: light.position.x, z: light.position.z };
@@ -665,7 +667,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           }
       });
       return filteredLights;
-  }, [mapData?.lights, mapData?.walls, mapData?.fowEnabled, playerVisionSources, role]);
+  }, [mapData?.lights, mapData?.walls, mapData?.fowEnabled, mapData?.fowWallsEnabled, playerVisionSources, role, combinedLights]);
 
   // Extract active combatant early so the Camera Director can hook into it
   const activeCombatantId = mapData && data?.campaign?.combat?.active && data?.campaign?.combat?.combatants?.length 

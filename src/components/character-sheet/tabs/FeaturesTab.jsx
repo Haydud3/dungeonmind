@@ -2,8 +2,8 @@ import React, { useState } from 'react';
 import { useCharacterStore } from '../../../stores/useCharacterStore';
 import Icon from '../../Icon';
 
-const FeaturesTab = ({ onUse, isOwner }) => {
-    const { character, updateInfo } = useCharacterStore();
+const FeaturesTab = ({ onDiceRoll, onLogAction, isOwner }) => {
+    const { character, updateInfo, toggleCondition } = useCharacterStore();
     const [showAdd, setShowAdd] = useState(false);
     const [newFeat, setNewFeat] = useState({ name: "", source: "Class", desc: "" });
 
@@ -110,7 +110,19 @@ const FeaturesTab = ({ onUse, isOwner }) => {
                                         </button>
                                     ) : (
                                         <button onClick={() => {
-                                            if (onUse) onUse(feat, 'Feature');
+                                            if (onDiceRoll) {
+                                                onDiceRoll('1d0', {
+                                                    alias: feat.name,
+                                                    description: feat.description || feat.desc || "",
+                                                    actionType: 'use',
+                                                    characterName: character.name
+                                                });
+                                            } else if (onLogAction) {
+                                                onLogAction(`
+                                                    <div class="font-bold text-indigo-300">${feat.name}</div>
+                                                    <div class="text-xs text-slate-400 mt-1">${feat.description || feat.desc || ""}</div>
+                                                `);
+                                            }
                                             if (feat.name.toLowerCase().includes('rage')) toggleCondition('Raging');
                                         }} className="px-3 py-1 bg-slate-700 hover:bg-indigo-600 text-slate-300 hover:text-white rounded text-[10px] font-bold transition-colors">
                                             Use

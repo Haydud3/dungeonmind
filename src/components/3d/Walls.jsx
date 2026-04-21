@@ -138,7 +138,7 @@ export const Wall = ({ wall, onContextMenu, onToggleDoor, showWalls, role, playe
     
     return (
         <group>
-            {(showWalls || type === 'wall') && (
+            {showWalls && (
                 <Line 
                     points={points} 
                     color={color} 
@@ -152,7 +152,7 @@ export const Wall = ({ wall, onContextMenu, onToggleDoor, showWalls, role, playe
                 />
             )}
 
-            {!showWalls && (type === 'door' || type === 'window') && showIcon && (
+            {(type === 'door' || type === 'window') && showIcon && (
                 <Billboard position={[center.x, 0.5, center.z]}>
                     <Text 
                         fontSize={0.8}

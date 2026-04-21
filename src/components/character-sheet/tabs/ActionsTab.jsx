@@ -117,7 +117,8 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
                 onDiceRoll('1d0', {
                     alias: action.name,
                     description: action.desc || action.notes || "",
-                    actionType: 'use'
+                    actionType: 'use',
+                    characterName: character.name
                 });
             } else if (onLogAction) {
                 onLogAction(`
@@ -134,7 +135,8 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
                 onDiceRoll('1d0', {
                     alias: 'Saving Throw',
                     description: `${action.name} requires a ${action.hit} save.`,
-                    actionType: 'use'
+                    actionType: 'use',
+                    characterName: character.name
                 });
                 return;
             }
@@ -143,7 +145,8 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
             const formula = `1d20${mod >= 0 ? '+' : ''}${mod}`;
             onDiceRoll(formula, {
                 weaponName: action.name,
-                alias: 'Attack'
+                alias: 'Attack',
+                characterName: character.name
             });
         } 
         else if (type === 'dmg') {
@@ -151,7 +154,8 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
             if (!action.dmg) {
                 onDiceRoll('1d0', {
                     alias: action.name,
-                    actionType: 'use'
+                    actionType: 'use',
+                    characterName: character.name
                 });
                 return;
             }
@@ -162,7 +166,8 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
                     actionType: 'damage',
                     weaponName: action.name,
                     alias: 'Damage Roll',
-                    damageType: action.notes || ''
+                    damageType: action.notes || '',
+                    characterName: character.name
                 });
                 return;
             }
@@ -171,7 +176,8 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
                 actionType: 'damage',
                 weaponName: action.name,
                 alias: 'Damage Roll',
-                damageType: action.notes || ''
+                damageType: action.notes || '',
+                characterName: character.name
             });
         } 
     };

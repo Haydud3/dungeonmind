@@ -72,7 +72,8 @@ const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate, isOwner, onUse })
             const formula = `1d20${mod >= 0 ? '+' : ''}${mod}`;
             onDiceRoll(formula, {
                 weaponName: spell.name,
-                alias: 'Spell Attack'
+                alias: 'Spell Attack',
+                characterName: character.name
             });
         } 
         else if (type === 'dmg') {
@@ -88,6 +89,7 @@ const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate, isOwner, onUse })
                     actionType: 'damage',
                     weaponName: spell.name,
                     alias: 'Spell Damage',
+                    characterName: character.name,
                     damageType: typeLabel
                 });
             } else {
@@ -95,6 +97,7 @@ const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate, isOwner, onUse })
                     actionType: 'damage',
                     weaponName: spell.name,
                     alias: 'Spell Damage',
+                    characterName: character.name,
                     damageType: spell.dmg
                 });
             }

@@ -58,7 +58,8 @@ const SkillsTab = ({ onDiceRoll, onLogAction }) => {
         const formula = `1d20${total >= 0 ? '+' : ''}${total}`;
         await onDiceRoll(formula, { 
             alias: `${skill.name} Check`,
-            description: `Proficiency: ${isProf ? 'Yes' : 'No'}`
+            description: `Proficiency: ${isProf ? 'Yes' : 'No'}`,
+            characterName: character.name
         });
     };
 
@@ -78,7 +79,7 @@ const SkillsTab = ({ onDiceRoll, onLogAction }) => {
                                 onClick={() => {
                                     if (!onDiceRoll) return;
                                     const formula = `1d20${total >= 0 ? '+' : ''}${total}`;
-                                    onDiceRoll(formula, { alias: `${stat.toUpperCase()} Save` });
+                                    onDiceRoll(formula, { alias: `${stat.toUpperCase()} Save`, characterName: character.name });
                                 }}
                                 className="bg-slate-900/50 p-2 rounded border border-slate-700 flex flex-col items-center cursor-pointer hover:border-amber-500 hover:bg-slate-800 transition-all active:scale-95"
                             >

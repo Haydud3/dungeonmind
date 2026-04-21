@@ -99,7 +99,7 @@ const HeaderStats = ({ character: propCharacter, onDiceRoll, onLogAction, onBack
                     <div className="flex flex-col items-center bg-slate-800 px-2 py-1 rounded">
                         <span className="text-[9px] text-slate-500 font-bold">INIT</span>
                         <div className="text-sm font-bold text-amber-500">{init >= 0 ? `+${init}` : init}</div>
-                        <button onClick={() => onDiceRoll(`1d20+${init}`, { alias: 'Initiative' })} className="text-[8px] text-slate-500 hover:text-white mt-0.5">
+                        <button onClick={() => onDiceRoll(`1d20+${init}`, { alias: 'Initiative', characterName: character.name })} className="text-[8px] text-slate-500 hover:text-white mt-0.5">
                             Roll
                         </button>
                     </div>
@@ -128,7 +128,7 @@ const HeaderStats = ({ character: propCharacter, onDiceRoll, onLogAction, onBack
                         <button 
                             onClick={async () => {
                                 if (!onDiceRoll) return;
-                                const roll = await onDiceRoll(20, { alias: 'Death Save' });
+                                const roll = await onDiceRoll(20, { alias: 'Death Save', characterName: character.name });
                                 if (roll === 1) updateDeathSaves('crit_fail');
                                 else if (roll === 20) updateDeathSaves('success'); // Usually 2 successes, but let's just trigger standard success or let user handle healing manually. Wait, rules say 20 is regain 1 HP, we handled this in store optionally or manually.
                                 else if (roll >= 10) updateDeathSaves('success');
@@ -177,17 +177,27 @@ const HeaderStats = ({ character: propCharacter, onDiceRoll, onLogAction, onBack
 
                     {/* Stats Grid */}
                     <div className="grid grid-cols-6 gap-2">
-                        {['str', 'dex', 'con', 'int', 'wis', 'cha'].map(s => (
-                            <div key={s} className="bg-slate-800 p-1.5 rounded text-center">
-                                <div className="text-[9px] uppercase text-slate-500">{s}</div>
-                                <input
-                                    className="w-full bg-transparent text-center text-sm font-bold text-white outline-none"
-                                    value={character.stats?.[s] || 10}
-                                    onChange={e => updateStat(s, parseInt(e.target.value) || 0)}
-                                    type="number"
-                                />
-                            </div>
-                        ))}
+                        {['str', 'dex', 'con', 'int', 'wis', 'cha'].map(s => {
+                            const score = character.stats?.[s] || 10;
+                            const mod = Math.floor((score - 10) / 2);
+                            return (
+                                <div key={s} className="bg-slate-800 p-1.5 rounded text-center flex flex-col items-center">
+                                    <button
+                                        onClick={() => onDiceRoll && onDiceRoll(`1d20${mod >= 0 ? '+' : ''}${mod}`, { alias: `${s.toUpperCase()} Check`, characterName: character.name })}
+                                        className="text-[9px] uppercase font-bold text-amber-500 hover:text-amber-400 cursor-pointer hover:underline"
+                                        title={`Roll ${s.toUpperCase()} Check`}
+                                    >
+                                        {s}
+                                    </button>
+                                    <input
+                                        className="w-full bg-transparent text-center text-sm font-bold text-white outline-none mt-0.5"
+                                        value={score}
+                                        onChange={e => updateStat(s, parseInt(e.target.value) || 0)}
+                                        type="number"
+                                    />
+                                </div>
+                            );
+                        })}
                     </div>
 
                     {/* Senses Grid */}
