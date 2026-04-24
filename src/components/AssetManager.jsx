@@ -2,12 +2,13 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { collection, addDoc, getDocs, query, orderBy, serverTimestamp, doc, deleteDoc, updateDoc } from 'firebase/firestore';
 import { db, appId } from '../firebase';
 import { storeChunkedMap, deleteChunkedMap, retrieveChunkedMap } from '../utils/storageUtils';
+import { exportMapPreset, importMapPreset } from '../utils/presetManager';
 import Icon from './Icon';
 import MapGenerator from './MapGenerator';
 
 // Helper to generate a lightweight thumbnail so the gallery loads instantly
 const generateThumbnail = (dataUrl) => {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
         const img = new Image();
         img.onload = () => {
             const canvas = document.createElement('canvas');
@@ -21,14 +22,21 @@ const generateThumbnail = (dataUrl) => {
             ctx.drawImage(img, x, y, img.width * scale, img.height * scale);
             resolve(canvas.toDataURL('image/jpeg', 0.6));
         };
+        img.onerror = () => {
+            console.warn("Failed to generate thumbnail for image");
+            resolve(null); // Resolve with null instead of rejecting to avoid crashing the whole process
+        };
         img.src = dataUrl;
     });
 };
 
-const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, onSetBackground, onSetHeightmap, onGenerateMap, onNewBlankMap }) => {
+const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, onSetBackground, onSetHeightmap, onGenerateMap, onNewBlankMap, allCharacters, campaignData, updateCampaign }) => {
     const [assets, setAssets] = useState([]);
     const [isUploading, setIsUploading] = useState(false);
+    const [isExporting, setIsExporting] = useState(false);
+    const [isImporting, setIsImporting] = useState(false);
     const fileInputRef = useRef(null);
+    const importPresetRef = useRef(null);
     const [activeTab, setActiveTab] = useState('library');
     const [selectedAsset, setSelectedAsset] = useState(null);
 
@@ -277,15 +285,191 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
         setGridDetectionResult(null);
     };
 
+    const handleExportPreset = async () => {
+        setIsExporting(true);
+        try {
+            const mapSettings = {
+                gridSize: mapData?.gridSize || 1,
+                gridOffsetX: mapData?.gridOffsetX || 0,
+                gridOffsetY: mapData?.gridOffsetY || 0,
+                gridColor: mapData?.gridColor || '#888888',
+                gridThickness: mapData?.gridThickness || 1,
+                scale: mapData?.scale || 20,
+                environment: mapData?.environment || 'day',
+                lightingIntensity: mapData?.lightingIntensity || 1,
+                tokenElevationOffset: mapData?.tokenElevationOffset || -0.04,
+                showGrid: mapData?.showGrid !== false,
+                isSnapToGrid: mapData?.isSnapToGrid !== false,
+                showNameplates: mapData?.showNameplates !== false,
+                fowEnabled: mapData?.fowEnabled || false,
+                fowWallsEnabled: mapData?.fowWallsEnabled || false,
+                playerDoorVisibility: mapData?.playerDoorVisibility || false,
+                mapImageUrl: mapData?.backgroundUrl || null,
+                heightmapUrl: mapData?.heightmapUrl || null,
+                normalMapUrl: mapData?.normalMapUrl || null,
+                heightScale: mapData?.heightScale || 1,
+            };
+
+            const geometry = { walls: mapData?.walls || {} };
+            const lights = mapData?.lights ? Object.values(mapData.lights).filter(Boolean) : [];
+            const tokens = mapData?.tokens ? Object.values(mapData.tokens).filter(Boolean) : [];
+            
+            const characters = [];
+            if (allCharacters && tokens.length > 0) {
+                tokens.forEach(t => {
+                    if (!t || !t.characterId) return; // Prevent TypeError if token is null or lacks characterId
+                    const char = allCharacters.find(c => c && String(c.id) === String(t.characterId));
+                    if (char && !characters.find(c => c.id === char.id)) {
+                        characters.push(char);
+                    }
+                });
+            }
+
+            await exportMapPreset(mapSettings, geometry, lights, tokens, characters);
+        } catch (err) {
+            console.error("Failed to export preset:", err);
+            alert("Failed to export preset.");
+        } finally {
+            setIsExporting(false);
+        }
+    };
+
+    const handleImportPresetClick = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        setIsImporting(true);
+        try {
+            const preset = await importMapPreset(file);
+            
+            // Process Characters
+            const currentNpcs = campaignData?.npcs || [];
+            const newNpcs = [...currentNpcs];
+            const characterIdMap = {};
+
+            if (preset.characters) {
+                for (const char of preset.characters) {
+                    let existing = currentNpcs.find(c => c.name === char.name);
+                    let newCharId;
+                    if (existing) {
+                        newCharId = existing.id;
+                    } else {
+                        newCharId = `char_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+                        const newChar = { ...char, id: newCharId };
+                        
+                        if (char.modelBase64 && char.modelBase64.startsWith('data:')) {
+                            try {
+                               const chunkedId = await storeChunkedMap(char.modelBase64, `${char.name}_model.glb`);
+                               newChar.modelUrl = chunkedId;
+                            } catch (e) {
+                               console.error("Failed to store model:", e);
+                            }
+                        }
+                        delete newChar.modelBase64;
+                        newNpcs.push(newChar);
+                    }
+                    characterIdMap[char.id] = newCharId;
+                }
+                if (updateCampaign) updateCampaign({ npcs: newNpcs });
+            }
+
+            // Process Map Assets
+            let backgroundUrl = preset.mapSettings?.mapImageUrl;
+            let heightmapUrl = preset.mapSettings?.heightmapUrl;
+            let normalMapUrl = preset.mapSettings?.normalMapUrl;
+
+            if (preset.mapSettings?.mapImageBase64) {
+                if (preset.mapSettings.mapImageBase64.startsWith('blob:')) {
+                    alert("This preset was exported incorrectly and is missing its background image data. Please re-export the preset.");
+                    setIsImporting(false);
+                    if (e.target) e.target.value = null;
+                    return;
+                }
+                
+                const mapName = preset.mapSettings?.name || 'Imported Map';
+                backgroundUrl = await storeChunkedMap(preset.mapSettings.mapImageBase64, mapName);
+                
+                const thumbBase64 = await generateThumbnail(preset.mapSettings.mapImageBase64);
+                const assetsRef = collection(db, 'artifacts', appId || 'dungeonmind', 'public', 'data', 'campaigns', campaignCode, 'assets');
+                await addDoc(assetsRef, { 
+                    name: mapName, 
+                    url: backgroundUrl, 
+                    thumbnail: thumbBase64, 
+                    createdAt: serverTimestamp() 
+                });
+                await fetchAssets();
+            }
+            if (preset.mapSettings?.heightmapBase64) {
+                heightmapUrl = await storeChunkedMap(preset.mapSettings.heightmapBase64, 'preset_heightmap');
+            }
+            if (preset.mapSettings?.normalMapBase64) {
+                normalMapUrl = await storeChunkedMap(preset.mapSettings.normalMapBase64, 'preset_normalmap');
+            }
+
+            const updates = {
+                ...preset.mapSettings,
+                backgroundUrl,
+                heightmapUrl,
+                normalMapUrl,
+                walls: preset.geometry?.walls || {},
+                lights: preset.lights?.reduce((acc, l) => { acc[l.id] = l; return acc; }, {}) || {}
+            };
+            
+            delete updates.mapImageBase64;
+            delete updates.heightmapBase64;
+            delete updates.normalMapBase64;
+            delete updates.mapImageUrl;
+
+            // Tokens
+            const tokensUpdate = {};
+            if (preset.tokens) {
+                preset.tokens.forEach(t => {
+                    const newTokenId = `token_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+                    tokensUpdate[newTokenId] = {
+                        ...t,
+                        id: newTokenId,
+                        characterId: characterIdMap[t.characterId] || t.characterId
+                    };
+                });
+                updates.tokens = tokensUpdate;
+            } else {
+                updates.tokens = {};
+            }
+
+            // Create a new map rather than overwriting the current one
+            const newMapId = doc(collection(db, 'maps')).id;
+            
+            updates.name = updates.name || preset.mapSettings?.name || 'Imported Map';
+            updates.gridSize = updates.gridSize || 1;
+            updates.scale = updates.scale || 20;
+            updates.environment = updates.environment || 'day';
+            
+            await updateMap(campaignCode, newMapId, updates);
+            
+            if (updateCampaign) {
+                await updateCampaign({ activeMapId: newMapId });
+            }
+            
+            if (onClose) onClose(); // Close the asset manager after importing
+            
+        } catch (err) {
+            console.error("Failed to import preset:", err);
+            alert("Failed to import preset. Make sure it's a valid DungeonMind preset JSON file.");
+        } finally {
+            setIsImporting(false);
+        }
+        if (e.target) e.target.value = null;
+    };
+
     return (
         <div className="absolute top-0 right-0 bottom-0 w-80 bg-slate-900 border-l border-slate-700 shadow-2xl z-[80] flex flex-col animate-in slide-in-from-right duration-300">
             
             {/* Loading Overlay */}
-            {isDetectingGrid && (
-                <div className="absolute inset-0 z-[100] bg-slate-900/80 backdrop-blur-sm flex flex-col items-center justify-center text-center p-6">
+            {(isDetectingGrid || isImporting) && (
+                <div className="fixed inset-0 z-[100] bg-slate-900/80 backdrop-blur-sm flex flex-col items-center justify-center text-center p-6">
                     <Icon name="loader" className="animate-spin text-amber-500 mb-4" size={48} />
-                    <h3 className="text-xl font-bold text-white mb-2">Analyzing Frequencies...</h3>
-                    <p className="text-sm text-slate-400">Running Computer Vision Grid Detection</p>
+                    <h3 className="text-xl font-bold text-white mb-2">{isImporting ? 'Importing Preset...' : 'Analyzing Frequencies...'}</h3>
+                    <p className="text-sm text-slate-400">{isImporting ? 'Please wait while assets are loaded and applied.' : 'Running Computer Vision Grid Detection'}</p>
                 </div>
             )}
 
@@ -370,7 +554,7 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
             
             {activeTab === 'library' && (
                 <>
-                    <div className="flex-none p-4 border-b border-slate-800">
+                    <div className="flex-none p-4 border-b border-slate-800 flex gap-2">
                         <input
                             type="file"
                             ref={fileInputRef}
@@ -378,9 +562,21 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                             className="hidden"
                             accept="image/png, image/jpeg, image/gif, image/webp"
                         />
-                        <button onClick={() => fileInputRef.current?.click()} disabled={isUploading} className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded flex items-center justify-center gap-2">
-                            {isUploading ? <Icon name="loader" size={16} className="animate-spin" /> : <Icon name="upload" size={16} />}
+                        <button onClick={() => fileInputRef.current?.click()} disabled={isUploading} className="flex-1 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded flex items-center justify-center gap-2 shadow">
+                            {isUploading ? <Icon name="loader" size={14} className="animate-spin" /> : <Icon name="upload" size={14} />}
                             {isUploading ? "Uploading..." : "Upload Asset"}
+                        </button>
+                        
+                        <input
+                            type="file"
+                            ref={importPresetRef}
+                            onChange={handleImportPresetClick}
+                            className="hidden"
+                            accept=".json"
+                        />
+                        <button onClick={() => importPresetRef.current?.click()} disabled={isImporting} className="flex-1 py-2 bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs rounded flex items-center justify-center gap-2 shadow">
+                            {isImporting ? <Icon name="loader" size={14} className="animate-spin" /> : <Icon name="download" size={14} />}
+                            {isImporting ? "Importing..." : "Import Preset"}
                         </button>
                     </div>
 
@@ -741,6 +937,15 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                                 <Icon name="trash-2" size={14} className="inline mr-1" /> Remove Normal Map
                             </button>
                         )}
+                    </div>
+
+                    <div className="border-t border-slate-800 pt-4">
+                        <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Export & Backup</label>
+                        <button onClick={handleExportPreset} disabled={isExporting} className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold rounded flex items-center justify-center gap-2 transition-colors border border-slate-700 shadow">
+                            {isExporting ? <Icon name="loader" size={14} className="animate-spin" /> : <Icon name="save" size={14} />}
+                            {isExporting ? "Packaging Preset..." : "Export Map Preset"}
+                        </button>
+                        <p className="text-[10px] text-slate-500 text-center mt-2 leading-tight">Exports a shareable JSON file containing the current map image, 3D heightmaps, lighting, walls, tokens, and character sheets.</p>
                     </div>
                 </div>
             )}

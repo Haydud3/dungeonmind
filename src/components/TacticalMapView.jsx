@@ -1927,6 +1927,9 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           mapData={mapData}
           activeMapId={activeMapId}
           updateMap={updateMap}
+          allCharacters={allCharacters}
+          campaignData={data}
+          updateCampaign={updateCampaign}
           onClose={() => setShowAssetManager(false)} 
           onSetBackground={handleSetBackground}
           onSetHeightmap={(url) => updateMap(campaignCode, activeMapId, { heightmapUrl: url })}
