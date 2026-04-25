@@ -593,7 +593,7 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                                 >
                                     <img src={asset.thumbnail || asset.url} className="w-full h-full object-cover" alt={asset.name} draggable={false} />
                                     <div className="absolute inset-x-0 bottom-0 bg-black/60 text-[9px] text-white p-1 truncate opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">{asset.name}</div>
-                                    <div className="absolute top-1 right-1 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <div className="absolute top-1 left-1 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                         <button onClick={async (e) => { 
                                             e.stopPropagation(); 
                                             const isNew = await onSetBackground(asset, false); 
@@ -611,6 +611,23 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                                         <button onClick={(e) => { e.stopPropagation(); setSelectedAsset(asset); setActiveTab('settings'); }} className="bg-black/80 text-cyan-400 hover:text-white p-1.5 rounded shadow-md" title="Map Settings">
                                             <Icon name="settings" size={14}/>
                                         </button>
+                                    </div>
+                                    <div className="absolute top-1 right-1 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <button onClick={(e) => { 
+                                            e.stopPropagation(); 
+                                            const newName = prompt("Enter new name for asset:", asset.name);
+                                            if (newName && newName !== asset.name) {
+                                                const assetRef = doc(db, 'artifacts', appId || 'dungeonmind', 'public', 'data', 'campaigns', campaignCode, 'assets', asset.id);
+                                                updateDoc(assetRef, { name: newName }).then(() => {
+                                                    setAssets(prev => prev.map(a => a.id === asset.id ? { ...a, name: newName } : a));
+                                                }).catch(err => {
+                                                    console.error("Error renaming asset", err);
+                                                    alert("Failed to rename asset.");
+                                                });
+                                            }
+                                        }} className="bg-black/80 text-green-400 hover:text-white p-1.5 rounded shadow-md" title="Rename Asset">
+                                            <Icon name="pencil" size={14}/>
+                                        </button>
                                         <button onClick={(e) => { e.stopPropagation(); handleDeleteAsset(asset); }} className="bg-black/80 text-red-500 hover:text-white p-1.5 rounded shadow-md" title="Delete Asset">
                                             <Icon name="trash" size={14}/>
                                         </button>
@@ -627,6 +644,17 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
 
             {activeTab === 'settings' && selectedAsset && (
                  <div className="flex-1 min-h-0 overflow-y-auto custom-scroll p-4 space-y-6">
+
+                    <div>
+                        <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Map Name</label>
+                        <input
+                            type="text"
+                            value={mapData?.name || ''}
+                            placeholder="Unnamed Map"
+                            onChange={(e) => updateMap(campaignCode, activeMapId, { name: e.target.value })}
+                            className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm outline-none focus:border-amber-500 shadow-inner"
+                        />
+                    </div>
                     
                     <div>
                         <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Grid Auto-Detect (AI)</label>
