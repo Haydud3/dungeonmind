@@ -8,21 +8,29 @@ export const HeightmapContent = ({ resolvedHeightmapUrl, resolvedBackgroundUrl, 
     const subdivisions = isLowPerf ? 128 : 256;
 
     const backgroundTexture = useTexture(resolvedBackgroundUrl);
-    useMemo(() => {
-        if (backgroundTexture) {
-            backgroundTexture.wrapS = backgroundTexture.wrapT = THREE.RepeatWrapping;
-        }
-    }, [backgroundTexture]);
 
     const heightmapTexture = useTexture(resolvedHeightmapUrl);
 
-    // Load normal map conditionally. Since useTexture expects a valid URL or array, we pass a dummy if null, but we don't apply it.
-    // However, Drei's useTexture will throw if passing null or an empty string.
-    // A better approach is to conditionally load it if the URL exists.
-    // Actually, useTexture supports passing an array or single URL, but it can't be conditionally called inside a component (React Hook rules).
-    // So we use useLoader directly if we want conditional loading, OR we pass a transparent 1x1 base64 image if null.
     const safeNormalMapUrl = resolvedNormalMapUrl || "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="; 
     const normalMapTexture = useTexture(safeNormalMapUrl);
+
+    useMemo(() => {
+        // FIX: Texture properties must be explicitly flagged for update in Three.js
+        if (backgroundTexture) {
+            backgroundTexture.colorSpace = THREE.SRGBColorSpace;
+            backgroundTexture.wrapS = backgroundTexture.wrapT = THREE.RepeatWrapping;
+            backgroundTexture.needsUpdate = true;
+        }
+        if (heightmapTexture) {
+            heightmapTexture.colorSpace = THREE.NoColorSpace;
+            heightmapTexture.wrapS = heightmapTexture.wrapT = THREE.RepeatWrapping;
+            heightmapTexture.needsUpdate = true;
+        }
+        if (normalMapTexture) {
+            normalMapTexture.colorSpace = THREE.NoColorSpace;
+            normalMapTexture.needsUpdate = true;
+        }
+    }, [backgroundTexture, heightmapTexture, normalMapTexture]);
 
     return (
         <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]}>

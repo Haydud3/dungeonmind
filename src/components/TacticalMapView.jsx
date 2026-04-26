@@ -12,6 +12,7 @@ import { Client } from "@gradio/client";
 import { retrieveChunkedMap, storeChunkedMap } from '../utils/storageUtils';
 import CharacterModel from './CharacterModel';
 import Token3D from './tactical/Token';
+import MapProp from './tactical/MapProp';
 import CameraController from '../utils/CameraController';
 import { collection, doc, query, where, getDocs } from 'firebase/firestore';
 import { db, appId } from '../firebase';
@@ -42,11 +43,39 @@ import { GpuFogOfWar } from './3d/GpuFogOfWar';
 
 import { ZoomHandler } from './3d/ZoomHandler';
 import { WallDrawingController } from './3d/controllers/WallDrawingController';
+import { FreehandDrawingController } from './3d/controllers/FreehandDrawingController';
+import { StampingController } from './3d/controllers/StampingController';
 import { WeatherParticles } from './3d/WeatherParticles';
 import { PostProcessingEffects } from './3d/PostProcessingEffects';
 import { DropZone } from './ui/DropZone';
 import { DisplacedGrid } from './3d/DisplacedGrid';
 import { ToolButton } from './ui/ToolButton';
+
+// Helper: UI images to avoid CORS issues natively
+const getProxiedImageUrl = (url) => {
+    if (!url) return '';
+    if (url.startsWith('http') && !url.includes('firebasestorage.googleapis.com') && !url.includes('wsrv.nl')) {
+        return `https://wsrv.nl/?url=${encodeURIComponent(url)}&cors=1`;
+    }
+    return url;
+};
+
+// Helper: Error boundary to prevent broken textures from crashing the canvas
+class ErrorBoundary extends React.Component {
+    constructor(props) {
+        super(props);
+        this.state = { hasError: false };
+    }
+    static getDerivedStateFromError(error) {
+        return { hasError: true };
+    }
+    componentDidCatch(error, errorInfo) {
+        console.warn("3D Asset Error Caught:", error, errorInfo);
+    }
+    render() {
+        return this.state.hasError ? (this.props.fallback || null) : this.props.children;
+    }
+}
 
 // Helper function to generate boundary walls
 const generateBoundaryWalls = (mapScale, mapAspect) => {
@@ -141,6 +170,10 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
 
   const [isDrawingWalls, setIsDrawingWalls] = useState(false);
   const [drawingWallType, setDrawingWallType] = useState('wall');
+  const [isDrawingFreehand, setIsDrawingFreehand] = useState(false);
+  const [activeStampingAsset, setActiveStampingAsset] = useState(null);
+  const [drawingColor, setDrawingColor] = useState('#000000');
+  const [drawingLineWidth, setDrawingLineWidth] = useState(5);
   const [selectedWalls, setSelectedWalls] = useState([]);
   const [selectedLights, setSelectedLights] = useState([]);
   const [isArchitectMode, setIsArchitectMode] = useState(false);
@@ -148,9 +181,11 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
   const [isDeleting, setIsDeleting] = useState(false);
   const [wallContextMenu, setWallContextMenu] = useState(null);
   const [lightContextMenu, setLightContextMenu] = useState(null);
+  const [propContextMenu, setPropContextMenu] = useState(null);
   const tokenMenuRef = useRef(null);
   const wallMenuRef = useRef(null);
   const lightMenuRef = useRef(null);
+  const propMenuRef = useRef(null);
   const [activeTool, setActiveTool] = useState(null);
   const [activeMeasurementStyle, setActiveMeasurementStyle] = useState('default');
   const [isToolbarOpen, setIsToolbarOpen] = useState(true);
@@ -220,12 +255,12 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
   }, []);
 
   useEffect(() => {
-      isAnyMenuOpenRef.current = showAssetManager || showTokenManager || !!contextMenu || !!wallContextMenu || !!lightContextMenu || showCompendium || showModelPicker;
+      isAnyMenuOpenRef.current = showAssetManager || showTokenManager || !!contextMenu || !!wallContextMenu || !!lightContextMenu || !!propContextMenu || showCompendium || showModelPicker;
       if (isAnyMenuOpenRef.current) {
           setIsIdle(false);
           if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
       }
-  }, [showAssetManager, showTokenManager, contextMenu, wallContextMenu, lightContextMenu, showCompendium, showModelPicker]);
+  }, [showAssetManager, showTokenManager, contextMenu, wallContextMenu, lightContextMenu, propContextMenu, showCompendium, showModelPicker]);
 
   const handleMouseMove = () => {
       if (!isFullscreen) return;
@@ -521,7 +556,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
   const visibleDoorWindowIds = useMemo(() => {
       if (role === 'dm') {
           // DM sees all walls, so all doors/windows are visible to DM
-          return new Set(Object.values(mapData?.walls || {}).filter(w => w.type === 'door' || w.type === 'window').map(w => w.id));
+          return new Set(Object.values(mapData?.walls || {}).filter(w => w && (w.type === 'door' || w.type === 'window')).map(w => w.id));
       }
 
       const visibleIds = new Set();
@@ -529,8 +564,8 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           return visibleIds;
       }
 
-      Object.values(mapData.walls).forEach(wall => {
-          if (wall.type === 'door' || wall.type === 'window') {
+      Object.values(mapData.walls).filter(Boolean).forEach(wall => {
+          if (wall && (wall.type === 'door' || wall.type === 'window')) {
               const wallMidpoint = {
                   x: (wall.points[0].x + wall.points[1].x) / 2,
                   z: (wall.points[0].z + wall.points[1].z) / 2,
@@ -970,6 +1005,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
   const [tokenMenuDisplayPosition, setTokenMenuDisplayPosition] = useState({ x: 0, y: 0 });
   const [wallMenuDisplayPosition, setWallMenuDisplayPosition] = useState({ x: 0, y: 0 });
   const [lightMenuDisplayPosition, setLightMenuDisplayPosition] = useState({ x: 0, y: 0 });
+  const [propMenuDisplayPosition, setPropMenuDisplayPosition] = useState({ x: 0, y: 0 });
 
   // Effect for token context menu positioning
   useEffect(() => {
@@ -1041,6 +1077,29 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
     }
   }, [lightContextMenu]);
 
+  // Effect for prop context menu positioning
+  useEffect(() => {
+    if (propContextMenu && propMenuRef.current) {
+      requestAnimationFrame(() => {
+        const menuWidth = propMenuRef.current.offsetWidth;
+        const menuHeight = propMenuRef.current.offsetHeight;
+        const viewportWidth = window.innerWidth;
+        const viewportHeight = window.innerHeight;
+
+        let newX = propContextMenu.x;
+        let newY = propContextMenu.y;
+
+        if (newX + menuWidth > viewportWidth) {
+          newX = viewportWidth - menuWidth - 10;
+        }
+        if (newY + menuHeight > viewportHeight) {
+          newY = viewportHeight - menuHeight - 10;
+        }
+        setPropMenuDisplayPosition({ x: Math.max(0, newX), y: Math.max(0, newY) });
+      });
+    }
+  }, [propContextMenu]);
+
   const handleContextMenu = (e, token) => {
     if (typeof navigator !== 'undefined' && navigator.vibrate) {
       navigator.vibrate(50); // Haptic feedback on token long-press/right-click
@@ -1088,10 +1147,26 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       }
       setContextMenu(null);
       setWallContextMenu(null);
+      setPropContextMenu(null);
       setLightContextMenu({
           x: e.clientX,
           y: e.clientY,
           lightId: lightId
+      });
+  };
+
+  const handlePropContextMenu = (e, propId) => {
+      e.stopPropagation();
+      if (typeof navigator !== 'undefined' && navigator.vibrate) {
+        navigator.vibrate(50);
+      }
+      setContextMenu(null);
+      setWallContextMenu(null);
+      setLightContextMenu(null);
+      setPropContextMenu({
+          x: e.clientX,
+          y: e.clientY,
+          propId: propId
       });
   };
 
@@ -1116,6 +1191,19 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       throw e;
     }
   };
+
+  // Handler triggered by MapProp when a drag ends
+  const handleUpdatePropPosition = useCallback(async (propId, position) => {
+    try {
+        const updates = {};
+        Object.keys(position).forEach(key => {
+            updates[`props.${propId}.${key}`] = position[key];
+        });
+        await updateMap(campaignCode, activeMapId, updates);
+    } catch (e) {
+        console.error("[TacticalMapView] Failed to updateProp in Firestore:", e);
+    }
+  }, [campaignCode, activeMapId]);
 
   // Handle dragging an image from the AssetManager directly onto the map
   const handleDrop = async (e, position) => {
@@ -1161,6 +1249,25 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
     const dropX = isSnapToGrid ? (isEvenSize ? Math.round((position.x - gridOffsetX) / gridSize) * gridSize + gridOffsetX : Math.floor((position.x - gridOffsetX) / gridSize) * gridSize + gridSize / 2 + gridOffsetX) : position.x;
     const dropZ = isSnapToGrid ? (isEvenSize ? Math.round((position.z - gridOffsetY) / gridSize) * gridSize + gridOffsetY : Math.floor((position.z - gridOffsetY) / gridSize) * gridSize + gridSize / 2 + gridOffsetY) : position.z;
     const terrainY = getTerrainHeight ? getTerrainHeight(dropX, dropZ) : 0;
+
+    if (payload.category === 'Props') {
+        const newPropId = `prop_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        const propData = {
+            id: newPropId,
+            name: payload.name || 'New Prop',
+            x: position.x, // Props usually don't snap to grid on raw drop
+            y: position.y,
+            z: position.z,
+            image: payload.url || payload.image || '',
+            scale: 1.0,
+            elevation: 0,
+            rotation: 0,
+            is3D: payload.is3D || false,
+            modelUrl: payload.modelUrl || null
+        };
+        await updateMap(campaignCode, activeMapId, { [`props.${newPropId}`]: propData });
+        return;
+    }
 
     const newTokenId = `token_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     let tokenData;
@@ -1232,7 +1339,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
 
       if (e.key === 'Escape') {
           setSelectedTokenIds([]); setContextMenu(null); setWallContextMenu(null); setLightContextMenu(null);
-          if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); }
+          if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); setActiveStampingAsset(null); }
           setActiveTool(null);
           return;
       }
@@ -1375,7 +1482,10 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
         }}
         /* Clear selection and context menu when clicking the background void */
         onPointerMissed={(e) => {
-          if (isDrawingWalls || isArchitectMode || isPlacingLights) return;
+          if (isDrawingWalls || isArchitectMode || isPlacingLights || activeStampingAsset) {
+              if (e.button === 2 && activeStampingAsset) setActiveStampingAsset(null); // Right click cancels stamp
+              return;
+          }
           // If a measurement tool is active, a missed click should clear it.
           if (activeTool) {
               setActiveTool(null);
@@ -1434,18 +1544,20 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
         </Suspense>
         {/* Suspense is required when using useTexture to catch the loading state */}
         <Suspense fallback={null}>
-            {mapData?.heightmapUrl ? (
-                <Heightmap 
-                    heightmapUrl={mapData.heightmapUrl}
-                    backgroundUrl={mapData.backgroundUrl}
-                    normalMapUrl={mapData.normalMapUrl}
-                    heightScale={mapData.heightScale || 1}
-                    scale={mapData.scale || 20}
-                    aspect={aspect}
-                />
-            ) : (
-                showPlane && <MapPlane backgroundUrl={mapData.backgroundUrl} scale={mapData.scale || 20} />
-            )}
+            <ErrorBoundary fallback={null}>
+                {mapData?.heightmapUrl ? (
+                    <Heightmap 
+                        heightmapUrl={mapData.heightmapUrl}
+                        backgroundUrl={mapData.backgroundUrl}
+                        normalMapUrl={mapData.normalMapUrl}
+                        heightScale={mapData.heightScale || 1}
+                        scale={mapData.scale || 20}
+                        aspect={aspect}
+                    />
+                ) : (
+                    showPlane && <MapPlane backgroundUrl={mapData.backgroundUrl} scale={mapData.scale || 20} />
+                )}
+            </ErrorBoundary>
         </Suspense>
 
         <MarqueeSelector 
@@ -1461,12 +1573,14 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
         {mapData?.showGrid !== false && (
             mapData?.heightmapUrl ? (
                 <Suspense fallback={null}>
-                    <DisplacedGrid 
-                        mapData={mapData}
-                        aspect={aspect}
-                        resolvedHeightmapUrl={resolvedHeightmapUrl}
-                        resolvedNormalMapUrl={resolvedNormalMapUrl}
-                    />
+                    <ErrorBoundary fallback={null}>
+                        <DisplacedGrid 
+                            mapData={mapData}
+                            aspect={aspect}
+                            resolvedHeightmapUrl={resolvedHeightmapUrl}
+                            resolvedNormalMapUrl={resolvedNormalMapUrl}
+                        />
+                    </ErrorBoundary>
                 </Suspense>
             ) : (
                 <Grid 
@@ -1487,6 +1601,20 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
         {/* Active Combat Tracker Integration */}
         <CombatCameraDirector activeTokenId={activeCombatantId} tokensList={tokensList} />
         
+        {/* Render all map props */}
+        {mapData && mapData.props && isAspectReady && (!mapData.heightmapUrl || terrainData) && Object.values(mapData.props).filter(Boolean).map(prop => (
+            <ErrorBoundary key={prop.id} fallback={null}>
+                <MapProp
+                    propData={prop}
+                    isSelected={false} // Selection logic can be added next
+                    onContextMenu={role === 'dm' ? handlePropContextMenu : null}
+                    getTerrainHeight={getTerrainHeight}
+                    updatePropPosition={handleUpdatePropPosition}
+                    gridSize={gridSize}
+                />
+            </ErrorBoundary>
+        ))}
+
         {/* Render all tokens on the map */}
         {mapData && isAspectReady && (!mapData.heightmapUrl || terrainData) && tokensList.map(token => {
             if (role !== 'dm' && (!visibleTokenIds.has(token.id) || token.isHidden)) {
@@ -1532,34 +1660,38 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
             const myCharAssigned = myCharId && String(token.characterId) === String(myCharId);
             const canControl = role === 'dm' || isOwner || myCharAssigned || token.isSharedControl;
             
+            const isInteractive = true;
+
             return (
-                <Token3D 
-                    key={token.id} 
-                    token={displayToken} 
-                    updateTokenPosition={handleUpdateTokenPosition}
-                    gridSize={gridSize}
-                    gridOffsetX={mapData?.gridOffsetX || 0}
-                    gridOffsetY={mapData?.gridOffsetY || 0}
-                    isSelected={selectedTokenIds.includes(token.id)}
-                    onSelect={handleSelectToken}
-                    onContextMenu={handleContextMenu}
-                    role={role}
-                    getTerrainHeight={getTerrainHeight}
-                    isSnapToGrid={isSnapToGrid}
-                    isTerrainReady={!mapData.heightmapUrl || !!terrainData}
-                    draggedTokenId={draggedTokenId}
-                    setDraggedTokenId={setDraggedTokenId}
-                    viewMode={viewMode}
-                    activeTool={activeTool}
-                    showNameplates={showNameplates}
-                    selectedTokenIds={selectedTokenIds}
-                    groupDragData={groupDragData}
-                    onGroupDragEnd={handleGroupDragEnd}
-                    isActiveTurn={activeCombatantId === token.id}
-                    canControl={canControl}
-                    shiftHeldRef={shiftHeldRef}
-                    tokenBaseOffset={mapData?.tokenElevationOffset ?? -0.04}
-                />
+                <ErrorBoundary key={token.id} fallback={null}>
+                    <Token3D 
+                        token={displayToken} 
+                        updateTokenPosition={handleUpdateTokenPosition}
+                        gridSize={gridSize}
+                        gridOffsetX={mapData?.gridOffsetX || 0}
+                        gridOffsetY={mapData?.gridOffsetY || 0}
+                        isSelected={selectedTokenIds.includes(token.id)}
+                        onSelect={handleSelectToken}
+                        onContextMenu={handleContextMenu}
+                        role={role}
+                        getTerrainHeight={getTerrainHeight}
+                        isSnapToGrid={isSnapToGrid}
+                        isTerrainReady={!mapData.heightmapUrl || !!terrainData}
+                        draggedTokenId={draggedTokenId}
+                        setDraggedTokenId={setDraggedTokenId}
+                        viewMode={viewMode}
+                        activeTool={activeTool}
+                        showNameplates={showNameplates}
+                        selectedTokenIds={selectedTokenIds}
+                        groupDragData={groupDragData}
+                        onGroupDragEnd={handleGroupDragEnd}
+                        isActiveTurn={activeCombatantId === token.id}
+                        canControl={canControl && isInteractive}
+                        shiftHeldRef={shiftHeldRef}
+                        tokenBaseOffset={mapData?.tokenElevationOffset ?? -0.04}
+                        isInteractive={isInteractive}
+                    />
+                </ErrorBoundary>
             );
         })}
 
@@ -1652,6 +1784,33 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                 />
             </>
         )}
+        
+        {activeStampingAsset && (
+            <StampingController 
+                isEnabled={!!activeStampingAsset}
+                asset={activeStampingAsset}
+                getTerrainHeight={getTerrainHeight}
+                gridSize={gridSize}
+                isSnapToGrid={false}
+                onStamp={(pt, asset) => {
+                    const newPropId = `prop_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                    const propData = {
+                        id: newPropId,
+                        name: asset.name || 'New Prop',
+                        x: pt.x, y: pt.y, z: pt.z, // Use the literal dropped y
+                        image: asset.generatedMapUrl || asset.url || asset.image || '',
+                        scale: 1.0,
+                        elevation: 0,
+                        rotation: 0,
+                        is3D: asset.is3D || false,
+                        modelUrl: asset.modelUrl || null
+                    };
+                    updateMap(campaignCode, activeMapId, {
+                        [`props.${newPropId}`]: propData
+                    });
+                }}
+            />
+        )}
 
         {/* MapControls maps left-click to pan, right-click to rotate, scroll to zoom */}
         <MapControls 
@@ -1666,29 +1825,29 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
         <ZoomHandler zoomRef={zoomRef} />
       </Canvas>
 
+      {/* Floating Action Button for active stamp tool */}
+      {activeStampingAsset && (
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[70]">
+              <button 
+                  onClick={() => setActiveStampingAsset(null)}
+                  className="bg-red-600 hover:bg-red-500 text-white px-4 py-2 rounded-full font-bold shadow-xl flex items-center gap-2 transition-colors border border-red-800"
+              >
+                  <Icon name="x" size={16}/> Cancel Stamp (Esc)
+              </button>
+          </div>
+      )}
+
       <div className={`absolute top-4 left-4 vtt-safe-top vtt-safe-left z-[70] flex flex-col items-start gap-2 ${uiOpacityClass}`}>
-        <div className="h-10 px-3 bg-slate-900/80 backdrop-blur border border-slate-700 rounded-lg shadow-lg flex items-center gap-2 cursor-help" title={`Connected to Realm: ${campaignCode}`}>
+        <div className="h-10 px-3 bg-slate-900/80 backdrop-blur border border-slate-700 rounded-xl shadow-2xl flex items-center gap-2 cursor-help hover:border-indigo-500 transition-colors" title={`Connected to Realm: ${campaignCode}`}>
             <div className="w-2 h-2 rounded-full shadow-[0_0_10px_rgba(34,197,94,0.5)] bg-green-500"></div>
             <span className="text-sm font-bold text-amber-500 fantasy-font tracking-widest">{campaignCode}</span>
         </div>
-        <div className="flex gap-2">
-            <button onClick={() => { cameraControllerRef.current?.reset(); }} className="w-10 h-10 bg-slate-900/80 backdrop-blur border border-slate-700 hover:border-blue-500 hover:bg-slate-800 text-white rounded-lg shadow-lg flex items-center justify-center transition-all" title="Reset View">
-              <Icon name="camera" size={18} />
-            </button>
-            <button onClick={() => setViewMode(prev => prev === 'isometric' ? 'top-down' : 'isometric')} className="w-10 h-10 bg-slate-900/80 backdrop-blur border border-slate-700 hover:border-blue-500 hover:bg-slate-800 text-white rounded-lg shadow-lg flex items-center justify-center transition-all" title={viewMode === 'isometric' ? 'Switch to Top-Down (V)' : 'Switch to Isometric (V)'}>
-              <Icon name={viewMode === 'isometric' ? 'layout-grid' : 'box'} size={18} />
-            </button>
-            <button onClick={toggleFullscreen} className="w-10 h-10 bg-slate-900/80 backdrop-blur border border-slate-700 hover:border-amber-500 hover:bg-slate-800 text-white rounded-lg shadow-lg flex items-center justify-center transition-all" title="Toggle Fullscreen">
-              <Icon name={isFullscreen ? "minimize" : "maximize"} size={18} />
-            </button>
-        </div>
-        <div className="flex gap-2">
-            <button onClick={() => zoomRef.current?.zoomIn()} className="w-10 h-10 bg-slate-900/80 backdrop-blur border border-slate-700 hover:border-blue-500 hover:bg-slate-800 text-white rounded-lg shadow-lg flex items-center justify-center transition-all" title="Zoom In">
-              <Icon name="zoom-in" size={18} />
-            </button>
-            <button onClick={() => zoomRef.current?.zoomOut()} className="w-10 h-10 bg-slate-900/80 backdrop-blur border border-slate-700 hover:border-blue-500 hover:bg-slate-800 text-white rounded-lg shadow-lg flex items-center justify-center transition-all" title="Zoom Out">
-              <Icon name="zoom-out" size={18} />
-            </button>
+        <div className="flex flex-col gap-2">
+            <ToolButton name="Reset View" icon="camera" onClick={() => { cameraControllerRef.current?.reset(); }} isStandalone={true} />
+            <ToolButton name={viewMode === 'isometric' ? 'Switch to Top-Down (V)' : 'Switch to Isometric (V)'} icon={viewMode === 'isometric' ? 'layout-grid' : 'box'} onClick={() => setViewMode(prev => prev === 'isometric' ? 'top-down' : 'isometric')} isStandalone={true} />
+            <ToolButton name="Toggle Fullscreen" icon={isFullscreen ? "minimize" : "maximize"} onClick={toggleFullscreen} isStandalone={true} />
+            <ToolButton name="Zoom In" icon="zoom-in" onClick={() => zoomRef.current?.zoomIn()} isStandalone={true} />
+            <ToolButton name="Zoom Out" icon="zoom-out" onClick={() => zoomRef.current?.zoomOut()} isStandalone={true} />
         </div>
       </div>
 
@@ -1698,119 +1857,154 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           <CombatTrackerSidebar combat={data?.campaign?.combat} updateCampaign={updateCampaign} tokens={tokensList} role={role} campaignCode={campaignCode} activeMapId={activeMapId} campaignData={data?.campaign} allCharacters={allCharacters} data={data} onOpenSheet={onOpenSheet} className={uiOpacityClass} onClose={() => setShowInitiativeTracker(false)} />
       )}
 
-      <div className={`absolute top-4 right-4 vtt-safe-top vtt-safe-right z-[70] flex flex-col items-end gap-3 ${uiOpacityClass}`}>
-          <button 
-              onClick={() => setIsToolbarOpen(p => !p)} 
-              className="w-10 h-10 bg-slate-900/80 backdrop-blur border border-slate-700 hover:border-amber-500 hover:bg-slate-800 text-slate-400 hover:text-white rounded-full shadow-lg flex items-center justify-center transition-all z-[71]"
-              title={isToolbarOpen ? "Collapse Toolbar" : "Expand Toolbar"}
-          >
-              <Icon name={isToolbarOpen ? "chevron-up" : "chevron-down"} size={20} />
-          </button>
+      {/* Primary Right Dock */}
+      <div className={`absolute top-1/2 right-4 -translate-y-1/2 vtt-safe-right z-[70] flex flex-col gap-2 ${uiOpacityClass}`}>
+              {role === 'dm' && (
+                  <>
+                      <ToolButton name="Tokens" icon="users" isActive={showTokenManager} onClick={() => { setActiveTool(null); setShowAssetManager(false); setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); setShowTokenManager(p => !p); }} isStandalone={true} />
+                      <ToolButton name="Map" icon="map" isActive={showAssetManager} onClick={() => { setActiveTool(null); setShowTokenManager(false); setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); setShowAssetManager(p => !p); }} isStandalone={true} />
+                      <ToolButton 
+                          name="Combat" 
+                          icon="swords" 
+                          isActive={showInitiativeTracker} 
+                          onClick={() => {
+                              if (!data?.campaign?.combat?.active) {
+                                  updateCampaign({ 'campaign.combat.active': true });
+                              }
+                              setShowInitiativeTracker(p => !p);
+                          }} 
+                          isStandalone={true} 
+                      />
+                      <div className="h-px w-8 bg-slate-700/50 my-1 mx-auto"></div>
+                  </>
+              )}
 
-          <div className={`flex flex-col items-end gap-3 transition-all duration-300 origin-top ${isToolbarOpen ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-4 pointer-events-none absolute top-12 right-0'}`}>
-            <div className="flex flex-col items-end gap-2">
-                <div className="flex gap-1 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-1 rounded-full shadow-2xl">
-                <ToolButton name="freehand" icon="pen-tool" isActive={activeTool === 'freehand' || activeTool === 'freehand-linger'} onClick={() => { if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setActiveTool(p => p === 'freehand' ? 'freehand-linger' : p === 'freehand-linger' ? null : 'freehand'); }} title="Draw" />
-                <ToolButton name="ruler" icon="ruler" isActive={activeTool === 'ruler' || activeTool === 'ruler-linger'} onClick={() => { if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setActiveTool(p => p === 'ruler' ? 'ruler-linger' : p === 'ruler-linger' ? null : 'ruler'); }} />
-                <ToolButton name="cone" icon="triangle" isActive={activeTool === 'cone' || activeTool === 'cone-linger'} onClick={() => { if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setActiveTool(p => p === 'cone' ? 'cone-linger' : p === 'cone-linger' ? null : 'cone'); }} />
-                <ToolButton name="circle" icon="circle" isActive={activeTool === 'circle' || activeTool === 'circle-linger'} onClick={() => { if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setActiveTool(p => p === 'circle' ? 'circle-linger' : p === 'circle-linger' ? null : 'circle'); }} />
-                <ToolButton name="box" icon="square" isActive={activeTool === 'box' || activeTool === 'box-linger'} onClick={() => { if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setActiveTool(p => p === 'box' ? 'box-linger' : p === 'box-linger' ? null : 'box'); }} />
-            </div>
-            
-            {/* Template Style Picker */}
-            {activeTool && activeTool.includes('-linger') && activeTool !== 'ruler-linger' && (
-                <div className="flex gap-1 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-1 rounded-full shadow-2xl animate-in slide-in-from-top-2">
-                    <ToolButton name="style-default" icon="mouse-pointer-2" isActive={activeMeasurementStyle === 'default'} onClick={() => setActiveMeasurementStyle('default')} title="Standard" />
-                    <ToolButton name="style-fire" icon="flame" isActive={activeMeasurementStyle === 'fire'} onClick={() => setActiveMeasurementStyle('fire')} title="Fire" />
-                    <ToolButton name="style-ice" icon="snowflake" isActive={activeMeasurementStyle === 'ice'} onClick={() => setActiveMeasurementStyle('ice')} title="Ice" />
-                    <ToolButton name="style-web" icon="box-select" isActive={activeMeasurementStyle === 'web'} onClick={() => setActiveMeasurementStyle('web')} title="Web" />
-                    <ToolButton name="style-poison" icon="skull" isActive={activeMeasurementStyle === 'poison'} onClick={() => setActiveMeasurementStyle('poison')} title="Poison" />
-                    <ToolButton name="style-radiant" icon="sun" isActive={activeMeasurementStyle === 'radiant'} onClick={() => setActiveMeasurementStyle('radiant')} title="Radiant" />
-                </div>
-            )}
+              {onOpenDiceTray && <ToolButton name="Dice" icon="dices" onClick={onOpenDiceTray} isStandalone={true} />}
+              {onOpenHandouts && <ToolButton name="Handouts" icon="scroll" onClick={onOpenHandouts} isStandalone={true} />}
+              {onOpenChat && <ToolButton name="Chat" icon="message-circle" onClick={onOpenChat} isStandalone={true} />}
+              {onOpenJournal && <ToolButton name="Journal" icon="book" onClick={onOpenJournal} isStandalone={true} />}
+              
+              <div className="h-px w-8 bg-slate-700/50 my-1 mx-auto"></div>
 
-            {role === 'dm' && (
-                <div className="flex gap-1 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-1 rounded-full shadow-2xl">
-                    <ToolButton name="architect" icon="pen-tool" isActive={isArchitectMode} onClick={() => { setActiveTool(null); setIsDrawingWalls(false); setIsPlacingLights(false); setIsArchitectMode(p => !p); }} />
-                    
-                    <ToolButton name="draw" icon="pencil" isActive={isDrawingWalls} onClick={() => { setActiveTool(null); setIsArchitectMode(false); setIsPlacingLights(false); setIsDrawingWalls(p => !p); }} />
-                    {isDrawingWalls && (
-                        <div className="flex gap-1 border-l border-slate-600 pl-1 ml-1 mr-1">
-                            <ToolButton name="wall" icon="square" isActive={drawingWallType === 'wall'} onClick={() => setDrawingWallType('wall')} title="Wall" />
-                            <ToolButton name="door" icon="door-closed" isActive={drawingWallType === 'door'} onClick={() => setDrawingWallType('door')} title="Door" />
-                            <ToolButton name="window" icon="layout" isActive={drawingWallType === 'window'} onClick={() => setDrawingWallType('window')} title="Window" />
-                        </div>
-                    )}
+              {/* Map Tools */}
+              <div className="relative group flex justify-center">
+                  <ToolButton 
+                      name="Measure" 
+                      icon="ruler" 
+                      isActive={['freehand', 'freehand-linger', 'ruler', 'ruler-linger', 'cone', 'cone-linger', 'circle', 'circle-linger', 'box', 'box-linger'].includes(activeTool) || isDrawingFreehand || !!activeStampingAsset} 
+                      onClick={() => setIsToolbarOpen(p => p === 'measure' ? null : 'measure')} 
+                      isStandalone={true} 
+                  />
+                  {isToolbarOpen === 'measure' && (
+                      <div className="absolute top-1/2 right-[110%] -translate-y-1/2 flex items-center gap-2">
+                          {isDrawingFreehand && (
+                              <div className="flex items-center gap-2 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-2 rounded-full shadow-2xl animate-in slide-in-from-right-2">
+                                  <input type="color" value={drawingColor} onChange={e => setDrawingColor(e.target.value)} className="w-6 h-6 rounded cursor-pointer bg-transparent border-0 p-0" title="Color" />
+                                  <input type="range" min="1" max="20" value={drawingLineWidth} onChange={e => setDrawingLineWidth(Number(e.target.value))} className="w-24 accent-amber-500" title="Line Width" />
+                                  <div className="w-px h-4 bg-slate-700"></div>
+                                  <ToolButton name="clear-drawings" icon="trash-2" onClick={() => { if (window.confirm("Clear all map drawings?")) { updateMap(campaignCode, activeMapId, { drawings: {} }); } }} title="Clear All Drawings" />
+                              </div>
+                          )}
 
-                    <ToolButton name="light" icon="lightbulb" isActive={isPlacingLights} onClick={() => { setActiveTool(null); setIsArchitectMode(false); setIsDrawingWalls(false); setIsPlacingLights(p => !p); }} />
-                    
-                    <ToolButton name="delete" icon="trash-2" isActive={isDeleting} onClick={() => {
-                        if (isDeleting && (selectedWalls.length > 0 || selectedLights.length > 0 || selectedTokenIds.length > 0)) {
-                            let updates = {};
-                            let changed = false;
+                          {activeTool && activeTool.includes('-linger') && activeTool !== 'ruler-linger' && (
+                              <div className="flex gap-1 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-1 rounded-full shadow-2xl animate-in slide-in-from-right-2">
+                                  <ToolButton name="style-default" icon="mouse-pointer-2" isActive={activeMeasurementStyle === 'default'} onClick={() => setActiveMeasurementStyle('default')} title="Standard" />
+                                  <ToolButton name="style-fire" icon="flame" isActive={activeMeasurementStyle === 'fire'} onClick={() => setActiveMeasurementStyle('fire')} title="Fire" />
+                                  <ToolButton name="style-ice" icon="snowflake" isActive={activeMeasurementStyle === 'ice'} onClick={() => setActiveMeasurementStyle('ice')} title="Ice" />
+                                  <ToolButton name="style-web" icon="box-select" isActive={activeMeasurementStyle === 'web'} onClick={() => setActiveMeasurementStyle('web')} title="Web" />
+                                  <ToolButton name="style-poison" icon="skull" isActive={activeMeasurementStyle === 'poison'} onClick={() => setActiveMeasurementStyle('poison')} title="Poison" />
+                                  <ToolButton name="style-radiant" icon="sun" isActive={activeMeasurementStyle === 'radiant'} onClick={() => setActiveMeasurementStyle('radiant')} title="Radiant" />
+                              </div>
+                          )}
 
-                            if (selectedWalls.length > 0) {
-                                selectedWalls.forEach(id => updates[`walls.${id}`] = null);
-                                changed = true;
-                            }
-                            if (selectedLights.length > 0) {
-                                selectedLights.forEach(id => updates[`lights.${id}`] = null);
-                                changed = true;
-                            }
-                            if (selectedTokenIds.length > 0) {
-                                selectedTokenIds.forEach(id => updates[`tokens.${id}`] = null);
-                                changed = true;
-                            }
+                          <div className="flex gap-1 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-1 rounded-full shadow-2xl animate-in slide-in-from-right-2">
+                              <ToolButton 
+                                  name="Stamp Measurement" 
+                                  icon="stamp" 
+                                  isActive={activeTool && activeTool.includes('-linger')} 
+                                  onClick={() => {
+                                      setActiveTool(prev => {
+                                          if (!prev) return null;
+                                          return prev.includes('-linger') ? prev.replace('-linger', '') : `${prev}-linger`;
+                                      });
+                                  }} 
+                                  title="Leave Measurements on Map (Toggle Stamp)" 
+                              />
 
-                            if (changed) {
-                                updateMap(campaignCode, activeMapId, updates);
-                                setSelectedWalls([]);
-                                setSelectedLights([]);
-                                setSelectedTokenIds([]);
-                            }
-                        } else {
-                            setActiveTool(null); setIsArchitectMode(false); setIsDrawingWalls(false); setIsPlacingLights(false); 
-                            setIsDeleting(p => {
-                                if (p) {
-                                    setSelectedWalls([]);
-                                    setSelectedLights([]);
-                                }
-                                return !p;
-                            });
-                        }
-                    }} />
-                </div>
-            )}
-        </div>
+                              <div className="w-px h-6 bg-slate-700 self-center mx-1"></div>
 
-        {role === 'dm' && (
-            <div className="flex flex-col gap-2">
-                <ToolButton name="tokens" icon="users" isActive={showTokenManager} onClick={() => { setActiveTool(null); setShowAssetManager(false); setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); setShowTokenManager(p => !p); }} isStandalone={true} />
-                <ToolButton name="map" icon="map" isActive={showAssetManager} onClick={() => { setActiveTool(null); setShowTokenManager(false); setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); setShowAssetManager(p => !p); }} isStandalone={true} />
-                <ToolButton 
-                    name="Combat Tracker" 
-                    icon="swords" 
-                    isActive={showInitiativeTracker} 
-                    onClick={() => {
-                        if (!data?.campaign?.combat?.active) {
-                            updateCampaign({ 'campaign.combat.active': true });
-                        }
-                        setShowInitiativeTracker(p => !p);
-                    }} 
-                    isStandalone={true} 
-                />
-            </div>
-        )}
+                              <ToolButton name="freehand" icon="pen-tool" isActive={activeTool === 'freehand' || activeTool === 'freehand-linger'} onClick={() => { if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => (p === 'freehand' || p === 'freehand-linger') ? null : (p?.includes('-linger') ? 'freehand-linger' : 'freehand')); }} title="Measure Freehand" />
+                              <ToolButton name="ruler" icon="ruler" isActive={activeTool === 'ruler' || activeTool === 'ruler-linger'} onClick={() => { if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => (p === 'ruler' || p === 'ruler-linger') ? null : (p?.includes('-linger') ? 'ruler-linger' : 'ruler')); }} />
+                              <ToolButton name="cone" icon="triangle" isActive={activeTool === 'cone' || activeTool === 'cone-linger'} onClick={() => { if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => (p === 'cone' || p === 'cone-linger') ? null : (p?.includes('-linger') ? 'cone-linger' : 'cone')); }} />
+                              <ToolButton name="circle" icon="circle" isActive={activeTool === 'circle' || activeTool === 'circle-linger'} onClick={() => { if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => (p === 'circle' || p === 'circle-linger') ? null : (p?.includes('-linger') ? 'circle-linger' : 'circle')); }} />
+                              <ToolButton name="box" icon="square" isActive={activeTool === 'box' || activeTool === 'box-linger'} onClick={() => { if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => (p === 'box' || p === 'box-linger') ? null : (p?.includes('-linger') ? 'box-linger' : 'box')); }} />
+                          </div>
+                      </div>
+                  )}
+              </div>
+              
+              {role === 'dm' && (
+                  <div className="relative group flex justify-center">
+                      <ToolButton 
+                          name="Architect" 
+                          icon="hammer" 
+                          isActive={isArchitectMode || isDrawingWalls || isPlacingLights || isDeleting} 
+                          onClick={() => setIsToolbarOpen(p => p === 'architect' ? null : 'architect')} 
+                          isStandalone={true} 
+                      />
+                      {isToolbarOpen === 'architect' && (
+                          <div className="absolute top-1/2 right-[110%] -translate-y-1/2 flex items-center gap-2">
+                              {isDrawingWalls && (
+                                  <div className="flex gap-1 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-1 rounded-full shadow-2xl animate-in slide-in-from-right-2">
+                                      <ToolButton name="wall" icon="square" isActive={drawingWallType === 'wall'} onClick={() => setDrawingWallType('wall')} title="Wall" />
+                                      <ToolButton name="door" icon="door-closed" isActive={drawingWallType === 'door'} onClick={() => setDrawingWallType('door')} title="Door" />
+                                      <ToolButton name="window" icon="layout" isActive={drawingWallType === 'window'} onClick={() => setDrawingWallType('window')} title="Window" />
+                                  </div>
+                              )}
+                              <div className="flex gap-1 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-1 rounded-full shadow-2xl animate-in slide-in-from-right-2">
+                                  <ToolButton name="architect" icon="pen-tool" isActive={isArchitectMode} onClick={() => { setActiveTool(null); setIsDrawingWalls(false); setIsPlacingLights(false); setIsArchitectMode(p => !p); }} />
+                                  <ToolButton name="draw" icon="pencil" isActive={isDrawingWalls} onClick={() => { setActiveTool(null); setIsArchitectMode(false); setIsPlacingLights(false); setIsDrawingWalls(p => !p); }} />
+                                  <ToolButton name="light" icon="lightbulb" isActive={isPlacingLights} onClick={() => { setActiveTool(null); setIsArchitectMode(false); setIsDrawingWalls(false); setIsPlacingLights(p => !p); }} />
+                                  <ToolButton name="delete" icon="trash-2" isActive={isDeleting} onClick={() => {
+                                      if (isDeleting && (selectedWalls.length > 0 || selectedLights.length > 0 || selectedTokenIds.length > 0)) {
+                                          let updates = {};
+                                          let changed = false;
 
-        <div className="w-8 h-px bg-slate-700/50 my-1 mr-1"></div>
+                                          if (selectedWalls.length > 0) {
+                                              selectedWalls.forEach(id => updates[`walls.${id}`] = null);
+                                              changed = true;
+                                          }
+                                          if (selectedLights.length > 0) {
+                                              selectedLights.forEach(id => updates[`lights.${id}`] = null);
+                                              changed = true;
+                                          }
+                                          if (selectedTokenIds.length > 0) {
+                                              selectedTokenIds.forEach(id => updates[`tokens.${id}`] = null);
+                                              changed = true;
+                                          }
 
-            <div className="flex flex-col gap-2">
-                {onOpenDiceTray && <ToolButton name="Dice" icon="dices" onClick={onOpenDiceTray} isStandalone={true} />}
-                {onOpenHandouts && <ToolButton name="Handouts" icon="scroll" onClick={onOpenHandouts} isStandalone={true} />}
-                {onOpenChat && <ToolButton name="Chat" icon="message-circle" onClick={onOpenChat} isStandalone={true} />}
-                {onOpenJournal && <ToolButton name="Journal" icon="book" onClick={onOpenJournal} isStandalone={true} />}
-            </div>
-          </div>
+                                          if (changed) {
+                                              updateMap(campaignCode, activeMapId, updates);
+                                              setSelectedWalls([]);
+                                              setSelectedLights([]);
+                                              setSelectedTokenIds([]);
+                                          }
+                                      } else {
+                                          setActiveTool(null); setIsArchitectMode(false); setIsDrawingWalls(false); setIsPlacingLights(false); 
+                                          setIsDeleting(p => {
+                                              if (p) {
+                                                  setSelectedWalls([]);
+                                                  setSelectedLights([]);
+                                              }
+                                              return !p;
+                                          });
+                                      }
+                                  }} />
+                              </div>
+                          </div>
+                      )}
+                  </div>
+              )}
       </div>
 
       {/* Actors Manager Drawer */}
@@ -1842,7 +2036,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                                   className="aspect-square bg-slate-800 rounded-lg border border-slate-700 overflow-hidden cursor-grab active:cursor-grabbing hover:border-green-500 transition-colors relative group shadow-lg"
                               >
                                   {p.image ? (
-                                    <img src={p.image} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" alt={p.name} draggable={false} />
+                                    <img src={getProxiedImageUrl(p.image)} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" alt={p.name} draggable={false} />
                                   ) : (
                                     <div className="w-full h-full flex items-center justify-center font-bold text-3xl text-slate-600 bg-slate-700 opacity-80 group-hover:opacity-100 transition-opacity">{p.name?.[0] || '?'}</div>
                                   )}
@@ -1859,7 +2053,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                                   className="flex items-center gap-3 bg-slate-800 rounded-lg border border-slate-700 p-2 cursor-grab active:cursor-grabbing hover:border-green-500 transition-colors group shadow-lg"
                               >
                                   <div className="w-10 h-10 rounded bg-slate-700 shrink-0 overflow-hidden relative">
-                                      {p.image ? <img src={p.image} className="w-full h-full object-cover" draggable={false} /> : <div className="w-full h-full flex items-center justify-center font-bold text-slate-500">{p.name?.[0] || '?'}</div>}
+                                      {p.image ? <img src={getProxiedImageUrl(p.image)} className="w-full h-full object-cover" draggable={false} /> : <div className="w-full h-full flex items-center justify-center font-bold text-slate-500">{p.name?.[0] || '?'}</div>}
                                   </div>
                                   <div className="flex-1 min-w-0 font-bold text-sm text-slate-200 truncate">{p.name}</div>
                                   {/* <button onClick={(e) => { e.stopPropagation(); handleAddActorToCombat(p, false); }} className="opacity-0 group-hover:opacity-100 p-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded shadow-lg transition-all" title="Add to Initiative Tracker"><Icon name="plus" size={14}/></button> */}
@@ -1889,7 +2083,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                                   className="aspect-square bg-slate-800 rounded-lg border border-slate-700 overflow-hidden cursor-grab active:cursor-grabbing hover:border-red-500 transition-colors relative group shadow-lg"
                               >
                                   {n.image ? (
-                                    <img src={n.image} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" alt={n.name} draggable={false} />
+                                    <img src={getProxiedImageUrl(n.image)} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" alt={n.name} draggable={false} />
                                   ) : (
                                     <div className="w-full h-full flex items-center justify-center font-bold text-3xl text-slate-600 bg-slate-700 opacity-80 group-hover:opacity-100 transition-opacity">{n.name?.[0] || '?'}</div>
                                   )}
@@ -1906,7 +2100,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                                   className="flex items-center gap-3 bg-slate-800 rounded-lg border border-slate-700 p-2 cursor-grab active:cursor-grabbing hover:border-red-500 transition-colors group shadow-lg"
                               >
                                   <div className="w-10 h-10 rounded bg-slate-700 shrink-0 overflow-hidden relative">
-                                      {n.image ? <img src={n.image} className="w-full h-full object-cover" draggable={false} /> : <div className="w-full h-full flex items-center justify-center font-bold text-slate-500">{n.name?.[0] || '?'}</div>}
+                                      {n.image ? <img src={getProxiedImageUrl(n.image)} className="w-full h-full object-cover" draggable={false} /> : <div className="w-full h-full flex items-center justify-center font-bold text-slate-500">{n.name?.[0] || '?'}</div>}
                                   </div>
                                   <div className="flex-1 min-w-0 font-bold text-sm text-slate-200 truncate">{n.name}</div>
                                   {/* <button onClick={(e) => { e.stopPropagation(); handleAddActorToCombat(n, true); }} className="opacity-0 group-hover:opacity-100 p-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded shadow-lg transition-all" title="Add to Initiative Tracker"><Icon name="plus" size={14}/></button> */}
@@ -1930,6 +2124,10 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           allCharacters={allCharacters}
           campaignData={data}
           updateCampaign={updateCampaign}
+          onSelectStamper={(asset) => {
+             setActiveStampingAsset(asset);
+             setShowAssetManager(false);
+          }}
           onClose={() => setShowAssetManager(false)} 
           onSetBackground={handleSetBackground}
           onSetHeightmap={(url) => updateMap(campaignCode, activeMapId, { heightmapUrl: url })}
@@ -2190,6 +2388,32 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
             {role === 'dm' && (
               <>
                 <div className="border-t border-slate-700 my-1"></div>
+                <button 
+                  className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors flex items-center gap-2 text-indigo-400"
+                  onClick={() => {
+                    const idsToDuplicate = selectedTokenIds.includes(contextMenu.tokenId) && selectedTokenIds.length > 1 ? selectedTokenIds : [contextMenu.tokenId];
+                    const updates = {};
+                    idsToDuplicate.forEach(id => {
+                        const originalToken = mapData.tokens[id];
+                        if (originalToken) {
+                            const newTokenId = `token_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                            updates[`tokens.${newTokenId}`] = {
+                                ...originalToken,
+                                id: newTokenId,
+                                x: (originalToken.x || 0) + (gridSize || 1), // Offset by 1 grid size
+                                z: (originalToken.z || 0) + (gridSize || 1)
+                            };
+                        }
+                    });
+                    if (Object.keys(updates).length > 0) {
+                        updateMap(campaignCode, activeMapId, updates);
+                    }
+                    setContextMenu(null);
+                  }}
+                >
+                  <Icon name="copy" size={14}/>
+                  {selectedTokenIds.includes(contextMenu.tokenId) && selectedTokenIds.length > 1 ? `Duplicate Selected (${selectedTokenIds.length})` : "Duplicate Token"}
+                </button>
                 
                 <button 
                   className="w-full text-left px-4 py-2 hover:bg-red-900/50 text-red-400 transition-colors"
@@ -2339,6 +2563,114 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                     }}
                 >
                     <Icon name="trash-2" size={14}/> Delete Light
+                </button>
+            </div>
+        </>
+      )}
+
+      {propContextMenu && (
+        <>
+            <div 
+                className="fixed inset-0 z-40" 
+                onClick={() => setPropContextMenu(null)}
+                onContextMenu={(e) => { e.preventDefault(); setPropContextMenu(null); }}
+            ></div>
+            <div 
+                ref={propMenuRef}
+                className="fixed z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-2xl py-1 text-sm text-slate-200 min-w-[220px] overflow-hidden"
+                style={{ top: propMenuDisplayPosition.y, left: propMenuDisplayPosition.x, maxHeight: 'calc(100vh - 20px)', overflowY: 'auto' }}
+                onContextMenu={(e) => e.preventDefault()}
+            >
+                <div className="text-xs uppercase font-bold text-slate-500 px-4 py-1 flex justify-between items-center">
+                    Map Prop
+                    <button onClick={() => setPropContextMenu(null)} className="text-slate-400 hover:text-white"><Icon name="x" size={14}/></button>
+                </div>
+                <div className="border-t border-slate-700 my-1"></div>
+
+                <div className="px-4 py-2">
+                    <div className="flex justify-between items-center mb-1">
+                        <span className="text-slate-300 text-xs font-bold">Scale</span>
+                        <span className="text-xs text-amber-500 font-bold tabular-nums">{(mapData.props[propContextMenu.propId]?.scale || 1.0).toFixed(3)}x</span>
+                    </div>
+                    <input 
+                        type="range" 
+                        min="0.001" 
+                        max="10.0" 
+                        step="0.001" 
+                        value={mapData.props[propContextMenu.propId]?.scale || 1.0} 
+                        onChange={(e) => {
+                            updateMap(campaignCode, activeMapId, { [`props.${propContextMenu.propId}.scale`]: Number(e.target.value) });
+                        }}
+                        className="w-full accent-amber-500"
+                    />
+                </div>
+
+                <div className="px-4 py-2">
+                    <div className="flex justify-between items-center mb-1">
+                        <span className="text-slate-300 text-xs font-bold">Elevation</span>
+                        <span className="text-xs text-amber-500 font-bold tabular-nums">{mapData.props[propContextMenu.propId]?.elevation || 0}</span>
+                    </div>
+                    <input 
+                        type="range" 
+                        min="-2" 
+                        max="10" 
+                        step="0.1" 
+                        value={mapData.props[propContextMenu.propId]?.elevation || 0} 
+                        onChange={(e) => {
+                            updateMap(campaignCode, activeMapId, { [`props.${propContextMenu.propId}.elevation`]: Number(e.target.value) });
+                        }}
+                        className="w-full accent-amber-500"
+                    />
+                </div>
+
+                <div className="px-4 py-2">
+                    <div className="flex justify-between items-center mb-1">
+                        <span className="text-slate-300 text-xs font-bold">Rotation</span>
+                        <span className="text-xs text-amber-500 font-bold tabular-nums">{mapData.props[propContextMenu.propId]?.rotation || 0}°</span>
+                    </div>
+                    <input 
+                        type="range" 
+                        min="0" 
+                        max="359" 
+                        step="1" 
+                        value={mapData.props[propContextMenu.propId]?.rotation || 0} 
+                        onChange={(e) => {
+                            updateMap(campaignCode, activeMapId, { [`props.${propContextMenu.propId}.rotation`]: Number(e.target.value) });
+                        }}
+                        className="w-full accent-amber-500"
+                    />
+                </div>
+                
+                <div className="border-t border-slate-700 my-1"></div>
+                <button 
+                    className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors flex items-center gap-2 text-indigo-400"
+                    onClick={() => {
+                        const originalProp = mapData.props[propContextMenu.propId];
+                        if (originalProp) {
+                            const newPropId = `prop_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                            const newPropData = {
+                                ...originalProp,
+                                id: newPropId,
+                                x: (originalProp.x || 0) + 1, // Offset by 1 unit so it doesn't perfectly overlap
+                                z: (originalProp.z || 0) + 1
+                            };
+                            updateMap(campaignCode, activeMapId, { [`props.${newPropId}`]: newPropData });
+                        }
+                        setPropContextMenu(null);
+                    }}
+                >
+                    <Icon name="copy" size={14}/> Duplicate Prop
+                </button>
+
+                <div className="border-t border-slate-700 my-1"></div>
+                <button 
+                    className="w-full text-left px-4 py-2 hover:bg-red-900/50 text-red-400 transition-colors flex items-center gap-2"
+                    onClick={() => {
+                        updateMap(campaignCode, activeMapId, { [`props.${propContextMenu.propId}`]: null });
+                        setPropContextMenu(null);
+                    }}
+                >
+                    <Icon name="trash-2" size={14}/> Delete Prop
                 </button>
             </div>
         </>

@@ -30,7 +30,7 @@ const ResolvedImage = ({ id }) => {
         load();
         return () => { 
             active = false; 
-            if (createdUrl) URL.revokeObjectURL(createdUrl); 
+            if (createdUrl) setTimeout(() => URL.revokeObjectURL(createdUrl), 5000); 
         };
     }, [id]);
 

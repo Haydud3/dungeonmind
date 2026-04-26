@@ -105,7 +105,7 @@ export const GpuFogOfWar = ({ enabled, walls, lights, gridSize, mapData, aspect,
         const oldAutoClear = gl.autoClear;
         gl.autoClear = false;
 
-        const wallsArray = Object.values(walls || {});
+        const wallsArray = Object.values(walls || {}).filter(Boolean);
         gl.setRenderTarget(fowTarget);
         gl.setClearColor(0xffffff, 1); // 1. Clear to white (fully fogged)
         gl.clear(true, true, true); // color, depth, stencil
@@ -145,7 +145,7 @@ export const GpuFogOfWar = ({ enabled, walls, lights, gridSize, mapData, aspect,
             let shadowGeo = null;
             if (wallsArray.length > 0 && fowWallsEnabled !== false) {
                 const vertices = [];
-                Object.values(walls).forEach(wall => {
+                Object.values(walls).filter(Boolean).forEach(wall => {
                     if (wall.isOpen || !wall.points || wall.points.length < 2) return;
                     for (let i = 0; i < wall.points.length - 1; i++) {
                         const p1 = wall.points[i];

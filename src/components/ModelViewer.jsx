@@ -34,7 +34,7 @@ const Model = ({ modelUrl, scale }) => {
 
         return () => {
             if (objectUrl) {
-                URL.revokeObjectURL(objectUrl);
+                setTimeout(() => URL.revokeObjectURL(objectUrl), 5000);
             }
         };
     }, [modelUrl]);

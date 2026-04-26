@@ -34,7 +34,7 @@ const CharacterModel = ({ modelUrl, scale, forceStatue, opacity = 1 }) => {
 
         return () => {
             if (objectUrl) {
-                URL.revokeObjectURL(objectUrl);
+                setTimeout(() => URL.revokeObjectURL(objectUrl), 5000);
             }
         };
     }, [modelUrl]);
@@ -94,9 +94,19 @@ const GLTFModel = ({ url, scale, forceStatue, opacity = 1 }) => {
         return clone;
     }, [scene, forceStatue, statueMaterial, opacity]);
 
+    // Auto-Size: Calculate the exact bounding box of the raw model to normalize its scale to 1x1x1
+    const normalizedScale = useMemo(() => {
+        if (!scene) return 1;
+        const box = new THREE.Box3().setFromObject(scene);
+        const size = new THREE.Vector3();
+        box.getSize(size);
+        const maxDim = Math.max(size.x, size.y, size.z);
+        return maxDim > 0 ? 1.0 / maxDim : 1;
+    }, [scene]);
+
     return (
         <Center bottom>
-            <primitive object={clonedScene} scale={scale} />
+            <primitive object={clonedScene} scale={scale * normalizedScale} />
         </Center>
     );
 }

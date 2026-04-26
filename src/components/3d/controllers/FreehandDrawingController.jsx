@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useThree } from '@react-three/fiber';
 import { useCursor, Line } from '@react-three/drei';
 
-export const WallDrawingController = ({ isEnabled, onDrawEnd, getTerrainHeight }) => {
+export const FreehandDrawingController = ({ isEnabled, color, lineWidth, onDrawEnd, getTerrainHeight }) => {
     const { controls } = useThree();
     const [isDrawing, setIsDrawing] = useState(false);
     const [points, setPoints] = useState([]);
@@ -45,7 +45,11 @@ export const WallDrawingController = ({ isEnabled, onDrawEnd, getTerrainHeight }
         setIsDrawing(false);
         
         if (points.length > 1) {
-            onDrawEnd(points);
+            onDrawEnd({
+                points,
+                color,
+                lineWidth
+            });
         }
         setPoints([]);
     };
@@ -55,7 +59,7 @@ export const WallDrawingController = ({ isEnabled, onDrawEnd, getTerrainHeight }
     return (
         <>
             {/* Show the line being actively drawn */}
-            {points.length > 1 && <Line points={points} color="magenta" lineWidth={5} renderOrder={200} depthTest={false} />}
+            {points.length > 1 && <Line points={points} color={color} lineWidth={lineWidth} renderOrder={200} depthTest={false} />}
 
             {/* The large invisible plane to capture drawing events */}
             <mesh

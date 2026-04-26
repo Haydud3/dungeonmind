@@ -177,7 +177,7 @@ export const Walls = ({ walls, onWallContextMenu, onToggleDoor, showWalls, role,
     if (!walls) return null;
     return (
         <group>
-            {Object.values(walls).map(wall => (
+            {Object.values(walls).filter(Boolean).map(wall => (
                 <Wall 
                     key={wall.id} 
                     wall={wall} 

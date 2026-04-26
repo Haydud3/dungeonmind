@@ -4,7 +4,6 @@ import { db, appId } from '../firebase';
 import { storeChunkedMap, deleteChunkedMap, retrieveChunkedMap } from '../utils/storageUtils';
 import { exportMapPreset, importMapPreset } from '../utils/presetManager';
 import Icon from './Icon';
-import MapGenerator from './MapGenerator';
 
 // Helper to generate a lightweight thumbnail so the gallery loads instantly
 const generateThumbnail = (dataUrl) => {
@@ -30,7 +29,34 @@ const generateThumbnail = (dataUrl) => {
     });
 };
 
-const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, onSetBackground, onSetHeightmap, onGenerateMap, onNewBlankMap, allCharacters, campaignData, updateCampaign }) => {
+import SketchfabImporter from './SketchfabImporter';
+import MapGenerator from './MapGenerator';
+
+const ThrottledSlider = ({ value, min, max, step, onChange, onDragStart, onDragEnd, className }) => {
+    const [localVal, setLocalVal] = useState(value);
+    const isDragging = useRef(false);
+
+    useEffect(() => { 
+        if (!isDragging.current) setLocalVal(value); 
+    }, [value]);
+
+    return (
+        <input 
+            type="range" min={min} max={max} step={step} 
+            value={localVal}
+            onPointerDown={() => { isDragging.current = true; if (onDragStart) onDragStart(); }}
+            onPointerUp={() => { isDragging.current = false; setLocalVal(value); if (onDragEnd) onDragEnd(); }}
+            onChange={(e) => {
+                const v = parseFloat(e.target.value);
+                setLocalVal(v);
+                if (onChange) onChange(v);
+            }}
+            className={className}
+        />
+    );
+};
+
+const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, onSetBackground, onSetHeightmap, onGenerateMap, onNewBlankMap, allCharacters, campaignData, updateCampaign, onSelectStamper }) => {
     const [assets, setAssets] = useState([]);
     const [isUploading, setIsUploading] = useState(false);
     const [isExporting, setIsExporting] = useState(false);
@@ -39,12 +65,39 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
     const importPresetRef = useRef(null);
     const [activeTab, setActiveTab] = useState('library');
     const [selectedAsset, setSelectedAsset] = useState(null);
+    const [assetCategory, setAssetCategory] = useState('All');
 
     // Grid Auto-Detection States
     const [isDetectingGrid, setIsDetectingGrid] = useState(false);
     const [gridDetectionResult, setGridDetectionResult] = useState(null);
     const [gridSubdivision, setGridSubdivision] = useState(1);
     const workerRef = useRef(null);
+
+    const pendingMapUpdates = useRef({});
+    const mapUpdateThrottle = useRef(null);
+
+    const throttledUpdateMap = useCallback((updates) => {
+        for (const key in updates) {
+            if (typeof updates[key] === 'object' && updates[key] !== null && !Array.isArray(updates[key])) {
+                pendingMapUpdates.current[key] = { ...pendingMapUpdates.current[key], ...updates[key] };
+            } else {
+                pendingMapUpdates.current[key] = updates[key];
+            }
+        }
+        if (!mapUpdateThrottle.current) {
+            mapUpdateThrottle.current = setTimeout(() => {
+                updateMap(campaignCode, activeMapId, { ...pendingMapUpdates.current });
+                pendingMapUpdates.current = {};
+                mapUpdateThrottle.current = null;
+            }, 100);
+        }
+    }, [campaignCode, activeMapId, updateMap]);
+
+    useEffect(() => {
+        return () => {
+            if (mapUpdateThrottle.current) clearTimeout(mapUpdateThrottle.current);
+        };
+    }, []);
 
     // Fetch all previously uploaded images from this campaign's folder
     const fetchAssets = async () => {
@@ -53,9 +106,10 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
         const q = query(assetsRef, orderBy('createdAt', 'desc'));
         try {
             const res = await getDocs(q);
-            setAssets(res.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-        } catch (e) {
-            console.error("Error fetching assets", e);
+            const fetched = res.docs.map(d => ({ id: d.id, ...d.data() }));
+            setAssets([...fetched]);
+        } catch (err) {
+            console.error("Failed to fetch assets", err);
         }
     };
 
@@ -86,16 +140,28 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
         
         setIsUploading(true);
         try {
+            const isModel = file.name.toLowerCase().endsWith('.glb') || file.name.toLowerCase().endsWith('.gltf');
             const reader = new FileReader();
             reader.onload = async () => {
                 try {
                     const base64 = reader.result;
-                    const thumbBase64 = await generateThumbnail(base64);
+                    let thumbBase64 = null;
+                    
+                    if (!isModel) {
+                        thumbBase64 = await generateThumbnail(base64);
+                    }
                     
                     const chunkedId = await storeChunkedMap(base64, file.name);
                     
                     const assetsRef = collection(db, 'artifacts', appId || 'dungeonmind', 'public', 'data', 'campaigns', campaignCode, 'assets');
-                    await addDoc(assetsRef, { name: file.name, url: chunkedId, thumbnail: thumbBase64, createdAt: serverTimestamp() });
+                    
+                    const assetData = { name: file.name, url: chunkedId, thumbnail: thumbBase64, createdAt: serverTimestamp(), category: assetCategory === 'All' ? (isModel ? 'Props' : 'Uncategorized') : assetCategory };
+                    if (isModel) {
+                        assetData.is3D = true;
+                        assetData.modelUrl = chunkedId;
+                    }
+                    
+                    await addDoc(assetsRef, assetData);
                     
                     await fetchAssets();
                 } catch (err) { console.error(err); alert("Processing failed."); }
@@ -163,7 +229,7 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
             // Preserve existing walls that were not generated by AI (e.g. boundary walls, hand-drawn)
             const preservedWalls = {};
             if (mapData?.walls) {
-                Object.values(mapData.walls).forEach(w => {
+                Object.values(mapData.walls).filter(Boolean).forEach(w => {
                     if (!w.id.includes('_gen_')) {
                         preservedWalls[w.id] = w;
                     }
@@ -179,8 +245,17 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
 
         await updateDoc(assetRef, updates);
         
-        // Only apply to the current map if we are currently viewing this asset
-        if (mapData?.backgroundUrl === asset.generatedMapUrl || mapData?.backgroundUrl === asset.url || mapData?.backgroundUrl === data || mapUpdates.walls || mapUpdates.lights || mapUpdates.heightmapUrl || mapUpdates.normalMapUrl) {
+        // Update local selectedAsset state to reflect changes instantly (green checkmarks)
+        if (selectedAsset && selectedAsset.id === asset.id) {
+            setSelectedAsset(prev => ({ ...prev, ...updates }));
+        }
+        
+        // Only apply to the current map if we are currently viewing THIS exact asset's background
+        const isActiveMap = mapData?.backgroundUrl === asset.generatedMapUrl || 
+                            mapData?.backgroundUrl === asset.url || 
+                            (layerType === 'baseMap' && mapData?.backgroundUrl === data);
+                            
+        if (isActiveMap && Object.keys(mapUpdates).length > 0) {
             updateMap(campaignCode, activeMapId, mapUpdates);
         }
     };
@@ -236,13 +311,13 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                     height: img.height
                 });
 
-                if (objectUrl) URL.revokeObjectURL(objectUrl);
+                if (objectUrl) setTimeout(() => URL.revokeObjectURL(objectUrl), 5000);
             };
             img.onerror = () => {
                 console.error("Failed to load image for grid detection.");
                 setIsDetectingGrid(false);
                 alert("Could not load image. Cross-Origin Resource Sharing (CORS) might be preventing it.");
-                if (objectUrl) URL.revokeObjectURL(objectUrl);
+                if (objectUrl) setTimeout(() => URL.revokeObjectURL(objectUrl), 5000);
             };
             img.src = finalUrl;
         } catch (err) {
@@ -461,6 +536,8 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
         if (e.target) e.target.value = null;
     };
 
+    const activeScaleData = useRef(null);
+
     return (
         <div className="absolute top-0 right-0 bottom-0 w-80 bg-slate-900 border-l border-slate-700 shadow-2xl z-[80] flex flex-col animate-in slide-in-from-right duration-300">
             
@@ -549,9 +626,42 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
 
             <div className="flex-none border-b border-slate-800 flex overflow-x-auto no-scrollbar">
                 <TabButton name="library" activeTab={activeTab} onClick={setActiveTab} icon="library">Assets</TabButton>
-                {(activeTab === 'settings' || activeTab === 'generators') && <TabButton name={activeTab} activeTab={activeTab} onClick={setActiveTab} icon={activeTab === 'settings' ? 'sliders-horizontal' : 'star'}>{activeTab.charAt(0).toUpperCase() + activeTab.slice(1)}</TabButton>}
+                <TabButton name="sketchfab" activeTab={activeTab} onClick={setActiveTab} icon="globe">Sketchfab</TabButton>
+                {activeTab === 'settings' && <TabButton name="settings" activeTab={activeTab} onClick={setActiveTab} icon="sliders-horizontal">Settings</TabButton>}
+                {activeTab === 'ai' && <TabButton name="ai" activeTab={activeTab} onClick={setActiveTab} icon="layers">Layers</TabButton>}
             </div>
             
+            {activeTab === 'sketchfab' && (
+                <SketchfabImporter 
+                    onSelectStamper={onSelectStamper} 
+                    onImportCompleted={async (assetData) => {
+                        if (assetData && campaignCode) {
+                            const assetsRef = collection(db, 'artifacts', appId || 'dungeonmind', 'public', 'data', 'campaigns', campaignCode, 'assets');
+                            await addDoc(assetsRef, {
+                                name: assetData.name,
+                                url: assetData.url,
+                                modelUrl: assetData.modelUrl,
+                                thumbnail: assetData.image,
+                                is3D: assetData.is3D,
+                                category: 'Props',
+                                createdAt: serverTimestamp()
+                            });
+                        }
+                        fetchAssets();
+                    }} 
+                />
+            )}
+
+            {activeTab === 'ai' && selectedAsset && (
+                <div className="flex-1 min-h-0 overflow-y-auto custom-scroll bg-slate-900">
+                    <MapGenerator 
+                        asset={selectedAsset}
+                        mapData={mapData} 
+                        onUpdateLayer={handleUpdateAssetLayer} 
+                    />
+                </div>
+            )}
+
             {activeTab === 'library' && (
                 <>
                     <div className="flex-none p-4 border-b border-slate-800 flex gap-2">
@@ -560,7 +670,7 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                             ref={fileInputRef}
                             onChange={handleUpload}
                             className="hidden"
-                            accept="image/png, image/jpeg, image/gif, image/webp"
+                            accept="image/png, image/jpeg, image/gif, image/webp, .glb, .gltf"
                         />
                         <button onClick={() => fileInputRef.current?.click()} disabled={isUploading} className="flex-1 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded flex items-center justify-center gap-2 shadow">
                             {isUploading ? <Icon name="loader" size={14} className="animate-spin" /> : <Icon name="upload" size={14} />}
@@ -580,37 +690,59 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                         </button>
                     </div>
 
+                    <div className="flex gap-2 p-2 px-4 border-b border-slate-800 bg-slate-900 overflow-x-auto no-scrollbar shrink-0">
+                        {['All', 'Maps', 'Tokens', 'Props', 'Uncategorized'].map(cat => (
+                            <button 
+                                key={cat} 
+                                onClick={() => setAssetCategory(cat)} 
+                                className={`px-3 py-1 text-[10px] font-bold rounded-full whitespace-nowrap transition-colors ${assetCategory === cat ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}
+                            >
+                                {cat}
+                            </button>
+                        ))}
+                    </div>
                     <div className="flex-1 min-h-0 overflow-y-auto custom-scroll p-4">
                         <div className="grid grid-cols-2 gap-2">
-                            {assets.map((asset) => (
+                            {assets.filter(a => assetCategory === 'All' || (a.category || 'Uncategorized') === assetCategory).map((asset) => (
                                 <div key={asset.id} draggable 
+                                    onClick={() => {
+                                        if (onSelectStamper) onSelectStamper(asset);
+                                    }}
                                     onDragStart={(e) => {
-                                        const payload = JSON.stringify({ format: 'dungeonmind-asset', url: asset.url });
+                                        const payload = JSON.stringify({ format: 'dungeonmind-asset', url: asset.url, is3D: asset.is3D, modelUrl: asset.modelUrl, category: asset.category, name: asset.name });
                                         e.dataTransfer.setData('application/dungeonmind-asset', payload);
                                         e.dataTransfer.setData('text/plain', payload);
                                     }}
                                     className="aspect-square bg-slate-800 rounded border border-slate-700 overflow-hidden cursor-grab active:cursor-grabbing hover:border-amber-500 transition-colors relative group"
                                 >
-                                    <img src={asset.thumbnail || asset.url} className="w-full h-full object-cover" alt={asset.name} draggable={false} />
+                                    {asset.thumbnail || (!asset.is3D && asset.url) ? (
+                                        <img src={asset.thumbnail || asset.url} className="w-full h-full object-cover" alt={asset.name} draggable={false} />
+                                    ) : (
+                                        <div className="w-full h-full flex items-center justify-center bg-slate-900 border border-slate-700"><Icon name="box" size={32} className="text-slate-600"/></div>
+                                    )}
                                     <div className="absolute inset-x-0 bottom-0 bg-black/60 text-[9px] text-white p-1 truncate opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">{asset.name}</div>
                                     <div className="absolute top-1 left-1 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                        <button onClick={async (e) => { 
-                                            e.stopPropagation(); 
-                                            const isNew = await onSetBackground(asset, false); 
-                                            setSelectedAsset(asset);
-                                            setActiveTab('settings');
-                                            if (isNew) {
-                                                handleAutoDetectGrid(asset.generatedMapUrl || asset.url);
-                                            }
-                                        }} className="bg-black/80 text-amber-500 hover:text-white p-1.5 rounded shadow-md" title="Set as Map Background">
-                                            <Icon name="map" size={14}/>
-                                        </button>
-                                        <button onClick={(e) => { e.stopPropagation(); setSelectedAsset(asset); setActiveTab('generators'); }} className="bg-black/80 text-purple-400 hover:text-white p-1.5 rounded shadow-md" title="Generate Terrain">
-                                            <Icon name="mountain" size={14}/>
-                                        </button>
-                                        <button onClick={(e) => { e.stopPropagation(); setSelectedAsset(asset); setActiveTab('settings'); }} className="bg-black/80 text-cyan-400 hover:text-white p-1.5 rounded shadow-md" title="Map Settings">
-                                            <Icon name="settings" size={14}/>
-                                        </button>
+                                        {asset.category !== 'Props' && asset.category !== 'Tokens' && (
+                                            <>
+                                                <button onClick={async (e) => { 
+                                                    e.stopPropagation(); 
+                                                    const isNew = await onSetBackground(asset, false); 
+                                                    setSelectedAsset(asset);
+                                                    setActiveTab('settings');
+                                                    if (isNew) {
+                                                        handleAutoDetectGrid(asset.generatedMapUrl || asset.url);
+                                                    }
+                                                }} className="bg-black/80 text-amber-500 hover:text-white p-1.5 rounded shadow-md" title="Set as Map Background">
+                                                    <Icon name="map" size={14}/>
+                                                </button>
+                                                <button onClick={(e) => { e.stopPropagation(); setSelectedAsset(asset); setActiveTab('settings'); }} className="bg-black/80 text-cyan-400 hover:text-white p-1.5 rounded shadow-md" title="Map Settings">
+                                                    <Icon name="settings" size={14}/>
+                                                </button>
+                                                <button onClick={(e) => { e.stopPropagation(); setSelectedAsset(asset); setActiveTab('ai'); }} className="bg-black/80 text-purple-400 hover:text-white p-1.5 rounded shadow-md" title="Map Layers & Importers">
+                                                    <Icon name="layers" size={14}/>
+                                                </button>
+                                            </>
+                                        )}
                                     </div>
                                     <div className="absolute top-1 right-1 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                         <button onClick={(e) => { 
@@ -631,6 +763,25 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                                         <button onClick={(e) => { e.stopPropagation(); handleDeleteAsset(asset); }} className="bg-black/80 text-red-500 hover:text-white p-1.5 rounded shadow-md" title="Delete Asset">
                                             <Icon name="trash" size={14}/>
                                         </button>
+                                    </div>
+                                    <div className="absolute bottom-5 left-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <select 
+                                            value={asset.category || 'Uncategorized'} 
+                                            onChange={(e) => {
+                                                e.stopPropagation();
+                                                const assetRef = doc(db, 'artifacts', appId || 'dungeonmind', 'public', 'data', 'campaigns', campaignCode, 'assets', asset.id);
+                                                updateDoc(assetRef, { category: e.target.value }).then(() => {
+                                                    setAssets(prev => prev.map(a => a.id === asset.id ? { ...a, category: e.target.value } : a));
+                                                });
+                                            }}
+                                            onClick={e => e.stopPropagation()}
+                                            className="bg-black/80 text-[8px] font-bold uppercase text-slate-300 border border-slate-700 rounded px-1 outline-none w-20"
+                                        >
+                                            <option value="Uncategorized">Uncategorized</option>
+                                            <option value="Maps">Maps</option>
+                                            <option value="Tokens">Tokens</option>
+                                            <option value="Props">Props</option>
+                                        </select>
                                     </div>
                                 </div>
                             ))}
@@ -686,14 +837,14 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                         </select>
                         
                         <label className="block text-[10px] uppercase font-bold text-slate-500 mb-2 tracking-wider">Brightness Multiplier</label>
-                        <input 
+                        <ThrottledSlider 
                             type="range" 
                             min="0" 
                             max="10" 
                             step="0.05" 
                             value={mapData?.lightingIntensity ?? 1} 
-                            onChange={(e) => updateMap(campaignCode, activeMapId, { lightingIntensity: parseFloat(e.target.value) })}
-                            className="w-full accent-amber-500"
+                            onChange={(val) => throttledUpdateMap({ lightingIntensity: val })}
+                            className="w-full accent-amber-500" 
                         />
                         <div className="text-right text-xs text-slate-400 mt-1">{mapData?.lightingIntensity ?? 1}x</div>
                     </div>
@@ -742,7 +893,7 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                                     }
                                 }
 
-                                updateMap(campaignCode, activeMapId, updates);
+                                throttledUpdateMap(updates);
                             }}
                             className="w-full accent-amber-500"
                         />
@@ -752,13 +903,13 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                     <div>
                         <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Grid Size</label>
                         <div className="flex items-center gap-2">
-                            <input 
+                            <ThrottledSlider 
                                 type="range" 
                                 min="0.1" 
                                 max="5" 
                                 step="0.01" 
                                 value={mapData?.gridSize ?? 1} 
-                                onChange={(e) => updateMap(campaignCode, activeMapId, { gridSize: parseFloat(e.target.value) })}
+                                onChange={(val) => throttledUpdateMap({ gridSize: val })}
                                 className="w-full accent-amber-500 flex-1"
                             />
                             <input 
@@ -768,7 +919,7 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                                 value={mapData?.gridSize ?? 1} 
                                 onChange={(e) => {
                                     const val = parseFloat(e.target.value);
-                                    if (!isNaN(val)) updateMap(campaignCode, activeMapId, { gridSize: val });
+                                    if (!isNaN(val)) throttledUpdateMap({ gridSize: val });
                                 }}
                                 className="w-16 bg-slate-900 border border-slate-700 rounded p-1 text-xs text-white text-right outline-none focus:border-amber-500"
                             />
@@ -778,13 +929,13 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                     <div>
                         <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Grid Offset X</label>
                         <div className="flex items-center gap-2">
-                            <input 
+                            <ThrottledSlider 
                                 type="range" 
                                 min="-5" 
                                 max="5" 
                                 step="0.01" 
                                 value={mapData?.gridOffsetX ?? 0} 
-                                onChange={(e) => updateMap(campaignCode, activeMapId, { gridOffsetX: parseFloat(e.target.value) })}
+                                onChange={(val) => throttledUpdateMap({ gridOffsetX: val })}
                                 className="w-full accent-amber-500 flex-1"
                             />
                             <input 
@@ -793,7 +944,7 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                                 value={mapData?.gridOffsetX ?? 0} 
                                 onChange={(e) => {
                                     const val = parseFloat(e.target.value);
-                                    if (!isNaN(val)) updateMap(campaignCode, activeMapId, { gridOffsetX: val });
+                                    if (!isNaN(val)) throttledUpdateMap({ gridOffsetX: val });
                                 }}
                                 className="w-16 bg-slate-900 border border-slate-700 rounded p-1 text-xs text-white text-right outline-none focus:border-amber-500"
                             />
@@ -803,13 +954,13 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                     <div>
                         <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Grid Offset Y</label>
                         <div className="flex items-center gap-2">
-                            <input 
+                            <ThrottledSlider 
                                 type="range" 
                                 min="-5" 
                                 max="5" 
                                 step="0.01" 
                                 value={mapData?.gridOffsetY ?? 0} 
-                                onChange={(e) => updateMap(campaignCode, activeMapId, { gridOffsetY: parseFloat(e.target.value) })}
+                                onChange={(val) => throttledUpdateMap({ gridOffsetY: val })}
                                 className="w-full accent-amber-500 flex-1"
                             />
                             <input 
@@ -818,7 +969,7 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                                 value={mapData?.gridOffsetY ?? 0} 
                                 onChange={(e) => {
                                     const val = parseFloat(e.target.value);
-                                    if (!isNaN(val)) updateMap(campaignCode, activeMapId, { gridOffsetY: val });
+                                    if (!isNaN(val)) throttledUpdateMap({ gridOffsetY: val });
                                 }}
                                 className="w-16 bg-slate-900 border border-slate-700 rounded p-1 text-xs text-white text-right outline-none focus:border-amber-500"
                             />
@@ -831,7 +982,7 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                             <input 
                                 type="color" 
                                 value={mapData?.gridColor || '#888888'} 
-                                onChange={(e) => updateMap(campaignCode, activeMapId, { gridColor: e.target.value })}
+                                onChange={(e) => throttledUpdateMap({ gridColor: e.target.value })}
                                 className="w-8 h-8 rounded cursor-pointer bg-slate-900 border border-slate-700 p-0.5"
                             />
                             <div className="flex-1 text-xs text-slate-400 uppercase">{mapData?.gridColor || '#888888'}</div>
@@ -840,13 +991,13 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
 
                     <div>
                         <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Grid Thickness</label>
-                        <input 
+                        <ThrottledSlider 
                             type="range" 
                             min="0.5" 
                             max="5" 
                             step="0.5" 
                             value={mapData?.gridThickness || 1} 
-                            onChange={(e) => updateMap(campaignCode, activeMapId, { gridThickness: parseFloat(e.target.value) })}
+                            onChange={(val) => throttledUpdateMap({ gridThickness: val })}
                             className="w-full accent-amber-500"
                         />
                         <div className="text-right text-xs text-slate-400 mt-1">{mapData?.gridThickness || 1}x</div>
@@ -855,13 +1006,13 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                     <div>
                         <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Token Elevation Offset</label>
                         <div className="flex items-center gap-2">
-                            <input 
+                            <ThrottledSlider 
                                 type="range" 
                                 min="-0.5" 
                                 max="0.5" 
                                 step="0.01" 
                                 value={mapData?.tokenElevationOffset ?? -0.04} 
-                                onChange={(e) => updateMap(campaignCode, activeMapId, { tokenElevationOffset: parseFloat(e.target.value) })}
+                                onChange={(val) => throttledUpdateMap({ tokenElevationOffset: val })}
                                 className="w-full accent-amber-500 flex-1"
                             />
                             <input 
@@ -870,7 +1021,7 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                                 value={mapData?.tokenElevationOffset ?? -0.04} 
                                 onChange={(e) => {
                                     const val = parseFloat(e.target.value);
-                                    if (!isNaN(val)) updateMap(campaignCode, activeMapId, { tokenElevationOffset: val });
+                                    if (!isNaN(val)) throttledUpdateMap({ tokenElevationOffset: val });
                                 }}
                                 className="w-16 bg-slate-900 border border-slate-700 rounded p-1 text-xs text-white text-right outline-none focus:border-amber-500"
                             />
@@ -945,13 +1096,13 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
 
                     <div className="border-t border-slate-800 pt-4">
                         <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">3D Heightmap Scale</label>
-                        <input 
+                        <ThrottledSlider 
                             type="range" 
                             min="0" 
                             max="10" 
                             step="0.1" 
                             value={mapData?.heightScale || 1} 
-                            onChange={(e) => updateMap(campaignCode, activeMapId, { heightScale: parseFloat(e.target.value) })}
+                            onChange={(val) => throttledUpdateMap({ heightScale: val })}
                             className="w-full accent-blue-500"
                         />
                         <div className="text-right text-xs text-slate-400 mt-1">{mapData?.heightScale || 1}x multiplier</div>
@@ -975,16 +1126,6 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                         </button>
                         <p className="text-[10px] text-slate-500 text-center mt-2 leading-tight">Exports a shareable JSON file containing the current map image, 3D heightmaps, lighting, walls, tokens, and character sheets.</p>
                     </div>
-                </div>
-            )}
-            
-            {activeTab === 'generators' && selectedAsset && (
-                <div className="flex-1 min-h-0 overflow-y-auto custom-scroll p-4 space-y-6">
-                    <MapGenerator 
-                        mapData={mapData} 
-                        onUpdateAssetLayer={(layerType, data) => handleUpdateAssetLayer(selectedAsset, layerType, data)} 
-                        asset={selectedAsset} 
-                    />
                 </div>
             )}
         </div>

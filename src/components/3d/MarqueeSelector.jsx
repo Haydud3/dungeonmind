@@ -82,7 +82,7 @@ export const MarqueeSelector = ({ tokens = [], walls = {}, lights = {}, isDeleti
                 });
 
                 if (isDeleting && onSelectWalls) {
-                    Object.values(walls).forEach(wall => {
+                    Object.values(walls).filter(Boolean).forEach(wall => {
                         let inside = false;
                         for (const p of wall.points) {
                             const vec = new THREE.Vector3(p.x, p.y, p.z).project(camera);

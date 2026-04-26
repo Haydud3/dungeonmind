@@ -75,7 +75,7 @@ const scanFeatures = (architectUrl, illuminationUrl, scale = 20) => {
     });
 };
 
-const MapGenerator = ({ asset, onUpdateLayer, mapData }) => {
+const AILayerGenerator = ({ asset, onUpdateLayer, mapData }) => {
     const toast = useToast();
     const [images, setImages] = useState({
         baseMap: null,
@@ -87,7 +87,6 @@ const MapGenerator = ({ asset, onUpdateLayer, mapData }) => {
     const [isProcessing, setIsProcessing] = useState({});
     const [copied, setCopied] = useState(null);
 
-    // Updated AI Prompts
     const prompts = {
         baseMap: "System Role: You are the DungeonMind Architect Engine. Generate a detailed top-down TTRPG battlemap. NO text or labels.",
         heightMap: "System Role: You are the DungeonMind Architect Engine. First, perfectly visualize how the previous 2D battlemap would look as a physical 3D environment with depth and verticality. Then, generate a clean, colored topographical heightmap of this 3D structure. Use smooth, continuous color gradients to represent elevation (darker for low ground, lighter for high structures). CRITICAL AVOIDANCE: Do NOT add any noise, textures, patterns, or 'dots'. The gradients MUST be perfectly smooth to prevent jagged spikes when rendered in 3D. NO text or labels.",
@@ -124,27 +123,14 @@ const MapGenerator = ({ asset, onUpdateLayer, mapData }) => {
                 let finalDataUrl = dataUrl;
                 
                 if (layerType === 'baseMap') {
+                    // Use lossy JPEG compression for the visual base map to save space
                     const res = await fetch(dataUrl);
                     const blob = await res.blob();
                     finalDataUrl = await compressImage(blob, 2048, 0.9);
                 } else {
-                    try {
-                        const res = await fetch(dataUrl);
-                        const blob = await res.blob();
-                        const bitmap = await createImageBitmap(blob);
-                        const canvas = document.createElement('canvas');
-                        let w = bitmap.width, h = bitmap.height;
-                        const maxDim = 2048;
-                        if (w > maxDim || h > maxDim) {
-                            const ratio = Math.min(maxDim / w, maxDim / h);
-                            w = Math.round(w * ratio); h = Math.round(h * ratio);
-                        }
-                        canvas.width = w; canvas.height = h;
-                        canvas.getContext('2d').drawImage(bitmap, 0, 0, w, h);
-                        finalDataUrl = canvas.toDataURL('image/png');
-                    } catch (e) {
-                        console.warn("Failed to losslessly resize 3D map, falling back to raw.", e);
-                    }
+                    // FIX: Removed the HTML Canvas resizing logic that was destroying the smooth 16-bit 
+                    // gradients of the displacement map. We pass the raw image data directly to Firebase.
+                    finalDataUrl = dataUrl;
                 }
                 
                 const url = await storeChunkedMap(finalDataUrl, `${asset.name}_${layerType}_${Date.now()}.png`);
@@ -162,6 +148,7 @@ const MapGenerator = ({ asset, onUpdateLayer, mapData }) => {
                 }
             }
             
+            // Clear the preview image once successfully applied
             setImages(prev => ({ ...prev, [layerType]: null }));
             toast(`Successfully applied ${layerType}!`, "success");
         } catch (err) {
@@ -258,14 +245,34 @@ const MapGenerator = ({ asset, onUpdateLayer, mapData }) => {
             </div>
 
             <div className="space-y-4">
-                <LayerSection type="baseMap" title="1. Base Map (Albedo)" description="The primary top-down visual texture of the map." />
-                <LayerSection type="heightMap" title="2. Heightmap (Displacement)" description="Grayscale image where white is high elevation and black is low." />
-                <LayerSection type="normalMap" title="3. Normal Map" description="Tangent-space vector map used for dynamic 3D lighting calculation." />
-                <LayerSection type="architectMask" title="4. Architect Mask (Walls, Doors, Windows)" description="Extracts physical 3D walls and boundaries automatically." />
-                <LayerSection type="illuminationMask" title="5. Illumination Data" description="Identifies the position and radius of built-in light sources." />
+                <LayerSection 
+                    type="baseMap" 
+                    title="1. Base Map (Albedo)" 
+                    description="The primary top-down visual texture of the map." 
+                />
+                <LayerSection 
+                    type="heightMap" 
+                    title="2. Heightmap (Displacement)" 
+                    description="Grayscale image where white is high elevation and black is low." 
+                />
+                <LayerSection 
+                    type="normalMap" 
+                    title="3. Normal Map" 
+                    description="Tangent-space vector map used for dynamic 3D lighting calculation." 
+                />
+                <LayerSection 
+                    type="architectMask" 
+                    title="4. Architect Mask (Walls, Doors, Windows)" 
+                    description="Extracts physical 3D walls and boundaries automatically." 
+                />
+                <LayerSection 
+                    type="illuminationMask" 
+                    title="5. Illumination Data" 
+                    description="Identifies the position and radius of built-in light sources." 
+                />
             </div>
         </div>
     );
 };
 
-export default MapGenerator;
+export default AILayerGenerator;

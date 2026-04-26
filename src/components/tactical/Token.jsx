@@ -37,7 +37,7 @@ const TokenImage = ({ imageUrl, size, opacity }) => {
 }
 
 // Interactive 3D Token
-const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gridOffsetY = 0, isSelected, onSelect, onContextMenu, role, getTerrainHeight, isSnapToGrid, isTerrainReady, activeTool, draggedTokenId, setDraggedTokenId, viewMode, showNameplates, selectedTokenIds, groupDragData, onGroupDragEnd, isActiveTurn, canControl, shiftHeldRef, tokenBaseOffset = -0.04 }) => {
+const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gridOffsetY = 0, isSelected, onSelect, onContextMenu, role, getTerrainHeight, isSnapToGrid, isTerrainReady, activeTool, draggedTokenId, setDraggedTokenId, viewMode, showNameplates, selectedTokenIds, groupDragData, onGroupDragEnd, isActiveTurn, canControl, shiftHeldRef, tokenBaseOffset = -0.04, isInteractive = true }) => {
   const meshRef = useRef();
   const visualsRef = useRef();
   const rotationRef = useRef();
@@ -352,7 +352,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
           setResolvedImage(objectUrl);
         }
       }).catch(console.error);
-      return () => { isActive = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
+      return () => { isActive = false; if (objectUrl) setTimeout(() => URL.revokeObjectURL(objectUrl), 5000); };
     } else {
       setResolvedImage(imgUrl);
     }
@@ -377,13 +377,13 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
     <group 
       ref={meshRef} 
       scale={[scale, scale, scale]}
-      onPointerDown={activeTool ? undefined : handlePointerDown}
-      onPointerMove={activeTool ? undefined : handlePointerMove}
-      onPointerUp={activeTool ? undefined : handlePointerUp}
-      onPointerOver={activeTool ? undefined : (e) => { e.stopPropagation(); if (isTerrainReady) setHover(true); }}
-      onPointerOut={activeTool ? undefined : (e) => { if (isTerrainReady) setHover(false); }}
-      onClick={activeTool ? undefined : (e) => { e.stopPropagation(); if (e.button === 2) return; if (isTerrainReady) onSelect(token.id, e.shiftKey); }}
-      onContextMenu={activeTool ? undefined : (e) => {
+      onPointerDown={(!isInteractive || activeTool) ? undefined : handlePointerDown}
+      onPointerMove={(!isInteractive || activeTool) ? undefined : handlePointerMove}
+      onPointerUp={(!isInteractive || activeTool) ? undefined : handlePointerUp}
+      onPointerOver={(!isInteractive || activeTool) ? undefined : (e) => { e.stopPropagation(); if (isTerrainReady) setHover(true); }}
+      onPointerOut={(!isInteractive || activeTool) ? undefined : (e) => { if (isTerrainReady) setHover(false); }}
+      onClick={(!isInteractive || activeTool) ? undefined : (e) => { e.stopPropagation(); if (e.button === 2) return; if (isTerrainReady) onSelect(token.id, e.shiftKey); }}
+      onContextMenu={(!isInteractive || activeTool) ? undefined : (e) => {
         e.stopPropagation();
         if (e.nativeEvent) e.nativeEvent.preventDefault();
         if (canControl && !hasDragged.current) {
@@ -461,14 +461,14 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
           return (
           <Billboard position={nameplatePos}>
             <group
-                onPointerDown={handleNameplatePointerDown}
-                onPointerMove={handleNameplatePointerMove}
-                onPointerUp={handleNameplatePointerUp}
-                onPointerOut={(e) => { 
+                onPointerDown={(!isInteractive || activeTool) ? undefined : handleNameplatePointerDown}
+                onPointerMove={(!isInteractive || activeTool) ? undefined : handleNameplatePointerMove}
+                onPointerUp={(!isInteractive || activeTool) ? undefined : handleNameplatePointerUp}
+                onPointerOut={(!isInteractive || activeTool) ? undefined : (e) => { 
                     if (!isRotatingToken.current) document.body.style.cursor = 'auto'; 
                 }}
-                onPointerOver={(e) => { e.stopPropagation(); if (canControl && !activeTool) document.body.style.cursor = 'ew-resize'; }}
-                onClick={(e) => e.stopPropagation()}
+                onPointerOver={(!isInteractive || activeTool) ? undefined : (e) => { e.stopPropagation(); if (canControl && !activeTool) document.body.style.cursor = 'ew-resize'; }}
+                onClick={(!isInteractive || activeTool) ? undefined : (e) => e.stopPropagation()}
             >
                 {/* Turn Indicator Glow */}
                 {isActiveTurn && (
@@ -598,7 +598,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
         </Html>
       </group>
 
-      {canControl && !activeTool ? (
+      {canControl && !activeTool && isInteractive ? (
         <DragControls
           ref={dragControlsRef}
           axisLock="y"

@@ -162,6 +162,7 @@ const RulerTool = ({ getTerrainHeight, gridSize }) => {
                 transparent 
                 opacity={opacity} 
                 visible={false}
+                frustumCulled={false}
             />
 
             <mesh
@@ -169,9 +170,9 @@ const RulerTool = ({ getTerrainHeight, gridSize }) => {
                 onPointerMove={handlePointerMove}
                 onContextMenu={handleContextMenu}
                 rotation={[-Math.PI / 2, 0, 0]}
-                visible={false}
             >
                 <planeGeometry args={[1000, 1000]} />
+                <meshBasicMaterial transparent opacity={0} colorWrite={false} depthWrite={false} />
             </mesh>
         </>
     );
@@ -326,9 +327,9 @@ const ShapeToolBase = ({ children, onHitTest, tokens, onCompleteSelection, type,
                 onClick={handleClick}
                 onContextMenu={handleContextMenu}
                 rotation={[-Math.PI / 2, 0, 0]}
-                visible={false}
             >
                 <planeGeometry args={[1000, 1000]} />
+                <meshBasicMaterial transparent opacity={0} colorWrite={false} depthWrite={false} />
             </mesh>
         </>
     );
@@ -574,7 +575,7 @@ const FreehandTool = ({ getTerrainHeight, isLingering, onSaveMeasurement, active
     return (
         <>
             {points.length > 1 && (
-                <Line points={points} color={getMaterialProps('freehand', activeStyle).color} lineWidth={3} depthTest={false} renderOrder={300} transparent opacity={opacity} />
+                <Line points={points} color={getMaterialProps('freehand', activeStyle).color} lineWidth={3} depthTest={false} renderOrder={300} transparent opacity={opacity} frustumCulled={false} />
             )}
             <mesh
                 onPointerDown={handlePointerDown}
@@ -582,9 +583,9 @@ const FreehandTool = ({ getTerrainHeight, isLingering, onSaveMeasurement, active
                 onPointerUp={handlePointerUp}
                 onContextMenu={handleContextMenu}
                 rotation={[-Math.PI / 2, 0, 0]}
-                visible={false}
             >
                 <planeGeometry args={[1000, 1000]} />
+                <meshBasicMaterial transparent opacity={0} colorWrite={false} depthWrite={false} />
             </mesh>
         </>
     );
