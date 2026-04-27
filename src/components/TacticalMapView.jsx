@@ -1383,7 +1383,9 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           scale: 20,
           environment: 'day',
           tokens: {},
-          lights: {}
+          lights: {},
+          fowEnabled: false,
+          fowWallsEnabled: true
       };
       await createMap(campaignCode, newMapId, newMapData);
       await updateCampaign({ activeMapId: newMapId });
@@ -1442,6 +1444,8 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
             scale: 20,
             environment: 'day',
             tokens: {},
+            fowEnabled: false,
+            fowWallsEnabled: true
         };
         await createMap(campaignCode, newMapId, newMapData);
         await updateCampaign({ activeMapId: newMapId });

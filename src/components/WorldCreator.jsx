@@ -199,6 +199,8 @@ Constraints: All 4 quadrants must be exactly the same size and perfectly aligned
                 name: loc.name, backgroundUrl: loc.mapUrl, heightmapUrl: loc.heightmapUrl,
                 walls: loc.features?.walls || {}, lights: loc.features?.lights || {},
                 gridSize: 1, scale: 20, environment: 'day', tokens: {},
+                fowEnabled: false,
+                fowWallsEnabled: true
             };
             await createMap(campaignCode, newMapId, newMapData);
             await updateCampaign({ activeMapId: newMapId });
