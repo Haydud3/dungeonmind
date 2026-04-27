@@ -37,7 +37,7 @@ const TokenImage = ({ imageUrl, size, opacity }) => {
 }
 
 // Interactive 3D Token
-const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gridOffsetY = 0, isSelected, onSelect, onContextMenu, role, getTerrainHeight, isSnapToGrid, isTerrainReady, activeTool, draggedTokenId, setDraggedTokenId, viewMode, showNameplates, selectedTokenIds, groupDragData, onGroupDragEnd, isActiveTurn, canControl, shiftHeldRef, tokenBaseOffset = -0.04, isInteractive = true }) => {
+const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gridOffsetY = 0, isSelected, onSelect, onContextMenu, role, getTerrainHeight, isSnapToGrid, isTerrainReady, activeTool, draggedTokenId, setDraggedTokenId, viewMode, showNameplates, selectedTokenIds, groupDragData, onGroupDragEnd, isActiveTurn, canControl, shiftHeldRef, tokenBaseOffset = 0.04, isInteractive = true }) => {
   const meshRef = useRef();
   const visualsRef = useRef();
   const rotationRef = useRef();

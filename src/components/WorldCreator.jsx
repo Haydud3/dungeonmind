@@ -132,8 +132,8 @@ const WorldCreator = ({ role, aiHelper, apiKey }) => {
             const imageGenPrompt = `A top-down battlemap of ${json.name}, which is a ${json.type}. ${json.desc}. System Role: You are the DungeonMind Architect Engine. Generate a single 2x2 grid image (Master Sheet) representing a tactical TTRPG battlemap. NO text or labels.
 Top-Left: Detailed top-down reference map.
 Top-Right: Grayscale topographical heightmap (White=high, Black=low).
-Bottom-Left (Architect Mask): Pure Black background. Use THICK, SOLID, UN-ALIASED strokes for features: Pure Red (#FF0000) for impassable Walls. Pure Blue (#0000FF) for Doors. Pure Cyan (#00FFFF) for Windows. Do NOT use gradients or soft edges here!
-Bottom-Right (Illumination): Pure Black background. Pure Yellow (#FFFF00) solid circles representing light source origins (e.g., torches, lanterns, campfires, glowing crystals).
+Bottom-Left (Architect Mask): Pure Black background. Act as a VTT Line-of-Sight engine. This quadrant will be scanned by a script to extract 2D collision geometry for dynamic lighting and fog of war. Draw a minimalist neon-wireframe using thin, 1-pixel solid lines to represent vision-blocking boundaries. Pure Red (#FF0000) for vision-blocking walls/caves, Pure Blue (#0000FF) for doors, Pure Cyan (#00FFFF) for windows. CRITICAL 1: For thick walls, do NOT outline both edges; draw exactly ONE line down the center of the mass. CRITICAL 2: Ignore all low scatter terrain (tables, wagons, trees, props) that don't fully block tall vision.
+Bottom-Right (Illumination): Pure Black background. This quadrant will be scanned by a script to place 3D point lights in the scene. Pure Yellow (#FFFF00) solid circles representing EXACTLY the origin points of light sources (torches, campfires, etc). Do not paint the ambient light, just the exact source emitter.
 Constraints: All 4 quadrants must be exactly the same size and perfectly aligned.`;
 
             const imgElement = await window.puter.ai.txt2img(imageGenPrompt, { model: 'dall-e-3' });

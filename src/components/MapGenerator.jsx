@@ -1,10 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
 import Icon from './Icon';
 import { storeChunkedMap } from '../utils/storageUtils';
+
 import { compressImage } from '../utils/imageCompressor';
 import { useToast } from './ToastProvider';
-
 // The AI Ingestion Pixel Scanner
 const scanFeatures = (architectUrl, illuminationUrl, scale = 20) => {
     return new Promise((resolve, reject) => {
@@ -82,23 +82,22 @@ const MapGenerator = ({ asset, onUpdateLayer, mapData }) => {
         heightMap: null,
         normalMap: null,
         architectMask: null,
-        illuminationMask: null
+        illuminationMask: null,
     });
     const [isProcessing, setIsProcessing] = useState({});
     const [copied, setCopied] = useState(null);
 
-    // Updated AI Prompts
     const prompts = {
         baseMap: "System Role: You are the DungeonMind Architect Engine. Generate a detailed top-down TTRPG battlemap. NO text or labels.",
         heightMap: "System Role: You are the DungeonMind Architect Engine. First, perfectly visualize how the previous 2D battlemap would look as a physical 3D environment with depth and verticality. Then, generate a clean, colored topographical heightmap of this 3D structure. Use smooth, continuous color gradients to represent elevation (darker for low ground, lighter for high structures). CRITICAL AVOIDANCE: Do NOT add any noise, textures, patterns, or 'dots'. The gradients MUST be perfectly smooth to prevent jagged spikes when rendered in 3D. NO text or labels.",
         normalMap: "System Role: You are the DungeonMind Architect Engine. Generate a tangent-space normal map of the battlemap. NO text or labels.",
-        architectMask: "System Role: You are the DungeonMind Architect Engine. Generate an Architect Mask: Pure Red (#FF0000) for Walls. Pure Blue (#0000FF) for Doors. Pure Cyan (#00FFFF) for Windows.",
-        illuminationMask: "System Role: You are the DungeonMind Architect Engine. Generate Illumination Data: Pure Yellow (#FFFF00) solid circles representing light sources."
+        architectMask: "System Role: You are a Virtual Tabletop (VTT) Line-of-Sight engine. Generate a vision-blocking Architect Mask. This mask will be scanned by a script to extract 2D collision geometry for dynamic lighting and fog of war. Pure Black background. Draw THIN, 1-PIXEL solid lines representing ONLY the absolute boundaries that block a player's vision (walls, heavy doors, closed rooms, cave boundaries). CRITICAL INSTRUCTIONS: 1. For thick walls, do NOT outline both the inner and outer edges; instead, draw exactly ONE single line directly down the center of the wall's mass. 2. Ignore all scatter terrain that doesn't fully block tall vision (tables, wagons, barrels, bushes, trees, statues). Use Pure Red (#FF0000) for vision-blocking walls, Pure Blue (#0000FF) for doors, and Pure Cyan (#00FFFF) for windows. The result must be a clean, minimalist neon wireframe. Precision is required for the engine to parse the lines.",
+        illuminationMask: "System Role: You are the DungeonMind Architect Engine. Generate Illumination Data of the battlemap. This mask will be scanned by a script to place interactive 3D point lights in the game engine. Pure Black background. Pure Yellow (#FFFF00) solid circles representing EXACTLY the origins of light sources (e.g., torches, lanterns, campfires, glowing crystals). Do NOT draw light gradients or ambient light, ONLY solid yellow circles at the exact source emitter."
     };
 
-    const handleCopy = (type, text) => {
+    const handleCopy = (layerType, text) => {
         navigator.clipboard.writeText(text);
-        setCopied(type);
+        setCopied(layerType);
         setTimeout(() => setCopied(null), 2000);
     };
 
@@ -124,31 +123,34 @@ const MapGenerator = ({ asset, onUpdateLayer, mapData }) => {
                 let finalDataUrl = dataUrl;
                 
                 if (layerType === 'baseMap') {
+                    // Use lossy JPEG compression for the visual base map to save space
                     const res = await fetch(dataUrl);
                     const blob = await res.blob();
                     finalDataUrl = await compressImage(blob, 2048, 0.9);
                 } else {
                     try {
+                        // Losslessly resize 3D data maps (Height/Normal) as PNGs to prevent 
+                        // database crashes while perfectly preserving their smooth gradients
                         const res = await fetch(dataUrl);
                         const blob = await res.blob();
                         const bitmap = await createImageBitmap(blob);
                         const canvas = document.createElement('canvas');
                         let w = bitmap.width, h = bitmap.height;
-                        const maxDim = 2048;
+                        const maxDim = 2048; // Max safe resolution for WebGL displacement
                         if (w > maxDim || h > maxDim) {
                             const ratio = Math.min(maxDim / w, maxDim / h);
                             w = Math.round(w * ratio); h = Math.round(h * ratio);
                         }
                         canvas.width = w; canvas.height = h;
                         canvas.getContext('2d').drawImage(bitmap, 0, 0, w, h);
-                        finalDataUrl = canvas.toDataURL('image/png');
+                        finalDataUrl = canvas.toDataURL('image/png'); // Lossless PNG
                     } catch (e) {
                         console.warn("Failed to losslessly resize 3D map, falling back to raw.", e);
                     }
                 }
                 
                 const url = await storeChunkedMap(finalDataUrl, `${asset.name}_${layerType}_${Date.now()}.png`);
-                await onUpdateLayer(asset, layerType, url);
+                await onUpdateLayer(layerType, url);
             } else {
                 const emptyImg = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
                 const archUrl = layerType === 'architectMask' ? dataUrl : emptyImg;
@@ -156,12 +158,13 @@ const MapGenerator = ({ asset, onUpdateLayer, mapData }) => {
                 const features = await scanFeatures(archUrl, illUrl, scale);
                 
                 if (layerType === 'architectMask') {
-                    await onUpdateLayer(asset, 'architectMask', { walls: features.walls });
+                    await onUpdateLayer('architectMask', { walls: features.walls });
                 } else if (layerType === 'illuminationMask') {
-                    await onUpdateLayer(asset, 'illuminationMask', { lights: features.lights });
+                    await onUpdateLayer('illuminationMask', { lights: features.lights });
                 }
             }
             
+            // Clear the preview image once successfully applied
             setImages(prev => ({ ...prev, [layerType]: null }));
             toast(`Successfully applied ${layerType}!`, "success");
         } catch (err) {
@@ -212,7 +215,7 @@ const MapGenerator = ({ asset, onUpdateLayer, mapData }) => {
                         </button>
                     </div>
 
-                    <div className="flex flex-col sm:flex-row gap-4">
+                    <div className="flex flex-col sm:flex-row gap-2">
                         <div 
                             {...getRootProps()} 
                             className={`flex-1 border-2 border-dashed rounded-lg p-4 flex flex-col items-center justify-center text-center cursor-pointer transition-colors min-h-[120px] ${
@@ -229,7 +232,7 @@ const MapGenerator = ({ asset, onUpdateLayer, mapData }) => {
                                 {images[type] ? "Click or drag to replace image" : "Drop AI generated image here"}
                             </p>
                         </div>
-
+                        
                         <div className="sm:w-32 flex flex-col justify-end">
                             <button 
                                 onClick={() => handleApply(type)}
@@ -258,11 +261,31 @@ const MapGenerator = ({ asset, onUpdateLayer, mapData }) => {
             </div>
 
             <div className="space-y-4">
-                <LayerSection type="baseMap" title="1. Base Map (Albedo)" description="The primary top-down visual texture of the map." />
-                <LayerSection type="heightMap" title="2. Heightmap (Displacement)" description="Grayscale image where white is high elevation and black is low." />
-                <LayerSection type="normalMap" title="3. Normal Map" description="Tangent-space vector map used for dynamic 3D lighting calculation." />
-                <LayerSection type="architectMask" title="4. Architect Mask (Walls, Doors, Windows)" description="Extracts physical 3D walls and boundaries automatically." />
-                <LayerSection type="illuminationMask" title="5. Illumination Data" description="Identifies the position and radius of built-in light sources." />
+                <LayerSection 
+                    type="baseMap" 
+                    title="1. Base Map (Albedo)" 
+                    description="The primary top-down visual texture of the map." 
+                />
+                <LayerSection 
+                    type="heightMap" 
+                    title="2. Heightmap (Displacement)" 
+                    description="Grayscale image where white is high elevation and black is low." 
+                />
+                <LayerSection 
+                    type="normalMap" 
+                    title="3. Normal Map" 
+                    description="Tangent-space vector map used for dynamic 3D lighting calculation." 
+                />
+                <LayerSection 
+                    type="architectMask" 
+                    title="4. Architect Mask (Walls, Doors, Windows)" 
+                    description="Extracts physical 3D walls and boundaries automatically." 
+                />
+                <LayerSection 
+                    type="illuminationMask" 
+                    title="5. Illumination Data" 
+                    description="Identifies the position and radius of built-in light sources." 
+                />
             </div>
         </div>
     );

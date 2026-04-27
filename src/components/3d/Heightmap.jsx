@@ -8,9 +8,9 @@ export const HeightmapContent = ({ resolvedHeightmapUrl, resolvedBackgroundUrl, 
     const subdivisions = isLowPerf ? 128 : 256;
 
     const backgroundTexture = useTexture(resolvedBackgroundUrl);
-
     const heightmapTexture = useTexture(resolvedHeightmapUrl);
 
+    // Provide a safe default for the normal map to prevent Drei's useTexture from crashing if null
     const safeNormalMapUrl = resolvedNormalMapUrl || "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="; 
     const normalMapTexture = useTexture(safeNormalMapUrl);
 

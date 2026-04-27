@@ -435,7 +435,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           const finalZ = isSnapToGrid ? (isEvenSize ? Math.round((newZ - gridOffsetY) / gridSize) * gridSize + gridOffsetY : Math.floor((newZ - gridOffsetY) / gridSize) * gridSize + gridSize / 2 + gridOffsetY) : newZ;
 
           const terrainY = getTerrainHeight ? getTerrainHeight(finalX, finalZ) : 0;
-          const finalY = terrainY + (t.elevationOffset || 0) + (mapData?.tokenElevationOffset ?? -0.04);
+          const finalY = terrainY + (t.elevationOffset || 0) + (mapData?.tokenElevationOffset ?? 0.04);
 
           updates[`tokens.${id}.x`] = finalX;
           updates[`tokens.${id}.y`] = finalY;
@@ -992,7 +992,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
     const newTokenId = `token_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const tokenData = {
         id: newTokenId, characterId: finalNpc.id, name: finalNpc.name,
-        type: 'npc', x: dropX, y: terrainY + (mapData?.tokenElevationOffset ?? -0.04), z: dropZ,
+        type: 'npc', x: dropX, y: terrainY + (mapData?.tokenElevationOffset ?? 0.04), z: dropZ,
         image: finalNpc.image || '', size: finalNpc.size || 1, hp: finalNpc.hp
     };
 
@@ -1277,7 +1277,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
             id: newTokenId,
             name: 'New Token',
             type: 'npc',
-            x: dropX, y: terrainY + (mapData?.tokenElevationOffset ?? -0.04), z: dropZ,
+            x: dropX, y: terrainY + (mapData?.tokenElevationOffset ?? 0.04), z: dropZ,
             image: payload.url || payload.image || '',
             size: 1,
             isHidden: false
@@ -1288,7 +1288,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
             characterId: payload.id || null, 
             name: payload.name || 'Unknown',
             type: payload.type || 'npc',
-        x: dropX, y: terrainY + (mapData?.tokenElevationOffset ?? -0.04), z: dropZ,
+        x: dropX, y: terrainY + (mapData?.tokenElevationOffset ?? 0.04), z: dropZ,
             image: payload.image || '',
             size: payload.size || 1,
         };
@@ -1688,7 +1688,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                         isActiveTurn={activeCombatantId === token.id}
                         canControl={canControl && isInteractive}
                         shiftHeldRef={shiftHeldRef}
-                        tokenBaseOffset={mapData?.tokenElevationOffset ?? -0.04}
+                        tokenBaseOffset={mapData?.tokenElevationOffset ?? 0.04}
                         isInteractive={isInteractive}
                     />
                 </ErrorBoundary>
