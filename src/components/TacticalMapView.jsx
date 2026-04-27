@@ -684,6 +684,64 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       return visibleIds;
   }, [tokensList, role, playerVisionSources, mapData?.walls, mapData?.lights, mapData?.fowEnabled, mapData?.fowWallsEnabled, allCharacters, user?.uid, data?.assignments, gridSize]);
 
+  // CPU-based Line of Sight / Prop Visibility Filter
+  const visiblePropIds = useMemo(() => {
+      const props = mapData?.props ? Object.values(mapData.props).filter(Boolean) : [];
+      if (role === 'dm') return new Set(props.map(p => p.id)); // DM sees everything
+      
+      const visibleIds = new Set();
+      const wallsArray = mapData?.fowWallsEnabled !== false ? Object.values(mapData?.walls || {}) : [];
+
+      props.forEach(p => {
+          const targetPt = { x: p.x || 0, z: p.z || 0 };
+
+          // Check visibility from each of the player's vision sources
+          for (const src of playerVisionSources) {
+              const dist = Math.sqrt(Math.pow(src.x - targetPt.x, 2) + Math.pow(src.z - targetPt.z, 2));
+              
+              const truesightRange = src.truesight ?? 0;
+              const blindsightRange = src.blindsight ?? 0;
+              const tremorsenseRange = src.tremorsense ?? 0;
+              const baseVisionRange = src.darkvision ?? src.range;
+
+              // Optimization: We check LOS only once if needed
+              const hasLOS = checkLineOfSight(src, targetPt, wallsArray);
+
+              const canSeeWithTruesight = dist <= truesightRange && hasLOS;
+              const canSeeWithBlindsight = dist <= blindsightRange && hasLOS;
+              const canSeeWithTremorsense = dist <= tremorsenseRange && (p.elevation || 0) === 0;
+
+              if (canSeeWithTruesight || canSeeWithBlindsight || canSeeWithTremorsense) {
+                  visibleIds.add(p.id);
+                  return; // Visible, no need to check further for this prop
+              }
+
+              // Condition 1: Is the target within darkvision/base range AND there is line of sight?
+              if (dist <= baseVisionRange && hasLOS) {
+                  visibleIds.add(p.id);
+                  return; // Visible
+              }
+
+              // Condition 2: Is the target illuminated by a light source AND does the player have line of sight to it?
+              if (combinedLights && mapData?.fowEnabled !== false) {
+                  if (hasLOS) {
+                      for (const light of Object.values(combinedLights)) {
+                          const lightRange = (light.radius || 15) / 5 * gridSize;
+                          const lightPt = { x: light.position.x, z: light.position.z };
+                          const distToLight = Math.sqrt(Math.pow(lightPt.x - targetPt.x, 2) + Math.pow(lightPt.z - targetPt.z, 2));
+                          
+                          if (distToLight <= lightRange && checkLineOfSight(lightPt, targetPt, wallsArray)) {
+                              visibleIds.add(p.id);
+                              return; // Visible
+                          }
+                      }
+                  }
+              }
+          }
+      });
+      return visibleIds;
+  }, [mapData?.props, role, playerVisionSources, mapData?.walls, mapData?.lights, mapData?.fowEnabled, mapData?.fowWallsEnabled, combinedLights, gridSize]);
+
   // Calculate which 3D lights are visible to the players (prevents unseen lights from shining through walls via normal maps)
   const visibleLights = useMemo(() => {
       if (!combinedLights) return {};
@@ -1606,18 +1664,23 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
         <CombatCameraDirector activeTokenId={activeCombatantId} tokensList={tokensList} />
         
         {/* Render all map props */}
-        {mapData && mapData.props && isAspectReady && (!mapData.heightmapUrl || terrainData) && Object.values(mapData.props).filter(Boolean).map(prop => (
-            <ErrorBoundary key={prop.id} fallback={null}>
-                <MapProp
-                    propData={prop}
-                    isSelected={false} // Selection logic can be added next
-                    onContextMenu={role === 'dm' ? handlePropContextMenu : null}
-                    getTerrainHeight={getTerrainHeight}
-                    updatePropPosition={handleUpdatePropPosition}
-                    gridSize={gridSize}
-                />
-            </ErrorBoundary>
-        ))}
+        {mapData && mapData.props && isAspectReady && (!mapData.heightmapUrl || terrainData) && Object.values(mapData.props).filter(Boolean).map(prop => {
+            if (role !== 'dm' && !visiblePropIds.has(prop.id)) {
+                return null;
+            }
+            return (
+                <ErrorBoundary key={prop.id} fallback={null}>
+                    <MapProp
+                        propData={prop}
+                        isSelected={false} // Selection logic can be added next
+                        onContextMenu={role === 'dm' ? handlePropContextMenu : null}
+                        getTerrainHeight={getTerrainHeight}
+                        updatePropPosition={handleUpdatePropPosition}
+                        gridSize={gridSize}
+                    />
+                </ErrorBoundary>
+            );
+        })}
 
         {/* Render all tokens on the map */}
         {mapData && isAspectReady && (!mapData.heightmapUrl || terrainData) && tokensList.map(token => {
@@ -1862,7 +1925,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       )}
 
       {/* Primary Right Dock */}
-      <div className={`absolute top-1/2 right-4 -translate-y-1/2 vtt-safe-right z-[70] flex flex-col gap-2 ${uiOpacityClass}`}>
+      <div className={`absolute top-4 right-4 vtt-safe-right z-[70] flex flex-col gap-2 ${uiOpacityClass}`}>
               {role === 'dm' && (
                   <>
                       <ToolButton name="Tokens" icon="users" isActive={showTokenManager} onClick={() => { setActiveTool(null); setShowAssetManager(false); setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); setShowTokenManager(p => !p); }} isStandalone={true} />

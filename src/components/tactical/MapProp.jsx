@@ -93,11 +93,48 @@ export const MapProp = ({ propData, isSelected, onSelect, onContextMenu, getTerr
 
     const is3D = propData.is3D || propData.modelUrl;
 
+    const longPressTimer = useRef();
+    const touchStartPos = useRef({ x: 0, y: 0 });
+
+    const cancelLongPress = () => {
+        if (longPressTimer.current) {
+            clearTimeout(longPressTimer.current);
+            longPressTimer.current = null;
+        }
+    };
+
+    const handlePointerDown = (e) => {
+        if (e.pointerType === 'touch') {
+            touchStartPos.current = { x: e.clientX, y: e.clientY };
+            longPressTimer.current = setTimeout(() => {
+                longPressTimer.current = null;
+                if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate(50);
+                const mockEvent = { clientX: touchStartPos.current.x, clientY: touchStartPos.current.y, preventDefault: () => {}, stopPropagation: () => {} };
+                if (onContextMenu) onContextMenu(mockEvent, propData.id);
+            }, 500);
+        }
+    };
+
+    const handlePointerMove = (e) => {
+        if (longPressTimer.current) {
+            const dx = e.clientX - touchStartPos.current.x;
+            const dy = e.clientY - touchStartPos.current.y;
+            if (Math.sqrt(dx * dx + dy * dy) > 10) {
+                cancelLongPress();
+            }
+        }
+    };
+
+    const handlePointerUp = (e) => {
+        cancelLongPress();
+    };
+
     return (
         <DragControls
             ref={dragControlsRef}
             axisLockY={true}
             onDragStart={() => setHovered(true)}
+            onDrag={cancelLongPress}
             onDragEnd={() => {
                 setHovered(false);
                 if (groupRef.current && dragControlsRef.current && updatePropPosition) {
@@ -119,7 +156,14 @@ export const MapProp = ({ propData, isSelected, onSelect, onContextMenu, getTerr
                 }
             }}
         >
-            <group ref={groupRef} position={[x, y, z]} rotation={[0, -rotY, 0]}>
+            <group ref={groupRef} position={[x, y, z]} rotation={[0, -rotY, 0]}
+                   onPointerDown={handlePointerDown}
+                   onPointerMove={handlePointerMove}
+                   onPointerUp={handlePointerUp}
+                   onPointerCancel={handlePointerUp}
+                   onPointerLeave={handlePointerUp}
+                   onPointerOut={handlePointerUp}
+            >
                 {/* The actual prop mesh */}
                 {is3D ? (
                     <group

@@ -319,22 +319,25 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
     }
   };
 
+  const cancelLongPress = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+  };
+
   const handlePointerMove = (e) => {
-    if (e.pointerType === 'touch' && longPressTimer.current) {
+    if (longPressTimer.current) {
       const dx = e.clientX - touchStartPos.current.x;
       const dy = e.clientY - touchStartPos.current.y;
       if (Math.sqrt(dx * dx + dy * dy) > 10) {
-        clearTimeout(longPressTimer.current);
-        longPressTimer.current = null;
+        cancelLongPress();
       }
     }
   };
 
   const handlePointerUp = (e) => {
-    if (e.pointerType === 'touch' && longPressTimer.current) {
-      clearTimeout(longPressTimer.current);
-      longPressTimer.current = null;
-    }
+    cancelLongPress();
   };
 
   useEffect(() => {
@@ -381,7 +384,9 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
       onPointerMove={(!isInteractive || activeTool) ? undefined : handlePointerMove}
       onPointerUp={(!isInteractive || activeTool) ? undefined : handlePointerUp}
       onPointerOver={(!isInteractive || activeTool) ? undefined : (e) => { e.stopPropagation(); if (isTerrainReady) setHover(true); }}
-      onPointerOut={(!isInteractive || activeTool) ? undefined : (e) => { if (isTerrainReady) setHover(false); }}
+      onPointerOut={(!isInteractive || activeTool) ? undefined : (e) => { cancelLongPress(); if (isTerrainReady) setHover(false); }}
+      onPointerCancel={(!isInteractive || activeTool) ? undefined : cancelLongPress}
+      onPointerLeave={(!isInteractive || activeTool) ? undefined : cancelLongPress}
       onClick={(!isInteractive || activeTool) ? undefined : (e) => { e.stopPropagation(); if (e.button === 2) return; if (isTerrainReady) onSelect(token.id, e.shiftKey); }}
       onContextMenu={(!isInteractive || activeTool) ? undefined : (e) => {
         e.stopPropagation();

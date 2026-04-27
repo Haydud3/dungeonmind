@@ -5,7 +5,10 @@ import { storeChunkedMap, deleteChunkedMap, retrieveChunkedMap } from '../utils/
 import { exportMapPreset, importMapPreset } from '../utils/presetManager';
 import Icon from './Icon';
 import SketchfabImporter from './SketchfabImporter';
-import MapGenerator from './MapGenerator'; // <-- Add this import
+import MapGenerator from './MapGenerator';
+import ResolvedImage from './ResolvedImage'; // Add this import
+
+import { useResolvedUrl } from '../utils/useResolvedUrl';
 
 // Helper to generate a lightweight thumbnail so the gallery loads instantly
 const generateThumbnail = (dataUrl) => {
@@ -55,6 +58,33 @@ const ThrottledSlider = ({ value, min, max, step, onChange, onDragStart, onDragE
     );
 };
 
+const AssetThumbnail = ({ asset }) => {
+    let imgUrl = asset.thumbnail || asset.url;
+    if (imgUrl && typeof imgUrl === 'string' && imgUrl.startsWith('http') && !imgUrl.includes('firebasestorage.googleapis.com') && !imgUrl.includes('wsrv.nl')) {
+        imgUrl = `https://wsrv.nl/?url=${encodeURIComponent(imgUrl)}&cors=1&w=256`; // Resize via wsrv for thumbnails
+    }
+
+    const resolvedUrl = useResolvedUrl(imgUrl);
+
+    if (resolvedUrl || (!asset.is3D && asset.url)) {
+        return <img src={resolvedUrl || imgUrl} className="w-full h-full object-cover" alt={asset.name} draggable={false} />;
+    }
+    return <div className="w-full h-full flex items-center justify-center bg-slate-900 border border-slate-700"><Icon name="box" size={32} className="text-slate-600"/></div>;
+};
+
+const CharacterThumbnail = ({ char }) => {
+    let imgUrl = char.avatarUrl || char.imageUrl;
+    if (imgUrl && typeof imgUrl === 'string' && imgUrl.startsWith('http') && !imgUrl.includes('firebasestorage.googleapis.com') && !imgUrl.includes('wsrv.nl')) {
+        imgUrl = `https://wsrv.nl/?url=${encodeURIComponent(imgUrl)}&cors=1&w=256`;
+    }
+    const resolvedUrl = useResolvedUrl(imgUrl);
+
+    if (resolvedUrl) {
+        return <img src={resolvedUrl} className="w-full h-full object-cover" alt={char.name} draggable={false} />;
+    }
+    return <div className="w-full h-full flex items-center justify-center bg-slate-900 border border-slate-700 text-slate-500"><Icon name="user" size={32}/></div>;
+};
+
 const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, onSetBackground, onSetHeightmap, onGenerateMap, onNewBlankMap, allCharacters, campaignData, updateCampaign, onSelectStamper }) => {
     const [assets, setAssets] = useState([]);
     const [isUploading, setIsUploading] = useState(false);
@@ -64,7 +94,7 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
     const importPresetRef = useRef(null);
     const [activeTab, setActiveTab] = useState('library');
     const [selectedAsset, setSelectedAsset] = useState(null);
-    const [assetCategory, setAssetCategory] = useState('All');
+    const [assetCategory, setAssetCategory] = useState('Maps');
 
     // Grid Auto-Detection States
     const [isDetectingGrid, setIsDetectingGrid] = useState(false);
@@ -173,6 +203,20 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
             setIsUploading(false);
         }
         if (e.target) e.target.value = null;
+    };
+
+    const handleDeleteCharacter = async (char) => {
+        if (!confirm(`Permanently remove "${char.name}" from the campaign?`)) return;
+        try {
+            if (campaignData?.players?.find(p => p.id === char.id)) {
+                if (updateCampaign) updateCampaign({ players: campaignData.players.filter(p => p.id !== char.id) });
+            } else if (campaignData?.npcs?.find(n => n.id === char.id)) {
+                if (updateCampaign) updateCampaign({ npcs: campaignData.npcs.filter(n => n.id !== char.id) });
+            }
+        } catch (err) {
+            console.error("Failed to delete character", err);
+            alert("Delete failed.");
+        }
     };
 
     const handleDeleteAsset = async (asset) => {
@@ -702,6 +746,26 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                     </div>
                     <div className="flex-1 min-h-0 overflow-y-auto custom-scroll p-4">
                         <div className="grid grid-cols-2 gap-2">
+                            {['Tokens', 'All'].includes(assetCategory) && allCharacters?.map((char) => {
+                                return (
+                                    <div key={`actor-${char.id}`} draggable 
+                                        onDragStart={(e) => {
+                                            const payload = JSON.stringify({ format: 'dungeonmind-character', type: 'pc', id: char.id, name: char.name, image: char.avatarUrl || char.imageUrl });
+                                            e.dataTransfer.setData('application/dungeonmind-character', payload);
+                                            e.dataTransfer.setData('text/plain', payload);
+                                        }}
+                                        className="aspect-square bg-slate-800 rounded border border-slate-700 overflow-hidden cursor-grab active:cursor-grabbing hover:border-amber-500 transition-colors relative group"
+                                    >
+                                        <CharacterThumbnail char={char} />
+                                        <div className="absolute inset-x-0 bottom-0 bg-black/80 text-[10px] text-white p-1 truncate font-bold text-center pointer-events-none">{char.name}</div>
+                                        <div className="absolute top-1 right-1 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <button onClick={(e) => { e.stopPropagation(); handleDeleteCharacter(char); }} className="bg-black/80 text-red-500 hover:text-white p-1.5 rounded shadow-md" title="Delete Token">
+                                                <Icon name="trash" size={14}/>
+                                            </button>
+                                        </div>
+                                    </div>
+                                );
+                            })}
                             {assets.filter(a => assetCategory === 'All' || (a.category || 'Uncategorized') === assetCategory).map((asset) => (
                                 <div key={asset.id} draggable 
                                     onClick={() => {
@@ -714,11 +778,7 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                                     }}
                                     className="aspect-square bg-slate-800 rounded border border-slate-700 overflow-hidden cursor-grab active:cursor-grabbing hover:border-amber-500 transition-colors relative group"
                                 >
-                                    {asset.thumbnail || (!asset.is3D && asset.url) ? (
-                                        <img src={asset.thumbnail || asset.url} className="w-full h-full object-cover" alt={asset.name} draggable={false} />
-                                    ) : (
-                                        <div className="w-full h-full flex items-center justify-center bg-slate-900 border border-slate-700"><Icon name="box" size={32} className="text-slate-600"/></div>
-                                    )}
+                                    <AssetThumbnail asset={asset} />
                                     <div className="absolute inset-x-0 bottom-0 bg-black/60 text-[9px] text-white p-1 truncate opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">{asset.name}</div>
                                     <div className="absolute top-1 left-1 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                         {asset.category !== 'Props' && asset.category !== 'Tokens' && (
@@ -784,8 +844,8 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                                     </div>
                                 </div>
                             ))}
-                            {assets.length === 0 && !isUploading && (
-                                <div className="col-span-2 text-center text-slate-500 text-sm mt-10 flex flex-col items-center"><Icon name="image" size={32} className="opacity-20 mb-2" /> No assets uploaded yet.</div>
+                            {assets.filter(a => assetCategory === 'All' || (a.category || 'Uncategorized') === assetCategory).length === 0 && (!['Tokens', 'All'].includes(assetCategory) || !allCharacters || allCharacters.length === 0) && !isUploading && (
+                                <div className="col-span-2 text-center text-slate-500 text-sm mt-10 flex flex-col items-center"><Icon name={assetCategory === 'Tokens' ? 'users' : 'image'} size={32} className="opacity-20 mb-2" /> No {assetCategory === 'Tokens' ? 'tokens' : 'assets'} available.</div>
                             )}
                         </div>
                     </div>
