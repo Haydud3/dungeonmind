@@ -1,11 +1,11 @@
-import React, { useState, useEffect, Suspense, useRef, useMemo } from 'react';
+import React, { useState, useEffect, Suspense, useRef, useMemo, lazy } from 'react';
 import { useThree, useFrame } from '@react-three/fiber';
 import { DragControls, Html, useCursor, Text, RoundedBox, Billboard, Line } from '@react-three/drei';
 import * as THREE from 'three';
-import CharacterModel from '../CharacterModel';
+const CharacterModel = lazy(() => import('../CharacterModel').then(m => ({ default: m.default })));
 import { retrieveChunkedMap } from '../../utils/storageUtils';
 import Icon from '../Icon';
-import { ConditionParticles } from '../3d/ConditionParticles';
+const ConditionParticles = lazy(() => import('../3d/ConditionParticles').then(m => ({ default: m.ConditionParticles })));
 
 const CONDITION_ICONS = {
   Blinded: { icon: 'eye-off', color: '#64748b' },
@@ -37,7 +37,7 @@ const TokenImage = ({ imageUrl, size, opacity }) => {
 }
 
 // Interactive 3D Token
-const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gridOffsetY = 0, isSelected, onSelect, onContextMenu, role, getTerrainHeight, isSnapToGrid, isTerrainReady, activeTool, draggedTokenId, setDraggedTokenId, viewMode, showNameplates, selectedTokenIds, groupDragData, onGroupDragEnd, isActiveTurn, canControl, shiftHeldRef, tokenBaseOffset = 0.04, isInteractive = true }) => {
+const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gridOffsetY = 0, isSelected, onSelect, onContextMenu, role, getTerrainHeight, isSnapToGrid, isTerrainReady, activeTool, draggedTokenId, setDraggedTokenId, viewMode, showNameplates, selectedTokenIds, groupDragData, onGroupDragEnd, isActiveTurn, canControl, shiftHeldRef, tokenBaseOffset = 0.04, isInteractive = true, orientation = 0 }) => {
   const meshRef = useRef();
   const visualsRef = useRef();
   const rotationRef = useRef();
@@ -362,10 +362,15 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
   }, [token.image, token.img]);
 
   const nameplatePos = useMemo(() => {
-      return viewMode === 'top-down' 
-          ? [0, 0, safeSize * 0.75] 
-          : [0, safeSize * 0.2, safeSize * 0.85]; // Hover slightly off the ground, shifted South (towards camera)
-  }, [safeSize, viewMode]);
+      const baseZ = viewMode === 'top-down' ? safeSize * 0.75 : safeSize * 0.85;
+      const baseY = viewMode === 'top-down' ? 0 : safeSize * 0.2;
+      const angle = orientation * (Math.PI / 2);
+      
+      const offsetX = Math.sin(angle) * baseZ;
+      const offsetZ = Math.cos(angle) * baseZ;
+      
+      return [offsetX, baseY, offsetZ];
+  }, [safeSize, viewMode, orientation]);
 
   const initials = useMemo(() => {
       const name = token.name || "Unknown";
@@ -456,7 +461,9 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
             </mesh>
           )}
 
-          <ConditionParticles conditions={token.conditions} size={safeSize} />
+          <Suspense fallback={null}>
+            <ConditionParticles conditions={token.conditions} size={safeSize} />
+          </Suspense>
         </group>
 
         {showNameplates && (() => {
@@ -710,4 +717,29 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
   );
 };
 
-export default Token3D;
+const areTokensEqual = (prev, next) => {
+    // Fast path: if the same object, they are equal
+    if (prev.token === next.token && prev.isSelected === next.isSelected && prev.draggedTokenId === next.draggedTokenId && prev.activeTool === next.activeTool) {
+        return true;
+    }
+    
+    // Deep comparison of specific token fields to prevent re-renders when other tokens are dragged
+    const pt = prev.token;
+    const nt = next.token;
+    
+    if (pt.id !== nt.id || pt.x !== nt.x || pt.y !== nt.y || pt.z !== nt.z || pt.size !== nt.size || pt.rotationY !== nt.rotationY || pt.elevationOffset !== nt.elevationOffset || pt.isHidden !== nt.isHidden || pt.modelUrl !== nt.modelUrl || pt.image !== nt.image) {
+        return false;
+    }
+    
+    // Check if conditions arrays are different
+    if ((pt.conditions || []).join(',') !== (nt.conditions || []).join(',')) return false;
+    
+    // Check primitive props
+    if (prev.isSelected !== next.isSelected || prev.role !== next.role || prev.gridSize !== next.gridSize || prev.isSnapToGrid !== next.isSnapToGrid || prev.isTerrainReady !== next.isTerrainReady || prev.activeTool !== next.activeTool || prev.draggedTokenId !== next.draggedTokenId || prev.viewMode !== next.viewMode || prev.showNameplates !== next.showNameplates || prev.isActiveTurn !== next.isActiveTurn || prev.canControl !== next.canControl || prev.isInteractive !== next.isInteractive || prev.orientation !== next.orientation) {
+        return false;
+    }
+    
+    return true;
+};
+
+export default React.memo(Token3D, areTokensEqual);

@@ -1,18 +1,16 @@
-import React, { useState, useEffect, Suspense, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, Suspense, useRef, useCallback, useMemo, lazy } from 'react';
 import { Canvas, useThree, useFrame } from '@react-three/fiber';
 import { MapControls, Grid, useTexture, DragControls, Html, useCursor, Line, Text, RoundedBox, Billboard, useProgress } from '@react-three/drei';
 import * as THREE from 'three';
 import { subscribeToMap, updateMap, createMap } from '../utils/mapService';
 import { useNewCampaign } from '../contexts/NewCampaignProvider';
 import { useCharacterStore } from '../stores/useCharacterStore';
-import AssetManager from './AssetManager';
-import { MeasurementTools } from './MeasurementTools';
+const AssetManager = lazy(() => import('./AssetManager'));
+const MeasurementTools = lazy(() => import('./MeasurementTools').then(m => ({ default: m.MeasurementTools })));
 import Icon from './Icon';
-import { Client } from "@gradio/client";
 import { retrieveChunkedMap, storeChunkedMap } from '../utils/storageUtils';
-import CharacterModel from './CharacterModel';
-import Token3D from './tactical/Token';
-import MapProp from './tactical/MapProp';
+const Token3D = lazy(() => import('./tactical/Token').then(m => ({ default: m.default })));
+const MapProp = lazy(() => import('./tactical/MapProp').then(m => ({ default: m.default })));
 import CameraController from '../utils/CameraController';
 import { collection, doc, query, where, getDocs } from 'firebase/firestore';
 import { db, appId } from '../firebase';
@@ -23,32 +21,32 @@ import { segmentsIntersect } from '../utils/mathUtils';
 import { checkLineOfSight } from '../utils/losUtils';
 import { useResolvedUrl } from '../utils/useResolvedUrl';
 
-import { MapPlane, MapPlaneContent } from './3d/MapPlane';
+const MapPlane = lazy(() => import('./3d/MapPlane').then(m => ({ default: m.MapPlane })));
 
-import { MarqueeSelector } from './3d/MarqueeSelector';
+const MarqueeSelector = lazy(() => import('./3d/MarqueeSelector').then(m => ({ default: m.MarqueeSelector })));
 
-import { Heightmap, HeightmapContent } from './3d/Heightmap';
+const Heightmap = lazy(() => import('./3d/Heightmap').then(m => ({ default: m.Heightmap })));
 
-import { Walls, Wall, WallSegment } from './3d/Walls';
+const Walls = lazy(() => import('./3d/Walls').then(m => ({ default: m.Walls })));
 
-import { CombatTrackerSidebar, CombatRibbon } from './ui/CombatTrackerSidebar';
+const CombatTrackerSidebar = lazy(() => import('./ui/CombatTrackerSidebar').then(m => ({ default: m.CombatTrackerSidebar })));
+const CombatRibbon = lazy(() => import('./ui/CombatTrackerSidebar').then(m => ({ default: m.CombatRibbon })));
 
-import { CombatCameraDirector } from './3d/CombatCameraDirector';
-import { ArchitectPenController } from './3d/controllers/ArchitectPenController';
-import { LightPlacementController } from './3d/controllers/LightPlacementController';
-import { MapLights } from './3d/MapLights';
-import { MapPings } from './3d/MapPings';
+const CombatCameraDirector = lazy(() => import('./3d/CombatCameraDirector').then(m => ({ default: m.CombatCameraDirector })));
+const ArchitectPenController = lazy(() => import('./3d/controllers/ArchitectPenController').then(m => ({ default: m.ArchitectPenController })));
+const LightPlacementController = lazy(() => import('./3d/controllers/LightPlacementController').then(m => ({ default: m.LightPlacementController })));
+const MapLights = lazy(() => import('./3d/MapLights').then(m => ({ default: m.MapLights })));
+const MapPings = lazy(() => import('./3d/MapPings').then(m => ({ default: m.MapPings })));
 
-import { GpuFogOfWar } from './3d/GpuFogOfWar';
+const GpuFogOfWar = lazy(() => import('./3d/GpuFogOfWar').then(m => ({ default: m.GpuFogOfWar })));
 
-import { ZoomHandler } from './3d/ZoomHandler';
-import { WallDrawingController } from './3d/controllers/WallDrawingController';
-import { FreehandDrawingController } from './3d/controllers/FreehandDrawingController';
-import { StampingController } from './3d/controllers/StampingController';
-import { WeatherParticles } from './3d/WeatherParticles';
-import { PostProcessingEffects } from './3d/PostProcessingEffects';
+const ZoomHandler = lazy(() => import('./3d/ZoomHandler').then(m => ({ default: m.ZoomHandler })));
+const WallDrawingController = lazy(() => import('./3d/controllers/WallDrawingController').then(m => ({ default: m.WallDrawingController })));
+const StampingController = lazy(() => import('./3d/controllers/StampingController').then(m => ({ default: m.StampingController })));
+const WeatherParticles = lazy(() => import('./3d/WeatherParticles').then(m => ({ default: m.WeatherParticles })));
+const PostProcessingEffects = lazy(() => import('./3d/PostProcessingEffects').then(m => ({ default: m.PostProcessingEffects })));
 import { DropZone } from './ui/DropZone';
-import { DisplacedGrid } from './3d/DisplacedGrid';
+const DisplacedGrid = lazy(() => import('./3d/DisplacedGrid').then(m => ({ default: m.DisplacedGrid })));
 import { ToolButton } from './ui/ToolButton';
 
 // Helper: UI images to avoid CORS issues natively
@@ -108,48 +106,110 @@ const generateBoundaryWalls = (mapScale, mapAspect) => {
 const LoadingOverlay = ({ activeMapId, isMapDataReady }) => {
     const { active, progress, loaded, total } = useProgress();
     const [prevMapId, setPrevMapId] = useState(activeMapId);
-    const [isForced, setIsForced] = useState(true);
+    const [isInitialLoad, setIsInitialLoad] = useState(true);
 
     if (activeMapId !== prevMapId) {
         setPrevMapId(activeMapId);
-        setIsForced(true);
+        setIsInitialLoad(true);
     }
 
     useEffect(() => {
-        if (isForced && isMapDataReady) {
-            const timer = setTimeout(() => setIsForced(false), 500);
+        if (isInitialLoad && isMapDataReady && !active) {
+            const timer = setTimeout(() => setIsInitialLoad(false), 500);
             return () => clearTimeout(timer);
         }
-    }, [isForced, isMapDataReady]);
+    }, [isInitialLoad, isMapDataReady, active]);
     
-    const show = active || isForced || !isMapDataReady;
+    const showFullscreen = isInitialLoad || !isMapDataReady;
+    const showMini = !showFullscreen && active;
 
     return (
-        <div className={`absolute inset-0 z-50 flex items-center justify-center bg-slate-950 text-white pointer-events-none transition-opacity duration-500 ${show ? 'opacity-100' : 'opacity-0'}`}>
-            <div className="flex flex-col items-center gap-6">
-                {/* Spinning Hexagon Ring */}
-                <div className="relative w-24 h-24">
-                    <div className="absolute inset-0 border-t-4 border-amber-500 border-r-4 border-r-transparent rounded-full animate-spin"></div>
-                    <div className="absolute inset-2 border-b-4 border-emerald-500 border-l-4 border-l-transparent rounded-full animate-spin" style={{ animationDirection: 'reverse', animationDuration: '1.5s' }}></div>
-                    <div className="absolute inset-0 flex items-center justify-center">
-                        <Icon name="hexagon" size={32} className="text-amber-500 animate-pulse" />
+        <>
+            {/* Fullscreen Overlay for Initial Load */}
+            <div className={`absolute inset-0 z-50 flex items-center justify-center bg-slate-950 text-white transition-opacity duration-500 ${showFullscreen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}>
+                <div className="flex flex-col items-center gap-6">
+                    {/* Spinning Hexagon Ring */}
+                    <div className="relative w-24 h-24">
+                        <div className="absolute inset-0 border-t-4 border-amber-500 border-r-4 border-r-transparent rounded-full animate-spin"></div>
+                        <div className="absolute inset-2 border-b-4 border-emerald-500 border-l-4 border-l-transparent rounded-full animate-spin" style={{ animationDirection: 'reverse', animationDuration: '1.5s' }}></div>
+                        <div className="absolute inset-0 flex items-center justify-center">
+                            <Icon name="hexagon" size={32} className="text-amber-500 animate-pulse" />
+                        </div>
                     </div>
-                </div>
-                
-                {/* Text and Bar */}
-                <div className="flex flex-col items-center gap-2">
-                    <div className="text-2xl font-bold font-serif text-amber-500 tracking-wider">Summoning Realm</div>
-                    <div className="w-64 h-1.5 bg-slate-800 rounded-full overflow-hidden shadow-inner">
-                        <div className="h-full bg-gradient-to-r from-amber-600 to-amber-400 transition-all duration-300 ease-out" style={{ width: `${progress}%` }}></div>
+                    
+                    {/* Text and Bar */}
+                    <div className="flex flex-col items-center gap-2">
+                        <div className="text-2xl font-bold font-serif text-amber-500 tracking-wider">Summoning Realm</div>
+                        <div className="w-64 h-1.5 bg-slate-800 rounded-full overflow-hidden shadow-inner">
+                            <div className="h-full bg-gradient-to-r from-amber-600 to-amber-400 transition-all duration-300 ease-out" style={{ width: `${progress}%` }}></div>
+                        </div>
+                        <div className="text-xs text-slate-500 font-mono tracking-widest">{loaded} / {total || 1} Assets</div>
                     </div>
-                    <div className="text-xs text-slate-500 font-mono tracking-widest">{loaded} / {total || 1} Assets</div>
                 </div>
             </div>
-        </div>
+
+            {/* Mini Loader for Subsequent Asset Loads */}
+            <div className={`absolute top-4 left-1/2 -translate-x-1/2 z-[60] flex items-center gap-3 px-4 py-2 bg-slate-900/90 backdrop-blur border border-slate-700 rounded-full shadow-2xl transition-all duration-500 ${showMini ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 -translate-y-4 pointer-events-none'}`}>
+                <Icon name="loader" size={16} className="text-amber-500 animate-spin" />
+                <span className="text-xs font-bold text-slate-300 font-mono tracking-wider">
+                    Downloading... {loaded}/{total || 1}
+                </span>
+            </div>
+        </>
     );
 };
 
-export default React.memo(function TacticalMapView({ campaignCode, activeMapId, onOpenSheet, role, onOpenHandouts, onOpenChat, onOpenJournal, onOpenDiceTray }) {
+const ViewManager = React.memo(({ aspect, scale, orientation, fitTrigger }) => {
+    const { camera } = useThree();
+    const controls = useThree(state => state.controls);
+    
+    useEffect(() => {
+        if (!controls || !fitTrigger) return;
+
+        const fitLogic = () => {
+            // When orientation is 90 or 270 degrees, the map is effectively rotated.
+            // We need to swap width and height for fitting calculations.
+            const isPortraitOrientation = orientation % 2 !== 0;
+            const mapWidth = scale * aspect;
+            const mapHeight = scale;
+
+            const fov = camera.fov * (Math.PI / 180);
+            const currentAspect = window.innerWidth / window.innerHeight;
+            
+            // The dimension that needs to fit the viewport's height is now mapWidth, and vice-versa.
+            const distanceForHeight = (isPortraitOrientation ? mapWidth : mapHeight) / (2 * Math.tan(fov / 2));
+            const distanceForWidth = (isPortraitOrientation ? mapHeight : mapWidth) / (2 * currentAspect * Math.tan(fov / 2));
+            
+            const targetDistance = Math.max(distanceForHeight, distanceForWidth) * 1.05; // 5% padding
+            
+            controls.target.set(0, 0, 0);
+            const direction = new THREE.Vector3();
+            camera.getWorldDirection(direction);
+            camera.position.copy(controls.target).addScaledVector(direction, -targetDistance);
+            controls.update();
+        };
+
+        // The orientation update has a 100ms timeout. We wait slightly longer to ensure rotation is complete.
+        const timeout = setTimeout(fitLogic, 150);
+        return () => clearTimeout(timeout);
+
+    }, [fitTrigger, scale, aspect, camera, controls, orientation]);
+
+    useEffect(() => {
+        if (controls) {
+            const timeout = setTimeout(() => {
+                controls.setAzimuthalAngle(orientation * (Math.PI / 2));
+                controls.update();
+            }, 100);
+            return () => clearTimeout(timeout);
+        }
+    }, [orientation, controls]);
+
+    return null;
+});
+
+export default React.memo(function TacticalMapView({ campaignCode, activeMapId, onOpenSheet, role, onOpenHandouts, onOpenChat, onOpenJournal, onOpenDiceTray, onOpenCast, isCastMode: propIsCastMode }) {
+  const isCastMode = propIsCastMode || (typeof window !== 'undefined' && (new URLSearchParams(window.location.search).get('cast') === 'true' || window.location.hash.includes('cast=true')));
   const { campaign, updateCampaign, user } = useNewCampaign();
   const data = campaign;
   const cameraControllerRef = useRef();
@@ -163,10 +223,10 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
   const [showInitiativeTracker, setShowInitiativeTracker] = useState(false);
   
   useEffect(() => {
-      if (data?.campaign?.combat?.active) {
+      if (data?.campaign?.combat?.active && !isCastMode) {
           setShowInitiativeTracker(true);
       }
-  }, [data?.campaign?.combat?.active]);
+  }, [data?.campaign?.combat?.active, isCastMode]);
 
   const [isDrawingWalls, setIsDrawingWalls] = useState(false);
   const [drawingWallType, setDrawingWallType] = useState('wall');
@@ -189,11 +249,14 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
   const [activeTool, setActiveTool] = useState(null);
   const [activeMeasurementStyle, setActiveMeasurementStyle] = useState('default');
   const [isToolbarOpen, setIsToolbarOpen] = useState(true);
-  const [viewMode, setViewMode] = useState('isometric');
+  const [viewModeState, setViewModeState] = useState('isometric');
+  const viewMode = isCastMode ? 'top-down' : viewModeState;
+  const setViewMode = setViewModeState;
   const [draggedTokenId, setDraggedTokenId] = useState(null);
   const [remountKey, setRemountKey] = useState(0);
   const [assetTab, setAssetTab] = useState('library');
   const shiftHeldRef = useRef(false);
+  const [fitTrigger, setFitTrigger] = useState(0);
 
   // Added States for List View and 5e API
   const [actorViewMode, setActorViewMode] = useState('grid');
@@ -298,6 +361,12 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
   const [isAspectReady, setIsAspectReady] = useState(false);
   const [terrainData, setTerrainData] = useState(null);
 
+  useEffect(() => {
+      if (isCastMode && mapData && isAspectReady) {
+          setFitTrigger(p => p + 1);
+      }
+  }, [isCastMode, mapData?.activeMapId, isAspectReady]);
+
   const resolvedBackgroundUrl = useResolvedUrl(mapData?.backgroundUrl);
   const resolvedHeightmapUrl = useResolvedUrl(mapData?.heightmapUrl);
   const resolvedNormalMapUrl = useResolvedUrl(mapData?.normalMapUrl);
@@ -348,15 +417,18 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
     return () => { isActive = false; };
   }, [resolvedHeightmapUrl]);
 
+  const mapScale = mapData?.scale || 20;
+  const mapHeightScale = mapData?.heightScale || 1;
+  const mapHeightmapUrl = mapData?.heightmapUrl;
+
   const getTerrainHeight = useCallback((x, z) => {
-    if (!terrainData || !mapData || !mapData.heightmapUrl) {
+    if (isCastMode) return 0; // Force tokens and measurements to be flat against the TV glass
+    if (!terrainData || !mapHeightmapUrl) {
       return 0;
     }
-    const scale = mapData.scale || 20;
-    const heightScale = mapData.heightScale || 1;
-    
-    const u = (x / (scale * aspect)) + 0.5;
-    const v = (z / scale) + 0.5;
+
+    const u = (x / (mapScale * aspect)) + 0.5;
+    const v = (z / mapScale) + 0.5;
 
     if (u < 0 || u > 1 || v < 0 || v > 1) {
       return 0;
@@ -371,9 +443,9 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
     const index = (safeY * terrainData.width + safeX) * 4;
     const r = terrainData.data[index]; // Red channel for height
 
-    const calculatedHeight = (r / 255.0) * heightScale;
+    const calculatedHeight = (r / 255.0) * mapHeightScale;
     return calculatedHeight;
-  }, [terrainData, mapData, aspect]);
+  }, [terrainData, mapHeightmapUrl, mapScale, mapHeightScale, aspect, isCastMode]);
 
   // Subscribe to real-time map updates from Firebase
   useEffect(() => {
@@ -402,7 +474,16 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
   }, [tokens]);
 
   const tokensList = useMemo(() => Object.values(tokens).filter(Boolean), [tokens]); // Filter out null/undefined tokens
-  const allCharacters = useMemo(() => [...(data?.players || []), ...(data?.npcs || [])], [data?.players, data?.npcs]);
+
+  // Stabilize context objects that secretly bust React caches on every UI click
+  const playersStr = JSON.stringify(data?.players || []);
+  const npcsStr = JSON.stringify(data?.npcs || []);
+  const assignmentsStr = JSON.stringify(data?.assignments || {});
+  
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const allCharacters = useMemo(() => [...(data?.players || []), ...(data?.npcs || [])], [playersStr, npcsStr]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const stableAssignments = useMemo(() => data?.assignments || {}, [assignmentsStr]);
 
   const groupDragData = useRef({ activeTokenId: null, delta: new THREE.Vector3() });
 
@@ -418,7 +499,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
               const character = allCharacters.find(c => String(c.id) === String(t.characterId));
               const isOwner = (character?.ownerId && String(character.ownerId) === String(user?.uid)) || 
                               (t.ownerId && String(t.ownerId) === String(user?.uid));
-              const myCharId = data?.assignments?.[user?.uid];
+              const myCharId = stableAssignments[user?.uid];
               const myCharAssigned = myCharId && String(t.characterId) === String(myCharId);
               const canControl = isOwner || myCharAssigned || t.isSharedControl;
               if (!canControl) return;
@@ -446,18 +527,18 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       if (Object.keys(updates).length > 0) {
           updateMap(campaignCode, activeMapId, updates);
       }
-  }, [selectedTokenIds, isSnapToGrid, gridSize, getTerrainHeight, campaignCode, activeMapId, mapData?.gridOffsetX, mapData?.gridOffsetY, mapData?.tokenElevationOffset, role, allCharacters, user?.uid, data?.assignments]);
+  }, [selectedTokenIds, isSnapToGrid, gridSize, getTerrainHeight, campaignCode, activeMapId, mapData?.gridOffsetX, mapData?.gridOffsetY, mapData?.tokenElevationOffset, role, allCharacters, user?.uid, stableAssignments]);
 
   // Calculate Player Vision Sources (Used by both Fog Renderer and CPU Visibility checks)
   const playerVisionSources = useMemo(() => {
       if (!tokensList || !allCharacters) return [];
 
       let relevantTokens;
-      if (role === 'dm') {
+      if (role === 'dm' || isCastMode) {
           const playerCharIds = new Set((data?.players || []).map(p => String(p.id)));
           relevantTokens = tokensList.filter(t => t.characterId && playerCharIds.has(String(t.characterId)));
       } else {
-          const myCharId = data?.assignments?.[user?.uid];
+          const myCharId = stableAssignments[user?.uid];
           relevantTokens = tokensList.filter(t => {
               if (!t.characterId) return false;
               if (t.isSharedControl) return true;
@@ -550,7 +631,8 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
               tremorsense: (parsedTremorsense / 5) * gridSize
           };
       }).filter(Boolean);
-  }, [tokensList, role, user?.uid, data?.assignments, allCharacters, gridSize, data?.players, mapData?.fowEnabled]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tokensList, role, user?.uid, stableAssignments, allCharacters, gridSize, playersStr, mapData?.fowEnabled]);
 
   // Calculate which doors and windows are visible to players based on their vision sources
   const visibleDoorWindowIds = useMemo(() => {
@@ -616,7 +698,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           
           const character = allCharacters.find(c => String(c.id) === String(t.characterId));
           const isOwner = (character?.ownerId && String(character.ownerId) === String(user?.uid)) || (t.ownerId && String(t.ownerId) === String(user?.uid));
-          const myCharAssigned = data?.assignments?.[user?.uid] && String(t.characterId) === String(data.assignments[user.uid]);
+          const myCharAssigned = stableAssignments[user?.uid] && String(t.characterId) === String(stableAssignments[user.uid]);
           
           // You can always see yourself and tokens you share control over
           if (isOwner || myCharAssigned || t.isSharedControl) {
@@ -682,7 +764,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           }
       });
       return visibleIds;
-  }, [tokensList, role, playerVisionSources, mapData?.walls, mapData?.lights, mapData?.fowEnabled, mapData?.fowWallsEnabled, allCharacters, user?.uid, data?.assignments, gridSize]);
+  }, [tokensList, role, playerVisionSources, mapData?.walls, mapData?.lights, mapData?.fowEnabled, mapData?.fowWallsEnabled, allCharacters, user?.uid, stableAssignments, gridSize]);
 
   // CPU-based Line of Sight / Prop Visibility Filter
   const visiblePropIds = useMemo(() => {
@@ -768,14 +850,14 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       : null;
 
   // Handle clicking a token to both select it and open the side sheet
-  const handleSelectToken = (tokenId, isMulti) => {
+  const handleSelectToken = useCallback((tokenId, isMulti) => {
     if (isMulti) {
         setSelectedTokenIds(prev => prev.includes(tokenId) ? prev.filter(id => id !== tokenId) : [...prev, tokenId]);
     } else {
         setSelectedTokenIds([tokenId]);
     }
     setContextMenu(null);
-  };
+  }, [setSelectedTokenIds]);
 
   // Group Initiative Roller
   const rollGroupInitiative = (tokenIds) => {
@@ -958,6 +1040,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           
           try {
               setForge3DStatus(`Waking up VAST-AI/TripoSG...`);
+              const { Client } = await import("@gradio/client");
               app = await Client.connect("VAST-AI/TripoSG", options);
           } catch (e) {
               console.warn(`Space VAST-AI/TripoSG is asleep or unavailable.`, e);
@@ -1158,7 +1241,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
     }
   }, [propContextMenu]);
 
-  const handleContextMenu = (e, token) => {
+  const handleContextMenu = useCallback((e, token) => {
     if (typeof navigator !== 'undefined' && navigator.vibrate) {
       navigator.vibrate(50); // Haptic feedback on token long-press/right-click
     }
@@ -1183,9 +1266,9 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       color: token.color,
       type: token.type,
     });
-  };
+  }, [allCharacters, user?.uid, data?.assignments, role]);
 
-  const handleWallContextMenu = (e, wallId) => {
+  const handleWallContextMenu = useCallback((e, wallId) => {
     e.stopPropagation();
     if (typeof navigator !== 'undefined' && navigator.vibrate) {
       navigator.vibrate(50); // Haptic feedback on wall long-press/right-click
@@ -1196,9 +1279,9 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       y: e.clientY,
       wallId: wallId,
     });
-  };
+  }, []);
 
-  const handleLightContextMenu = (e, lightId) => {
+  const handleLightContextMenu = useCallback((e, lightId) => {
       e.stopPropagation();
       if (typeof navigator !== 'undefined' && navigator.vibrate) {
         navigator.vibrate(50); // Haptic feedback on light long-press/right-click
@@ -1211,9 +1294,9 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           y: e.clientY,
           lightId: lightId
       });
-  };
+  }, []);
 
-  const handlePropContextMenu = (e, propId) => {
+  const handlePropContextMenu = useCallback((e, propId) => {
       e.stopPropagation();
       if (typeof navigator !== 'undefined' && navigator.vibrate) {
         navigator.vibrate(50);
@@ -1226,18 +1309,18 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           y: e.clientY,
           propId: propId
       });
-  };
+  }, []);
 
-  const handleToggleDoor = (e, wallId) => {
+  const handleToggleDoor = useCallback((e, wallId) => {
       e.stopPropagation();
       const wall = mapData?.walls?.[wallId];
       if (wall && (wall.type === 'door' || wall.type === 'window')) {
           updateMap(campaignCode, activeMapId, { [`walls.${wallId}.isOpen`]: !wall.isOpen });
       }
-  };
+  }, [mapData?.walls, campaignCode, activeMapId]);
 
   // Handler triggered by Token3D when a drag ends
-  const handleUpdateTokenPosition = async (tokenId, position) => {
+  const handleUpdateTokenPosition = useCallback(async (tokenId, position) => {
     try {
         const updates = {};
         Object.keys(position).forEach(key => {
@@ -1248,7 +1331,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       console.error("[TacticalMapView] Failed to updateToken in Firestore:", e);
       throw e;
     }
-  };
+  }, [campaignCode, activeMapId]);
 
   // Handler triggered by MapProp when a drag ends
   const handleUpdatePropPosition = useCallback(async (propId, position) => {
@@ -1369,6 +1452,16 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       // Ignore shortcuts if the user is typing in a text field
       if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target?.tagName)) return;
 
+      // Zoom Shortcuts
+      if (e.key === '+' || e.key === '=') {
+          zoomRef.current?.zoomIn();
+          return;
+      }
+      if (e.key === '-' || e.key === '_') {
+          zoomRef.current?.zoomOut();
+          return;
+      }
+
       if (e.key === 'Delete' || e.key === 'Backspace') {
           if (activeTool) return;
           if (selectedTokenIds.length > 0) {
@@ -1397,8 +1490,15 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
 
       if (e.key === 'Escape') {
           setSelectedTokenIds([]); setContextMenu(null); setWallContextMenu(null); setLightContextMenu(null);
-          if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); setActiveStampingAsset(null); }
+          if (role === 'dm') { 
+              setIsDrawingWalls(false); 
+              setIsArchitectMode(false); 
+              setIsPlacingLights(false); 
+              setActiveStampingAsset(null); 
+              setIsDeleting(false); 
+          }
           setActiveTool(null);
+          setIsDrawingFreehand(false);
           return;
       }
 
@@ -1514,7 +1614,122 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
         return isNew;
   };
 
+  // Memoize Props to prevent UI states from reloading their 3D models
+  const propsJSX = useMemo(() => {
+      if (!mapData || !mapData.props || !isAspectReady || (mapData.heightmapUrl && !terrainData)) return null;
 
+      return Object.values(mapData.props).filter(Boolean).map(prop => {
+          if (role !== 'dm' && !visiblePropIds.has(prop.id)) {
+              return null;
+          }
+          return (
+              <ErrorBoundary key={prop.id} fallback={null}>
+                  <MapProp
+                      propData={prop}
+                      isSelected={false} 
+                      onContextMenu={role === 'dm' ? handlePropContextMenu : null}
+                      getTerrainHeight={getTerrainHeight}
+                      updatePropPosition={handleUpdatePropPosition}
+                      gridSize={gridSize}
+                  />
+              </ErrorBoundary>
+          );
+      });
+  }, [mapData?.props, isAspectReady, mapData?.heightmapUrl, terrainData, role, visiblePropIds, handlePropContextMenu, getTerrainHeight, handleUpdatePropPosition, gridSize]);
+
+  // Memoize Tokens to prevent UI states (like activeTool) from reloading their 3D models
+  const tokensJSX = useMemo(() => {
+      if (!mapData || !isAspectReady || (mapData.heightmapUrl && !terrainData)) return null;
+
+      return tokensList.map(token => {
+          if (role !== 'dm' && (!visibleTokenIds.has(token.id) || token.isHidden)) {
+              return null;
+          }
+
+          const character = allCharacters.find(c => String(c.id) === String(token.characterId));
+          const type = data?.players?.some(p => String(p.id) === String(character?.id)) ? 'pc' : 'npc';
+
+          if (isCastMode && mapData.hidePlayerTokensOnCast && type === 'pc') {
+              return null;
+          }
+
+          const displayToken = { ...token };
+
+          if (character) {
+              displayToken.name = token.name || character.name;
+              displayToken.image = character.image || token.image || token.img;
+              displayToken.type = type;
+              displayToken.modelUrl = character.modelUrl;
+              displayToken.modelScale = character.modelScale;
+              displayToken.modelYOffset = character.modelYOffset;
+              displayToken.conditions = character.conditions || token.conditions || [];
+          } else {
+              displayToken.image = token.image || token.img;
+              displayToken.conditions = token.conditions || [];
+          }
+
+          // Fix CORS for token images in WebGL using a dedicated image proxy
+          if (displayToken.image && displayToken.image.startsWith('http')) {
+              let cleanUrl = displayToken.image;
+              if (cleanUrl.includes('corsproxy.io/?')) cleanUrl = decodeURIComponent(cleanUrl.split('corsproxy.io/?')[1] || cleanUrl);
+              if (cleanUrl.includes('api.allorigins.win/raw?url=')) cleanUrl = decodeURIComponent(cleanUrl.split('api.allorigins.win/raw?url=')[1] || cleanUrl);
+
+              if (!cleanUrl.includes('firebasestorage.googleapis.com') && !cleanUrl.includes('wsrv.nl')) {
+                  displayToken.image = `https://wsrv.nl/?url=${encodeURIComponent(cleanUrl)}&cors=1`;
+              } else {
+                  displayToken.image = cleanUrl;
+              }
+          }
+
+          const isOwner = (character?.ownerId && String(character.ownerId) === String(user?.uid)) ||
+                          (token.ownerId && String(token.ownerId) === String(user?.uid));
+          const myCharId = stableAssignments[user?.uid];
+          const myCharAssigned = myCharId && String(token.characterId) === String(myCharId);
+          const canControl = role === 'dm' || isOwner || myCharAssigned || token.isSharedControl;
+
+          const isInteractive = true;
+
+          return (
+              <ErrorBoundary key={token.id} fallback={null}>
+                  <Token3D
+                      token={displayToken}                      updateTokenPosition={handleUpdateTokenPosition}
+                      gridSize={gridSize}
+                      gridOffsetX={mapData?.gridOffsetX || 0}
+                      gridOffsetY={mapData?.gridOffsetY || 0}
+                      isSelected={selectedTokenIds.includes(token.id)}
+                      onSelect={handleSelectToken}
+                      onContextMenu={handleContextMenu}
+                      role={role}
+                      getTerrainHeight={getTerrainHeight}
+                      isSnapToGrid={isSnapToGrid}
+                      isTerrainReady={!mapData.heightmapUrl || !!terrainData}
+                      draggedTokenId={draggedTokenId}
+                      setDraggedTokenId={setDraggedTokenId}
+                      viewMode={viewMode}
+                      showNameplates={showNameplates}
+                      selectedTokenIds={selectedTokenIds}
+                      groupDragData={groupDragData}
+                      onGroupDragEnd={handleGroupDragEnd}
+                      isActiveTurn={activeCombatantId === token.id}
+                      canControl={canControl && isInteractive}
+                      shiftHeldRef={shiftHeldRef}
+                      tokenBaseOffset={mapData?.tokenElevationOffset ?? 0.04}
+                      isInteractive={isInteractive}
+                      orientation={mapData?.orientation || 0}
+                  />
+              </ErrorBoundary>
+          );
+      });
+  }, [
+      mapData?.heightmapUrl, isAspectReady, terrainData, tokensList, allCharacters, data?.players, visibleTokenIds, role, user?.uid, stableAssignments,
+      handleUpdateTokenPosition, gridSize, mapData?.gridOffsetX, mapData?.gridOffsetY, selectedTokenIds,
+      handleSelectToken, handleContextMenu, getTerrainHeight, isSnapToGrid, draggedTokenId, viewMode, showNameplates,
+      activeCombatantId, mapData?.tokenElevationOffset, groupDragData, handleGroupDragEnd, shiftHeldRef,
+      mapData?.orientation
+  ]);
+
+
+  const orientation = mapData?.orientation || 0;
   const envSetting = ENV_SETTINGS[mapData?.environment || 'day'] || ENV_SETTINGS.day;
   const lightingMultiplier = mapData?.lightingIntensity ?? 1.0;
 
@@ -1572,16 +1787,18 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
         <hemisphereLight color="#ffffff" groundColor="#444444" intensity={0.4 * lightingMultiplier} />
         <directionalLight color={envSetting.dir.color} position={envSetting.dir.position} intensity={envSetting.dir.intensity * lightingMultiplier} />
         
-        <WeatherParticles 
-            environment={mapData?.environment} 
-            viewMode={viewMode} 
-            mapScale={mapData?.scale || 20} 
-            aspect={aspect} 
-        />
-        <PostProcessingEffects 
-            environment={mapData?.environment} 
-            lightingMultiplier={lightingMultiplier} 
-        />
+        <Suspense fallback={null}>
+            <WeatherParticles 
+                environment={mapData?.environment} 
+                viewMode={viewMode} 
+                mapScale={mapData?.scale || 20} 
+                aspect={aspect} 
+            />
+            <PostProcessingEffects 
+                environment={mapData?.environment} 
+                lightingMultiplier={lightingMultiplier} 
+            />
+        </Suspense>
 
         <Suspense fallback={null}>
             <MeasurementTools 
@@ -1607,7 +1824,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
         {/* Suspense is required when using useTexture to catch the loading state */}
         <Suspense fallback={null}>
             <ErrorBoundary fallback={null}>
-                {mapData?.heightmapUrl ? (
+                {mapData?.heightmapUrl && !isCastMode ? (
                     <Heightmap 
                         heightmapUrl={mapData.heightmapUrl}
                         backgroundUrl={mapData.backgroundUrl}
@@ -1622,18 +1839,20 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
             </ErrorBoundary>
         </Suspense>
 
-        <MarqueeSelector 
-            tokens={role === 'dm' ? tokensList : tokensList.filter(t => visibleTokenIds.has(t.id))} 
-            walls={mapData?.walls}
-            lights={mapData?.lights}
-            isDeleting={isDeleting}
-            onSelectTokens={setSelectedTokenIds} 
-            onSelectWalls={setSelectedWalls}
-            onSelectLights={setSelectedLights}
-        />
+        <Suspense fallback={null}>
+            <MarqueeSelector 
+                tokens={role === 'dm' ? tokensList : tokensList.filter(t => visibleTokenIds.has(t.id))} 
+                walls={mapData?.walls}
+                lights={mapData?.lights}
+                isDeleting={isDeleting}
+                onSelectTokens={setSelectedTokenIds} 
+                onSelectWalls={setSelectedWalls}
+                onSelectLights={setSelectedLights}
+            />
+        </Suspense>
 
         {mapData?.showGrid !== false && (
-            mapData?.heightmapUrl ? (
+            mapData?.heightmapUrl && !isCastMode ? (
                 <Suspense fallback={null}>
                     <ErrorBoundary fallback={null}>
                         <DisplacedGrid 
@@ -1661,158 +1880,79 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
         )}
 
         {/* Active Combat Tracker Integration */}
-        <CombatCameraDirector activeTokenId={activeCombatantId} tokensList={tokensList} />
+        <Suspense fallback={null}>
+            <CombatCameraDirector activeTokenId={activeCombatantId} tokensList={tokensList} />
+        </Suspense>
         
         {/* Render all map props */}
-        {mapData && mapData.props && isAspectReady && (!mapData.heightmapUrl || terrainData) && Object.values(mapData.props).filter(Boolean).map(prop => {
-            if (role !== 'dm' && !visiblePropIds.has(prop.id)) {
-                return null;
-            }
-            return (
-                <ErrorBoundary key={prop.id} fallback={null}>
-                    <MapProp
-                        propData={prop}
-                        isSelected={false} // Selection logic can be added next
-                        onContextMenu={role === 'dm' ? handlePropContextMenu : null}
-                        getTerrainHeight={getTerrainHeight}
-                        updatePropPosition={handleUpdatePropPosition}
-                        gridSize={gridSize}
-                    />
-                </ErrorBoundary>
-            );
-        })}
+        <Suspense fallback={null}>
+            {propsJSX}
+        </Suspense>
 
         {/* Render all tokens on the map */}
-        {mapData && isAspectReady && (!mapData.heightmapUrl || terrainData) && tokensList.map(token => {
-            if (role !== 'dm' && (!visibleTokenIds.has(token.id) || token.isHidden)) {
-                return null; // Skip rendering if invisible
-            }
+        <Suspense fallback={null}>
+            {tokensJSX}
+        </Suspense>
 
-            // Find the linked character if one exists
-            const character = allCharacters.find(c => String(c.id) === String(token.characterId));
-            const displayToken = { ...token };
-            
-            if (character) {
-                displayToken.name = token.name || character.name;
-                displayToken.image = character.image || token.image || token.img;
-                displayToken.type = data?.players?.some(p => String(p.id) === String(character.id)) ? 'pc' : 'npc';
-                displayToken.modelUrl = character.modelUrl;
-                displayToken.modelScale = character.modelScale;
-                displayToken.modelYOffset = character.modelYOffset;
-                displayToken.conditions = character.conditions || token.conditions || [];
-            } else {
-                displayToken.image = token.image || token.img;
-                displayToken.conditions = token.conditions || [];
-            }
-            
-            // Fix CORS for token images in WebGL using a dedicated image proxy
-            if (displayToken.image && displayToken.image.startsWith('http')) {
-                let cleanUrl = displayToken.image;
-                // Strip out old failing proxies if they were saved to the database
-                if (cleanUrl.includes('corsproxy.io/?')) cleanUrl = decodeURIComponent(cleanUrl.split('corsproxy.io/?')[1] || cleanUrl);
-                if (cleanUrl.includes('api.allorigins.win/raw?url=')) cleanUrl = decodeURIComponent(cleanUrl.split('api.allorigins.win/raw?url=')[1] || cleanUrl);
-                if (cleanUrl.includes('api.allorigins.win/raw?url=')) cleanUrl = decodeURIComponent(cleanUrl.split('api.allorigins.win/raw?url=')[1] || cleanUrl);
-                
-                // Proxy external images (excluding Firebase) through wsrv.nl to force permissive CORS headers
-                if (!cleanUrl.includes('firebasestorage.googleapis.com') && !cleanUrl.includes('wsrv.nl')) {
-                    displayToken.image = `https://wsrv.nl/?url=${encodeURIComponent(cleanUrl)}&cors=1`;
-                } else {
-                    displayToken.image = cleanUrl;
-                }
-            }
-            
-            const isOwner = (character?.ownerId && String(character.ownerId) === String(user?.uid)) || 
-                            (token.ownerId && String(token.ownerId) === String(user?.uid));
-            const myCharId = data?.assignments?.[user?.uid];
-            const myCharAssigned = myCharId && String(token.characterId) === String(myCharId);
-            const canControl = role === 'dm' || isOwner || myCharAssigned || token.isSharedControl;
-            
-            const isInteractive = true;
-
-            return (
-                <ErrorBoundary key={token.id} fallback={null}>
-                    <Token3D 
-                        token={displayToken} 
-                        updateTokenPosition={handleUpdateTokenPosition}
-                        gridSize={gridSize}
-                        gridOffsetX={mapData?.gridOffsetX || 0}
-                        gridOffsetY={mapData?.gridOffsetY || 0}
-                        isSelected={selectedTokenIds.includes(token.id)}
-                        onSelect={handleSelectToken}
-                        onContextMenu={handleContextMenu}
-                        role={role}
-                        getTerrainHeight={getTerrainHeight}
-                        isSnapToGrid={isSnapToGrid}
-                        isTerrainReady={!mapData.heightmapUrl || !!terrainData}
-                        draggedTokenId={draggedTokenId}
-                        setDraggedTokenId={setDraggedTokenId}
-                        viewMode={viewMode}
-                        activeTool={activeTool}
-                        showNameplates={showNameplates}
-                        selectedTokenIds={selectedTokenIds}
-                        groupDragData={groupDragData}
-                        onGroupDragEnd={handleGroupDragEnd}
-                        isActiveTurn={activeCombatantId === token.id}
-                        canControl={canControl && isInteractive}
-                        shiftHeldRef={shiftHeldRef}
-                        tokenBaseOffset={mapData?.tokenElevationOffset ?? 0.04}
-                        isInteractive={isInteractive}
-                    />
-                </ErrorBoundary>
-            );
-        })}
-
-        <Walls 
-            walls={mapData?.walls} 
-            selectedWalls={selectedWalls}
-            onWallContextMenu={isDeleting ? null : handleWallContextMenu} 
-            onToggleDoor={handleToggleDoor} 
-            showWalls={role === 'dm' && (isDrawingWalls || isArchitectMode || isDeleting)}
-            role={role}
-            playerDoorVisibility={mapData?.playerDoorVisibility}
-            visibleDoorWindowIds={visibleDoorWindowIds} // Pass calculated visibility for doors/windows
-            onDelete={isDeleting ? (wallId) => {
-                updateMap(campaignCode, activeMapId, { [`walls.${wallId}`]: null });
-            } : null}
-        />
+        <Suspense fallback={null}>
+            <Walls 
+                walls={mapData?.walls} 
+                selectedWalls={selectedWalls}
+                onWallContextMenu={isDeleting ? null : handleWallContextMenu} 
+                onToggleDoor={handleToggleDoor} 
+                showWalls={role === 'dm' && (isDrawingWalls || isArchitectMode || isDeleting)}
+                role={role}
+                playerDoorVisibility={mapData?.playerDoorVisibility}
+                visibleDoorWindowIds={visibleDoorWindowIds} // Pass calculated visibility for doors/windows
+                onDelete={isDeleting ? (wallId) => {
+                    updateMap(campaignCode, activeMapId, { [`walls.${wallId}`]: null });
+                } : null}
+            />
+        </Suspense>
 
         {/* The Dynamic Fog of War layer */}
-        {mapData && <GpuFogOfWar 
-            key={`fow-${activeMapId}-${mapData?.scale}-${aspect}`}
-            enabled={mapData?.fowEnabled} 
-            fowWallsEnabled={mapData?.fowWallsEnabled}
-            walls={mapData?.walls} 
-            lights={combinedLights}
-            gridSize={gridSize}
-            mapData={mapData}
-            aspect={aspect}
-            resolvedHeightmapUrl={resolvedHeightmapUrl}
-            playerVisionSources={playerVisionSources}
-            role={role}
-        />}
+        <Suspense fallback={null}>
+            {mapData && <GpuFogOfWar 
+                key={`fow-${activeMapId}-${mapData?.scale}-${aspect}`}
+                enabled={mapData?.fowEnabled} 
+                fowWallsEnabled={mapData?.fowWallsEnabled}
+                walls={mapData?.walls} 
+                lights={combinedLights}
+                gridSize={gridSize}
+                mapData={mapData}
+                aspect={aspect}
+                resolvedHeightmapUrl={resolvedHeightmapUrl}
+                playerVisionSources={playerVisionSources}
+                role={role}
+            />}
+        </Suspense>
 
-        <MapLights 
-            lights={visibleLights} 
-            selectedLights={selectedLights}
-            onContextMenu={handleLightContextMenu} 
-            role={role} 
-            gridSize={gridSize} 
-            showLightRadius={isPlacingLights || isDeleting} 
-            onDelete={isDeleting && role === 'dm' ? (lightId) => {
-                updateMap(campaignCode, activeMapId, { [`lights.${lightId}`]: null });
-            } : null}
-        />
+        <Suspense fallback={null}>
+            <MapLights 
+                lights={visibleLights} 
+                selectedLights={selectedLights}
+                onContextMenu={handleLightContextMenu} 
+                role={role} 
+                gridSize={gridSize} 
+                showLightRadius={isPlacingLights || isDeleting} 
+                onDelete={isDeleting && role === 'dm' ? (lightId) => {
+                    updateMap(campaignCode, activeMapId, { [`lights.${lightId}`]: null });
+                } : null}
+            />
+        </Suspense>
 
-        <MapPings 
-            pings={mapData?.pings || {}} 
-            campaignCode={campaignCode} 
-            activeMapId={activeMapId} 
-            getTerrainHeight={getTerrainHeight}
-            userColor={role === 'dm' ? "#ef4444" : "#3b82f6"}
-        />
+        <Suspense fallback={null}>
+            <MapPings 
+                pings={mapData?.pings || {}} 
+                campaignCode={campaignCode} 
+                activeMapId={activeMapId} 
+                getTerrainHeight={getTerrainHeight}
+                userColor={role === 'dm' ? "#ef4444" : "#3b82f6"}
+            />
+        </Suspense>
 
         {role === 'dm' && (
-            <>
+            <Suspense fallback={null}>
                 <WallDrawingController
                     isEnabled={isDrawingWalls}
                     getTerrainHeight={getTerrainHeight}
@@ -1849,34 +1989,36 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                         });
                     }}
                 />
-            </>
+            </Suspense>
         )}
         
         {activeStampingAsset && (
-            <StampingController 
-                isEnabled={!!activeStampingAsset}
-                asset={activeStampingAsset}
-                getTerrainHeight={getTerrainHeight}
-                gridSize={gridSize}
-                isSnapToGrid={false}
-                onStamp={(pt, asset) => {
-                    const newPropId = `prop_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-                    const propData = {
-                        id: newPropId,
-                        name: asset.name || 'New Prop',
-                        x: pt.x, y: pt.y, z: pt.z, // Use the literal dropped y
-                        image: asset.generatedMapUrl || asset.url || asset.image || '',
-                        scale: 1.0,
-                        elevation: 0,
-                        rotation: 0,
-                        is3D: asset.is3D || false,
-                        modelUrl: asset.modelUrl || null
-                    };
-                    updateMap(campaignCode, activeMapId, {
-                        [`props.${newPropId}`]: propData
-                    });
-                }}
-            />
+            <Suspense fallback={null}>
+                <StampingController 
+                    isEnabled={!!activeStampingAsset}
+                    asset={activeStampingAsset}
+                    getTerrainHeight={getTerrainHeight}
+                    gridSize={gridSize}
+                    isSnapToGrid={false}
+                    onStamp={(pt, asset) => {
+                        const newPropId = `prop_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                        const propData = {
+                            id: newPropId,
+                            name: asset.name || 'New Prop',
+                            x: pt.x, y: pt.y, z: pt.z, // Use the literal dropped y
+                            image: asset.generatedMapUrl || asset.url || asset.image || '',
+                            scale: 1.0,
+                            elevation: 0,
+                            rotation: 0,
+                            is3D: asset.is3D || false,
+                            modelUrl: asset.modelUrl || null
+                        };
+                        updateMap(campaignCode, activeMapId, {
+                            [`props.${newPropId}`]: propData
+                        });
+                    }}
+                />
+            </Suspense>
         )}
 
         {/* MapControls maps left-click to pan, right-click to rotate, scroll to zoom */}
@@ -1884,16 +2026,24 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           makeDefault 
           maxPolarAngle={Math.PI / 2 - 0.05} // Prevent camera from going under the board
           minDistance={1} // Limit max zoom in
-          maxDistance={40} // Limit max zoom out
+          maxDistance={500} // Limit max zoom out so large maps can still "Fit to Screen"
           enableDamping={true} // Smooth camera movements
           enableRotate={false}
         />
         <CameraController ref={cameraControllerRef} view={viewMode} />
-        <ZoomHandler zoomRef={zoomRef} />
+        <Suspense fallback={null}>
+            <ZoomHandler zoomRef={zoomRef} />
+        </Suspense>
+        <ViewManager 
+            aspect={aspect} 
+            scale={mapData?.scale || 20} 
+            orientation={orientation} 
+            fitTrigger={fitTrigger} 
+        />
       </Canvas>
 
       {/* Floating Action Button for active stamp tool */}
-      {activeStampingAsset && (
+      {activeStampingAsset && !isCastMode && (
           <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[70]">
               <button 
                   onClick={() => setActiveStampingAsset(null)}
@@ -1904,30 +2054,55 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           </div>
       )}
 
-      <div className={`absolute top-4 left-4 vtt-safe-top vtt-safe-left z-[70] flex flex-col items-start gap-2 ${uiOpacityClass}`}>
-        <div className="h-10 px-3 bg-slate-900/80 backdrop-blur border border-slate-700 rounded-xl shadow-2xl flex items-center gap-2 cursor-help hover:border-indigo-500 transition-colors" title={`Connected to Realm: ${campaignCode}`}>
-            <div className="w-2 h-2 rounded-full shadow-[0_0_10px_rgba(34,197,94,0.5)] bg-green-500"></div>
-            <span className="text-sm font-bold text-amber-500 fantasy-font tracking-widest">{campaignCode}</span>
-        </div>
-        <div className="flex flex-col gap-2">
-            <ToolButton name="Reset View" icon="camera" onClick={() => { cameraControllerRef.current?.reset(); }} isStandalone={true} />
-            <ToolButton name={viewMode === 'isometric' ? 'Switch to Top-Down (V)' : 'Switch to Isometric (V)'} icon={viewMode === 'isometric' ? 'layout-grid' : 'box'} onClick={() => setViewMode(prev => prev === 'isometric' ? 'top-down' : 'isometric')} isStandalone={true} />
-            <ToolButton name="Toggle Fullscreen" icon={isFullscreen ? "minimize" : "maximize"} onClick={toggleFullscreen} isStandalone={true} />
-            <ToolButton name="Zoom In" icon="zoom-in" onClick={() => zoomRef.current?.zoomIn()} isStandalone={true} />
-            <ToolButton name="Zoom Out" icon="zoom-out" onClick={() => zoomRef.current?.zoomOut()} isStandalone={true} />
-        </div>
-      </div>
+      {/* Top-Left: Connection & Camera Controls */}
+      {!isCastMode && (
+          <div className={`absolute top-4 left-4 vtt-safe-top vtt-safe-left z-[70] flex flex-col gap-2 items-start ${uiOpacityClass}`}>
+              {/* Row 1: Connection Status & View Modes */}
+              <div className="flex flex-row items-center gap-2">
+                  <div className="h-10 px-3 bg-slate-900/80 backdrop-blur border border-slate-700 rounded-xl shadow-2xl flex items-center gap-2 cursor-help hover:border-indigo-500 transition-colors" title={`Connected to Realm: ${campaignCode}`}>
+                  <div className="w-2 h-2 rounded-full shadow-[0_0_10px_rgba(34,197,94,0.5)] bg-green-500"></div>
+                  <span className="text-sm font-bold text-amber-500 fantasy-font tracking-widest">{campaignCode}</span>
+              </div>
+              
+              <div className="flex items-center gap-1 bg-slate-900/80 backdrop-blur-md border border-slate-700 p-1 rounded-xl shadow-2xl h-10">
+                  <ToolButton name="Reset View" icon="camera" onClick={() => { cameraControllerRef.current?.reset(); }} title="Reset Camera" />
+                  <div className="w-px h-5 bg-slate-700 mx-1"></div>
+                  <ToolButton name={viewMode === 'isometric' ? 'Switch to Top-Down (V)' : 'Switch to Isometric (V)'} icon={viewMode === 'isometric' ? 'layout-grid' : 'box'} onClick={() => setViewMode(prev => prev === 'isometric' ? 'top-down' : 'isometric')} title={viewMode === 'isometric' ? 'Switch to Top-Down (V)' : 'Switch to Isometric (V)'} />
+                  <ToolButton name="Toggle Fullscreen" icon={isFullscreen ? "minimize" : "maximize"} onClick={toggleFullscreen} title="Toggle Fullscreen" />
+              </div>
+          </div>
 
-      <CombatRibbon combat={data?.campaign?.combat} updateCampaign={updateCampaign} tokens={tokensList} role={role} campaignData={data?.campaign} className={uiOpacityClass} />
+          {/* Row 2: Zoom Controls */}
+          <div className="flex flex-row items-center gap-1 bg-slate-900/80 backdrop-blur-md border border-slate-700 p-1 rounded-xl shadow-2xl h-10">
+              <ToolButton name="Zoom Out" icon="zoom-out" onClick={() => zoomRef.current?.zoomOut()} title="Zoom Out" />
+              <ToolButton name="Zoom In" icon="zoom-in" onClick={() => zoomRef.current?.zoomIn()} title="Zoom In" />
+              <div className="w-px h-5 bg-slate-700 mx-1"></div>
+              <ToolButton name="Fit to Screen" icon="expand" onClick={() => setFitTrigger(p => p + 1)} title="Fit Map to Screen" />
+              <ToolButton 
+                  name="Rotate View" 
+                  icon="rotate-cw" 
+                  onClick={() => updateMap(campaignCode, activeMapId, { 'orientation': ((mapData?.orientation || 0) + 1) % 4 })} 
+                  title="Rotate Map Orientation" 
+              />
+          </div>
+          </div>
+      )}
 
-      {showInitiativeTracker && (
+      <Suspense fallback={null}>
+        {!isCastMode && <CombatRibbon combat={data?.campaign?.combat} updateCampaign={updateCampaign} tokens={tokensList} role={role} campaignData={data?.campaign} className={uiOpacityClass} />}
+      </Suspense>
+
+      {showInitiativeTracker && !isCastMode && (
+        <Suspense fallback={null}>
           <CombatTrackerSidebar combat={data?.campaign?.combat} updateCampaign={updateCampaign} tokens={tokensList} role={role} campaignCode={campaignCode} activeMapId={activeMapId} campaignData={data?.campaign} allCharacters={allCharacters} data={data} onOpenSheet={onOpenSheet} className={uiOpacityClass} onClose={() => setShowInitiativeTracker(false)} />
+        </Suspense>
       )}
 
       {/* Primary Right Dock */}
-      <div className={`absolute top-4 right-4 vtt-safe-right z-[70] flex flex-col gap-2 ${uiOpacityClass}`}>
-              {role === 'dm' && (
-                  <>
+      {!isCastMode && (
+          <div className={`absolute top-4 right-4 vtt-safe-right z-[70] flex flex-col gap-2 ${uiOpacityClass}`}>
+                  {role === 'dm' && (
+                      <>
                       <ToolButton name="Tokens" icon="users" isActive={showTokenManager} onClick={() => { setActiveTool(null); setShowAssetManager(false); setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); setShowTokenManager(p => !p); }} isStandalone={true} />
                       <ToolButton name="Map" icon="map" isActive={showAssetManager} onClick={() => { setActiveTool(null); setShowTokenManager(false); setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); setShowAssetManager(p => !p); }} isStandalone={true} />
                       <ToolButton 
@@ -1942,6 +2117,25 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                           }} 
                           isStandalone={true} 
                       />
+                      {!isCastMode && (
+                          <ToolButton 
+                              name="Cast to TV" 
+                              icon="monitor" 
+                              onClick={() => {
+                                  if (onOpenCast) onOpenCast();
+                                  else {
+                                      const url = new URL(window.location.href);
+                                      if (url.hash) {
+                                          url.hash += url.hash.includes('?') ? '&cast=true' : '?cast=true';
+                                      } else {
+                                          url.searchParams.set('cast', 'true');
+                                      }
+                                      window.open(url.toString(), 'DungeonMindCast');
+                                  }
+                              }} 
+                              isStandalone={true} 
+                          />
+                      )}
                       <div className="h-px w-8 bg-slate-700/50 my-1 mx-auto"></div>
                   </>
               )}
@@ -2072,7 +2266,8 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                       )}
                   </div>
               )}
-      </div>
+          </div>
+      )}
 
       {/* Actors Manager Drawer */}
       {showTokenManager && role === 'dm' && (
@@ -2183,32 +2378,34 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
 
       {/* Asset Manager Drawer */}
       {showAssetManager && role === 'dm' && (
-        <AssetManager 
-          campaignCode={campaignCode} 
-          mapData={mapData}
-          activeMapId={activeMapId}
-          updateMap={updateMap}
-          allCharacters={allCharacters}
-          campaignData={data}
-          updateCampaign={updateCampaign}
-          onSelectStamper={(asset) => {
-             setActiveStampingAsset(asset);
-             setShowAssetManager(false);
-          }}
-          onClose={() => setShowAssetManager(false)} 
-          onSetBackground={handleSetBackground}
-          onSetHeightmap={(url) => updateMap(campaignCode, activeMapId, { heightmapUrl: url })}
-          onGenerateMap={({ backgroundUrl, heightmapUrl, features, prompt }) => {
-              updateMap(campaignCode, activeMapId, {
-                  backgroundUrl,
-                  heightmapUrl,
-                  walls: features.walls || {},
-                  lights: features.lights || {},
-                  prompt: prompt || ''
-              });
-          }}
-          onNewBlankMap={handleNewBlankMap}
-        />
+        <Suspense fallback={null}>
+          <AssetManager 
+            campaignCode={campaignCode} 
+            mapData={mapData}
+            activeMapId={activeMapId}
+            updateMap={updateMap}
+            allCharacters={allCharacters}
+            campaignData={data}
+            updateCampaign={updateCampaign}
+            onSelectStamper={(asset) => {
+               setActiveStampingAsset(asset);
+               setShowAssetManager(false);
+            }}
+            onClose={() => setShowAssetManager(false)} 
+            onSetBackground={handleSetBackground}
+            onSetHeightmap={(url) => updateMap(campaignCode, activeMapId, { heightmapUrl: url })}
+            onGenerateMap={({ backgroundUrl, heightmapUrl, features, prompt }) => {
+                updateMap(campaignCode, activeMapId, {
+                    backgroundUrl,
+                    heightmapUrl,
+                    walls: features.walls || {},
+                    lights: features.lights || {},
+                    prompt: prompt || ''
+                });
+            }}
+            onNewBlankMap={handleNewBlankMap}
+          />
+        </Suspense>
       )}
 
       {/* Context Menu Overlay */}

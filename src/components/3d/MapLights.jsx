@@ -2,7 +2,7 @@ import React, { useState, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { useCursor } from '@react-three/drei';
 
-const LightNode = ({ light, onContextMenu, role, gridSize, showLightRadius, onDelete, hovered, setHover }) => {
+const LightNodeComponent = ({ light, onContextMenu, role, gridSize, showLightRadius, onDelete, hovered, setHover }) => {
     const touchStartPos = useRef({ x: 0, y: 0 });
     const pointLightRef = useRef();
     const longPressTimer = useRef(null);
@@ -105,6 +105,20 @@ const LightNode = ({ light, onContextMenu, role, gridSize, showLightRadius, onDe
         </group>
     );
 };
+
+const areLightsEqual = (prev, next) => {
+    if (prev.light === next.light && prev.showLightRadius === next.showLightRadius && prev.hovered === next.hovered) return true;
+    
+    const pl = prev.light;
+    const nl = next.light;
+    if (pl.id !== nl.id || pl.position.x !== nl.position.x || pl.position.y !== nl.position.y || pl.position.z !== nl.position.z || pl.color !== nl.color || pl.radius !== nl.radius || pl.intensity !== nl.intensity) return false;
+    
+    if (prev.showLightRadius !== next.showLightRadius || prev.hovered !== next.hovered || prev.role !== next.role || prev.gridSize !== next.gridSize) return false;
+    
+    return true;
+};
+
+const LightNode = React.memo(LightNodeComponent, areLightsEqual);
 
 export const MapLights = ({ lights, onContextMenu, role, gridSize = 1, showLightRadius, onDelete }) => {
     const [hovered, setHover] = useState(null);

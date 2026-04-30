@@ -1,6 +1,6 @@
-import React, { useRef, useState, useMemo } from 'react';
+import React, { useRef, useState, useMemo, lazy, Suspense } from 'react';
 import * as THREE from 'three';
-import CharacterModel from '../CharacterModel';
+const CharacterModel = lazy(() => import('../CharacterModel').then(m => ({ default: m.default })));
 import { useResolvedUrl } from '../../utils/useResolvedUrl';
 import { DragControls } from '@react-three/drei';
 
@@ -184,7 +184,9 @@ export const MapProp = ({ propData, isSelected, onSelect, onContextMenu, getTerr
                             setHovered(false);
                         }}
                     >
-                        <CharacterModel modelUrl={propData.modelUrl || propData.url} scale={baseScale} />
+                        <Suspense fallback={null}>
+                            <CharacterModel modelUrl={propData.modelUrl || propData.url} scale={baseScale} />
+                        </Suspense>
                     </group>
                 ) : (
                     resolvedUrl ? (
@@ -226,4 +228,19 @@ export const MapProp = ({ propData, isSelected, onSelect, onContextMenu, getTerr
     );
 };
 
-export default MapProp;
+const arePropsEqual = (prev, next) => {
+    if (prev.propData === next.propData && prev.isSelected === next.isSelected) return true;
+    
+    const pp = prev.propData;
+    const np = next.propData;
+    
+    if (pp.id !== np.id || pp.x !== np.x || pp.y !== np.y || pp.z !== np.z || pp.scale !== np.scale || pp.rotation !== np.rotation || pp.elevation !== np.elevation || pp.image !== np.image || pp.modelUrl !== np.modelUrl) {
+        return false;
+    }
+    
+    if (prev.isSelected !== next.isSelected || prev.gridSize !== next.gridSize) return false;
+    
+    return true;
+};
+
+export default React.memo(MapProp, arePropsEqual);

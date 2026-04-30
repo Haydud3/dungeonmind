@@ -7,11 +7,8 @@ import Icon from './Icon';
 const RulerTool = ({ getTerrainHeight, gridSize }) => {
     const { controls } = useThree();
     const [points, setPoints] = useState([]);
+    const [cursorPos, setCursorPos] = useState(null);
     
-    const cursorPosRef = useRef(null);
-    const activeLineRef = useRef(null);
-    const activeLabelRef = useRef(null);
-    const activeTextRef = useRef(null);
     
     const [isFading, setIsFading] = useState(false);
     const [opacity, setOpacity] = useState(1);
@@ -29,37 +26,10 @@ const RulerTool = ({ getTerrainHeight, gridSize }) => {
                 setOpacity(prev => Math.max(0, prev - delta * 1.5));
             } else if (points.length > 0) {
                 setPoints([]);
+                setCursorPos(null);
                 setIsFading(false);
                 setOpacity(1);
             }
-        }
-        
-        if (points.length > 0 && cursorPosRef.current && !isFading) {
-            const lastPoint = points[points.length - 1];
-            const cursorPos = cursorPosRef.current;
-            const dist = lastPoint.distanceTo(cursorPos);
-            
-            if (activeLineRef.current) {
-                activeLineRef.current.geometry.setPositions([
-                    lastPoint.x, lastPoint.y, lastPoint.z,
-                    cursorPos.x, cursorPos.y, cursorPos.z
-                ]);
-                activeLineRef.current.computeLineDistances();
-                activeLineRef.current.visible = true;
-            }
-            
-            if (activeLabelRef.current) {
-                activeLabelRef.current.position.copy(cursorPos).add(new THREE.Vector3(0, 0.3, 0));
-                activeLabelRef.current.visible = true;
-            }
-            
-            if (activeTextRef.current) {
-                const currentTotal = totalDist + dist;
-                activeTextRef.current.innerText = `${Math.round((currentTotal / gridSize) * 5)} ft`;
-            }
-        } else {
-            if (activeLineRef.current) activeLineRef.current.visible = false;
-            if (activeLabelRef.current) activeLabelRef.current.visible = false;
         }
     });
 
@@ -82,6 +52,7 @@ const RulerTool = ({ getTerrainHeight, gridSize }) => {
 
         const pt = e.point.clone();
         pt.y = getTerrainHeight(pt.x, pt.z) + 0.1;
+        setCursorPos(pt);
 
         if (isFading || opacity < 1) {
             setIsFading(false);
@@ -97,14 +68,14 @@ const RulerTool = ({ getTerrainHeight, gridSize }) => {
         e.stopPropagation();
         const pt = e.point.clone();
         pt.y = getTerrainHeight(pt.x, pt.z) + 0.1;
-        cursorPosRef.current = pt;
+        setCursorPos(pt);
     };
 
     const handleContextMenu = e => {
-        e.preventDefault();
+        if (e.nativeEvent) e.nativeEvent.preventDefault();
         e.stopPropagation();
         if (points.length > 0 && !isFading) {
-            cursorPosRef.current = null;
+            setCursorPos(null);
             lingerTimerRef.current = setTimeout(() => {
                 setIsFading(true);
             }, 1500);
@@ -113,6 +84,7 @@ const RulerTool = ({ getTerrainHeight, gridSize }) => {
              setIsFading(false);
              setOpacity(1);
              setPoints([]);
+             setCursorPos(null);
         }
     };
 
@@ -137,33 +109,30 @@ const RulerTool = ({ getTerrainHeight, gridSize }) => {
         <>
             {segments}
             
-            {/* Active Drawing Segment */}
-            <group visible={false} ref={activeLabelRef}>
-                <Html center className="pointer-events-none select-none z-50">
-                    <div 
-                        ref={activeTextRef}
-                        className="bg-slate-900/80 text-amber-400 text-xs font-bold px-2 py-0.5 rounded-full shadow-lg whitespace-nowrap pointer-events-none"
-                        style={{ opacity }}
-                    >
-                        0 ft
-                    </div>
-                </Html>
-            </group>
-            
-            <Line 
-                ref={activeLineRef}
-                points={[[0,0,0], [0,0,0]]} 
-                color="#f59e0b" 
-                lineWidth={3} 
-                dashed 
-                dashScale={5} 
-                depthTest={false} 
-                renderOrder={300} 
-                transparent 
-                opacity={opacity} 
-                visible={false}
-                frustumCulled={false}
-            />
+            {points.length > 0 && cursorPos && !isFading && (
+                <group>
+                    <Line 
+                        points={[points[points.length - 1], cursorPos]} 
+                        color="#f59e0b" 
+                        lineWidth={3} 
+                        dashed 
+                        dashScale={5} 
+                        depthTest={false} 
+                        renderOrder={300} 
+                        transparent 
+                        opacity={opacity} 
+                        frustumCulled={false}
+                    />
+                    <Html position={[cursorPos.x, cursorPos.y + 0.3, cursorPos.z]} center className="pointer-events-none select-none z-50">
+                        <div 
+                            className="bg-slate-900/80 text-amber-400 text-xs font-bold px-2 py-0.5 rounded-full shadow-lg whitespace-nowrap pointer-events-none"
+                            style={{ opacity }}
+                        >
+                            {Math.round(((totalDist + points[points.length - 1].distanceTo(cursorPos)) / gridSize) * 5)} ft
+                        </div>
+                    </Html>
+                </group>
+            )}
 
             <mesh
                 onPointerDown={handlePointerDown}
@@ -299,7 +268,7 @@ const ShapeToolBase = ({ children, onHitTest, tokens, onCompleteSelection, type,
     };
 
     const handleContextMenu = e => {
-        e.preventDefault();
+        if (e.nativeEvent) e.nativeEvent.preventDefault();
         e.stopPropagation();
         if (startPoint && endPoint && !isFading) {
             if (lingerTimerRef.current) clearTimeout(lingerTimerRef.current);
@@ -388,14 +357,22 @@ const getMaterialProps = (type, styleKey = 'default') => {
 };
 
 const renderCircle = (start, end, opacity, gridSize, onDelete, styleKey = 'default') => {
-    const radius = start.distanceTo(end);
+    const radius = start.distanceTo(end) || 0.01;
     const radiusFt = Math.round((radius / gridSize) * 5);
+    
+    const circleBorder = [];
+    for(let i=0; i<=64; i++) {
+        const a = (i/64) * Math.PI * 2;
+        circleBorder.push([Math.cos(a) * radius, 0, -Math.sin(a) * radius]);
+    }
+
     return (
         <group position={[start.x, start.y + 0.1, start.z]}>
-            <mesh rotation={[-Math.PI / 2, 0, 0]}>
-                <ringGeometry args={[Math.max(0.01, radius - 0.05), radius, 64]} />
+            <mesh rotation={[-Math.PI / 2, 0, 0]} scale={[radius, radius, 1]}>
+                <circleGeometry args={[1, 64]} />
                 <meshBasicMaterial {...getMaterialProps('circle', styleKey)} opacity={STYLES[styleKey || 'default']?.opacity * opacity} />
             </mesh>
+            <Line points={circleBorder} color={getMaterialProps('circle', styleKey).color} lineWidth={2} depthTest={false} transparent opacity={opacity} />
             <Html position={[0, 0.3, radius]} center style={{ opacity }}>
                 <div className={`group bg-slate-900/80 text-blue-300 text-xs font-bold px-2 py-0.5 rounded-full shadow-lg whitespace-nowrap flex items-center gap-2 transition-all ${onDelete ? 'pointer-events-auto hover:bg-slate-800' : 'pointer-events-none'}`} style={{ opacity }}>
                     <span>{radiusFt} ft</span>
@@ -412,15 +389,24 @@ const renderCircle = (start, end, opacity, gridSize, onDelete, styleKey = 'defau
 
 const renderCone = (start, end, opacity, gridSize, onDelete, styleKey = 'default') => {
     const vec = new THREE.Vector3().subVectors(end, start);
-    const length = vec.length();
+    const length = vec.length() || 0.01;
     const angle = Math.atan2(vec.x, vec.z);
     const lengthFt = Math.round((length / gridSize) * 5);
+
+    const coneBorder = [[0, 0, 0]];
+    for(let i=0; i<=32; i++) {
+        const a = -Math.PI / 2 - Math.PI / 6 + (i/32) * (Math.PI / 3);
+        coneBorder.push([Math.cos(a) * length, 0, -Math.sin(a) * length]);
+    }
+    coneBorder.push([0, 0, 0]);
+
     return (
         <group position={[start.x, start.y + 0.1, start.z]} rotation={[0, angle, 0]}>
-            <mesh rotation={[-Math.PI / 2, 0, 0]}>
-                <circleGeometry args={[length, 32, -Math.PI / 2 - Math.PI / 6, Math.PI / 3]} />
+            <mesh rotation={[-Math.PI / 2, 0, 0]} scale={[length, length, 1]}>
+                <circleGeometry args={[1, 32, -Math.PI / 2 - Math.PI / 6, Math.PI / 3]} />
                 <meshBasicMaterial {...getMaterialProps('cone', styleKey)} opacity={STYLES[styleKey || 'default']?.opacity * opacity} />
             </mesh>
+            <Line points={coneBorder} color={getMaterialProps('cone', styleKey).color} lineWidth={2} depthTest={false} transparent opacity={opacity} />
             <Html position={[0, 0.3, length / 2]} center style={{ opacity }}>
                 <div className={`group bg-slate-900/80 text-emerald-300 text-xs font-bold px-2 py-0.5 rounded-full shadow-lg whitespace-nowrap flex items-center gap-2 transition-all ${onDelete ? 'pointer-events-auto hover:bg-slate-800' : 'pointer-events-none'}`} style={{ opacity }}>
                     <span>{lengthFt} ft Cone</span>
@@ -436,16 +422,16 @@ const renderCone = (start, end, opacity, gridSize, onDelete, styleKey = 'default
 };
 
 const renderBox = (start, end, opacity, gridSize, onDelete, styleKey = 'default') => {
-    const width = Math.abs(start.x - end.x);
-    const depth = Math.abs(start.z - end.z);
+    const width = Math.abs(start.x - end.x) || 0.01;
+    const depth = Math.abs(start.z - end.z) || 0.01;
     const center = new THREE.Vector3().addVectors(start, end).multiplyScalar(0.5);
     const widthFt = Math.round((width / gridSize) * 5);
     const depthFt = Math.round((depth / gridSize) * 5);
     const matProps = getMaterialProps('box', styleKey);
     return (
         <group position={[center.x, start.y + 0.1, center.z]}>
-            <mesh rotation={[-Math.PI / 2, 0, 0]}>
-                <planeGeometry args={[width, depth]} />
+            <mesh rotation={[-Math.PI / 2, 0, 0]} scale={[width, depth, 1]}>
+                <planeGeometry args={[1, 1]} />
                 <meshBasicMaterial {...matProps} opacity={STYLES[styleKey || 'default']?.opacity * opacity} />
             </mesh>
             <Line points={[[-width/2, 0, -depth/2], [width/2, 0, -depth/2], [width/2, 0, depth/2], [-width/2, 0, depth/2], [-width/2, 0, -depth/2]]} color={matProps.color} lineWidth={2} depthTest={false} transparent opacity={opacity} />
@@ -463,20 +449,21 @@ const renderBox = (start, end, opacity, gridSize, onDelete, styleKey = 'default'
     );
 };
 
-const CircleTool = ({ gridSize, tokens, onCompleteSelection, isLingering, onSaveMeasurement }) => (
+const CircleTool = ({ gridSize, tokens, onCompleteSelection, isLingering, onSaveMeasurement, activeStyle, getTerrainHeight }) => (
     <ShapeToolBase
         tokens={tokens}
         onCompleteSelection={onCompleteSelection}
         type="circle"
         isLingering={isLingering}
         onSaveMeasurement={onSaveMeasurement}
+        getTerrainHeight={getTerrainHeight}
         onHitTest={(start, end, tx, tz) => {
             const radius = start.distanceTo(end);
             const dist = Math.sqrt((start.x - tx) ** 2 + (start.z - tz) ** 2);
             return dist <= radius + 0.25;
         }}
     >
-        {(start, end, opacity) => renderCircle(start, end, opacity, gridSize, undefined)}
+        {(start, end, opacity) => renderCircle(start, end, opacity, gridSize, undefined, activeStyle)}
     </ShapeToolBase>
 );
 
@@ -564,7 +551,7 @@ const FreehandTool = ({ getTerrainHeight, isLingering, onSaveMeasurement, active
     };
 
     const handleContextMenu = e => {
-        e.preventDefault();
+        if (e.nativeEvent) e.nativeEvent.preventDefault();
         e.stopPropagation();
         if (points.length > 0 && !isFading) {
             if (lingerTimerRef.current) clearTimeout(lingerTimerRef.current);
@@ -621,13 +608,14 @@ const renderFreehand = (pointsData, opacity, onDelete, getTerrainHeight, styleKe
     );
 };
 
-const ConeTool = ({ gridSize, tokens, onCompleteSelection, isLingering, onSaveMeasurement, activeStyle }) => (
+const ConeTool = ({ gridSize, tokens, onCompleteSelection, isLingering, onSaveMeasurement, activeStyle, getTerrainHeight }) => (
     <ShapeToolBase
         tokens={tokens}
         onCompleteSelection={onCompleteSelection}
         type="cone"
         isLingering={isLingering}
         onSaveMeasurement={onSaveMeasurement}
+        getTerrainHeight={getTerrainHeight}
         onHitTest={(start, end, tx, tz) => {
             const vec = new THREE.Vector3().subVectors(end, start);
             const length = vec.length();
@@ -702,9 +690,9 @@ export const MeasurementTools = ({ activeTool, getTerrainHeight, gridSize, token
     switch (baseTool) {
         case 'freehand': activeToolElement = <FreehandTool getTerrainHeight={getTerrainHeight} isLingering={isLingering} onSaveMeasurement={onSaveMeasurement} />; break;
         case 'ruler': activeToolElement = <RulerTool getTerrainHeight={getTerrainHeight} gridSize={gridSize} />; break;
-        case 'circle': activeToolElement = <CircleTool gridSize={gridSize} tokens={tokens} onCompleteSelection={onCompleteSelection} isLingering={isLingering} onSaveMeasurement={onSaveMeasurement} activeStyle={activeStyle} />; break;
-        case 'cone': activeToolElement = <ConeTool gridSize={gridSize} tokens={tokens} onCompleteSelection={onCompleteSelection} isLingering={isLingering} onSaveMeasurement={onSaveMeasurement} activeStyle={activeStyle} />; break;
-        case 'box': activeToolElement = <BoxTool gridSize={gridSize} tokens={tokens} onCompleteSelection={onCompleteSelection} isLingering={isLingering} onSaveMeasurement={onSaveMeasurement} activeStyle={activeStyle} />; break;
+        case 'circle': activeToolElement = <CircleTool gridSize={gridSize} tokens={tokens} onCompleteSelection={onCompleteSelection} isLingering={isLingering} onSaveMeasurement={onSaveMeasurement} activeStyle={activeStyle} getTerrainHeight={getTerrainHeight} />; break;
+        case 'cone': activeToolElement = <ConeTool gridSize={gridSize} tokens={tokens} onCompleteSelection={onCompleteSelection} isLingering={isLingering} onSaveMeasurement={onSaveMeasurement} activeStyle={activeStyle} getTerrainHeight={getTerrainHeight} />; break;
+        case 'box': activeToolElement = <BoxTool gridSize={gridSize} tokens={tokens} onCompleteSelection={onCompleteSelection} isLingering={isLingering} onSaveMeasurement={onSaveMeasurement} activeStyle={activeStyle} getTerrainHeight={getTerrainHeight} />; break;
     }
 
     return (

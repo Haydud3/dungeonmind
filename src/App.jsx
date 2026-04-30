@@ -84,6 +84,7 @@ import { useNewCampaign } from './contexts/NewCampaignProvider';
 
 function DungeonMindApp() {
     const context = useNewCampaign();
+    const isCastMode = new URLSearchParams(window.location.search).get('cast') === 'true' || window.location.hash.includes('cast=true');
     
     // Safety guard: If context is not yet initialized, show loader
     if (!context) {
@@ -565,9 +566,9 @@ function DungeonMindApp() {
 
   return (
     <div className="fixed inset-0 w-full h-full flex flex-col md:flex-row bg-slate-900 text-slate-200 font-sans overflow-hidden pt-safe pb-safe pl-safe pr-safe">
-       <Sidebar view={currentView} setView={setCurrentView} onExit={leaveCampaign} />
+       {!isCastMode && <Sidebar view={currentView} setView={setCurrentView} onExit={leaveCampaign} />}
        <main className="flex-1 flex flex-col overflow-hidden relative w-full h-full">
-           {currentView !== 'map' && (
+           {currentView !== 'map' && !isCastMode && (
                <div className="shrink-0 bg-slate-900/95 backdrop-blur border-b border-slate-800 pt-safe z-50">
                    <div className="h-14 flex items-center justify-between px-4">
                        <div className="flex gap-2 items-center">
@@ -582,7 +583,7 @@ function DungeonMindApp() {
            )}
 
            {/* UPDATED: Changed compact padding from 50px to 52px to match the new MobileNav height exactly */}
-           <div className={`flex-1 overflow-hidden relative p-0 md:pb-0 ${data.config?.mobileCompact ? 'pb-[52px]' : 'pb-[70px]'}`}>
+           <div className={`flex-1 overflow-hidden relative p-0 md:pb-0 ${isCastMode ? 'pb-0' : (data.config?.mobileCompact ? 'pb-[52px]' : 'pb-[70px]')}`}>
              {/* 1. CHAT (Session) */}
               {currentView === 'session' && (
                   <SessionView 
@@ -716,7 +717,7 @@ function DungeonMindApp() {
               )}
 
               {/* VTT SIDEBARS */}
-              {vttSidebar === 'chat' && currentView === 'map' && (
+              {!isCastMode && vttSidebar === 'chat' && currentView === 'map' && (
                   <div className="absolute top-0 right-0 bottom-0 w-[350px] bg-slate-900 border-l border-slate-700 shadow-2xl z-[80] flex flex-col animate-in slide-in-from-right duration-300">
                       <div className="p-3 border-b border-slate-800 flex justify-between items-center bg-slate-950 shrink-0">
                           <h3 className="font-bold text-indigo-500 flex items-center gap-2"><Icon name="message-circle" size={18}/> Chat</h3>
@@ -742,7 +743,7 @@ function DungeonMindApp() {
                   </div>
               )}
 
-              {vttSidebar === 'journal' && currentView === 'map' && (
+              {!isCastMode && vttSidebar === 'journal' && currentView === 'map' && (
                   <div className="absolute top-0 right-0 bottom-0 w-[500px] max-w-full bg-slate-900 border-l border-slate-700 shadow-2xl z-[80] flex flex-col animate-in slide-in-from-right duration-300">
                       <JournalView role={effectiveRole} userId={user?.uid} aiHelper={queryAiService} onClose={() => setVttSidebar(null)} />
                   </div>
@@ -789,15 +790,15 @@ function DungeonMindApp() {
        <div className="fixed inset-0 pointer-events-none z-[99999]">{rollingDice && <DiceOverlay roll={rollingDice} />}</div>
        
        {/* Global Dice Tray Sidebar */}
-       {showTools && (
+       {!isCastMode && showTools && (
            <div className="fixed top-0 right-0 bottom-0 w-80 max-w-full bg-slate-900 border-l border-slate-700 shadow-2xl z-[100] flex flex-col animate-in slide-in-from-right duration-300">
                <DiceTray diceLog={diceLog} handleDiceRoll={handleDiceRoll} onClose={() => setShowTools(false)} />
            </div>
        )}
 
        {/* UPDATED: Pass compact prop */}
-       <MobileNav view={currentView} setView={setCurrentView} compact={data.config?.mobileCompact} />
-       {effectiveRole === 'dm' && !data.onboardingComplete && (
+       {!isCastMode && <MobileNav view={currentView} setView={setCurrentView} compact={data.config?.mobileCompact} />}
+       {!isCastMode && effectiveRole === 'dm' && !data.onboardingComplete && (
            <OnboardingWizard 
                onComplete={(wizData) => {
                    // This is the signal that turns off the wizard and starts the game
