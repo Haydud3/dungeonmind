@@ -107,10 +107,26 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
   const syncTarget = useRef(new THREE.Vector3());
   const hasInitialized = useRef(false);
 
+  // Calculate the exact starting position so the token doesn't spawn at [0,0,0] for one frame
+  const initialPosition = useMemo(() => {
+      const pos = new THREE.Vector3(token.x || 0, token.y || tokenBaseOffset, token.z || 0);
+      if (getTerrainHeight && isTerrainReady) {
+          const localTerrainY = getTerrainHeight(pos.x, pos.z, safeSize / 2);
+          pos.y = localTerrainY + (token.elevationOffset || 0) + tokenBaseOffset;
+      }
+      return [pos.x, pos.y, pos.z];
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // START CHANGE: Make token position reactive to props
   useEffect(() => {
     if (meshRef.current && !isLeftDragging.current) {
         const targetPosition = new THREE.Vector3(token.x || 0, token.y || tokenBaseOffset, token.z || 0);
+
+        if (getTerrainHeight && isTerrainReady) {
+            const localTerrainY = getTerrainHeight(targetPosition.x, targetPosition.z, safeSize / 2);
+            targetPosition.y = localTerrainY + (token.elevationOffset || 0) + tokenBaseOffset;
+        }
 
         if (isWaitingForSync.current) {
             if (targetPosition.distanceTo(syncTarget.current) < 0.01) {
@@ -126,7 +142,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
             hasInitialized.current = true;
         }
     }
-  }, [token.x, token.y, token.z, token.id]);
+  }, [token.x, token.y, token.z, token.id, getTerrainHeight, isTerrainReady, safeSize, token.elevationOffset, tokenBaseOffset]);
 
   useFrame((state, delta) => {
     if (nameplateGlowRef.current && isActiveTurn) {
@@ -164,6 +180,9 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
                       const localTerrainY = getTerrainHeight(targetPosition.x, targetPosition.z, safeSize / 2);
                       targetPosition.y = localTerrainY + (token.elevationOffset || 0) + tokenBaseOffset;
                   }
+                  if (rDrag.rotationY !== undefined) {
+                      targetRotationY.current = rDrag.rotationY;
+                  }
               }
           }
 
@@ -171,12 +190,21 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
               targetPosition.copy(syncTarget.current);
           }
 
+          let isFollowerDragging = false;
           if (isSelected && groupDragData?.current?.activeTokenId && groupDragData.current.activeTokenId !== token.id) {
+              isFollowerDragging = true;
               targetPosition.add(groupDragData.current.delta);
               const terrainY = getTerrainHeight ? getTerrainHeight(targetPosition.x, targetPosition.z, safeSize / 2) : 0;
               targetPosition.y = terrainY + (token.elevationOffset || 0) + tokenBaseOffset;
+              
+              const frameDelta = targetPosition.clone().sub(meshRef.current.position);
+              frameDelta.y = 0;
+              if (frameDelta.lengthSq() > 0.0001) {
+                  targetRotationY.current = Math.atan2(frameDelta.x, frameDelta.z);
+              }
+
               if (broadcastDrag) {
-                  broadcastDrag(token.id, targetPosition.x, targetPosition.z);
+                  broadcastDrag(token.id, targetPosition.x, targetPosition.z, targetRotationY.current);
               }
           }
 
@@ -185,7 +213,8 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
           p.lerp(targetPosition, 0.15); // Follow smoothly
 
           // Update rotation smoothly as well
-          const targetRotY = isRotatingToken.current ? targetRotationY.current : (token.rotationY || 0);
+          const isRemoteDragging = rtdbDragsRef?.current?.[token.id] && rtdbDragsRef.current[token.id].clientId !== myClientId;
+          const targetRotY = (isRotatingToken.current || isRemoteDragging || isFollowerDragging) ? targetRotationY.current : (token.rotationY || 0);
           const diff = targetRotY - rotationRef.current.rotation.y;
           rotationRef.current.rotation.y += Math.atan2(Math.sin(diff), Math.cos(diff)) * 0.15;
       } else {
@@ -209,14 +238,6 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
     
           if (groupDragData?.current?.activeTokenId === token.id) {
               groupDragData.current.delta.subVectors(new THREE.Vector3(displayX, 0, displayZ), dragStartPos.current);
-          }
-    
-          if (rtdbDragsRef && rtdbDragsRef.current) {
-              rtdbDragsRef.current[token.id] = { x: displayX, z: displayZ, clientId: myClientId };
-          }
-    
-          if (broadcastDrag) {
-              broadcastDrag(token.id, displayX, displayZ);
           }
     
           const terrainY = getTerrainHeight(displayX, displayZ, safeSize / 2);
@@ -264,6 +285,14 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
           } else {
               if (rulerRef.current) rulerRef.current.visible = false;
               if (rulerLabelRef.current) rulerLabelRef.current.visible = false;
+          }
+          
+          if (rtdbDragsRef && rtdbDragsRef.current) {
+              rtdbDragsRef.current[token.id] = { x: displayX, z: displayZ, rotationY: targetRotationY.current, clientId: myClientId };
+          }
+    
+          if (broadcastDrag) {
+              broadcastDrag(token.id, displayX, displayZ, targetRotationY.current);
           }
     
           previousPos.current.copy(worldPos);
@@ -393,6 +422,15 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
     // Dragging left (negative deltaX) rotates clockwise (negative Y rotation).
     // Dragging right (positive deltaX) rotates counter-clockwise (positive Y rotation).
     targetRotationY.current += deltaX * 0.05;
+    
+    if (broadcastDrag) {
+        const worldPos = new THREE.Vector3();
+        meshRef.current.getWorldPosition(worldPos);
+        broadcastDrag(token.id, worldPos.x, worldPos.z, targetRotationY.current);
+        if (rtdbDragsRef && rtdbDragsRef.current) {
+            rtdbDragsRef.current[token.id] = { x: worldPos.x, z: worldPos.z, rotationY: targetRotationY.current, clientId: myClientId };
+        }
+    }
   };
 
   const handleNameplatePointerUp = (e) => {
@@ -406,7 +444,9 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
     if (controls) controls.enabled = true;
     document.body.style.cursor = 'auto';
     
-    updateTokenPosition(token.id, { rotationY: targetRotationY.current });
+    updateTokenPosition(token.id, { rotationY: targetRotationY.current }).then(() => {
+        if (clearBroadcast) clearBroadcast(token.id);
+    });
   };
 
   const handlePointerDown = (e) => {
@@ -502,6 +542,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
   const tokenContent = (
     <group 
       ref={meshRef} 
+      position={initialPosition}
       scale={[scale, scale, scale]}
       onPointerDown={(!isInteractive || activeTool) ? undefined : handlePointerDown}
       onPointerMove={(!isInteractive || activeTool) ? undefined : handlePointerMove}
@@ -857,7 +898,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
 
 const areTokensEqual = (prev, next) => {
     // Fast path: if the same object, they are equal
-    if (prev.token === next.token && prev.isSelected === next.isSelected && prev.draggedTokenId === next.draggedTokenId && prev.activeTool === next.activeTool) {
+    if (prev.token === next.token && prev.isSelected === next.isSelected && prev.draggedTokenId === next.draggedTokenId && prev.activeTool === next.activeTool && prev.baseVisibility === next.baseVisibility && prev.alwaysVisible === next.alwaysVisible && prev.fowEnabled === next.fowEnabled && prev.getTerrainHeight === next.getTerrainHeight && prev.tokenBaseOffset === next.tokenBaseOffset) {
         return true;
     }
     
@@ -873,7 +914,7 @@ const areTokensEqual = (prev, next) => {
     if ((pt.conditions || []).join(',') !== (nt.conditions || []).join(',')) return false;
     
     // Check primitive props
-    if (prev.isSelected !== next.isSelected || prev.role !== next.role || prev.gridSize !== next.gridSize || prev.isSnapToGrid !== next.isSnapToGrid || prev.isTerrainReady !== next.isTerrainReady || prev.activeTool !== next.activeTool || prev.draggedTokenId !== next.draggedTokenId || prev.viewMode !== next.viewMode || prev.showNameplates !== next.showNameplates || prev.isActiveTurn !== next.isActiveTurn || prev.canControl !== next.canControl || prev.isInteractive !== next.isInteractive || prev.orientation !== next.orientation) {
+    if (prev.isSelected !== next.isSelected || prev.role !== next.role || prev.gridSize !== next.gridSize || prev.isSnapToGrid !== next.isSnapToGrid || prev.isTerrainReady !== next.isTerrainReady || prev.activeTool !== next.activeTool || prev.draggedTokenId !== next.draggedTokenId || prev.viewMode !== next.viewMode || prev.showNameplates !== next.showNameplates || prev.isActiveTurn !== next.isActiveTurn || prev.canControl !== next.canControl || prev.isInteractive !== next.isInteractive || prev.orientation !== next.orientation || prev.baseVisibility !== next.baseVisibility || prev.alwaysVisible !== next.alwaysVisible || prev.fowEnabled !== next.fowEnabled || prev.getTerrainHeight !== next.getTerrainHeight || prev.tokenBaseOffset !== next.tokenBaseOffset) {
         return false;
     }
     

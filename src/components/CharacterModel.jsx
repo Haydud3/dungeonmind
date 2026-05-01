@@ -1,5 +1,5 @@
 import React, { useState, useEffect, Suspense, useMemo } from 'react';
-import { useGLTF, Center } from '@react-three/drei';
+import { useGLTF } from '@react-three/drei';
 import { retrieveChunkedMap } from '../utils/storageUtils';
 import * as THREE from 'three';
 
@@ -94,20 +94,47 @@ const GLTFModel = ({ url, scale, forceStatue, opacity = 1 }) => {
         return clone;
     }, [scene, forceStatue, statueMaterial, opacity]);
 
-    // Auto-Size: Calculate the exact bounding box of the raw model to normalize its scale to 1x1x1
-    const normalizedScale = useMemo(() => {
-        if (!scene) return 1;
+    // Auto-Size & Auto-Align: Calculate bounding box of the raw model
+    const { normalizedScale, bottomOffset, centerOffsetX, centerOffsetZ } = useMemo(() => {
+        if (!scene) return { normalizedScale: 1, bottomOffset: 0, centerOffsetX: 0, centerOffsetZ: 0 };
+        
+        // Ensure matrices are updated before calculating bounds, fixes invisible scales from certain GLTF exporters
+        scene.updateMatrixWorld(true);
+        
         const box = new THREE.Box3().setFromObject(scene);
         const size = new THREE.Vector3();
         box.getSize(size);
+        
         const maxDim = Math.max(size.x, size.y, size.z);
-        return maxDim > 0 ? 1.0 / maxDim : 1;
+        
+        let calcScale = 1.5; 
+        // Fallback checks just in case the GLTF is completely empty/unbounded
+        if (maxDim > 0.0001 && isFinite(maxDim)) {
+            // Multiply by 1.5 to double the default base size
+            calcScale = (1.0 / maxDim) * 1.5;
+        }
+        
+        // Calculate the lowest Y point so we can shift it exactly to the floor (0)
+        const calcBottomOffset = isFinite(box.min.y) ? -box.min.y : 0;
+        
+        // Calculate center for X and Z to ensure the model sits strictly in the middle of the grid
+        const calcCenterOffsetX = isFinite(box.max.x) && isFinite(box.min.x) ? -(box.max.x + box.min.x) / 2 : 0;
+        const calcCenterOffsetZ = isFinite(box.max.z) && isFinite(box.min.z) ? -(box.max.z + box.min.z) / 2 : 0;
+
+        return { 
+            normalizedScale: calcScale, 
+            bottomOffset: calcBottomOffset,
+            centerOffsetX: calcCenterOffsetX,
+            centerOffsetZ: calcCenterOffsetZ
+        };
     }, [scene]);
 
     return (
-        <Center bottom>
-            <primitive object={clonedScene} scale={scale * normalizedScale} />
-        </Center>
+        <group scale={scale * normalizedScale}>
+            <group position={[centerOffsetX, bottomOffset, centerOffsetZ]}>
+                <primitive object={clonedScene} />
+            </group>
+        </group>
     );
 }
 

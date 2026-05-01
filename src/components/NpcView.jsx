@@ -528,8 +528,8 @@ ${pasteTextContent}`;
         const finalNpc = { ...npcForModelSelection };
         if (model) {
             finalNpc.modelUrl = model.url;
-            finalNpc.modelScale = model.scale;
-            finalNpc.modelYOffset = model.yOffset;
+            finalNpc.modelScale = 1;
+            finalNpc.modelYOffset = 0;
             finalNpc.forceStatue = forceStatue;
         } else {
             delete finalNpc.modelUrl;

@@ -131,8 +131,8 @@ const SideSheet = ({ characterId, onClose, role, onDiceRoll, onOpenDiceTray }) =
         const finalChar = { ...character };
         if (model) {
             finalChar.modelUrl = model.url;
-            finalChar.modelScale = model.scale;
-            finalChar.modelYOffset = model.yOffset;
+            finalChar.modelScale = 1;
+            finalChar.modelYOffset = 0;
             finalChar.forceStatue = forceStatue;
         } else {
             delete finalChar.modelUrl;

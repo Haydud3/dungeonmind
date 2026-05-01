@@ -578,13 +578,13 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
   }, [campaignCode, activeMapId]);
 
   const lastBroadcasts = useRef({});
-  const broadcastDrag = useCallback((tokenId, x, z) => {
+  const broadcastDrag = useCallback((tokenId, x, z, rotationY) => {
       if (!campaignCode || !activeMapId || !user?.uid) return;
       const now = performance.now();
       const last = lastBroadcasts.current[tokenId] || 0;
       if (now - last > 50) { // ~20 FPS limit per token
           lastBroadcasts.current[tokenId] = now;
-          set(ref(rtdb, `live_drags/${campaignCode}_${activeMapId}/${tokenId}`), { x, z, clientId, uid: user.uid });
+          set(ref(rtdb, `live_drags/${campaignCode}_${activeMapId}/${tokenId}`), { x, z, rotationY: rotationY ?? 0, clientId, uid: user.uid });
       }
   }, [campaignCode, activeMapId, user?.uid, clientId]);
 
@@ -1238,8 +1238,8 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
     const finalNpc = { ...pendingNpc };
     if (model) {
         finalNpc.modelUrl = model.url;
-        finalNpc.modelScale = model.scale;
-        finalNpc.modelYOffset = model.yOffset;
+        finalNpc.modelScale = 1;
+        finalNpc.modelYOffset = 0;
     }
     
     updateCampaign({ npcs: [...(data?.npcs || []), finalNpc] });
