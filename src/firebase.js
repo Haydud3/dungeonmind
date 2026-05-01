@@ -23,6 +23,7 @@ import {
 } from "firebase/firestore";
 // START CHANGE
 import { getStorage } from "firebase/storage";
+import { getDatabase } from "firebase/database";
 // END CHANGE
 
 const firebaseConfig = {
@@ -32,7 +33,8 @@ const firebaseConfig = {
   storageBucket: "dungeonmind-aa529.firebasestorage.app",
   messagingSenderId: "839802457564",
   appId: "1:839802457564:web:97aa6ea99190aa59acd319",
-  measurementId: "G-Z0TEJSQ0WF"
+  measurementId: "G-Z0TEJSQ0WF",
+  databaseURL: "https://dungeonmind-aa529-default-rtdb.firebaseio.com"
 };
 
 const app = initializeApp(firebaseConfig);
@@ -40,6 +42,7 @@ export const auth = getAuth(app);
 export const db = getFirestore(app);
 // START CHANGE: Ensure Storage is exported
 export const storage = getStorage(app);
+export const rtdb = getDatabase(app);
 // END CHANGE
 export const googleProvider = new GoogleAuthProvider();
 export const appId = 'dungeonmind'; // Added explicitly for mapService and App.jsx routing

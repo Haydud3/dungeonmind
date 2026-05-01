@@ -8,12 +8,13 @@ import { useCharacterStore } from '../stores/useCharacterStore';
 const AssetManager = lazy(() => import('./AssetManager'));
 const MeasurementTools = lazy(() => import('./MeasurementTools').then(m => ({ default: m.MeasurementTools })));
 import Icon from './Icon';
-import { retrieveChunkedMap, storeChunkedMap } from '../utils/storageUtils';
+import { retrieveChunkedMap, storeChunkedMap, deleteChunkedMap } from '../utils/storageUtils';
 const Token3D = lazy(() => import('./tactical/Token').then(m => ({ default: m.default })));
 const MapProp = lazy(() => import('./tactical/MapProp').then(m => ({ default: m.default })));
 import CameraController from '../utils/CameraController';
 import { collection, doc, query, where, getDocs } from 'firebase/firestore';
-import { db, appId } from '../firebase';
+import { db, rtdb, appId } from '../firebase';
+import { ref, onValue, set, remove } from 'firebase/database';
 import { searchGithubModels } from '../utils/miniManifest';
 
 import { ENV_SETTINGS } from '../constants/environment';
@@ -43,6 +44,7 @@ const GpuFogOfWar = lazy(() => import('./3d/GpuFogOfWar').then(m => ({ default: 
 const ZoomHandler = lazy(() => import('./3d/ZoomHandler').then(m => ({ default: m.ZoomHandler })));
 const WallDrawingController = lazy(() => import('./3d/controllers/WallDrawingController').then(m => ({ default: m.WallDrawingController })));
 const StampingController = lazy(() => import('./3d/controllers/StampingController').then(m => ({ default: m.StampingController })));
+const TerrainSculptorController = lazy(() => import('./3d/controllers/TerrainSculptorController').then(m => ({ default: m.TerrainSculptorController })));
 const WeatherParticles = lazy(() => import('./3d/WeatherParticles').then(m => ({ default: m.WeatherParticles })));
 const PostProcessingEffects = lazy(() => import('./3d/PostProcessingEffects').then(m => ({ default: m.PostProcessingEffects })));
 import { DropZone } from './ui/DropZone';
@@ -174,13 +176,13 @@ const ViewManager = React.memo(({ aspect, scale, orientation, fitTrigger }) => {
             const mapHeight = scale;
 
             const fov = camera.fov * (Math.PI / 180);
-            const currentAspect = window.innerWidth / window.innerHeight;
+            const currentAspect = camera.aspect;
             
             // The dimension that needs to fit the viewport's height is now mapWidth, and vice-versa.
             const distanceForHeight = (isPortraitOrientation ? mapWidth : mapHeight) / (2 * Math.tan(fov / 2));
             const distanceForWidth = (isPortraitOrientation ? mapHeight : mapWidth) / (2 * currentAspect * Math.tan(fov / 2));
             
-            const targetDistance = Math.max(distanceForHeight, distanceForWidth) * 1.05; // 5% padding
+            const targetDistance = Math.max(distanceForHeight, distanceForWidth); // Fit exactly
             
             controls.target.set(0, 0, 0);
             const direction = new THREE.Vector3();
@@ -255,6 +257,11 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
   const [draggedTokenId, setDraggedTokenId] = useState(null);
   const [remountKey, setRemountKey] = useState(0);
   const [assetTab, setAssetTab] = useState('library');
+
+  const [sculptBrushType, setSculptBrushType] = useState('raise');
+  const [sculptBrushSize, setSculptBrushSize] = useState(2);
+  const [sculptBrushStrength, setSculptBrushStrength] = useState(0.05);
+
   const shiftHeldRef = useRef(false);
   const [fitTrigger, setFitTrigger] = useState(0);
 
@@ -387,7 +394,22 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
 
   useEffect(() => {
     if (!resolvedHeightmapUrl) {
-      setTerrainData(null);
+      // Create a blank heightmap canvas so sculpting works on new/blank maps
+      const size = 1024;
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      ctx.fillStyle = '#000000'; // Black is zero height
+      ctx.fillRect(0, 0, size, size);
+      
+      const imageData = ctx.getImageData(0, 0, size, size);
+      const texture = new THREE.CanvasTexture(canvas);
+      
+      setTerrainData({
+          data: imageData.data, width: size, height: size,
+          canvas: canvas, ctx: ctx, texture: texture
+      });
       return;
     }
     let isActive = true;
@@ -404,10 +426,17 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       ctx.drawImage(img, 0, 0);
       try {
         const imageData = ctx.getImageData(0, 0, img.width, img.height);
+        
+        // Phase 1: Create the dynamic CanvasTexture for real-time sculpting
+        const texture = new THREE.CanvasTexture(canvas);
+
         setTerrainData({
           data: imageData.data,
           width: img.width,
-          height: img.height
+          height: img.height,
+          canvas: canvas,
+          ctx: ctx,
+          texture: texture
         });
       } catch (err) {
         console.warn("Failed to read heightmap data (CORS?)", err);
@@ -421,32 +450,81 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
   const mapHeightScale = mapData?.heightScale || 1;
   const mapHeightmapUrl = mapData?.heightmapUrl;
 
-  const getTerrainHeight = useCallback((x, z) => {
+  const latestPropsRef = useRef(mapData?.props);
+  useEffect(() => {
+    latestPropsRef.current = mapData?.props;
+  }, [mapData?.props]);
+
+  const getTerrainHeight = useCallback((x, z, radius = 0) => {
     if (isCastMode) return 0; // Force tokens and measurements to be flat against the TV glass
-    if (!terrainData || !mapHeightmapUrl) {
-      return 0;
+
+    let maxBaseHeight = 0;
+    if (terrainData && mapHeightmapUrl) {
+      const uCenter = (x / (mapScale * aspect)) + 0.5;
+      const vCenter = (z / mapScale) + 0.5;
+
+      const pixelXCenter = uCenter * terrainData.width;
+      const pixelYCenter = vCenter * terrainData.height;
+
+      let pixelRadius = 0;
+      if (radius > 0) {
+        pixelRadius = (radius / mapScale) * terrainData.height;
+      }
+
+      if (pixelRadius <= 0) {
+        const safeX = Math.max(0, Math.min(Math.floor(pixelXCenter), terrainData.width - 1));
+        const safeY = Math.max(0, Math.min(Math.floor(pixelYCenter), terrainData.height - 1));
+        const index = (safeY * terrainData.width + safeX) * 4;
+        maxBaseHeight = (terrainData.data[index] / 255.0) * mapHeightScale;
+      } else {
+        const step = Math.max(1, Math.floor(pixelRadius / 4)); // Sparse sampling for performance
+        for (let py = Math.floor(pixelYCenter - pixelRadius); py <= Math.ceil(pixelYCenter + pixelRadius); py += step) {
+          for (let px = Math.floor(pixelXCenter - pixelRadius); px <= Math.ceil(pixelXCenter + pixelRadius); px += step) {
+            const dx = px - pixelXCenter;
+            const dy = py - pixelYCenter;
+            if (dx * dx + dy * dy <= pixelRadius * pixelRadius) {
+              const safeX = Math.max(0, Math.min(px, terrainData.width - 1));
+              const safeY = Math.max(0, Math.min(py, terrainData.height - 1));
+              const index = (safeY * terrainData.width + safeX) * 4;
+              const h = (terrainData.data[index] / 255.0) * mapHeightScale;
+              if (h > maxBaseHeight) maxBaseHeight = h;
+            }
+          }
+        }
+      }
     }
 
-    const u = (x / (mapScale * aspect)) + 0.5;
-    const v = (z / mapScale) + 0.5;
+    let finalHeight = maxBaseHeight;
+    const props = latestPropsRef.current;
+    if (props) {
+        const currentGridSize = mapData?.gridSize || 1;
+        Object.values(props).forEach(prop => {
+            if (prop && prop.hasCollision !== false) { // Default to true if undefined
+                const propX = prop.x || 0;
+                const propZ = prop.z || 0;
+                const baseScale = (prop.scale || 1.0) * currentGridSize;
+                const dx = x - propX;
+                const dz = z - propZ;
+                
+                // Use combined scaled size for collision radius
+                const propRadius = baseScale * 0.5;
+                const tokenRadius = radius || 0;
+                const combinedRadius = propRadius + tokenRadius;
 
-    if (u < 0 || u > 1 || v < 0 || v > 1) {
-      return 0;
+                if (dx * dx + dz * dz <= combinedRadius * combinedRadius) {
+                    // 3D models are typically roughly proportional to their width.
+                    // We give 3D props a height estimate proportional to baseScale so tokens sit on top.
+                    const propHeight = maxBaseHeight + (prop.elevation || 0) + ((prop.is3D || prop.modelUrl) ? (baseScale * 0.8) : 0.05);
+                    if (propHeight > finalHeight) {
+                        finalHeight = propHeight;
+                    }
+                }
+            }
+        });
     }
 
-    const pixelX = Math.floor(u * terrainData.width);
-    const pixelY = Math.floor(v * terrainData.height);
-    
-    const safeX = Math.max(0, Math.min(pixelX, terrainData.width - 1));
-    const safeY = Math.max(0, Math.min(pixelY, terrainData.height - 1));
-
-    const index = (safeY * terrainData.width + safeX) * 4;
-    const r = terrainData.data[index]; // Red channel for height
-
-    const calculatedHeight = (r / 255.0) * mapHeightScale;
-    return calculatedHeight;
-  }, [terrainData, mapHeightmapUrl, mapScale, mapHeightScale, aspect, isCastMode]);
-
+    return finalHeight;
+  }, [terrainData, mapHeightmapUrl, mapScale, mapHeightScale, aspect, isCastMode, mapData?.gridSize]);
   // Subscribe to real-time map updates from Firebase
   useEffect(() => {
     setMapData(null); // Immediately clear last map's data
@@ -487,6 +565,34 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
 
   const groupDragData = useRef({ activeTokenId: null, delta: new THREE.Vector3() });
 
+  // RTDB Live Dragging Listeners & Broadcasters
+  const clientId = useMemo(() => Math.random().toString(36).substring(2, 10), []);
+  const rtdbDragsRef = useRef({});
+  useEffect(() => {
+      if (!campaignCode || !activeMapId) return;
+      const dragsRef = ref(rtdb, `live_drags/${campaignCode}_${activeMapId}`);
+      const unsubscribe = onValue(dragsRef, (snapshot) => {
+          rtdbDragsRef.current = snapshot.val() || {};
+      });
+      return () => unsubscribe();
+  }, [campaignCode, activeMapId]);
+
+  const lastBroadcasts = useRef({});
+  const broadcastDrag = useCallback((tokenId, x, z) => {
+      if (!campaignCode || !activeMapId || !user?.uid) return;
+      const now = performance.now();
+      const last = lastBroadcasts.current[tokenId] || 0;
+      if (now - last > 50) { // ~20 FPS limit per token
+          lastBroadcasts.current[tokenId] = now;
+          set(ref(rtdb, `live_drags/${campaignCode}_${activeMapId}/${tokenId}`), { x, z, clientId, uid: user.uid });
+      }
+  }, [campaignCode, activeMapId, user?.uid, clientId]);
+
+  const clearBroadcast = useCallback((tokenId) => {
+      if (!campaignCode || !activeMapId) return;
+      remove(ref(rtdb, `live_drags/${campaignCode}_${activeMapId}/${tokenId}`));
+  }, [campaignCode, activeMapId]);
+
   const handleGroupDragEnd = useCallback((leaderId, delta) => {
       const updates = {};
 
@@ -515,8 +621,9 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           const finalX = isSnapToGrid ? (isEvenSize ? Math.round((newX - gridOffsetX) / gridSize) * gridSize + gridOffsetX : Math.floor((newX - gridOffsetX) / gridSize) * gridSize + gridSize / 2 + gridOffsetX) : newX;
           const finalZ = isSnapToGrid ? (isEvenSize ? Math.round((newZ - gridOffsetY) / gridSize) * gridSize + gridOffsetY : Math.floor((newZ - gridOffsetY) / gridSize) * gridSize + gridSize / 2 + gridOffsetY) : newZ;
 
-          const terrainY = getTerrainHeight ? getTerrainHeight(finalX, finalZ) : 0;
-          const finalY = terrainY + (t.elevationOffset || 0) + (mapData?.tokenElevationOffset ?? 0.04);
+          const radius = (tokenSize * gridSize) / 2;
+          const terrainY = getTerrainHeight ? getTerrainHeight(finalX, finalZ, radius) : 0;
+          const finalY = terrainY + (t.elevationOffset || 0) + ((isCastMode || !mapData?.heightmapUrl) ? 0.04 : (mapData?.tokenElevationOffset ?? 0.04));
 
           updates[`tokens.${id}.x`] = finalX;
           updates[`tokens.${id}.y`] = finalY;
@@ -636,7 +743,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
 
   // Calculate which doors and windows are visible to players based on their vision sources
   const visibleDoorWindowIds = useMemo(() => {
-      if (role === 'dm') {
+      if (role === 'dm' && !isCastMode) {
           // DM sees all walls, so all doors/windows are visible to DM
           return new Set(Object.values(mapData?.walls || {}).filter(w => w && (w.type === 'door' || w.type === 'window')).map(w => w.id));
       }
@@ -667,11 +774,14 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           }
       });
       return visibleIds;
-  }, [mapData?.walls, mapData?.fowWallsEnabled, playerVisionSources, role]);
+  }, [mapData?.walls, mapData?.fowWallsEnabled, playerVisionSources, role, isCastMode]);
 
   // Calculate combined lights (map lights + dynamic token lights)
   const combinedLights = useMemo(() => {
-      const allLights = { ...(mapData?.lights || {}) };
+      const allLights = {};
+      Object.values(mapData?.lights || {}).filter(Boolean).forEach(l => {
+          allLights[l.id] = l;
+      });
       tokensList.forEach(t => {
           if (t.light && t.light.radius > 0) {
               if (role !== 'dm' && t.isHidden) return; // Hide light if token is hidden from players
@@ -690,18 +800,26 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
 
   // CPU-based Line of Sight / Token Visibility Filter
   const visibleTokenIds = useMemo(() => {
-      if (role === 'dm') return new Set(tokensList.map(t => t.id)); // DM sees everything
+      if (role === 'dm' && !isCastMode) return new Set(tokensList.map(t => t.id)); // DM sees everything
       const visibleIds = new Set();
+
+      const playerCharIds = isCastMode ? new Set((data?.players || []).map(p => String(p.id))) : new Set();
 
       tokensList.forEach(t => {
           if (t.isHidden) return; // Hidden tokens are completely excluded
           
+          // In cast mode, always see all PCs
+          if (isCastMode && t.characterId && playerCharIds.has(String(t.characterId))) {
+              visibleIds.add(t.id);
+              return;
+          }
+
           const character = allCharacters.find(c => String(c.id) === String(t.characterId));
           const isOwner = (character?.ownerId && String(character.ownerId) === String(user?.uid)) || (t.ownerId && String(t.ownerId) === String(user?.uid));
           const myCharAssigned = stableAssignments[user?.uid] && String(t.characterId) === String(stableAssignments[user.uid]);
           
           // You can always see yourself and tokens you share control over
-          if (isOwner || myCharAssigned || t.isSharedControl) {
+          if (!isCastMode && (isOwner || myCharAssigned || t.isSharedControl)) {
               visibleIds.add(t.id);
               return;
           }
@@ -764,12 +882,12 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           }
       });
       return visibleIds;
-  }, [tokensList, role, playerVisionSources, mapData?.walls, mapData?.lights, mapData?.fowEnabled, mapData?.fowWallsEnabled, allCharacters, user?.uid, stableAssignments, gridSize]);
+  }, [tokensList, role, playerVisionSources, mapData?.walls, mapData?.lights, mapData?.fowEnabled, mapData?.fowWallsEnabled, allCharacters, user?.uid, stableAssignments, gridSize, isCastMode, data?.players]);
 
   // CPU-based Line of Sight / Prop Visibility Filter
   const visiblePropIds = useMemo(() => {
       const props = mapData?.props ? Object.values(mapData.props).filter(Boolean) : [];
-      if (role === 'dm') return new Set(props.map(p => p.id)); // DM sees everything
+      if (role === 'dm' && !isCastMode) return new Set(props.map(p => p.id)); // DM sees everything
       
       const visibleIds = new Set();
       const wallsArray = mapData?.fowWallsEnabled !== false ? Object.values(mapData?.walls || {}) : [];
@@ -822,17 +940,17 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           }
       });
       return visibleIds;
-  }, [mapData?.props, role, playerVisionSources, mapData?.walls, mapData?.lights, mapData?.fowEnabled, mapData?.fowWallsEnabled, combinedLights, gridSize]);
+  }, [mapData?.props, role, playerVisionSources, mapData?.walls, mapData?.lights, mapData?.fowEnabled, mapData?.fowWallsEnabled, combinedLights, gridSize, isCastMode]);
 
   // Calculate which 3D lights are visible to the players (prevents unseen lights from shining through walls via normal maps)
   const visibleLights = useMemo(() => {
       if (!combinedLights) return {};
-      if (role === 'dm' || mapData?.fowEnabled === false) return combinedLights;
+      if ((role === 'dm' && !isCastMode) || mapData?.fowEnabled === false) return combinedLights;
 
       const filteredLights = {};
       const wallsArray = mapData?.fowWallsEnabled !== false ? Object.values(mapData?.walls || {}) : [];
 
-      Object.values(combinedLights).forEach(light => {
+      Object.values(combinedLights).filter(Boolean).forEach(light => {
           const lightPt = { x: light.position.x, z: light.position.z };
           for (const src of playerVisionSources) {
               if (checkLineOfSight(src, lightPt, wallsArray)) {
@@ -842,7 +960,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           }
       });
       return filteredLights;
-  }, [mapData?.lights, mapData?.walls, mapData?.fowEnabled, mapData?.fowWallsEnabled, playerVisionSources, role, combinedLights]);
+  }, [mapData?.lights, mapData?.walls, mapData?.fowEnabled, mapData?.fowWallsEnabled, playerVisionSources, role, combinedLights, isCastMode]);
 
   // Extract active combatant early so the Camera Director can hook into it
   const activeCombatantId = mapData && data?.campaign?.combat?.active && data?.campaign?.combat?.combatants?.length 
@@ -1128,12 +1246,13 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
     
     const dropX = 0;
     const dropZ = 0;
-    const terrainY = getTerrainHeight ? getTerrainHeight(dropX, dropZ) : 0;
+    const radius = ((finalNpc.size || 1) * gridSize) / 2;
+    const terrainY = getTerrainHeight ? getTerrainHeight(dropX, dropZ, radius) : 0;
     
     const newTokenId = `token_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const tokenData = {
         id: newTokenId, characterId: finalNpc.id, name: finalNpc.name,
-        type: 'npc', x: dropX, y: terrainY + (mapData?.tokenElevationOffset ?? 0.04), z: dropZ,
+        type: 'npc', x: dropX, y: terrainY + ((isCastMode || !mapData?.heightmapUrl) ? 0.04 : (mapData?.tokenElevationOffset ?? 0.04)), z: dropZ,
         image: finalNpc.image || '', size: finalNpc.size || 1, hp: finalNpc.hp
     };
 
@@ -1350,6 +1469,8 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
   const handleDrop = async (e, position) => {
     if (!position) return;
 
+    if (activeTool || isDrawingFreehand) return; // Prevent drops while tools are active
+
     let payload = null;
     
     try {
@@ -1389,7 +1510,8 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
     const gridOffsetY = mapData?.gridOffsetY || 0;
     const dropX = isSnapToGrid ? (isEvenSize ? Math.round((position.x - gridOffsetX) / gridSize) * gridSize + gridOffsetX : Math.floor((position.x - gridOffsetX) / gridSize) * gridSize + gridSize / 2 + gridOffsetX) : position.x;
     const dropZ = isSnapToGrid ? (isEvenSize ? Math.round((position.z - gridOffsetY) / gridSize) * gridSize + gridOffsetY : Math.floor((position.z - gridOffsetY) / gridSize) * gridSize + gridSize / 2 + gridOffsetY) : position.z;
-    const terrainY = getTerrainHeight ? getTerrainHeight(dropX, dropZ) : 0;
+    const radius = (tokenSize * gridSize) / 2;
+    const terrainY = getTerrainHeight ? getTerrainHeight(dropX, dropZ, radius) : 0;
 
     if (payload.category === 'Props') {
         const newPropId = `prop_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -1404,8 +1526,9 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
             elevation: 0,
             rotation: 0,
             is3D: payload.is3D || false,
-            modelUrl: payload.modelUrl || null
-        };
+            modelUrl: payload.modelUrl || null,
+            isLocked: false,
+            hasCollision: true        };
         await updateMap(campaignCode, activeMapId, { [`props.${newPropId}`]: propData });
         return;
     }
@@ -1418,7 +1541,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
             id: newTokenId,
             name: 'New Token',
             type: 'npc',
-            x: dropX, y: terrainY + (mapData?.tokenElevationOffset ?? 0.04), z: dropZ,
+            x: dropX, y: terrainY + ((isCastMode || !mapData?.heightmapUrl) ? 0.04 : (mapData?.tokenElevationOffset ?? 0.04)), z: dropZ,
             image: payload.url || payload.image || '',
             size: 1,
             isHidden: false
@@ -1429,7 +1552,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
             characterId: payload.id || null, 
             name: payload.name || 'Unknown',
             type: payload.type || 'npc',
-        x: dropX, y: terrainY + (mapData?.tokenElevationOffset ?? 0.04), z: dropZ,
+        x: dropX, y: terrainY + ((isCastMode || !mapData?.heightmapUrl) ? 0.04 : (mapData?.tokenElevationOffset ?? 0.04)), z: dropZ,
             image: payload.image || '',
             size: payload.size || 1,
         };
@@ -1619,7 +1742,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       if (!mapData || !mapData.props || !isAspectReady || (mapData.heightmapUrl && !terrainData)) return null;
 
       return Object.values(mapData.props).filter(Boolean).map(prop => {
-          if (role !== 'dm' && !visiblePropIds.has(prop.id)) {
+          if ((role !== 'dm' || isCastMode) && !visiblePropIds.has(prop.id)) {
               return null;
           }
           return (
@@ -1635,14 +1758,14 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
               </ErrorBoundary>
           );
       });
-  }, [mapData?.props, isAspectReady, mapData?.heightmapUrl, terrainData, role, visiblePropIds, handlePropContextMenu, getTerrainHeight, handleUpdatePropPosition, gridSize]);
+  }, [mapData?.props, isAspectReady, mapData?.heightmapUrl, terrainData, role, visiblePropIds, handlePropContextMenu, getTerrainHeight, handleUpdatePropPosition, gridSize, isCastMode]);
 
   // Memoize Tokens to prevent UI states (like activeTool) from reloading their 3D models
   const tokensJSX = useMemo(() => {
       if (!mapData || !isAspectReady || (mapData.heightmapUrl && !terrainData)) return null;
 
       return tokensList.map(token => {
-          if (role !== 'dm' && (!visibleTokenIds.has(token.id) || token.isHidden)) {
+          if ((role !== 'dm' || isCastMode) && token.isHidden) {
               return null;
           }
 
@@ -1713,9 +1836,21 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                       isActiveTurn={activeCombatantId === token.id}
                       canControl={canControl && isInteractive}
                       shiftHeldRef={shiftHeldRef}
-                      tokenBaseOffset={mapData?.tokenElevationOffset ?? 0.04}
+                      tokenBaseOffset={(isCastMode || !mapData?.heightmapUrl) ? 0.04 : (mapData?.tokenElevationOffset ?? 0.04)}
                       isInteractive={isInteractive}
                       orientation={mapData?.orientation || 0}
+                      activeTool={activeTool || (isDrawingFreehand ? 'freehand' : null)}
+                      rtdbDragsRef={rtdbDragsRef}
+                      broadcastDrag={broadcastDrag}
+                      clearBroadcast={clearBroadcast}
+                      myUid={user?.uid}
+                      myClientId={clientId}
+                      baseVisibility={visibleTokenIds.has(token.id)}
+                      playerVisionSources={playerVisionSources}
+                      wallsArray={mapData?.fowWallsEnabled !== false ? Object.values(mapData?.walls || {}) : []}
+                      combinedLights={combinedLights}
+                      fowEnabled={mapData?.fowEnabled}
+                      alwaysVisible={(role === 'dm' && !isCastMode) || (isCastMode && type === 'pc') || (canControl && !isCastMode)}
                   />
               </ErrorBoundary>
           );
@@ -1725,7 +1860,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       handleUpdateTokenPosition, gridSize, mapData?.gridOffsetX, mapData?.gridOffsetY, selectedTokenIds,
       handleSelectToken, handleContextMenu, getTerrainHeight, isSnapToGrid, draggedTokenId, viewMode, showNameplates,
       activeCombatantId, mapData?.tokenElevationOffset, groupDragData, handleGroupDragEnd, shiftHeldRef,
-      mapData?.orientation
+          mapData?.orientation, isCastMode, activeTool, isDrawingFreehand
   ]);
 
 
@@ -1812,9 +1947,9 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                     const id = Date.now().toString();
                     updateMap(campaignCode, activeMapId, { [`measurements.${id}`]: { ...m, style: activeMeasurementStyle } });
                 }}
-                onDeleteMeasurement={(id) => {
+                onDeleteMeasurement={role === 'dm' && !isCastMode ? (id) => {
                     updateMap(campaignCode, activeMapId, { [`measurements.${id}`]: null });
-                }}
+                } : null}
                 onCompleteSelection={(ids) => {
                     setSelectedTokenIds(ids);
                     setActiveTool(null);
@@ -1824,7 +1959,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
         {/* Suspense is required when using useTexture to catch the loading state */}
         <Suspense fallback={null}>
             <ErrorBoundary fallback={null}>
-                {mapData?.heightmapUrl && !isCastMode ? (
+                {(mapData?.heightmapUrl || activeTool === 'sculpt') && !isCastMode ? (
                     <Heightmap 
                         heightmapUrl={mapData.heightmapUrl}
                         backgroundUrl={mapData.backgroundUrl}
@@ -1832,6 +1967,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                         heightScale={mapData.heightScale || 1}
                         scale={mapData.scale || 20}
                         aspect={aspect}
+                        dynamicDisplacementMap={terrainData?.texture}
                     />
                 ) : (
                     showPlane && <MapPlane backgroundUrl={mapData.backgroundUrl} scale={mapData.scale || 20} />
@@ -1852,7 +1988,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
         </Suspense>
 
         {mapData?.showGrid !== false && (
-            mapData?.heightmapUrl && !isCastMode ? (
+            (mapData?.heightmapUrl || activeTool === 'sculpt') && !isCastMode ? (
                 <Suspense fallback={null}>
                     <ErrorBoundary fallback={null}>
                         <DisplacedGrid 
@@ -1860,6 +1996,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                             aspect={aspect}
                             resolvedHeightmapUrl={resolvedHeightmapUrl}
                             resolvedNormalMapUrl={resolvedNormalMapUrl}
+                            dynamicDisplacementMap={terrainData?.texture}
                         />
                     </ErrorBoundary>
                 </Suspense>
@@ -1900,11 +2037,11 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                 selectedWalls={selectedWalls}
                 onWallContextMenu={isDeleting ? null : handleWallContextMenu} 
                 onToggleDoor={handleToggleDoor} 
-                showWalls={role === 'dm' && (isDrawingWalls || isArchitectMode || isDeleting)}
-                role={role}
+                showWalls={role === 'dm' && !isCastMode && (isDrawingWalls || isArchitectMode || isDeleting)}
+                role={isCastMode ? 'player' : role}
                 playerDoorVisibility={mapData?.playerDoorVisibility}
                 visibleDoorWindowIds={visibleDoorWindowIds} // Pass calculated visibility for doors/windows
-                onDelete={isDeleting ? (wallId) => {
+                onDelete={isDeleting && role === 'dm' && !isCastMode ? (wallId) => {
                     updateMap(campaignCode, activeMapId, { [`walls.${wallId}`]: null });
                 } : null}
             />
@@ -1912,30 +2049,32 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
 
         {/* The Dynamic Fog of War layer */}
         <Suspense fallback={null}>
-            {mapData && <GpuFogOfWar 
+            {mapData && <GpuFogOfWar
                 key={`fow-${activeMapId}-${mapData?.scale}-${aspect}`}
-                enabled={mapData?.fowEnabled} 
+                enabled={mapData?.fowEnabled}
                 fowWallsEnabled={mapData?.fowWallsEnabled}
-                walls={mapData?.walls} 
+                walls={mapData?.walls}
                 lights={combinedLights}
                 gridSize={gridSize}
                 mapData={mapData}
                 aspect={aspect}
-                resolvedHeightmapUrl={resolvedHeightmapUrl}
+                resolvedHeightmapUrl={isCastMode ? null : resolvedHeightmapUrl}
                 playerVisionSources={playerVisionSources}
-                role={role}
+                role={isCastMode ? 'player' : role}
+                groupDragData={groupDragData}
+                selectedTokenIds={selectedTokenIds}
+                rtdbDragsRef={rtdbDragsRef}
             />}
         </Suspense>
-
         <Suspense fallback={null}>
             <MapLights 
                 lights={visibleLights} 
                 selectedLights={selectedLights}
                 onContextMenu={handleLightContextMenu} 
-                role={role} 
+                role={isCastMode ? 'player' : role} 
                 gridSize={gridSize} 
-                showLightRadius={isPlacingLights || isDeleting} 
-                onDelete={isDeleting && role === 'dm' ? (lightId) => {
+                showLightRadius={!isCastMode && (isPlacingLights || isDeleting)} 
+                onDelete={isDeleting && role === 'dm' && !isCastMode ? (lightId) => {
                     updateMap(campaignCode, activeMapId, { [`lights.${lightId}`]: null });
                 } : null}
             />
@@ -1989,6 +2128,26 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                         });
                     }}
                 />
+                <TerrainSculptorController
+                    isEnabled={activeTool === 'sculpt'}
+                    terrainData={terrainData}
+                    mapData={mapData}
+                    aspect={aspect}
+                    getTerrainHeight={getTerrainHeight}
+                    brushSize={sculptBrushSize}
+                    brushType={sculptBrushType}
+                    brushStrength={sculptBrushStrength}
+                    onSculptEnd={async () => {
+                        if (!terrainData || !terrainData.canvas) return;
+                        try {
+                            const base64 = terrainData.canvas.toDataURL('image/jpeg', 0.8);
+                            const url = await storeChunkedMap(base64, `sculpted_${Date.now()}.jpg`);
+                            updateMap(campaignCode, activeMapId, { heightmapUrl: url });
+                        } catch (err) {
+                            console.error("Failed to upload sculpted terrain", err);
+                        }
+                    }}
+                />
             </Suspense>
         )}
         
@@ -2011,7 +2170,9 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                             elevation: 0,
                             rotation: 0,
                             is3D: asset.is3D || false,
-                            modelUrl: asset.modelUrl || null
+                            modelUrl: asset.modelUrl || null,
+                            isLocked: false,
+                            hasCollision: true
                         };
                         updateMap(campaignCode, activeMapId, {
                             [`props.${newPropId}`]: propData
@@ -2204,6 +2365,31 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                   )}
               </div>
               
+              {role === 'dm' && (
+                  <div className="relative group flex justify-center">
+                      <ToolButton
+                          name="Sculpt" icon="mountain" isActive={activeTool === 'sculpt'} isStandalone={true}
+                          onClick={() => {
+                              setIsToolbarOpen(p => p === 'sculpt' ? null : 'sculpt');
+                              if (activeTool !== 'sculpt') {
+                                  setActiveTool('sculpt'); setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); setIsDeleting(false);
+                              } else { setActiveTool(null); }
+                          }}
+                      />
+                      {isToolbarOpen === 'sculpt' && (
+                          <div className="absolute top-1/2 right-[110%] -translate-y-1/2 flex items-center gap-2 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-2 rounded-full shadow-2xl animate-in slide-in-from-right-2">
+                              <ToolButton name="Raise" icon="arrow-up" isActive={sculptBrushType === 'raise'} onClick={() => setSculptBrushType('raise')} title="Raise" />
+                              <ToolButton name="Lower" icon="arrow-down" isActive={sculptBrushType === 'lower'} onClick={() => setSculptBrushType('lower')} title="Lower" />
+                              <ToolButton name="Flatten" icon="minus" isActive={sculptBrushType === 'flatten'} onClick={() => setSculptBrushType('flatten')} title="Flatten" />
+                              <ToolButton name="Smooth" icon="waves" isActive={sculptBrushType === 'smooth'} onClick={() => setSculptBrushType('smooth')} title="Smooth" />
+                              <div className="w-px h-6 bg-slate-700 mx-1"></div>
+                              <input type="range" min="0.5" max="10" step="0.5" value={sculptBrushSize} onChange={e => setSculptBrushSize(Number(e.target.value))} className="w-20 accent-amber-500" title="Brush Size" />
+                              <input type="range" min="0.01" max="0.2" step="0.01" value={sculptBrushStrength} onChange={e => setSculptBrushStrength(Number(e.target.value))} className="w-20 accent-blue-500" title="Brush Strength" />
+                          </div>
+                      )}
+                  </div>
+              )}
+
               {role === 'dm' && (
                   <div className="relative group flex justify-center">
                       <ToolButton 
@@ -2452,8 +2638,10 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                   idsToUpdate.forEach(id => {
                       const t = mapData.tokens[id];
                       if (!t) return;
-                      const terrainY = getTerrainHeight(t.x, t.z);
-                      const tokenBaseOffset = mapData?.tokenElevationOffset ?? -0.04;
+                      const tokenSize = t.size || 1;
+                      const radius = (tokenSize * gridSize) / 2;
+                      const terrainY = getTerrainHeight(t.x, t.z, radius);
+                      const tokenBaseOffset = (isCastMode || !mapData?.heightmapUrl) ? 0.04 : (mapData?.tokenElevationOffset ?? 0.04);
                       updates[`tokens.${id}.elevationOffset`] = 0;
                       updates[`tokens.${id}.y`] = terrainY + tokenBaseOffset;
                   });
@@ -2570,8 +2758,10 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                                 const token = mapData.tokens[id];
                                 if (!token) return;
                                 const newElevation = (token.elevationOffset || 0) - 1;
-                                const terrainY = getTerrainHeight(token.x, token.z);
-                                const tokenBaseOffset = mapData?.tokenElevationOffset ?? -0.04;
+                                const tokenSize = token.size || 1;
+                                const radius = (tokenSize * gridSize) / 2;
+                                const terrainY = getTerrainHeight(token.x, token.z, radius);
+                                const tokenBaseOffset = (isCastMode || !mapData?.heightmapUrl) ? 0.04 : (mapData?.tokenElevationOffset ?? 0.04);
                                 const newY = terrainY + newElevation + tokenBaseOffset;
                                 updates[`tokens.${id}.elevationOffset`] = newElevation;
                                 updates[`tokens.${id}.y`] = newY;
@@ -2591,8 +2781,10 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                                 const token = mapData.tokens[id];
                                 if (!token) return;
                                 const newElevation = (token.elevationOffset || 0) + 1;
-                                const terrainY = getTerrainHeight(token.x, token.z);
-                                const tokenBaseOffset = mapData?.tokenElevationOffset ?? -0.04;
+                                const tokenSize = token.size || 1;
+                                const radius = (tokenSize * gridSize) / 2;
+                                const terrainY = getTerrainHeight(token.x, token.z, radius);
+                                const tokenBaseOffset = (isCastMode || !mapData?.heightmapUrl) ? 0.04 : (mapData?.tokenElevationOffset ?? 0.04);
                                 const newY = terrainY + newElevation + tokenBaseOffset;
                                 updates[`tokens.${id}.elevationOffset`] = newElevation;
                                 updates[`tokens.${id}.y`] = newY;
@@ -2906,12 +3098,35 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                 </div>
                 
                 <div className="border-t border-slate-700 my-1"></div>
-                <button 
+                <button
+                    className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors flex items-center justify-between"
+                    onClick={() => {
+                        const isLocked = mapData.props[propContextMenu.propId]?.isLocked;
+                        updateMap(campaignCode, activeMapId, { [`props.${propContextMenu.propId}.isLocked`]: !isLocked });
+                        setPropContextMenu(null);
+                    }}
+                >
+                    <span className="flex items-center gap-2"><Icon name={mapData.props[propContextMenu.propId]?.isLocked ? "lock" : "unlock"} size={14}/> Lock Prop</span>
+                    <span className="text-xs text-slate-500">{mapData.props[propContextMenu.propId]?.isLocked ? "ON" : "OFF"}</span>
+                </button>
+                <button
+                    className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors flex items-center justify-between"
+                    onClick={() => {
+                        const hasCollision = mapData.props[propContextMenu.propId]?.hasCollision !== false; // Default true
+                        updateMap(campaignCode, activeMapId, { [`props.${propContextMenu.propId}.hasCollision`]: !hasCollision });
+                        setPropContextMenu(null);
+                    }}
+                >
+                    <span className="flex items-center gap-2"><Icon name="box" size={14}/> Collision</span>
+                    <span className="text-xs text-slate-500">{mapData.props[propContextMenu.propId]?.hasCollision !== false ? "ON" : "OFF"}</span>
+                </button>
+
+                <div className="border-t border-slate-700 my-1"></div>
+                <button
                     className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors flex items-center gap-2 text-indigo-400"
                     onClick={() => {
                         const originalProp = mapData.props[propContextMenu.propId];
-                        if (originalProp) {
-                            const newPropId = `prop_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                        if (originalProp) {                            const newPropId = `prop_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
                             const newPropData = {
                                 ...originalProp,
                                 id: newPropId,

@@ -128,7 +128,7 @@ export const MapLights = ({ lights, onContextMenu, role, gridSize = 1, showLight
 
     return (
         <group>
-            {Object.values(lights).map(light => (
+            {Object.values(lights).filter(Boolean).map(light => (
                 <LightNode
                     key={light.id}
                     light={light}

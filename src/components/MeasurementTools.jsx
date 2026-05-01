@@ -658,9 +658,9 @@ export const MeasurementTools = ({ activeTool, getTerrainHeight, gridSize, token
     const lingeringDrawings = Object.entries(measurements || {}).map(([id, m]) => {
         if (!m) return null;
         
-        const handleDelete = () => {
-            if (onDeleteMeasurement) onDeleteMeasurement(id);
-        };
+        const handleDelete = onDeleteMeasurement ? () => {
+            onDeleteMeasurement(id);
+        } : undefined;
 
         if (m.type === 'freehand') {
             return <group key={id}>{renderFreehand(m.points, 1, handleDelete, getTerrainHeight, m.style)}</group>;

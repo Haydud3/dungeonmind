@@ -129,6 +129,81 @@ export const MapProp = ({ propData, isSelected, onSelect, onContextMenu, getTerr
         cancelLongPress();
     };
 
+    const content = (
+        <group ref={groupRef} position={[x, y, z]} rotation={[0, -rotY, 0]}
+               onPointerDown={handlePointerDown}
+               onPointerMove={handlePointerMove}
+               onPointerUp={handlePointerUp}
+               onPointerCancel={handlePointerUp}
+               onPointerLeave={handlePointerUp}
+               onPointerOut={handlePointerUp}
+        >
+            {/* The actual prop mesh */}
+            {is3D ? (
+                <group
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        if (onSelect) onSelect(propData.id, e);
+                    }}
+                    onContextMenu={(e) => {
+                        e.stopPropagation();
+                        if (onContextMenu) onContextMenu(e, propData.id);
+                    }}
+                    onPointerOver={(e) => {
+                        e.stopPropagation();
+                        setHovered(true);
+                    }}
+                    onPointerOut={(e) => {
+                        e.stopPropagation();
+                        setHovered(false);
+                    }}
+                >
+                    <Suspense fallback={null}>
+                        <CharacterModel modelUrl={propData.modelUrl || propData.url} scale={baseScale} />
+                    </Suspense>
+                </group>
+            ) : (
+                resolvedUrl ? (
+                    <Prop2DMesh
+                        url={resolvedUrl}
+                        w={baseScale}
+                        h={baseScale}
+                        isSelected={isSelected}
+                        hovered={hovered}
+                        onSelect={(e) => {
+                            e.stopPropagation();
+                            if (onSelect) onSelect(propData.id, e);
+                        }}
+                        onContextMenu={(e) => {
+                            e.stopPropagation();
+                            if (onContextMenu) onContextMenu(e, propData.id);
+                        }}
+                        onPointerOver={(e) => {
+                            e.stopPropagation();
+                            setHovered(true);
+                        }}
+                        onPointerOut={(e) => {
+                            e.stopPropagation();
+                            setHovered(false);
+                        }}
+                    />
+                ) : null
+            )}
+
+            {/* Selection Highlight Ring */}
+            {isSelected && (
+                <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, -0.01]}>
+                    <ringGeometry args={[baseScale / 2 + 0.1, baseScale / 2 + 0.15, 32]} />
+                    <meshBasicMaterial color="#f59e0b" transparent opacity={0.8} />
+                </mesh>
+            )}
+        </group>
+    );
+
+    if (propData.isLocked) {
+        return content;
+    }
+
     return (
         <DragControls
             ref={dragControlsRef}
@@ -146,7 +221,7 @@ export const MapProp = ({ propData, isSelected, onSelect, onContextMenu, getTerr
                     dragControlsRef.current.position.set(0, 0, 0);
                     dragControlsRef.current.matrix.identity();
                     dragControlsRef.current.updateMatrixWorld();
-                    
+
                     groupRef.current.position.set(worldPos.x, groupRef.current.position.y, worldPos.z);
 
                     updatePropPosition(propData.id, { 
@@ -156,88 +231,19 @@ export const MapProp = ({ propData, isSelected, onSelect, onContextMenu, getTerr
                 }
             }}
         >
-            <group ref={groupRef} position={[x, y, z]} rotation={[0, -rotY, 0]}
-                   onPointerDown={handlePointerDown}
-                   onPointerMove={handlePointerMove}
-                   onPointerUp={handlePointerUp}
-                   onPointerCancel={handlePointerUp}
-                   onPointerLeave={handlePointerUp}
-                   onPointerOut={handlePointerUp}
-            >
-                {/* The actual prop mesh */}
-                {is3D ? (
-                    <group
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            if (onSelect) onSelect(propData.id, e);
-                        }}
-                        onContextMenu={(e) => {
-                            e.stopPropagation();
-                            if (onContextMenu) onContextMenu(e, propData.id);
-                        }}
-                        onPointerOver={(e) => {
-                            e.stopPropagation();
-                            setHovered(true);
-                        }}
-                        onPointerOut={(e) => {
-                            e.stopPropagation();
-                            setHovered(false);
-                        }}
-                    >
-                        <Suspense fallback={null}>
-                            <CharacterModel modelUrl={propData.modelUrl || propData.url} scale={baseScale} />
-                        </Suspense>
-                    </group>
-                ) : (
-                    resolvedUrl ? (
-                        <Prop2DMesh 
-                            url={resolvedUrl} 
-                            w={baseScale} 
-                            h={baseScale} 
-                            isSelected={isSelected} 
-                            hovered={hovered}
-                            onSelect={(e) => {
-                                e.stopPropagation();
-                                if (onSelect) onSelect(propData.id, e);
-                            }}
-                            onContextMenu={(e) => {
-                                e.stopPropagation();
-                                if (onContextMenu) onContextMenu(e, propData.id);
-                            }}
-                            onPointerOver={(e) => {
-                                e.stopPropagation();
-                                setHovered(true);
-                            }}
-                            onPointerOut={(e) => {
-                                e.stopPropagation();
-                                setHovered(false);
-                            }}
-                        />
-                    ) : null
-                )}
-    
-                {/* Selection Highlight Ring */}
-                {isSelected && (
-                    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, -0.01]}>
-                        <ringGeometry args={[baseScale / 2 + 0.1, baseScale / 2 + 0.15, 32]} />
-                        <meshBasicMaterial color="#f59e0b" transparent opacity={0.8} />
-                    </mesh>
-                )}
-            </group>
+            {content}
         </DragControls>
-    );
-};
+    );};
 
 const arePropsEqual = (prev, next) => {
     if (prev.propData === next.propData && prev.isSelected === next.isSelected) return true;
     
     const pp = prev.propData;
     const np = next.propData;
-    
-    if (pp.id !== np.id || pp.x !== np.x || pp.y !== np.y || pp.z !== np.z || pp.scale !== np.scale || pp.rotation !== np.rotation || pp.elevation !== np.elevation || pp.image !== np.image || pp.modelUrl !== np.modelUrl) {
+
+    if (pp.id !== np.id || pp.x !== np.x || pp.y !== np.y || pp.z !== np.z || pp.scale !== np.scale || pp.rotation !== np.rotation || pp.elevation !== np.elevation || pp.image !== np.image || pp.modelUrl !== np.modelUrl || pp.isLocked !== np.isLocked || pp.hasCollision !== np.hasCollision) {
         return false;
-    }
-    
+    }    
     if (prev.isSelected !== next.isSelected || prev.gridSize !== next.gridSize) return false;
     
     return true;

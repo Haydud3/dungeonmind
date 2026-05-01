@@ -2,7 +2,7 @@ import React, { useMemo } from 'react';
 import * as THREE from 'three';
 import { useTexture } from '@react-three/drei';
 
-const DisplacedGridContent = ({ mapData, aspect, resolvedHeightmapUrl, resolvedNormalMapUrl }) => {
+const DisplacedGridContent = ({ mapData, aspect, resolvedHeightmapUrl, resolvedNormalMapUrl, dynamicDisplacementMap }) => {
     const { scale = 20, gridSize = 1, heightScale = 1, gridOffsetX = 0, gridOffsetY = 0, gridColor = '#ffffff', gridThickness = 1 } = mapData;
     const width = scale * aspect;
     const height = scale;
@@ -10,7 +10,8 @@ const DisplacedGridContent = ({ mapData, aspect, resolvedHeightmapUrl, resolvedN
     const isLowPerf = localStorage.getItem('vtt_low_performance') === 'true';
     const subdivisions = isLowPerf ? 128 : 256;
 
-    const heightmapTexture = useTexture(resolvedHeightmapUrl);
+    const safeHeightmapUrl = resolvedHeightmapUrl || "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+    const heightmapTexture = useTexture(safeHeightmapUrl);
     
     const safeNormalMapUrl = resolvedNormalMapUrl || "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="; 
     const normalMapTexture = useTexture(safeNormalMapUrl);
@@ -56,7 +57,7 @@ const DisplacedGridContent = ({ mapData, aspect, resolvedHeightmapUrl, resolvedN
             <planeGeometry args={[width, height, subdivisions, subdivisions]} />
             <meshStandardMaterial
                 map={gridTexture}
-                displacementMap={heightmapTexture}
+                displacementMap={dynamicDisplacementMap || heightmapTexture}
                 displacementScale={heightScale}
                 displacementBias={0.01}
                 normalMap={resolvedNormalMapUrl ? normalMapTexture : null}
@@ -72,7 +73,7 @@ const DisplacedGridContent = ({ mapData, aspect, resolvedHeightmapUrl, resolvedN
     );
 };
 
-export const DisplacedGrid = ({ mapData, aspect, resolvedHeightmapUrl, resolvedNormalMapUrl }) => {
-    if (!resolvedHeightmapUrl) return null;
-    return <DisplacedGridContent mapData={mapData} aspect={aspect} resolvedHeightmapUrl={resolvedHeightmapUrl} resolvedNormalMapUrl={resolvedNormalMapUrl} />;
+export const DisplacedGrid = ({ mapData, aspect, resolvedHeightmapUrl, resolvedNormalMapUrl, dynamicDisplacementMap }) => {
+    if (!resolvedHeightmapUrl && !dynamicDisplacementMap) return null;
+    return <DisplacedGridContent mapData={mapData} aspect={aspect} resolvedHeightmapUrl={resolvedHeightmapUrl} resolvedNormalMapUrl={resolvedNormalMapUrl} dynamicDisplacementMap={dynamicDisplacementMap} />;
 };

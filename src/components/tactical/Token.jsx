@@ -5,6 +5,7 @@ import * as THREE from 'three';
 const CharacterModel = lazy(() => import('../CharacterModel').then(m => ({ default: m.default })));
 import { retrieveChunkedMap } from '../../utils/storageUtils';
 import Icon from '../Icon';
+import { checkLineOfSight } from '../../utils/losUtils';
 const ConditionParticles = lazy(() => import('../3d/ConditionParticles').then(m => ({ default: m.ConditionParticles })));
 
 const CONDITION_ICONS = {
@@ -37,7 +38,7 @@ const TokenImage = ({ imageUrl, size, opacity }) => {
 }
 
 // Interactive 3D Token
-const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gridOffsetY = 0, isSelected, onSelect, onContextMenu, role, getTerrainHeight, isSnapToGrid, isTerrainReady, activeTool, draggedTokenId, setDraggedTokenId, viewMode, showNameplates, selectedTokenIds, groupDragData, onGroupDragEnd, isActiveTurn, canControl, shiftHeldRef, tokenBaseOffset = 0.04, isInteractive = true, orientation = 0 }) => {
+const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gridOffsetY = 0, isSelected, onSelect, onContextMenu, role, getTerrainHeight, isSnapToGrid, isTerrainReady, activeTool, draggedTokenId, setDraggedTokenId, viewMode, showNameplates, selectedTokenIds, groupDragData, onGroupDragEnd, isActiveTurn, canControl, shiftHeldRef, tokenBaseOffset = 0.04, isInteractive = true, orientation = 0, rtdbDragsRef, broadcastDrag, clearBroadcast, myUid, myClientId, baseVisibility, playerVisionSources, wallsArray, combinedLights, fowEnabled, alwaysVisible }) => {
   const meshRef = useRef();
   const visualsRef = useRef();
   const rotationRef = useRef();
@@ -148,14 +149,35 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
 
           let targetPosition = new THREE.Vector3(token.x || 0, token.y || tokenBaseOffset, token.z || 0);
 
+          if (!isWaitingForSync.current && getTerrainHeight) {
+              const localTerrainY = getTerrainHeight(targetPosition.x, targetPosition.z, safeSize / 2);
+              targetPosition.y = localTerrainY + (token.elevationOffset || 0) + tokenBaseOffset;
+          }
+
+          // Check if this token is being dragged by someone else via RTDB
+          if (rtdbDragsRef?.current?.[token.id]) {
+              const rDrag = rtdbDragsRef.current[token.id];
+              if (rDrag.clientId !== myClientId) {
+                  targetPosition.x = rDrag.x;
+                  targetPosition.z = rDrag.z;
+                  if (getTerrainHeight) {
+                      const localTerrainY = getTerrainHeight(targetPosition.x, targetPosition.z, safeSize / 2);
+                      targetPosition.y = localTerrainY + (token.elevationOffset || 0) + tokenBaseOffset;
+                  }
+              }
+          }
+
           if (isWaitingForSync.current) {
               targetPosition.copy(syncTarget.current);
           }
 
           if (isSelected && groupDragData?.current?.activeTokenId && groupDragData.current.activeTokenId !== token.id) {
               targetPosition.add(groupDragData.current.delta);
-              const terrainY = getTerrainHeight ? getTerrainHeight(targetPosition.x, targetPosition.z) : 0;
+              const terrainY = getTerrainHeight ? getTerrainHeight(targetPosition.x, targetPosition.z, safeSize / 2) : 0;
               targetPosition.y = terrainY + (token.elevationOffset || 0) + tokenBaseOffset;
+              if (broadcastDrag) {
+                  broadcastDrag(token.id, targetPosition.x, targetPosition.z);
+              }
           }
 
           const p = meshRef.current.position;
@@ -166,82 +188,154 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
           const targetRotY = isRotatingToken.current ? targetRotationY.current : (token.rotationY || 0);
           const diff = targetRotY - rotationRef.current.rotation.y;
           rotationRef.current.rotation.y += Math.atan2(Math.sin(diff), Math.cos(diff)) * 0.15;
-          return; // Skip the rest of the logic if we're just observing
-      }
-      
-      // If the current user is dragging
-      const worldPos = new THREE.Vector3();
-      meshRef.current.getWorldPosition(worldPos);
-      
-      let displayX = worldPos.x;
-      let displayZ = worldPos.z;
-
-      if (isSnapToGrid) {
-          const tokenSize = token.size || 1;
-          const isEvenSize = Math.round(tokenSize) % 2 === 0;
-          displayX = isEvenSize ? Math.round((worldPos.x - gridOffsetX) / gridSize) * gridSize + gridOffsetX : Math.floor((worldPos.x - gridOffsetX) / gridSize) * gridSize + gridSize / 2 + gridOffsetX;
-          displayZ = isEvenSize ? Math.round((worldPos.z - gridOffsetY) / gridSize) * gridSize + gridOffsetY : Math.floor((worldPos.z - gridOffsetY) / gridSize) * gridSize + gridSize / 2 + gridOffsetY;
-      }
-
-      visualsRef.current.position.x = displayX - worldPos.x;
-      visualsRef.current.position.z = displayZ - worldPos.z;
-
-      if (groupDragData?.current?.activeTokenId === token.id) {
-          groupDragData.current.delta.subVectors(new THREE.Vector3(displayX, 0, displayZ), dragStartPos.current);
-      }
-
-      const terrainY = getTerrainHeight(displayX, displayZ);
-      const targetY = terrainY + (token.elevationOffset || 0) + tokenBaseOffset;
-      
-      meshRef.current.position.y = targetY; // Stick to terrain locally
-      
-      // --- Ruler and Velocity Logic (for local drag only) ---
-      const activeStart = waypoints.length > 0 ? waypoints[waypoints.length - 1] : dragStartPos.current;
-      const end = new THREE.Vector3(displayX, targetY, displayZ);
-      const distSq = end.clone().sub(activeStart).lengthSq();
-      
-      const totalDist = totalWaypointDistRef.current + Math.sqrt(distSq);
-
-      if (totalDist > 0.1) {
-          const activeSegmentDist = Math.sqrt(distSq);
-          if (rulerRef.current) {
-              rulerRef.current.scale.y = activeSegmentDist;
-              rulerRef.current.position.copy(activeStart).lerp(end, 0.5);
-              rulerRef.current.position.y = Math.max(activeStart.y, end.y) + 0.1;
-              const dir = end.clone().sub(activeStart).normalize();
-              if (dir.lengthSq() > 0) {
-                  rulerRef.current.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
-              }
-              rulerRef.current.visible = true;
-          }
-          if (rulerLabelRef.current) {
-              rulerLabelRef.current.position.copy(activeStart).lerp(end, 0.5);
-              rulerLabelRef.current.position.y = Math.max(activeStart.y, end.y) + 0.4;
-              rulerLabelRef.current.visible = true;
-              if (rulerTextRef.current) {
-                  rulerTextRef.current.innerText = `${Math.round((totalDist / gridSize) * 5)} ft`;
-              rulerTextRef.current.style.display = 'block';
-              }
-          }
-
-          const frameDelta = worldPos.clone().sub(previousPos.current);
-          frameDelta.y = 0;
-          velocity.current.add(frameDelta);
-          velocity.current.multiplyScalar(0.8);
-          
-          if (velocity.current.lengthSq() > 0.0001) {
-              targetRotationY.current = Math.atan2(velocity.current.x, velocity.current.z);
-          }
       } else {
-          if (rulerRef.current) rulerRef.current.visible = false;
-          if (rulerLabelRef.current) rulerLabelRef.current.visible = false;
+      
+          // If the current user is dragging
+          const worldPos = new THREE.Vector3();
+          meshRef.current.getWorldPosition(worldPos);
+          
+          let displayX = worldPos.x;
+          let displayZ = worldPos.z;
+    
+          if (isSnapToGrid) {
+              const tokenSize = token.size || 1;
+              const isEvenSize = Math.round(tokenSize) % 2 === 0;
+              displayX = isEvenSize ? Math.round((worldPos.x - gridOffsetX) / gridSize) * gridSize + gridOffsetX : Math.floor((worldPos.x - gridOffsetX) / gridSize) * gridSize + gridSize / 2 + gridOffsetX;
+              displayZ = isEvenSize ? Math.round((worldPos.z - gridOffsetY) / gridSize) * gridSize + gridOffsetY : Math.floor((worldPos.z - gridOffsetY) / gridSize) * gridSize + gridSize / 2 + gridOffsetY;
+          }
+    
+          visualsRef.current.position.x = displayX - worldPos.x;
+          visualsRef.current.position.z = displayZ - worldPos.z;
+    
+          if (groupDragData?.current?.activeTokenId === token.id) {
+              groupDragData.current.delta.subVectors(new THREE.Vector3(displayX, 0, displayZ), dragStartPos.current);
+          }
+    
+          if (rtdbDragsRef && rtdbDragsRef.current) {
+              rtdbDragsRef.current[token.id] = { x: displayX, z: displayZ, clientId: myClientId };
+          }
+    
+          if (broadcastDrag) {
+              broadcastDrag(token.id, displayX, displayZ);
+          }
+    
+          const terrainY = getTerrainHeight(displayX, displayZ, safeSize / 2);
+          const targetY = terrainY + (token.elevationOffset || 0) + tokenBaseOffset;
+          
+          meshRef.current.position.y = targetY; // Stick to terrain locally
+          
+          // --- Ruler and Velocity Logic (for local drag only) ---
+          const activeStart = waypoints.length > 0 ? waypoints[waypoints.length - 1] : dragStartPos.current;
+          const end = new THREE.Vector3(displayX, targetY, displayZ);
+          const distSq = end.clone().sub(activeStart).lengthSq();
+          
+          const totalDist = totalWaypointDistRef.current + Math.sqrt(distSq);
+    
+          if (totalDist > 0.1) {
+              const activeSegmentDist = Math.sqrt(distSq);
+              if (rulerRef.current) {
+                  rulerRef.current.scale.y = activeSegmentDist;
+                  rulerRef.current.position.copy(activeStart).lerp(end, 0.5);
+                  rulerRef.current.position.y = Math.max(activeStart.y, end.y) + 0.1;
+                  const dir = end.clone().sub(activeStart).normalize();
+                  if (dir.lengthSq() > 0) {
+                      rulerRef.current.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+                  }
+                  rulerRef.current.visible = true;
+              }
+              if (rulerLabelRef.current) {
+                  rulerLabelRef.current.position.copy(activeStart).lerp(end, 0.5);
+                  rulerLabelRef.current.position.y = Math.max(activeStart.y, end.y) + 0.4;
+                  rulerLabelRef.current.visible = true;
+                  if (rulerTextRef.current) {
+                      rulerTextRef.current.innerText = `${Math.round((totalDist / gridSize) * 5)} ft`;
+                  rulerTextRef.current.style.display = 'block';
+                  }
+              }
+    
+              const frameDelta = worldPos.clone().sub(previousPos.current);
+              frameDelta.y = 0;
+              velocity.current.add(frameDelta);
+              velocity.current.multiplyScalar(0.8);
+              
+              if (velocity.current.lengthSq() > 0.0001) {
+                  targetRotationY.current = Math.atan2(velocity.current.x, velocity.current.z);
+              }
+          } else {
+              if (rulerRef.current) rulerRef.current.visible = false;
+              if (rulerLabelRef.current) rulerLabelRef.current.visible = false;
+          }
+    
+          previousPos.current.copy(worldPos);
+          
+          // --- Rotation Lerping (for local drag only) ---
+          const diff = targetRotationY.current - rotationRef.current.rotation.y;
+          rotationRef.current.rotation.y += Math.atan2(Math.sin(diff), Math.cos(diff)) * 0.3;
       }
 
-      previousPos.current.copy(worldPos);
-      
-      // --- Rotation Lerping (for local drag only) ---
-      const diff = targetRotationY.current - rotationRef.current.rotation.y;
-      rotationRef.current.rotation.y += Math.atan2(Math.sin(diff), Math.cos(diff)) * 0.3;
+      // --- LIVE VISIBILITY ENGINE ---
+      let currentVisibility = baseVisibility;
+      let hasActiveDrag = false;
+      if (rtdbDragsRef?.current) {
+          hasActiveDrag = Object.keys(rtdbDragsRef.current).length > 0;
+      }
+
+      if (hasActiveDrag && !alwaysVisible) {
+          let isVisible = false;
+          const targetPt = { x: meshRef.current.position.x, z: meshRef.current.position.z };
+          const isTargetInvisible = (token.conditions || []).some(c => (typeof c === 'string' ? c : c.name)?.toLowerCase() === 'invisible');
+
+          const activeVisionSources = (playerVisionSources || []).map(source => {
+              if (rtdbDragsRef.current[source.id]) {
+                  const drag = rtdbDragsRef.current[source.id];
+                  return { ...source, x: drag.x, z: drag.z };
+              }
+              return source;
+          });
+
+          for (const src of activeVisionSources) {
+              const dist = Math.sqrt(Math.pow(src.x - targetPt.x, 2) + Math.pow(src.z - targetPt.z, 2));
+              const truesightRange = src.truesight ?? 0;
+              const blindsightRange = src.blindsight ?? 0;
+              const tremorsenseRange = src.tremorsense ?? 0;
+              const baseVisionRange = src.darkvision ?? src.range;
+
+              const hasLOS = checkLineOfSight(src, targetPt, wallsArray);
+
+              if ((dist <= truesightRange && hasLOS) || 
+                  (dist <= blindsightRange && hasLOS) || 
+                  (dist <= tremorsenseRange && (token.elevationOffset || 0) === 0)) {
+                  isVisible = true; break;
+              }
+
+              if (isTargetInvisible) continue;
+
+              if (dist <= baseVisionRange && hasLOS) {
+                  isVisible = true; break;
+              }
+
+              if (combinedLights && fowEnabled !== false && hasLOS) {
+                  let illuminated = false;
+                  for (const light of Object.values(combinedLights)) {
+                      const lightRange = (light.radius || 15) / 5 * gridSize;
+                      const lightPt = { x: light.position.x, z: light.position.z };
+                      const distToLight = Math.sqrt(Math.pow(lightPt.x - targetPt.x, 2) + Math.pow(lightPt.z - targetPt.z, 2));
+                      
+                      if (distToLight <= lightRange && checkLineOfSight(lightPt, targetPt, wallsArray)) {
+                          illuminated = true; break;
+                      }
+                  }
+                  if (illuminated) {
+                      isVisible = true; break;
+                  }
+              }
+          }
+          currentVisibility = isVisible;
+      } else if (alwaysVisible) {
+          currentVisibility = true;
+      }
+
+      meshRef.current.visible = currentVisibility;
     }
   });
   // END CHANGE
@@ -249,6 +343,30 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
   useEffect(() => {
     targetRotationY.current = token.rotationY || 0;
   }, [token.rotationY]);
+
+  // "Ghosting" effect: Overrides raycasting when a tool is active so clicks pass through to the floor
+  useEffect(() => {
+    if (!meshRef.current) return;
+
+    meshRef.current.traverse((child) => {
+        if (typeof child.raycast === 'function') {
+            // Save the original raycast function if it's not already our ghost function
+            if (child.raycast.name !== 'ghostRaycast' && !child.userData.originalRaycast) {
+                child.userData.originalRaycast = child.raycast;
+            }
+
+            if (activeTool) {
+                child.raycast = function ghostRaycast() {}; // Make invisible to mouse
+            } else {
+                if (child.userData.originalRaycast) {
+                    child.raycast = child.userData.originalRaycast;
+                } else {
+                    delete child.raycast;
+                }
+            }
+        }
+    });
+  });
 
   const isRotatingToken = useRef(false);
   const lastPointerX = useRef(0);
@@ -610,7 +728,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
         </Html>
       </group>
 
-      {canControl && !activeTool && isInteractive ? (
+      {canControl && isInteractive ? (
         <DragControls
           ref={dragControlsRef}
           axisLock="y"
@@ -632,14 +750,16 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
 
             const isGroupDrag = selectedTokenIds && selectedTokenIds.includes(token.id) && selectedTokenIds.length > 1;
 
-            if (isGroupDrag) {
-                if (groupDragData) {
+            if (groupDragData) {
+                if (isGroupDrag) {
                     groupDragData.current.activeTokenId = token.id;
                     groupDragData.current.delta.set(0, 0, 0);
+                } else {
+                    groupDragData.current.activeTokenId = null;
                 }
-            } else {
+            }
+            if (!isGroupDrag) {
                 onSelect(token.id, false);
-                if (groupDragData) groupDragData.current.activeTokenId = null;
             }
           }}
           onDrag={() => {
@@ -653,7 +773,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
             if (controls) controls.enabled = true;
             hasDragged.current = false;
             isLeftDragging.current = false;
-            
+
             if (rulerRef.current) rulerRef.current.visible = false;
             if (rulerLabelRef.current) rulerLabelRef.current.visible = false;
             if (rulerTextRef.current) rulerTextRef.current.style.display = 'none';
@@ -680,7 +800,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
                   groupDragData.current.delta.set(0, 0, 0);
               }
 
-              const terrainY = getTerrainHeight ? getTerrainHeight(snapX, snapZ) : 0;
+              const terrainY = getTerrainHeight ? getTerrainHeight(snapX, snapZ, safeSize / 2) : 0;
               const targetY = terrainY + (token.elevationOffset || 0) + tokenBaseOffset;
               
               meshRef.current.position.set(snapX, targetY, snapZ);
@@ -700,6 +820,24 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
                   console.log("[Token3D] Position update successful!");
                   setSaveStatus('saved');
                   setTimeout(() => setSaveStatus(null), 2000);
+                  
+                  setTimeout(() => {
+                      if (isLeftDragging.current) return; // Prevent clearing if they already started dragging again
+                      if (clearBroadcast) {
+                          clearBroadcast(token.id);
+                          const isGroupDrag = selectedTokenIds && selectedTokenIds.includes(token.id) && selectedTokenIds.length > 1;
+                          if (isGroupDrag && selectedTokenIds) {
+                              selectedTokenIds.forEach(id => clearBroadcast(id));
+                          }
+                      }
+                      if (rtdbDragsRef && rtdbDragsRef.current) {
+                          delete rtdbDragsRef.current[token.id];
+                          const isGroupDrag = selectedTokenIds && selectedTokenIds.includes(token.id) && selectedTokenIds.length > 1;
+                          if (isGroupDrag && selectedTokenIds) {
+                              selectedTokenIds.forEach(id => delete rtdbDragsRef.current[id]);
+                          }
+                      }
+                  }, 750);
               }).catch(err => {
                   console.error("[Token3D] Position update failed:", err);
                   setSaveStatus(null);

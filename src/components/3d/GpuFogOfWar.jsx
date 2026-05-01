@@ -7,7 +7,7 @@ import { checkLineOfSight } from '../../utils/losUtils';
 const MAX_SHADOW_VERTICES = 10000 * 6; // up to 10k wall segments
 const shadowVertexBuffer = new Float32Array(MAX_SHADOW_VERTICES * 3);
 
-export const GpuFogOfWar = ({ enabled, walls, lights, gridSize, mapData, aspect, resolvedHeightmapUrl, playerVisionSources, role, fowWallsEnabled }) => {
+export const GpuFogOfWar = ({ enabled, walls, lights, gridSize, mapData, aspect, resolvedHeightmapUrl, playerVisionSources, role, fowWallsEnabled, rtdbDragsRef }) => {
     const { gl } = useThree();
     const scale = mapData?.scale || 20;
     const width = scale * aspect;
@@ -96,7 +96,12 @@ export const GpuFogOfWar = ({ enabled, walls, lights, gridSize, mapData, aspect,
     }, [walls, lights, playerVisionSources, enabled, fowWallsEnabled, role, gridSize]);
 
     useFrame((state, delta) => {
-        if (!fowCamera || !fowNeedsUpdate.current) return;
+        let hasActiveDrag = false;
+        if (rtdbDragsRef && rtdbDragsRef.current) {
+            hasActiveDrag = Object.keys(rtdbDragsRef.current).length > 0;
+        }
+
+        if (!fowCamera || (!fowNeedsUpdate.current && !hasActiveDrag)) return;
         fowNeedsUpdate.current = false;
 
         const oldColor = gl.getClearColor(new THREE.Color());
@@ -110,7 +115,15 @@ export const GpuFogOfWar = ({ enabled, walls, lights, gridSize, mapData, aspect,
         gl.setClearColor(0xffffff, 1); // 1. Clear to white (fully fogged)
         gl.clear(true, true, true); // color, depth, stencil
 
-        const allSources = [...playerVisionSources];
+        const activeVisionSources = playerVisionSources.map(source => {
+            if (rtdbDragsRef?.current?.[source.id]) {
+                const drag = rtdbDragsRef.current[source.id];
+                return { ...source, x: drag.x, z: drag.z };
+            }
+            return source;
+        });
+
+        const allSources = [...activeVisionSources];
         // Only factor in lights if FOW is actually enabled.
         if (enabled && lights) {
             Object.values(lights).forEach(light => {
@@ -120,7 +133,7 @@ export const GpuFogOfWar = ({ enabled, walls, lights, gridSize, mapData, aspect,
                 let isVisibleToPlayers = role === 'dm';
                 if (!isVisibleToPlayers) { // If not DM, check if any player token can see this light
                     const lightPt = { x: light.position.x, y: light.position.y || 0, z: light.position.z };
-                    for (const src of playerVisionSources) {
+                    for (const src of activeVisionSources) {
                         if (checkLineOfSight(src, lightPt, wallsArray)) {
                             isVisibleToPlayers = true;
                             break;
