@@ -77,34 +77,6 @@ class ErrorBoundary extends React.Component {
     }
 }
 
-// Helper function to generate boundary walls
-const generateBoundaryWalls = (mapScale, mapAspect) => {
-    const mapWidth = mapScale * mapAspect;
-    const mapHeight = mapScale;
-    const walls = {};
-
-    const halfWidth = mapWidth / 2;
-    const halfHeight = mapHeight / 2;
-
-    // Small offset to ensure walls are slightly outside the map plane
-    const wallThicknessOffset = 0.1; 
-
-    // Define corners slightly outside the map to ensure they encompass the entire map plane
-    const topLeft = { x: -halfWidth - wallThicknessOffset, y: 0, z: -halfHeight - wallThicknessOffset };
-    const topRight = { x: halfWidth + wallThicknessOffset, y: 0, z: -halfHeight - wallThicknessOffset };
-    const bottomLeft = { x: -halfWidth - wallThicknessOffset, y: 0, z: halfHeight + wallThicknessOffset };
-    const bottomRight = { x: halfWidth + wallThicknessOffset, y: 0, z: halfHeight + wallThicknessOffset };
-
-    // Generate unique IDs for walls
-    const generateWallId = () => `wall_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
-
-    walls[generateWallId()] = { id: generateWallId(), type: 'wall', points: [topLeft, topRight] }; // Top wall
-    walls[generateWallId()] = { id: generateWallId(), type: 'wall', points: [bottomLeft, bottomRight] }; // Bottom wall
-    walls[generateWallId()] = { id: generateWallId(), type: 'wall', points: [topLeft, bottomLeft] }; // Left wall
-    walls[generateWallId()] = { id: generateWallId(), type: 'wall', points: [topRight, bottomRight] }; // Right wall
-    return walls;
-};
-
 const LoadingOverlay = ({ activeMapId, isMapDataReady }) => {
     const { active, progress, loaded, total } = useProgress();
     const [prevMapId, setPrevMapId] = useState(activeMapId);
@@ -1659,7 +1631,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       const newMapId = doc(collection(db, 'a')).id;
       const newMapData = {
           name: "New Blank Map",
-          walls: generateBoundaryWalls(20, 1), // Add generated walls
+          walls: {},
           gridSize: 1,
           scale: 20,
           environment: 'day',
@@ -1713,13 +1685,12 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                 img.onerror = () => { console.warn("Failed to load image for aspect ratio, defaulting to 1."); resolve(); };
             });
         }
-        const generatedBoundaryWalls = generateBoundaryWalls(defaultScale, currentAspect);
         const newMapData = {
             name: assetName ? assetName.replace(/\.[^/.]+$/, "") : "New Map",
             backgroundUrl: assetUrl,
             heightmapUrl: asset.generatedHeightmapUrl || null,
             normalMapUrl: asset.generatedNormalMapUrl || null,
-            walls: { ...(asset.generatedFeatures?.walls || {}), ...generatedBoundaryWalls }, // Merge generated walls
+            walls: asset.generatedFeatures?.walls || {},
             lights: asset.generatedFeatures?.lights || {},
             gridSize: 1,
             scale: 20,

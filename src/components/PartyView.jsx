@@ -71,9 +71,16 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
         setIsImporting(true);
         setImportStatus("Fetching from D&D Beyond...");
         try {
-            const encodedUrl = encodeURIComponent(`https://character-service.dndbeyond.com/character/v5/character/${refreshCharacter.dndBeyondId}`);
-            const response = await fetch(`https://api.allorigins.win/raw?url=${encodedUrl}`);
-            if (!response.ok) throw new Error(`Fetch failed: ${response.status}`);
+            const dndBeyondRaw = String(refreshCharacter.dndBeyondId);
+            const characterId = dndBeyondRaw.match(/\/characters\/(\d+)/)?.[1] || dndBeyondRaw.match(/^\d+$/)?.[0] || dndBeyondRaw;
+            const encodedUrl = encodeURIComponent(`https://character-service.dndbeyond.com/character/v5/character/${characterId}`);
+            let response = await fetch(`https://corsproxy.io/?url=${encodedUrl}`).catch(() => null);
+
+            if (!response || !response.ok) {
+                response = await fetch(`https://api.allorigins.win/raw?url=${encodedUrl}`).catch(() => null);
+            }
+
+            if (!response || !response.ok) throw new Error(`Fetch failed. D&D Beyond's security might be blocking the request.`);
             const jsonData = await response.json();
             const parsedData = parseDndBeyondJson(jsonData);
             const enrichedChar = await enrichCharacter(parsedData);
