@@ -37,6 +37,38 @@ const TokenImage = ({ imageUrl, size, opacity }) => {
     )
 }
 
+const DragLine = React.forwardRef((props, ref) => {
+  const [lineState, setLineState] = useState({ p1: [0,0,0], p2: [0,0,0], visible: false });
+  
+  React.useImperativeHandle(ref, () => ({
+    update: (p1, p2) => {
+      setLineState(prev => {
+          const dx = prev.p2[0] - p2.x;
+          const dz = prev.p2[2] - p2.z;
+          if (prev.visible && dx*dx + dz*dz < 0.0001) return prev;
+          return { p1: [p1.x, p1.y, p1.z], p2: [p2.x, p2.y, p2.z], visible: true };
+      });
+    },
+    hide: () => {
+      setLineState(prev => prev.visible ? { ...prev, visible: false } : prev);
+    }
+  }));
+
+  if (!lineState.visible) return null;
+
+  return (
+      <Line 
+        points={[lineState.p1, lineState.p2]}
+        color="#f59e0b" 
+        lineWidth={3} 
+        depthTest={false} 
+        transparent 
+        opacity={0.6} 
+        renderOrder={100}
+      />
+  );
+});
+
 // Interactive 3D Token
 const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gridOffsetY = 0, isSelected, onSelect, onContextMenu, role, getTerrainHeight, isSnapToGrid, isTerrainReady, activeTool, draggedTokenId, setDraggedTokenId, viewMode, showNameplates, selectedTokenIds, groupDragData, onGroupDragEnd, isActiveTurn, canControl, shiftHeldRef, tokenBaseOffset = 0.04, isInteractive = true, orientation = 0, rtdbDragsRef, broadcastDrag, clearBroadcast, myUid, myClientId, baseVisibility, playerVisionSources, wallsArray, combinedLights, fowEnabled, alwaysVisible }) => {
   const meshRef = useRef();
@@ -106,6 +138,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
   const isWaitingForSync = useRef(false);
   const syncTarget = useRef(new THREE.Vector3());
   const hasInitialized = useRef(false);
+  const isTopHitRef = useRef(false);
 
   // Calculate the exact starting position so the token doesn't spawn at [0,0,0] for one frame
   const initialPosition = useMemo(() => {
@@ -156,7 +189,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
 
       // If another user is dragging, smoothly move the token
       if (!isLeftDragging.current) {
-          if (rulerRef.current) rulerRef.current.visible = false;
+          if (rulerRef.current && rulerRef.current.hide) rulerRef.current.hide();
           if (rulerLabelRef.current) rulerLabelRef.current.visible = false;
           if (rulerTextRef.current) rulerTextRef.current.style.display = 'none';
 
@@ -254,15 +287,8 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
     
           if (totalDist > 0.1) {
               const activeSegmentDist = Math.sqrt(distSq);
-              if (rulerRef.current) {
-                  rulerRef.current.scale.y = activeSegmentDist;
-                  rulerRef.current.position.copy(activeStart).lerp(end, 0.5);
-                  rulerRef.current.position.y = Math.max(activeStart.y, end.y) + 0.1;
-                  const dir = end.clone().sub(activeStart).normalize();
-                  if (dir.lengthSq() > 0) {
-                      rulerRef.current.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
-                  }
-                  rulerRef.current.visible = true;
+              if (rulerRef.current && rulerRef.current.update) {
+                  rulerRef.current.update(activeStart, end);
               }
               if (rulerLabelRef.current) {
                   rulerLabelRef.current.position.copy(activeStart).lerp(end, 0.5);
@@ -283,7 +309,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
                   targetRotationY.current = Math.atan2(velocity.current.x, velocity.current.z);
               }
           } else {
-              if (rulerRef.current) rulerRef.current.visible = false;
+              if (rulerRef.current && rulerRef.current.hide) rulerRef.current.hide();
               if (rulerLabelRef.current) rulerLabelRef.current.visible = false;
           }
           
@@ -544,14 +570,73 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
       ref={meshRef} 
       position={initialPosition}
       scale={[scale, scale, scale]}
-      onPointerDown={(!isInteractive || activeTool) ? undefined : handlePointerDown}
+      onPointerDown={(!isInteractive || activeTool) ? undefined : (e) => {
+        isTopHitRef.current = false;
+        if (isTerrainReady) {
+            const firstHit = e.intersections[0];
+            let isMyHit = false;
+            if (firstHit) {
+                let obj = firstHit.object;
+                while (obj) {
+                    if (obj === meshRef.current) {
+                        isMyHit = true;
+                        break;
+                    }
+                    obj = obj.parent;
+                }
+            }
+            if (!isMyHit) {
+                console.log(`[Token ${token.name}] Swallowing pointer down! firstHit is someone else.`);
+                e.stopPropagation();
+                return;
+            }
+            isTopHitRef.current = true;
+        }
+        console.log(`[Token ${token.name}] Accepted pointer down!`);
+        handlePointerDown(e);
+      }}
       onPointerMove={(!isInteractive || activeTool) ? undefined : handlePointerMove}
       onPointerUp={(!isInteractive || activeTool) ? undefined : handlePointerUp}
-      onPointerOver={(!isInteractive || activeTool) ? undefined : (e) => { e.stopPropagation(); if (isTerrainReady) setHover(true); }}
+      onPointerOver={(!isInteractive || activeTool) ? undefined : (e) => { 
+        e.stopPropagation(); 
+        if (isTerrainReady) {
+            const firstHit = e.intersections[0];
+            let isMyHit = false;
+            if (firstHit) {
+                let obj = firstHit.object;
+                while (obj) {
+                    if (obj === meshRef.current) {
+                        isMyHit = true;
+                        break;
+                    }
+                    obj = obj.parent;
+                }
+            }
+            if (isMyHit) setHover(true);
+        }
+      }}
       onPointerOut={(!isInteractive || activeTool) ? undefined : (e) => { cancelLongPress(); if (isTerrainReady) setHover(false); }}
       onPointerCancel={(!isInteractive || activeTool) ? undefined : cancelLongPress}
       onPointerLeave={(!isInteractive || activeTool) ? undefined : cancelLongPress}
-      onClick={(!isInteractive || activeTool) ? undefined : (e) => { e.stopPropagation(); if (e.button === 2) return; if (isTerrainReady) onSelect(token.id, e.shiftKey); }}
+      onClick={(!isInteractive || activeTool) ? undefined : (e) => { 
+        e.stopPropagation(); 
+        if (e.button === 2) return; 
+        if (isTerrainReady) {
+            const firstHit = e.intersections[0];
+            let isMyHit = false;
+            if (firstHit) {
+                let obj = firstHit.object;
+                while (obj) {
+                    if (obj === meshRef.current) {
+                        isMyHit = true;
+                        break;
+                    }
+                    obj = obj.parent;
+                }
+            }
+            if (isMyHit) onSelect(token.id, e.shiftKey);
+        }
+      }}
       onContextMenu={(!isInteractive || activeTool) ? undefined : (e) => {
         e.stopPropagation();
         if (e.nativeEvent) e.nativeEvent.preventDefault();
@@ -752,10 +837,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
           );
       })}
 
-      <mesh ref={rulerRef} visible={false} raycast={() => null}>
-        <cylinderGeometry args={[0.08, 0.08, 1, 8]} />
-        <meshBasicMaterial color="#f59e0b" transparent opacity={0.6} depthTest={false} />
-      </mesh>
+      <DragLine ref={rulerRef} />
       
       <group ref={rulerLabelRef} visible={false}>
         <Html center className="pointer-events-none select-none z-50" distanceFactor={8}>
@@ -773,8 +855,13 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
         <DragControls
           ref={dragControlsRef}
           axisLock="y"
-          enabled={isTerrainReady && !activeTool && (draggedTokenId === null || draggedTokenId === token.id)}
-          onDragStart={() => {
+          enabled={isTerrainReady && !activeTool && (draggedTokenId === token.id || (draggedTokenId === null && hovered))}
+          onDragStart={(e) => {
+            if (!isTopHitRef.current && draggedTokenId !== token.id) {
+                console.log(`[Token ${token.name}] Aborting drag: not top hit.`);
+                return; // Not the top hit, abort drag.
+            }
+            console.log(`[Token ${token.name}] onDragStart Fired!`);
             if (controls) controls.enabled = false;
             isLeftDragging.current = true;
             hasDragged.current = true;
@@ -789,7 +876,17 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
             setWaypoints([]);
             totalWaypointDistRef.current = 0;
 
-            const isGroupDrag = selectedTokenIds && selectedTokenIds.includes(token.id) && selectedTokenIds.length > 1;
+            // If we are starting a drag on a token that is NOT selected, 
+            // OR if we click-drag a token without shift and it was part of a group, 
+            // we should isolate the selection to just this token.
+            const isShiftHeld = shiftHeldRef?.current;
+            let isGroupDrag = selectedTokenIds && selectedTokenIds.includes(token.id) && selectedTokenIds.length > 1;
+
+            if (!isShiftHeld && isGroupDrag && !e?.event?.shiftKey) {
+                // User started dragging one token of a selected stack without holding shift.
+                // We should break it out of the group and drag it alone.
+                isGroupDrag = false;
+            }
 
             if (groupDragData) {
                 if (isGroupDrag) {
@@ -799,6 +896,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
                     groupDragData.current.activeTokenId = null;
                 }
             }
+            
             if (!isGroupDrag) {
                 onSelect(token.id, false);
             }
@@ -815,7 +913,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
             hasDragged.current = false;
             isLeftDragging.current = false;
 
-            if (rulerRef.current) rulerRef.current.visible = false;
+            if (rulerRef.current && rulerRef.current.hide) rulerRef.current.hide();
             if (rulerLabelRef.current) rulerLabelRef.current.visible = false;
             if (rulerTextRef.current) rulerTextRef.current.style.display = 'none';
             setWaypoints([]);
