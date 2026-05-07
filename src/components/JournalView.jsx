@@ -6,7 +6,7 @@ import Icon from './Icon';
 // --- END OF CHANGES ---
 
 const JournalView = ({ role, userId, aiHelper, onClose }) => {
-    const { campaign, journal_pages, saveJournalPage, deleteJournalPage } = useNewCampaign();
+    const { campaign, journal_pages, saveJournalPage, deleteJournalPage, gameParams } = useNewCampaign();
     const data = { ...campaign, journal_pages };
     const [activePageId, setActivePageId] = useState(null);
 
@@ -62,6 +62,7 @@ const JournalView = ({ role, userId, aiHelper, onClose }) => {
                 aiHelper={aiHelper}
                 players={data.players || []} 
                 userId={userId}
+                campaignCode={gameParams?.code}
 // --- 2 lines after changes ---
             />
         );

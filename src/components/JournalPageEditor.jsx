@@ -1,41 +1,55 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import ReactQuill, { Quill } from 'react-quill-new';
+import QuillCursors from 'quill-cursors';
 import 'react-quill-new/dist/quill.snow.css';
 import 'quill-mention/dist/quill.mention.css';
-
-
 
 import { useToast } from './ToastProvider'; 
 import Icon from './Icon';
 import { resolveChunkedHtml, storeChunkedMap } from '../utils/storageUtils';
 import { compressImage } from '../utils/imageCompressor';
+import { rtdb } from '../firebase';
+import { ref as dbRef, onValue, set, onDisconnect, remove } from 'firebase/database';
+
+Quill.register('modules/cursors', QuillCursors);
+
+const stringToColor = (str) => {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
+    const c = (hash & 0x00FFFFFF).toString(16).toUpperCase();
+    return '#' + '00000'.substring(0, 6 - c.length) + c;
+};
 
 const JournalPageEditor = ({ 
     page, onSave, onDelete, onBack, aiHelper,
-    isDm, players = [], npcs = [], locations = [], onEntitySelect 
+    isDm, players = [], npcs = [], locations = [], onEntitySelect, userId, campaignCode
 }) => {
     const [localContent, setLocalContent] = useState(page.content || "");
     const [resolvedContent, setResolvedContent] = useState("");
+    const [isEditing, setIsEditing] = useState(false);
     const [syncStatus, setSyncStatus] = useState("idle");
     const [aiWorking, setAiWorking] = useState(false);
-    const [toolbarExpanded, setToolbarExpanded] = useState(false); // NEW: Toolbar state
+    const [toolbarExpanded, setToolbarExpanded] = useState(false);
     const toast = useToast();
     const quillRef = useRef(null);
     const debounceRef = useRef(null);
+    const lastLoadedPageRef = useRef(null);
     
     const [showPermMenu, setShowPermMenu] = useState(false);
     const permMenuRef = useRef(null);
     
-    const [zoom, setZoom] = useState(1); // 1 = 100%
+    const [zoom, setZoom] = useState(1);
+
+    const me = useMemo(() => players.find(p => String(p.ownerId) === String(userId)) || { name: 'Player' }, [players, userId]);
+    const myColor = useMemo(() => stringToColor(userId || 'anon'), [userId]);
 
     const adjustZoom = (delta) => {
         setZoom(prev => {
             const newZoom = Math.max(0.5, Math.min(2.0, prev + delta));
-            return parseFloat(newZoom.toFixed(1)); // Avoid floating point weirdness
+            return parseFloat(newZoom.toFixed(1));
         });
     };
     
-    // Close menu when clicking outside
     useEffect(() => {
         const handleClickOutside = (event) => {
             if (permMenuRef.current && !permMenuRef.current.contains(event.target)) {
@@ -57,59 +71,89 @@ const JournalPageEditor = ({
         onSave(page.id, { ...page, visibleTo: newList });
     };
 
-    // We define a Custom Toolbar ID to link the HTML container to Quill
     const TOOLBAR_ID = "journal-toolbar-container";
 
-    const lastLoadedPageRef = useRef(null);
-
+    // Load initial content or live updates when NOT editing
     useEffect(() => {
         const resolve = async () => {
-            // Only resolve if we have switched to a new page ID
-            if (page.id !== lastLoadedPageRef.current) {
-                lastLoadedPageRef.current = page.id; // Mark as loaded
-                
+            if (page.content !== lastLoadedPageRef.current?.content || page.id !== lastLoadedPageRef.current?.id) {
+                lastLoadedPageRef.current = { id: page.id, content: page.content };
+                // Update resolved content, which feeds the read-only view seamlessly
                 if (page.content) {
                     const html = await resolveChunkedHtml(page.content);
                     setResolvedContent(html);
+                    if (!isEditing) setLocalContent(html); // Keep local in sync if we aren't editing
                 } else {
                     setResolvedContent("");
+                    if (!isEditing) setLocalContent("");
                 }
             }
         };
         resolve();
-    }, [page.id]); // <--- CHANGED: Removed page.content dependency
-    
-    useEffect(() => { 
-        if (quillRef.current && (resolvedContent || resolvedContent === "")) {
-            try {
-                const editor = quillRef.current.getEditor();
-                if (editor) {
-                    // 1. Clear existing content first. This prevents the new content from being 
-                    //    appended to the old content (which caused the "duplicate at bottom" bug).
-                    editor.setText(''); 
-                    
-                    // 2. Paste the resolved HTML
-                    editor.clipboard.dangerouslyPasteHTML(0, resolvedContent, 'silent');
+    }, [page.id, page.content, isEditing]);
 
-                    // 3. REMOVED: editor.setSelection(...)
-                    // We removed the setSelection call. This ensures the keyboard does NOT 
-                    // open automatically. The user must now tap the text to start typing.
-                    
-                    // We must clear the history stack immediately after loading the page content.
-                    // This tells Quill: "This content is the starting point. Do not undo past here."
-                    editor.history.clear(); 
-                }
-            } catch (e) {
-                console.warn("Editor not ready yet, skipping initial load paste.");
+    // Live Cursor Tracking
+    useEffect(() => {
+        if (!campaignCode || !userId || !page.id || !quillRef.current) return;
+
+        const editor = quillRef.current.getEditor();
+        const cursorsModule = editor.getModule('cursors');
+        if (!cursorsModule) return;
+
+        const cursorsRef = dbRef(rtdb, `journal_cursors/${campaignCode}/${page.id}`);
+        const myCursorRef = dbRef(rtdb, `journal_cursors/${campaignCode}/${page.id}/${userId}`);
+
+        const onSelectionChange = (range) => {
+            if (range) {
+                set(myCursorRef, { range, name: me.name, color: myColor, timestamp: Date.now() });
+            } else {
+                remove(myCursorRef).catch(() => {});
             }
-        }
-    }, [resolvedContent]);
+        };
+        
+        // Listen to cursor movement
+        editor.on('selection-change', onSelectionChange);
+        
+        // Ensure cleanup if disconnected abruptly
+        onDisconnect(myCursorRef).remove();
+
+        const unsub = onValue(cursorsRef, (snapshot) => {
+            const val = snapshot.val() || {};
+            const activeIds = Object.keys(val);
+
+            Object.entries(val).forEach(([uid, data]) => {
+                if (uid === userId) return;
+                
+                try {
+                    const existingCursors = cursorsModule.cursors();
+                    if (!existingCursors.some(c => c.id === uid)) {
+                        cursorsModule.createCursor(uid, data.name, data.color);
+                    }
+                    if (data.range) {
+                        cursorsModule.moveCursor(uid, data.range);
+                    }
+                } catch (err) {
+                    console.warn("Cursor sync warning:", err);
+                }
+            });
+
+            const existingCursors = cursorsModule.cursors();
+            existingCursors.forEach(cursor => {
+                if (!activeIds.includes(cursor.id) && cursor.id !== userId) {
+                    cursorsModule.removeCursor(cursor.id);
+                }
+            });
+        });
+
+        return () => {
+            editor.off('selection-change', onSelectionChange);
+            unsub();
+            remove(myCursorRef).catch(() => {});
+        };
+    }, [campaignCode, userId, page.id, me.name, myColor]);
 
     const handleChange = (content, delta, source, editor) => {
-        // Only save if the change came from the 'user' (typing)
-        if (source !== 'user') return; 
-        
-        // Safety check (though usually editor is passed as arg)
+        if (source !== 'user' || !isEditing) return; 
         if (!editor) return;
 
         setLocalContent(content); 
@@ -130,10 +174,8 @@ const JournalPageEditor = ({
         onSave(page.id, { ...page, isPublic: !page.isPublic }); 
     };
 
-    // --- CUSTOM HANDLERS FOR QUILL TOOLBAR ---
-
     const handleImageUpload = () => {
-        if (!quillRef.current) return;
+        if (!quillRef.current || !isEditing) return;
         const editor = quillRef.current.getEditor();
         const input = document.createElement('input');
         input.setAttribute('type', 'file');
@@ -160,6 +202,7 @@ const JournalPageEditor = ({
     };
 
     const insertDynamicTable = () => {
+        if (!isEditing) return;
         const rows = prompt("How many rows?", "3");
         const cols = prompt("How many columns?", "3");
         if (!rows || !cols) return;
@@ -181,6 +224,7 @@ const JournalPageEditor = ({
     };
 
     const deleteRow = () => {
+        if (!isEditing) return;
         const quill = quillRef.current.getEditor();
         const range = quill.getSelection(true);
         if (!range) return;
@@ -193,13 +237,14 @@ const JournalPageEditor = ({
 
         if (current && current.tagName === 'TR') {
             current.remove();
-            handleChange(quill.root.innerHTML); // Force save
+            handleChange(quill.root.innerHTML, null, 'user', quill);
         } else {
             toast("Cursor must be inside a table row to delete it.", "warning");
         }
     };
 
     const deleteCol = () => {
+        if (!isEditing) return;
         const quill = quillRef.current.getEditor();
         const range = quill.getSelection(true);
         if (!range) return;
@@ -213,31 +258,28 @@ const JournalPageEditor = ({
         if (td && td.tagName === 'TD') {
             const tr = td.parentNode;
             const tbody = tr.parentNode;
-            // Calculate column index
             const colIndex = Array.from(tr.children).indexOf(td);
             
-            // Remove that cell from EVERY row
             const rows = tbody.querySelectorAll('tr');
             rows.forEach(row => {
                 if (row.children[colIndex]) row.children[colIndex].remove();
             });
-            handleChange(quill.root.innerHTML);
+            handleChange(quill.root.innerHTML, null, 'user', quill);
         } else {
             toast("Cursor must be inside a table cell to delete the column.", "warning");
         }
     };
 
     const resizeImage = () => {
+        if (!isEditing) return;
         const quill = quillRef.current.getEditor();
         const range = quill.getSelection(true);
         if (!range) return;
 
-        // Check if we clicked ON an image or cursor is near one
         const [leaf] = quill.getLeaf(range.index);
         let img = null;
 
         if (leaf.domNode.tagName === 'IMG') img = leaf.domNode;
-        // Sometimes selection is just after the image
         else if (leaf.domNode.previousSibling && leaf.domNode.previousSibling.tagName === 'IMG') {
             img = leaf.domNode.previousSibling;
         }
@@ -247,7 +289,7 @@ const JournalPageEditor = ({
             const newWidth = prompt("Enter new width (e.g., '50%', '300px'):", currentWidth);
             if (newWidth) {
                 img.style.width = newWidth;
-                handleChange(quill.root.innerHTML);
+                handleChange(quill.root.innerHTML, null, 'user', quill);
             }
         } else {
             toast("Please select an image to resize.", "warning");
@@ -255,17 +297,12 @@ const JournalPageEditor = ({
     };
 
     const handleAiSpark = async () => {
-        if(aiWorking || !aiHelper) return;
+        if(aiWorking || !aiHelper || !isEditing) return;
         setAiWorking(true);
-        // ... (Keep existing logic) ...
+        // Provide logic if any AI spark integration exists
         setAiWorking(false);
     };
 
-    // We store dynamic data in a Ref so we can access the LATEST data in the closure
-    // without forcing the 'modules' object to regenerate (which resets Quill history).
-    // We hold the latest data in a Ref. This allows us to use it in the 'mention' module
-    // WITHOUT adding it to the useMemo dependencies. This prevents the modules from
-    // regenerating on every render, which preserves the Undo History.
     const dataRef = useRef({ players, npcs, locations, isDm, onEntitySelect });
 
     useEffect(() => {
@@ -284,6 +321,7 @@ const JournalPageEditor = ({
                 'aiSpark': handleAiSpark
             }
         },
+        cursors: true,
         history: {
             delay: 1000,
             maxStack: 500,
@@ -293,7 +331,6 @@ const JournalPageEditor = ({
             allowedChars: /^[A-Za-z\sÅÄÖåäö]*$/,
             mentionDenotationChars: ["@"],
             source: (searchTerm, renderList, mentionChar) => {
-                // READ FROM REF (Stable)
                 const { players, npcs, locations, isDm } = dataRef.current;
                 
                 const values = [
@@ -310,7 +347,6 @@ const JournalPageEditor = ({
             renderItem: (item) => `<span><i class="vtt-mention-icon" data-icon="${item.icon}"></i>${item.value}</span>`,
             onSelect: (item, insertItem) => { 
                 insertItem(item); 
-                // READ FROM REF (Stable)
                 if (dataRef.current.onEntitySelect) dataRef.current.onEntitySelect(item.type, item.id); 
             }
         }
@@ -344,9 +380,7 @@ const JournalPageEditor = ({
                         <Icon name="arrow-left" size={24} />
                     </button>
 
-                    {/* Center: THE DETACHED TOOLBAR (Quill fills this div) */}
-                    <div id={TOOLBAR_ID} className={`flex-1 ql-toolbar ql-snow px-2 ${toolbarExpanded ? 'flex-wrap' : 'collapsed'}`}>
-                        {/* Quill will inject all these buttons. Flex-wrap will handle layout. */}
+                    <div id={TOOLBAR_ID} className={`flex-1 ql-toolbar ql-snow px-2 ${toolbarExpanded ? 'flex-wrap' : 'collapsed'} ${!isEditing ? 'opacity-30 pointer-events-none' : ''}`}>
                         <span className="ql-formats">
                             <select className="ql-header" defaultValue="">
                                 <option value="1"></option>
@@ -379,9 +413,15 @@ const JournalPageEditor = ({
                         </span>
                     </div>
 
-                    {/* Right: Actions */}
                     <div className="flex items-center gap-1 md:gap-3 ml-2 shrink-0">
-                        {/* NEW: Expand Toolbar Button */}
+                        <button 
+                            onClick={() => setIsEditing(!isEditing)} 
+                            className={`px-3 py-1.5 text-xs font-bold rounded flex items-center gap-2 transition-colors ${isEditing ? 'bg-amber-600 hover:bg-amber-500 text-white' : 'bg-slate-700 hover:bg-slate-600 text-slate-200'}`}
+                            title={isEditing ? "Stop Editing" : "Edit Page"}
+                        >
+                            {isEditing ? <><Icon name="eye" size={14}/> <span>Viewing</span></> : <><Icon name="pencil" size={14}/> <span>Edit</span></>}
+                        </button>
+
                         <button onClick={() => setToolbarExpanded(!toolbarExpanded)} className="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors">
                             <Icon name={toolbarExpanded ? "chevron-up" : "more-horizontal"} size={20} />
                         </button>
@@ -396,7 +436,6 @@ const JournalPageEditor = ({
                             </button>
                         </div>
 
-                        {/* Sync Status - Hide on small mobile to save space */}
                         {(() => {
                             const statusMap = {
                                 idle: { icon: 'cloud-off', color: 'text-slate-500' },
@@ -451,34 +490,32 @@ const JournalPageEditor = ({
                 </div>
             </div>
 
-            {/* THE VIEWPORT: This is where the paper floats */}
             <div className="desk-viewport custom-scroll">
                 <div 
                     className="journal-sheet transition-transform duration-200 ease-out"
                     style={{ 
                         transform: `scale(${zoom})`, 
                         transformOrigin: 'top center',
-                        marginTop: '2rem' // Ensure margin scales or stays consistent
+                        marginTop: '2rem'
                     }}
                 >
-                    {/* The Title sits ON the paper now */}
                     <input 
                         type="text"
                         value={page.title}
                         onChange={(e) => onSave(page.id, { ...page, title: e.target.value })}
                         placeholder="SESSION TITLE"
                         className="journal-title-input"
+                        readOnly={!isEditing}
                     />
                     
-                    {/* We rely entirely on the useEffects above to load data. */}
                     <ReactQuill 
                         ref={quillRef} 
                         theme="snow"
-                        value={localContent} 
-                        defaultValue="" 
+                        value={localContent}
+                        readOnly={!isEditing}
                         onChange={handleChange} 
                         modules={modules} 
-                        className="flex-1" 
+                        className={`flex-1 ${!isEditing ? 'journal-readonly' : ''}`}
                     />
                 </div>
             </div>
