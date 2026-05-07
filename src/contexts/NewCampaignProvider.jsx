@@ -66,10 +66,39 @@ export const NewCampaignProvider = ({ children }) => {
 
         const campaignRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code);
 
+        let localCampaign = null;
+        let localCharacters = [];
+
+        const updateMergedCampaign = () => {
+            if (localCampaign) {
+                const combinedPlayers = [...(localCampaign.players || [])];
+                const combinedNpcs = [...(localCampaign.npcs || [])];
+                
+                localCharacters.forEach(char => {
+                    if (char.type === 'player') {
+                        const idx = combinedPlayers.findIndex(p => String(p.id) === String(char.id));
+                        if (idx !== -1) combinedPlayers[idx] = char;
+                        else combinedPlayers.push(char);
+                    } else if (char.type === 'npc') {
+                        const idx = combinedNpcs.findIndex(n => String(n.id) === String(char.id));
+                        if (idx !== -1) combinedNpcs[idx] = char;
+                        else combinedNpcs.push(char);
+                    }
+                });
+
+                setCampaign({
+                    ...localCampaign,
+                    players: combinedPlayers,
+                    npcs: combinedNpcs
+                });
+            }
+        };
+
         const unsubCampaign = onSnapshot(campaignRef, (doc) => {
             if (doc.exists()) {
-                setCampaign(doc.data());
+                localCampaign = doc.data();
                 setError(null);
+                updateMergedCampaign();
             } else {
                 setError("Campaign not found.");
                 setCampaign(null);
@@ -78,6 +107,12 @@ export const NewCampaignProvider = ({ children }) => {
             console.error("Error listening to campaign:", err);
             setError("Failed to listen to campaign updates.");
             setCampaign(null);
+        });
+
+        const charsRef = collection(campaignRef, 'characters');
+        const unsubChars = onSnapshot(charsRef, (snap) => {
+            localCharacters = snap.docs.map(d => ({id: d.id, ...d.data()}));
+            updateMergedCampaign();
         });
 
         const chatRef = query(collection(campaignRef, 'chat'), orderBy('timestamp', 'asc'));
@@ -103,6 +138,7 @@ export const NewCampaignProvider = ({ children }) => {
 
         return () => {
             unsubCampaign();
+            unsubChars();
             unsubChat();
             unsubJournal();
             unsubLore();
@@ -116,9 +152,66 @@ export const NewCampaignProvider = ({ children }) => {
         }
         const campaignRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code);
         try {
-            // FIX: Wrap 'updates' in sanitize()
-            await setDoc(campaignRef, sanitize(updates), { merge: true });
-            console.log("Successfully Forged/Updated Campaign:", gameParams.code);
+            const updatesCopy = { ...updates };
+            let hasBatch = false;
+
+            if (updatesCopy.players || updatesCopy.npcs) {
+                const batch = writeBatch(fb.db);
+                const charCollection = collection(campaignRef, 'characters');
+                
+                const currentCharsSnap = await getDocs(charCollection);
+                const currentChars = currentCharsSnap.docs.map(d => ({ id: d.id, type: d.data().type }));
+
+                if (updatesCopy.players) {
+                    updatesCopy.players.forEach(p => {
+                        const charRef = doc(charCollection, String(p.id));
+                        batch.set(charRef, sanitize({ ...p, type: 'player' }), { merge: true });
+                        hasBatch = true;
+                    });
+                    
+                    const incomingIds = updatesCopy.players.map(p => String(p.id));
+                    currentChars.filter(c => c.type === 'player').forEach(c => {
+                        if (!incomingIds.includes(String(c.id))) {
+                            batch.delete(doc(charCollection, String(c.id)));
+                            hasBatch = true;
+                        }
+                    });
+                    updatesCopy.players = [];
+                }
+
+                if (updatesCopy.npcs) {
+                    updatesCopy.npcs.forEach(n => {
+                        const charRef = doc(charCollection, String(n.id));
+                        batch.set(charRef, sanitize({ ...n, type: 'npc' }), { merge: true });
+                        hasBatch = true;
+                    });
+                    
+                    const incomingIds = updatesCopy.npcs.map(n => String(n.id));
+                    currentChars.filter(c => c.type === 'npc').forEach(c => {
+                        if (!incomingIds.includes(String(c.id))) {
+                            batch.delete(doc(charCollection, String(c.id)));
+                            hasBatch = true;
+                        }
+                    });
+                    updatesCopy.npcs = [];
+                }
+
+                if (Object.keys(updatesCopy).length > 0) {
+                    batch.set(campaignRef, sanitize(updatesCopy), { merge: true });
+                    hasBatch = true;
+                }
+
+                if (hasBatch) {
+                    await batch.commit();
+                    console.log("Successfully Forged/Updated Campaign with characters subcollection:", gameParams.code);
+                    return;
+                }
+            }
+
+            if (Object.keys(updatesCopy).length > 0) {
+                await setDoc(campaignRef, sanitize(updatesCopy), { merge: true });
+                console.log("Successfully Forged/Updated Campaign:", gameParams.code);
+            }
         } catch (err) {
             console.error("FIREBASE ERROR:", err);
             alert("Database Error: Check your Firestore Rules in the Firebase Console!");
