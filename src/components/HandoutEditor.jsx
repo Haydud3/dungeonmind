@@ -67,6 +67,32 @@ const HandoutEditor = ({ onCancel, onLocalReveal }) => {
         resolve();
     }, [imageUrl, content]);
 
+    const resizeImage = () => {
+        const quill = quillRef.current?.getEditor();
+        if (!quill) return;
+        const range = quill.getSelection(true);
+        if (!range) return;
+
+        const [leaf] = quill.getLeaf(range.index);
+        let img = null;
+
+        if (leaf.domNode.tagName === 'IMG') img = leaf.domNode;
+        else if (leaf.domNode.previousSibling && leaf.domNode.previousSibling.tagName === 'IMG') {
+            img = leaf.domNode.previousSibling;
+        }
+
+        if (img) {
+            const currentWidth = img.style.width || "100%";
+            const newWidth = prompt("Enter new width (e.g., '50%', '300px'):", currentWidth);
+            if (newWidth) {
+                img.style.width = newWidth;
+                setContent(quill.root.innerHTML);
+            }
+        } else {
+            toast("Please select an inline image to resize.", "warning");
+        }
+    };
+
     const imageHandler = () => {
         const input = document.createElement('input');
         input.setAttribute('type', 'file');
@@ -78,7 +104,7 @@ const HandoutEditor = ({ onCancel, onLocalReveal }) => {
             if (!file) return;
             
             try {
-                toast("Processing image...", "info");
+                toast("Processing inline image...", "info");
                 const compressedBase64 = await compressImage(file, 800);
                 const chunkedId = await storeChunkedMap(compressedBase64, `body_img_${file.name}`);
                 
@@ -94,11 +120,11 @@ const HandoutEditor = ({ onCancel, onLocalReveal }) => {
     };
 
     const handleSubmit = (reveal = false) => {
-        if (!title.trim()) return toast("Please title this document.", "error");
+        if (!title.trim() && !imageUrl) return toast("Please provide a title or a standalone image.", "error");
         
         const handout = {
             id: id || Date.now(),
-            title,
+            title: title || 'Untitled Handout',
             theme,
             imageUrl,
             content,
@@ -138,7 +164,7 @@ const HandoutEditor = ({ onCancel, onLocalReveal }) => {
             const compressedBase64 = await compressImage(file, 1200);
             const chunkedId = await storeChunkedMap(compressedBase64, `handout_${file.name}`);
             setImageUrl(chunkedId);
-            toast("Image processed and stored", "success");
+            toast("Primary image processed and stored", "success");
         } catch (err) {
             console.error(err);
             toast("Processing failed", "error");
@@ -153,10 +179,13 @@ const HandoutEditor = ({ onCancel, onLocalReveal }) => {
                 ['bold', 'italic', 'underline'],
                 [{ 'align': [] }],
                 [{ 'list': 'ordered'}, { 'list': 'bullet' }],
-                ['image', 'clean']
+                ['image', 'clean'],
+                // custom button for resize
+                ['imageResize'] 
             ],
             handlers: {
-                image: imageHandler
+                image: imageHandler,
+                imageResize: resizeImage
             }
         },
         clipboard: { matchVisual: false }
@@ -164,7 +193,7 @@ const HandoutEditor = ({ onCancel, onLocalReveal }) => {
 
     return (
         <div className="fixed inset-0 z-[100] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-in zoom-in-95">
-            <div className="bg-slate-900 border border-slate-700 w-full max-w-4xl rounded-xl shadow-2xl flex flex-col h-[85vh] overflow-hidden">
+            <div className="bg-slate-900 border border-slate-700 w-full max-w-5xl rounded-xl shadow-2xl flex flex-col h-[90vh] overflow-hidden">
                 
                 {/* HEADER */}
                 <div className="p-4 border-b border-slate-700 bg-slate-800 flex justify-between items-center">
@@ -185,55 +214,78 @@ const HandoutEditor = ({ onCancel, onLocalReveal }) => {
                 </div>
 
                 {/* CONTENT */}
-                <div className="flex-1 overflow-y-auto custom-scroll p-6 bg-slate-950">
+                <div className="flex-1 overflow-y-auto custom-scroll p-4 md:p-6 bg-slate-950">
                     
                     {/* COMPOSE TAB */}
                     {activeTab === 'compose' && (
                         <div className="flex flex-col lg:flex-row gap-6 h-full">
                             {/* Left Column: Settings */}
-                            <div className="w-full lg:w-1/3 space-y-4 shrink-0">
+                            <div className="w-full lg:w-64 space-y-6 shrink-0">
                                 <div>
-                                    <label className="text-xs uppercase font-bold text-slate-500 mb-1 block">Title</label>
+                                    <label className="text-xs uppercase font-bold text-slate-500 mb-1 block">Title / Caption</label>
                                     <input value={title} onChange={e => setTitle(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white focus:border-amber-500 outline-none" placeholder="e.g. The King's Letter"/>
                                 </div>
                                 
                                 <div>
-                                    <label className="text-xs uppercase font-bold text-slate-500 mb-1 block">Theme</label>
-                                    <div className="grid grid-cols-3 gap-2">
+                                    <label className="text-xs uppercase font-bold text-slate-500 mb-1 block">Text Theme</label>
+                                    <div className="grid grid-cols-1 gap-2">
                                         {['parchment', 'stone', 'letter'].map(t => (
-                                            <button key={t} onClick={() => setTheme(t)} className={`p-2 rounded border capitalize text-xs ${theme === t ? 'border-amber-500 bg-amber-900/20 text-amber-200' : 'border-slate-700 bg-slate-900 text-slate-400'}`}>
+                                            <button key={t} onClick={() => setTheme(t)} className={`p-2 rounded border capitalize text-xs text-left ${theme === t ? 'border-amber-500 bg-amber-900/20 text-amber-200' : 'border-slate-700 bg-slate-900 text-slate-400 hover:border-slate-500'}`}>
                                                 {t}
                                             </button>
                                         ))}
                                     </div>
                                 </div>
 
-                                <div>
-                                    <label className="text-xs uppercase font-bold text-slate-500 mb-1 block">Header Image</label>
-                                    <div className="flex gap-2">
-                                        <input value={imageUrl} onChange={e => setImageUrl(e.target.value)} className="flex-1 bg-slate-900 border border-slate-700 rounded p-2 text-xs text-white" placeholder="Image URL..."/>
-                                        <button onClick={() => fileInputRef.current.click()} disabled={isUploading} className="bg-slate-800 border border-slate-600 px-2 rounded text-slate-300 hover:text-white">
-                                            {isUploading ? <Icon name="loader" size={16} className="animate-spin"/> : <Icon name="upload" size={16}/>}
-                                        </button>
-                                        <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileUpload}/>
-                                    </div>
-                                </div>
-
-                                {/* Preview of Theme */}
-                                <div className={`h-32 rounded border p-4 shadow-inner overflow-hidden relative ${theme === 'parchment' ? 'bg-[#f5e6c8] text-amber-900 border-amber-800' : theme === 'stone' ? 'bg-[#1c1917] text-slate-300 border-slate-600' : 'bg-white text-black border-slate-200'}`}>
-                                    {resolvedImageUrl && <img src={resolvedImageUrl} className="absolute inset-0 w-full h-full object-cover opacity-20 pointer-events-none" alt=""/>}
-                                    <div className="font-bold text-lg mb-1 relative z-10">{title || "Title Preview"}</div>
-                                    <div className="text-xs opacity-80 relative z-10">This is how the document will look to your players...</div>
-                                    <div className="absolute bottom-2 right-2 text-[10px] uppercase font-bold opacity-50 z-10">Theme Preview</div>
+                                {/* Help Box */}
+                                <div className="bg-slate-800/50 border border-slate-700 rounded p-3 text-xs text-slate-400 space-y-2">
+                                    <p><strong className="text-amber-500">Standalone Image Mode:</strong> Upload a Primary Image and leave the Body Content empty. The image will be shown full-size to players.</p>
+                                    <p><strong className="text-blue-400">Document Mode:</strong> Write in the Body Content. You can mix text and insert inline images via the editor toolbar.</p>
                                 </div>
                             </div>
 
-                            {/* Right Column: Editor */}
-                            <div className="flex-1 flex flex-col h-[500px] lg:h-auto">
-                                <label className="text-xs uppercase font-bold text-slate-500 mb-1 block">Body Content</label>
-                                <div className={`flex-1 flex flex-col rounded border overflow-hidden handout-editor-wrapper ${theme === 'stone' ? 'border-slate-600' : 'border-slate-300'}`}>
-                                    <ReactQuill ref={quillRef} theme="snow" value={content} onChange={setContent} modules={modules} className="flex-1 bg-white text-black flex flex-col h-full"/>
+                            {/* Right Column: Editor & Primary Image */}
+                            <div className="flex-1 flex flex-col min-h-0 space-y-4">
+                                
+                                {/* PRIMARY IMAGE DROPZONE */}
+                                <div>
+                                    <label className="text-xs uppercase font-bold text-slate-500 mb-1 block flex items-center justify-between">
+                                        <span>Primary Standalone Image</span>
+                                        {imageUrl && <button onClick={() => setImageUrl('')} className="text-red-400 hover:text-red-300">Remove</button>}
+                                    </label>
+                                    {!imageUrl ? (
+                                        <div 
+                                            onClick={() => fileInputRef.current.click()}
+                                            className="w-full h-32 border-2 border-dashed border-slate-700 rounded-lg flex flex-col items-center justify-center text-slate-500 hover:text-white hover:border-slate-500 cursor-pointer bg-slate-900/50 transition-colors"
+                                        >
+                                            {isUploading ? (
+                                                <><Icon name="loader" size={24} className="animate-spin mb-2 text-amber-500"/><span className="font-bold text-amber-500">Uploading...</span></>
+                                            ) : (
+                                                <><Icon name="image" size={24} className="mb-2"/><span className="font-bold">Click to add a full-page image (e.g. Map, Painting)</span></>
+                                            )}
+                                        </div>
+                                    ) : (
+                                        <div className="w-full h-48 rounded-lg overflow-hidden border border-slate-600 relative group bg-black">
+                                            {resolvedImageUrl && <img src={resolvedImageUrl} alt="Primary Handout" className="w-full h-full object-contain" />}
+                                            <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                                                <button onClick={() => fileInputRef.current.click()} className="bg-amber-600 hover:bg-amber-500 text-white font-bold py-2 px-4 rounded shadow-lg">Change Image</button>
+                                            </div>
+                                        </div>
+                                    )}
+                                    <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileUpload}/>
                                 </div>
+
+                                {/* QUILL EDITOR */}
+                                <div className="flex-1 flex flex-col min-h-[400px]">
+                                    <label className="text-xs uppercase font-bold text-slate-500 mb-1 flex items-center justify-between">
+                                        <span>Body Content (Optional)</span>
+                                    </label>
+                                    <style>{`.ql-imageResize { padding: 4px; display: flex; align-items: center; justify-content: center; } .ql-imageResize::before { content: '⤡'; font-size: 16px; line-height: 1; }`}</style>
+                                    <div className={`flex-1 flex flex-col rounded border overflow-hidden handout-editor-wrapper bg-white ${theme === 'stone' ? 'border-slate-600' : 'border-slate-300'}`}>
+                                        <ReactQuill ref={quillRef} theme="snow" value={content} onChange={setContent} modules={modules} className="flex-1 text-black flex flex-col h-full"/>
+                                    </div>
+                                </div>
+                                
                             </div>
                         </div>
                     )}
@@ -259,8 +311,9 @@ const HandoutEditor = ({ onCancel, onLocalReveal }) => {
                                                     <button onClick={(e) => { e.stopPropagation(); deleteHandout(h.id); }} className="text-slate-600 hover:text-red-500 opacity-0 group-hover:opacity-100"><Icon name="trash-2" size={16}/></button>
                                                 </div>
                                                 <p className="text-xs text-slate-500 mb-3">{new Date(h.timestamp).toLocaleDateString()}</p>
-                                                <div className={`h-24 rounded p-2 text-[10px] overflow-hidden opacity-80 ${h.theme === 'parchment' ? 'bg-[#f5e6c8] text-amber-900' : h.theme === 'stone' ? 'bg-[#1c1917] text-slate-400' : 'bg-white text-black'}`}>
-                                                    <div dangerouslySetInnerHTML={{__html: h.content || "No content"}} />
+                                                <div className={`h-24 rounded p-2 text-[10px] overflow-hidden opacity-80 ${h.theme === 'parchment' ? 'bg-[#f5e6c8] text-amber-900' : h.theme === 'stone' ? 'bg-[#1c1917] text-slate-400' : 'bg-white text-black'} relative`}>
+                                                    {h.imageUrl && <div className="absolute top-1 right-1 bg-blue-500 text-white text-[8px] px-1 rounded">IMAGE</div>}
+                                                    <div dangerouslySetInnerHTML={{__html: h.content || (h.imageUrl ? "Standalone Image Handout" : "No content")}} />
                                                 </div>
                                             </div>
                                         ))}
@@ -290,8 +343,9 @@ const HandoutEditor = ({ onCancel, onLocalReveal }) => {
                                                 {role === 'dm' && <button onClick={(e) => { e.stopPropagation(); deleteHandout(h.id); }} className="text-slate-600 hover:text-red-500 opacity-0 group-hover:opacity-100"><Icon name="trash-2" size={16}/></button>}
                                             </div>
                                             <p className="text-xs text-slate-500 mb-3">{new Date(h.timestamp).toLocaleDateString()}</p>
-                                            <div className={`h-24 rounded p-2 text-[10px] overflow-hidden opacity-60 grayscale-[0.5] ${h.theme === 'parchment' ? 'bg-[#f5e6c8] text-amber-900' : h.theme === 'stone' ? 'bg-[#1c1917] text-slate-400' : 'bg-white text-black'}`}>
-                                                <div dangerouslySetInnerHTML={{__html: h.content || "No content"}} />
+                                            <div className={`h-24 rounded p-2 text-[10px] overflow-hidden opacity-60 grayscale-[0.5] ${h.theme === 'parchment' ? 'bg-[#f5e6c8] text-amber-900' : h.theme === 'stone' ? 'bg-[#1c1917] text-slate-400' : 'bg-white text-black'} relative`}>
+                                                {h.imageUrl && <div className="absolute top-1 right-1 bg-blue-500 text-white text-[8px] px-1 rounded grayscale-0">IMAGE</div>}
+                                                <div dangerouslySetInnerHTML={{__html: h.content || (h.imageUrl ? "Standalone Image Handout" : "No content")}} />
                                             </div>
                                         </div>
                                     ))}
@@ -305,7 +359,7 @@ const HandoutEditor = ({ onCancel, onLocalReveal }) => {
 
                 {/* FOOTER */}
                 {activeTab === 'compose' && (
-                    <div className="p-4 border-t border-slate-700 bg-slate-800 flex justify-end gap-3">
+                    <div className="p-4 border-t border-slate-700 bg-slate-800 flex justify-end gap-3 shrink-0">
                         <button onClick={onCancel} className="px-4 py-2 text-slate-400 hover:text-white text-sm font-bold">Cancel</button>
                         <button onClick={() => handleSubmit(false)} className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded text-sm font-bold border border-slate-600">Save Only</button>
                         <button onClick={() => handleSubmit(true)} className="px-6 py-2 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white rounded text-sm font-bold shadow-lg flex items-center gap-2">

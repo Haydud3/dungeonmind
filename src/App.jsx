@@ -755,35 +755,39 @@ function DungeonMindApp() {
        {showHandout && (localHandout || data?.activeHandout) && (
            <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm overflow-hidden" onClick={() => { setShowHandout(false); setLocalHandout(null); }}>
                <div 
-                   className={`max-w-2xl w-full rounded-xl shadow-2xl relative flex flex-col max-h-[90vh] overflow-hidden ${
+                   className={`max-w-4xl w-full rounded-xl shadow-2xl relative flex flex-col max-h-[90vh] overflow-hidden ${
                        (localHandout || data?.activeHandout).theme === 'parchment' ? 'bg-[#f5e6c8] text-amber-900 border-4 border-amber-800' :
                        (localHandout || data?.activeHandout).theme === 'stone' ? 'bg-[#1c1917] text-slate-300 border-4 border-slate-700' :
                        'bg-white text-black border-4 border-slate-200'
                    }`} 
                    onClick={e=>e.stopPropagation()}
                >
-                   {activeHandoutImageUrl && (
-                       <div className="w-full h-48 overflow-hidden border-b border-black/10 shrink-0">
-                           <img src={activeHandoutImageUrl} className="w-full h-full object-cover opacity-40" alt=""/>
-                       </div>
-                   )}
-                   <div className="flex-1 overflow-y-auto custom-scroll p-8">
-                       <h2 className="fantasy-font text-3xl mb-6 border-b border-current/20 pb-2">{(localHandout || data?.activeHandout)?.title}</h2>
-                       {activeHandoutBlocks.length === 0 ? (
-                           <div className="py-20 text-center animate-pulse italic opacity-50 font-bold">DECIPHERING SCRIPT...</div>
-                       ) : (
-                           <div className="handout-content-stream">
-                               {activeHandoutBlocks.map((block, idx) => (
-                                   block.type === 'image' ? (
-                                       <ResolvedImage key={idx} id={block.id} />
-                                   ) : (
-                                       <div key={idx} className="mb-4 text-lg leading-relaxed" dangerouslySetInnerHTML={{__html: block.content}} />
-                                   )
-                               ))}
+                   <div className="flex-1 overflow-y-auto custom-scroll w-full h-full relative flex flex-col">
+                       {activeHandoutImageUrl && (
+                           <div className={`w-full ${!(localHandout || data?.activeHandout).content || (localHandout || data?.activeHandout).content === '<p><br></p>' ? 'flex-1 min-h-[50vh] flex items-center justify-center bg-black/90 p-4' : 'h-64 border-b border-black/10 shrink-0'}`}>
+                               <img src={activeHandoutImageUrl} className={`w-full h-full ${!(localHandout || data?.activeHandout).content || (localHandout || data?.activeHandout).content === '<p><br></p>' ? 'object-contain drop-shadow-2xl' : 'object-cover opacity-80'}`} alt="Handout Image"/>
+                           </div>
+                       )}
+                       {((localHandout || data?.activeHandout).content && (localHandout || data?.activeHandout).content !== '<p><br></p>') && (
+                           <div className="flex-1 p-8 md:p-12">
+                               <h2 className="fantasy-font text-3xl mb-6 border-b border-current/20 pb-2">{(localHandout || data?.activeHandout)?.title}</h2>
+                               {activeHandoutBlocks.length === 0 ? (
+                                   <div className="py-20 text-center animate-pulse italic opacity-50 font-bold">DECIPHERING SCRIPT...</div>
+                               ) : (
+                                   <div className="handout-content-stream">
+                                       {activeHandoutBlocks.map((block, idx) => (
+                                           block.type === 'image' ? (
+                                               <ResolvedImage key={idx} id={block.id} />
+                                           ) : (
+                                               <div key={idx} className="mb-4 text-lg leading-relaxed" dangerouslySetInnerHTML={{__html: block.content}} />
+                                           )
+                                       ))}
+                                   </div>
+                               )}
                            </div>
                        )}
                    </div>
-                   <button onClick={() => { setShowHandout(false); setLocalHandout(null); }} className="absolute top-4 right-4 z-20 bg-black/20 hover:bg-black/40 text-white rounded-full p-1"><Icon name="x" size={24}/></button>
+                   <button onClick={() => { setShowHandout(false); setLocalHandout(null); }} className="absolute top-4 right-4 z-20 bg-black/50 hover:bg-black/80 text-white rounded-full p-2 transition-colors"><Icon name="x" size={24}/></button>
                </div>
            </div>
        )}
