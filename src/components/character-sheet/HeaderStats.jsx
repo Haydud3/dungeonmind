@@ -181,7 +181,7 @@ const HeaderStats = ({ character: propCharacter, onDiceRoll, onLogAction, onBack
                             const score = character.stats?.[s] || 10;
                             const mod = Math.floor((score - 10) / 2);
                             return (
-                                <div key={s} className="bg-slate-800 p-1.5 rounded text-center flex flex-col items-center">
+                                <div key={s} className="bg-slate-800 p-1.5 rounded text-center flex flex-col items-center relative">
                                     <button
                                         onClick={() => onDiceRoll && onDiceRoll(`1d20${mod >= 0 ? '+' : ''}${mod}`, { alias: `${s.toUpperCase()} Check`, characterName: character.name })}
                                         className="text-[9px] uppercase font-bold text-amber-500 hover:text-amber-400 cursor-pointer hover:underline"
@@ -195,6 +195,7 @@ const HeaderStats = ({ character: propCharacter, onDiceRoll, onLogAction, onBack
                                         onChange={e => updateStat(s, parseInt(e.target.value) || 0)}
                                         type="number"
                                     />
+                                    <div className="text-[10px] font-bold text-slate-400 mt-0.5">{mod >= 0 ? '+' : ''}{mod}</div>
                                 </div>
                             );
                         })}
