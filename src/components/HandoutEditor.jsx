@@ -56,7 +56,7 @@ const HandoutEditor = ({ onCancel, onLocalReveal }) => {
         const resolve = async () => {
             if (imageUrl?.startsWith('chunked:')) {
                 const img = await retrieveChunkedMap(imageUrl);
-                setResolvedImageUrl(img);
+                setResolvedImageUrl(img instanceof Blob ? URL.createObjectURL(img) : img);
             } else {
                 setResolvedImageUrl(imageUrl);
             }
@@ -117,6 +117,34 @@ const HandoutEditor = ({ onCancel, onLocalReveal }) => {
                 toast("Image insertion failed", "error");
             }
         };
+    };
+
+    const handlePreview = () => {
+        if (!title.trim() && !imageUrl) return toast("Please provide a title or a standalone image.", "error");
+        
+        const handout = {
+            id: id || Date.now(),
+            title: title || 'Untitled Handout',
+            theme,
+            imageUrl,
+            content,
+            timestamp: Date.now(),
+            isDraft: true,
+            revealed: false
+        };
+
+        const isExisting = handout.id && savedHandouts.some(x => x.id === handout.id);
+      
+        const updatedHandouts = isExisting 
+            ? savedHandouts.map(x => x.id === handout.id ? handout : x)
+            : [handout, ...savedHandouts];
+
+        updateCampaign({ 
+            handouts: updatedHandouts, 
+            'campaign.activeHandout': handout 
+        });
+        
+        onLocalReveal(handout);
     };
 
     const handleSubmit = (reveal = false) => {
@@ -361,6 +389,9 @@ const HandoutEditor = ({ onCancel, onLocalReveal }) => {
                 {activeTab === 'compose' && (
                     <div className="p-4 border-t border-slate-700 bg-slate-800 flex justify-end gap-3 shrink-0">
                         <button onClick={onCancel} className="px-4 py-2 text-slate-400 hover:text-white text-sm font-bold">Cancel</button>
+                        <button onClick={handlePreview} className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded text-sm font-bold border border-slate-600 flex items-center gap-2">
+                            <Icon name="search" size={16}/> Preview
+                        </button>
                         <button onClick={() => handleSubmit(false)} className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded text-sm font-bold border border-slate-600">Save Only</button>
                         <button onClick={() => handleSubmit(true)} className="px-6 py-2 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white rounded text-sm font-bold shadow-lg flex items-center gap-2">
                             <Icon name="eye" size={16}/> Reveal to All

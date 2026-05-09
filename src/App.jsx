@@ -150,6 +150,7 @@ function DungeonMindApp() {
   const [activeHandoutBlocks, setActiveHandoutBlocks] = useState([]);
   const [showHandoutCreator, setShowHandoutCreator] = useState(false);
   const [rollingDice, setRollingDice] = useState(null);
+  const [isFullscreenImage, setIsFullscreenImage] = useState(false);
   const [activeTemplate, setActiveTemplate] = useState(null); // NEW: Track active spell template
   const addLogEntry = useCharacterStore((state) => state.addLogEntry);
   const rollTimeoutRef = useRef(null);
@@ -187,7 +188,8 @@ function DungeonMindApp() {
               // 1. Resolve Header Image
               let resolvedHeader = '';
               if (h.imageUrl?.startsWith('chunked:')) {
-                  resolvedHeader = await retrieveChunkedMap(h.imageUrl);
+                  const result = await retrieveChunkedMap(h.imageUrl);
+                  resolvedHeader = result instanceof Blob ? URL.createObjectURL(result) : result;
               } else {
                   resolvedHeader = h.imageUrl || '';
               }
@@ -763,32 +765,66 @@ function DungeonMindApp() {
                    onClick={e=>e.stopPropagation()}
                >
                    <div className="flex-1 overflow-y-auto custom-scroll w-full h-full relative flex flex-col">
-                       {activeHandoutImageUrl && (
-                           <div className={`w-full ${!(localHandout || data?.activeHandout).content || (localHandout || data?.activeHandout).content === '<p><br></p>' ? 'flex-1 min-h-[50vh] flex items-center justify-center bg-black/90 p-4' : 'h-64 border-b border-black/10 shrink-0'}`}>
-                               <img src={activeHandoutImageUrl} className={`w-full h-full ${!(localHandout || data?.activeHandout).content || (localHandout || data?.activeHandout).content === '<p><br></p>' ? 'object-contain drop-shadow-2xl' : 'object-cover opacity-80'}`} alt="Handout Image"/>
-                           </div>
-                       )}
-                       {((localHandout || data?.activeHandout).content && (localHandout || data?.activeHandout).content !== '<p><br></p>') && (
-                           <div className="flex-1 p-8 md:p-12">
-                               <h2 className="fantasy-font text-3xl mb-6 border-b border-current/20 pb-2">{(localHandout || data?.activeHandout)?.title}</h2>
-                               {activeHandoutBlocks.length === 0 ? (
-                                   <div className="py-20 text-center animate-pulse italic opacity-50 font-bold">DECIPHERING SCRIPT...</div>
-                               ) : (
-                                   <div className="handout-content-stream">
-                                       {activeHandoutBlocks.map((block, idx) => (
-                                           block.type === 'image' ? (
-                                               <ResolvedImage key={idx} id={block.id} />
-                                           ) : (
-                                               <div key={idx} className="mb-4 text-lg leading-relaxed" dangerouslySetInnerHTML={{__html: block.content}} />
-                                           )
-                                       ))}
-                                   </div>
+                       {((localHandout || data?.activeHandout)?.title || ((localHandout || data?.activeHandout).content && (localHandout || data?.activeHandout).content !== '<p><br></p>')) && (
+                           <div className="px-6 md:px-10 pt-6 md:pt-10 shrink-0">
+                               {((localHandout || data?.activeHandout)?.title) && (
+                                   <h2 className={`fantasy-font text-3xl border-b border-current/20 pb-2 ${((localHandout || data?.activeHandout).content && (localHandout || data?.activeHandout).content !== '<p><br></p>') ? 'mb-4' : 'mb-2'}`}>{(localHandout || data?.activeHandout)?.title}</h2>
+                               )}
+                               {((localHandout || data?.activeHandout).content && (localHandout || data?.activeHandout).content !== '<p><br></p>') && (
+                                   activeHandoutBlocks.length === 0 ? (
+                                       <div className="py-10 text-center animate-pulse italic opacity-50 font-bold">DECIPHERING SCRIPT...</div>
+                                   ) : (
+                                       <div className="handout-content-stream pb-2">
+                                           {activeHandoutBlocks.map((block, idx) => (
+                                               block.type === 'image' ? (
+                                                   <ResolvedImage key={idx} id={block.id} />
+                                               ) : (
+                                                   <div key={idx} className="mb-4 text-lg leading-relaxed" dangerouslySetInnerHTML={{__html: block.content}} />
+                                               )
+                                           ))}
+                                       </div>
+                                   )
                                )}
                            </div>
                        )}
+                       
+                       {activeHandoutImageUrl && (
+                           <div className={`w-full flex justify-center px-6 md:px-10 pb-6 md:pb-10 ${((localHandout || data?.activeHandout)?.title || ((localHandout || data?.activeHandout).content && (localHandout || data?.activeHandout).content !== '<p><br></p>')) ? 'pt-2' : 'pt-6 md:pt-10'}`}>
+                               <div className="relative inline-block max-w-full">
+                                   <img src={activeHandoutImageUrl} className={`max-w-full object-contain drop-shadow-2xl rounded-md ${((localHandout || data?.activeHandout)?.title || ((localHandout || data?.activeHandout).content && (localHandout || data?.activeHandout).content !== '<p><br></p>')) ? 'max-h-[55vh]' : 'max-h-[75vh]'}`} alt="Handout Image"/>
+                                   <button 
+                                       onClick={(e) => { e.stopPropagation(); setIsFullscreenImage(true); }} 
+                                       className="absolute top-2 right-2 bg-black/60 hover:bg-black/90 text-white rounded p-1.5 transition-colors backdrop-blur-sm group shadow-md border border-white/10"
+                                       title="View Fullscreen"
+                                   >
+                                       <Icon name="maximize" size={16} className="opacity-70 group-hover:opacity-100" />
+                                   </button>
+                               </div>
+                           </div>
+                       )}
                    </div>
-                   <button onClick={() => { setShowHandout(false); setLocalHandout(null); }} className="absolute top-4 right-4 z-20 bg-black/50 hover:bg-black/80 text-white rounded-full p-2 transition-colors"><Icon name="x" size={24}/></button>
+                   <button onClick={() => { setShowHandout(false); setLocalHandout(null); setIsFullscreenImage(false); }} className="absolute top-4 right-4 z-20 bg-black/50 hover:bg-black/80 text-white rounded-full p-2 transition-colors"><Icon name="x" size={24}/></button>
                </div>
+               
+               {/* Fullscreen Image Overlay */}
+               {isFullscreenImage && (
+                   <div 
+                       className="fixed inset-0 z-[60] bg-black/95 flex items-center justify-center p-4 cursor-pointer animate-in fade-in"
+                       onClick={(e) => { e.stopPropagation(); setIsFullscreenImage(false); }}
+                   >
+                       <img 
+                           src={activeHandoutImageUrl} 
+                           className="max-w-full max-h-full object-contain drop-shadow-2xl animate-in zoom-in-95 duration-200" 
+                           alt="Fullscreen Handout"
+                       />
+                       <button 
+                           onClick={(e) => { e.stopPropagation(); setIsFullscreenImage(false); }} 
+                           className="absolute top-6 right-6 bg-black/50 hover:bg-white/20 text-white rounded-full p-3 transition-colors border border-white/20"
+                       >
+                           <Icon name="x" size={28}/>
+                       </button>
+                   </div>
+               )}
            </div>
        )}
        <div className="fixed inset-0 pointer-events-none z-[99999]">{rollingDice && <DiceOverlay roll={rollingDice} />}</div>
