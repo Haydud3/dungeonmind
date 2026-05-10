@@ -16,6 +16,18 @@ const DisplacedGridContent = ({ mapData, aspect, resolvedHeightmapUrl, resolvedN
     const safeNormalMapUrl = resolvedNormalMapUrl || "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="; 
     const normalMapTexture = useTexture(safeNormalMapUrl);
 
+    // Force data textures to linear color space to match CPU height calculations perfectly
+    React.useLayoutEffect(() => {
+        if (heightmapTexture) {
+            heightmapTexture.colorSpace = THREE.NoColorSpace;
+            heightmapTexture.needsUpdate = true;
+        }
+        if (normalMapTexture) {
+            normalMapTexture.colorSpace = THREE.NoColorSpace;
+            normalMapTexture.needsUpdate = true;
+        }
+    }, [heightmapTexture, normalMapTexture]);
+
     const gridTexture = useMemo(() => {
         if (!gridSize || gridSize <= 0) return null;
         const canvas = document.createElement('canvas');

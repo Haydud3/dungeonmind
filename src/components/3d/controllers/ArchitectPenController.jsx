@@ -8,7 +8,15 @@ export const ArchitectPenController = ({ isEnabled, onCommitSegment, getTerrainH
     const [cursorPos, setCursorPos] = useState(null);
 
     useEffect(() => {
-        if (controls) controls.enabled = !isEnabled;
+        if (controls) {
+            if (isEnabled) {
+                controls.mouseButtons.LEFT = 0;
+                controls.mouseButtons.RIGHT = 2; // THREE.MOUSE.PAN
+            } else {
+                controls.mouseButtons.LEFT = 2; // THREE.MOUSE.PAN
+                controls.mouseButtons.RIGHT = 0; // THREE.MOUSE.ROTATE
+            }
+        }
         if (!isEnabled) { setNodes([]); setCursorPos(null); }
     }, [isEnabled, controls]);
 
@@ -50,12 +58,6 @@ export const ArchitectPenController = ({ isEnabled, onCommitSegment, getTerrainH
         setCursorPos(pt);
     };
 
-    const handleContextMenu = (e) => {
-        if (!isEnabled) return;
-        e.stopPropagation();
-        setNodes([]); // Break the chain
-    };
-
     useEffect(() => {
         const handleKeyDown = (e) => { if (e.key === 'Escape') setNodes([]); };
         window.addEventListener('keydown', handleKeyDown);
@@ -75,7 +77,7 @@ export const ArchitectPenController = ({ isEnabled, onCommitSegment, getTerrainH
                     <meshBasicMaterial color="#ef4444" depthTest={false} />
                 </mesh>
             ))}
-            <mesh onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onContextMenu={handleContextMenu} rotation={[-Math.PI / 2, 0, 0]} visible={false}>
+            <mesh onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} rotation={[-Math.PI / 2, 0, 0]} visible={false}>
                 <planeGeometry args={[1000, 1000]} />
                 <meshBasicMaterial />
             </mesh>

@@ -377,6 +377,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       
       const imageData = ctx.getImageData(0, 0, size, size);
       const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.NoColorSpace;
       
       setTerrainData({
           data: imageData.data, width: size, height: size,
@@ -430,63 +431,83 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
   const getTerrainHeight = useCallback((x, z, radius = 0) => {
     if (isCastMode) return 0; // Force tokens and measurements to be flat against the TV glass
 
-    let maxBaseHeight = 0;
+    let terrainHeight = 0;
     if (terrainData && mapHeightmapUrl) {
-      const uCenter = (x / (mapScale * aspect)) + 0.5;
-      const vCenter = (z / mapScale) + 0.5;
+      const getHForPoint = (px_val, pz_val) => {
+        const u = (px_val / (mapScale * aspect)) + 0.5;
+        const v = (pz_val / mapScale) + 0.5;
 
-      const pixelXCenter = uCenter * terrainData.width;
-      const pixelYCenter = vCenter * terrainData.height;
+        const clampedU = Math.max(0, Math.min(1, u));
+        const clampedV = Math.max(0, Math.min(1, v));
 
-      let pixelRadius = 0;
+        const px = clampedU * (terrainData.width - 1);
+        const py = clampedV * (terrainData.height - 1);
+
+        const x0 = Math.floor(px);
+        const x1 = Math.ceil(px);
+        const y0 = Math.floor(py);
+        const y1 = Math.ceil(py);
+
+        const tx = px - x0;
+        const ty = py - y0;
+
+        const getH = (ix, iy) => {
+            const safeX = Math.max(0, Math.min(ix, terrainData.width - 1));
+            const safeY = Math.max(0, Math.min(iy, terrainData.height - 1));
+            return (terrainData.data[(safeY * terrainData.width + safeX) * 4] / 255.0) * mapHeightScale;
+        };
+
+        const h00 = getH(x0, y0);
+        const h10 = getH(x1, y0);
+        const h01 = getH(x0, y1);
+        const h11 = getH(x1, y1);
+
+        const h0 = h00 * (1 - tx) + h10 * tx;
+        const h1 = h01 * (1 - tx) + h11 * tx;
+
+        return h0 * (1 - ty) + h1 * ty;
+      };
+
       if (radius > 0) {
-        pixelRadius = (radius / mapScale) * terrainData.height;
-      }
-
-      if (pixelRadius <= 0) {
-        const safeX = Math.max(0, Math.min(Math.floor(pixelXCenter), terrainData.width - 1));
-        const safeY = Math.max(0, Math.min(Math.floor(pixelYCenter), terrainData.height - 1));
-        const index = (safeY * terrainData.width + safeX) * 4;
-        maxBaseHeight = (terrainData.data[index] / 255.0) * mapHeightScale;
-      } else {
-        const step = Math.max(1, Math.floor(pixelRadius / 4)); // Sparse sampling for performance
-        for (let py = Math.floor(pixelYCenter - pixelRadius); py <= Math.ceil(pixelYCenter + pixelRadius); py += step) {
-          for (let px = Math.floor(pixelXCenter - pixelRadius); px <= Math.ceil(pixelXCenter + pixelRadius); px += step) {
-            const dx = px - pixelXCenter;
-            const dy = py - pixelYCenter;
-            if (dx * dx + dy * dy <= pixelRadius * pixelRadius) {
-              const safeX = Math.max(0, Math.min(px, terrainData.width - 1));
-              const safeY = Math.max(0, Math.min(py, terrainData.height - 1));
-              const index = (safeY * terrainData.width + safeX) * 4;
-              const h = (terrainData.data[index] / 255.0) * mapHeightScale;
-              if (h > maxBaseHeight) maxBaseHeight = h;
-            }
+          let maxHeight = getHForPoint(x, z);
+          const numSamples = 8;
+          for (let i = 0; i < numSamples; i++) {
+              const angle = (i / numSamples) * Math.PI * 2;
+              const sx = x + Math.cos(angle) * radius;
+              const sz = z + Math.sin(angle) * radius;
+              const h = getHForPoint(sx, sz);
+              if (h > maxHeight) maxHeight = h;
+              
+              const h2 = getHForPoint(x + Math.cos(angle) * (radius/2), z + Math.sin(angle) * (radius/2));
+              if (h2 > maxHeight) maxHeight = h2;
           }
-        }
+          terrainHeight = maxHeight;
+      } else {
+          terrainHeight = getHForPoint(x, z);
       }
+      
+      // Add the visual mesh offsets so tokens perfectly align with the rendered mesh
+      terrainHeight += 0.03; 
     }
 
-    let finalHeight = maxBaseHeight;
+    let finalHeight = terrainHeight;
     const props = latestPropsRef.current;
     if (props) {
         const currentGridSize = mapData?.gridSize || 1;
         Object.values(props).forEach(prop => {
-            if (prop && prop.hasCollision !== false) { // Default to true if undefined
+            if (prop && prop.hasCollision !== false) {
                 const propX = prop.x || 0;
                 const propZ = prop.z || 0;
                 const baseScale = (prop.scale || 1.0) * currentGridSize;
                 const dx = x - propX;
                 const dz = z - propZ;
                 
-                // Use combined scaled size for collision radius
                 const propRadius = baseScale * 0.5;
                 const tokenRadius = radius || 0;
                 const combinedRadius = propRadius + tokenRadius;
 
                 if (dx * dx + dz * dz <= combinedRadius * combinedRadius) {
-                    // 3D models are typically roughly proportional to their width.
-                    // We give 3D props a height estimate proportional to baseScale so tokens sit on top.
-                    const propHeight = maxBaseHeight + (prop.elevation || 0) + ((prop.is3D || prop.modelUrl) ? (baseScale * 0.8) : 0.05);
+                    const propHeight = terrainHeight + (prop.elevation || 0) + ((prop.is3D || prop.modelUrl) ? (baseScale * 0.8) : 0.05);
                     if (propHeight > finalHeight) {
                         finalHeight = propHeight;
                     }
@@ -1807,7 +1828,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                       isActiveTurn={activeCombatantId === token.id}
                       canControl={canControl && isInteractive}
                       shiftHeldRef={shiftHeldRef}
-                      tokenBaseOffset={(isCastMode || !mapData?.heightmapUrl) ? 0.04 : (mapData?.tokenElevationOffset ?? 0.04)}
+                      tokenBaseOffset={(isCastMode || !mapData?.heightmapUrl) ? 0.04 : (mapData?.tokenElevationOffset ?? -0.12)}
                       isInteractive={isInteractive}
                       orientation={mapData?.orientation || 0}
                       activeTool={activeTool || (isDrawingFreehand ? 'freehand' : null)}
@@ -2189,22 +2210,21 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       {/* Top-Left: Connection & Camera Controls */}
       {!isCastMode && (
           <div className={`absolute top-4 left-4 vtt-safe-top vtt-safe-left z-[70] flex flex-col gap-2 items-start ${uiOpacityClass}`}>
-              {/* Row 1: Connection Status & View Modes */}
-              <div className="flex flex-row items-center gap-2">
-                  <div className="h-10 px-3 bg-slate-900/80 backdrop-blur border border-slate-700 rounded-xl shadow-2xl flex items-center gap-2 cursor-help hover:border-indigo-500 transition-colors" title={`Connected to Realm: ${campaignCode}`}>
+              {/* Row 1: Connection Status */}
+              <div className="h-10 px-3 bg-slate-900/80 backdrop-blur border border-slate-700 rounded-xl shadow-2xl flex items-center gap-2 cursor-help hover:border-indigo-500 transition-colors" title={`Connected to Realm: ${campaignCode}`}>
                   <div className="w-2 h-2 rounded-full shadow-[0_0_10px_rgba(34,197,94,0.5)] bg-green-500"></div>
                   <span className="text-sm font-bold text-amber-500 fantasy-font tracking-widest">{campaignCode}</span>
               </div>
               
+              {/* Row 2: View Modes */}
               <div className="flex items-center gap-1 bg-slate-900/80 backdrop-blur-md border border-slate-700 p-1 rounded-xl shadow-2xl h-10">
                   <ToolButton name="Reset View" icon="camera" onClick={() => { cameraControllerRef.current?.reset(); }} title="Reset Camera" />
                   <div className="w-px h-5 bg-slate-700 mx-1"></div>
                   <ToolButton name={viewMode === 'isometric' ? 'Switch to Top-Down (V)' : 'Switch to Isometric (V)'} icon={viewMode === 'isometric' ? 'layout-grid' : 'box'} onClick={() => setViewMode(prev => prev === 'isometric' ? 'top-down' : 'isometric')} title={viewMode === 'isometric' ? 'Switch to Top-Down (V)' : 'Switch to Isometric (V)'} />
                   <ToolButton name="Toggle Fullscreen" icon={isFullscreen ? "minimize" : "maximize"} onClick={toggleFullscreen} title="Toggle Fullscreen" />
               </div>
-          </div>
 
-          {/* Row 2: Zoom Controls */}
+          {/* Row 3: Zoom Controls */}
           <div className="flex flex-row items-center gap-1 bg-slate-900/80 backdrop-blur-md border border-slate-700 p-1 rounded-xl shadow-2xl h-10">
               <ToolButton name="Zoom Out" icon="zoom-out" onClick={() => zoomRef.current?.zoomOut()} title="Zoom Out" />
               <ToolButton name="Zoom In" icon="zoom-in" onClick={() => zoomRef.current?.zoomIn()} title="Zoom In" />
@@ -2612,7 +2632,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                       const tokenSize = t.size || 1;
                       const radius = (tokenSize * gridSize) / 2;
                       const terrainY = getTerrainHeight(t.x, t.z, radius);
-                      const tokenBaseOffset = (isCastMode || !mapData?.heightmapUrl) ? 0.04 : (mapData?.tokenElevationOffset ?? 0.04);
+                      const tokenBaseOffset = (isCastMode || !mapData?.heightmapUrl) ? 0.04 : (mapData?.tokenElevationOffset ?? -0.12);
                       updates[`tokens.${id}.elevationOffset`] = 0;
                       updates[`tokens.${id}.y`] = terrainY + tokenBaseOffset;
                   });
@@ -2732,7 +2752,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                                 const tokenSize = token.size || 1;
                                 const radius = (tokenSize * gridSize) / 2;
                                 const terrainY = getTerrainHeight(token.x, token.z, radius);
-                                const tokenBaseOffset = (isCastMode || !mapData?.heightmapUrl) ? 0.04 : (mapData?.tokenElevationOffset ?? 0.04);
+                                const tokenBaseOffset = (isCastMode || !mapData?.heightmapUrl) ? 0.04 : (mapData?.tokenElevationOffset ?? -0.12);
                                 const newY = terrainY + newElevation + tokenBaseOffset;
                                 updates[`tokens.${id}.elevationOffset`] = newElevation;
                                 updates[`tokens.${id}.y`] = newY;
@@ -2755,7 +2775,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                                 const tokenSize = token.size || 1;
                                 const radius = (tokenSize * gridSize) / 2;
                                 const terrainY = getTerrainHeight(token.x, token.z, radius);
-                                const tokenBaseOffset = (isCastMode || !mapData?.heightmapUrl) ? 0.04 : (mapData?.tokenElevationOffset ?? 0.04);
+                                const tokenBaseOffset = (isCastMode || !mapData?.heightmapUrl) ? 0.04 : (mapData?.tokenElevationOffset ?? -0.12);
                                 const newY = terrainY + newElevation + tokenBaseOffset;
                                 updates[`tokens.${id}.elevationOffset`] = newElevation;
                                 updates[`tokens.${id}.y`] = newY;

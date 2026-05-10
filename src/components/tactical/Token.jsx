@@ -70,7 +70,7 @@ const DragLine = React.forwardRef((props, ref) => {
 });
 
 // Interactive 3D Token
-const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gridOffsetY = 0, isSelected, onSelect, onContextMenu, role, getTerrainHeight, isSnapToGrid, isTerrainReady, activeTool, draggedTokenId, setDraggedTokenId, viewMode, showNameplates, selectedTokenIds, groupDragData, onGroupDragEnd, isActiveTurn, canControl, shiftHeldRef, tokenBaseOffset = 0.04, isInteractive = true, orientation = 0, rtdbDragsRef, broadcastDrag, clearBroadcast, myUid, myClientId, baseVisibility, playerVisionSources, wallsArray, combinedLights, fowEnabled, alwaysVisible }) => {
+const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gridOffsetY = 0, isSelected, onSelect, onContextMenu, role, getTerrainHeight, isSnapToGrid, isTerrainReady, activeTool, draggedTokenId, setDraggedTokenId, viewMode, showNameplates, selectedTokenIds, groupDragData, onGroupDragEnd, isActiveTurn, canControl, shiftHeldRef, tokenBaseOffset = -0.12, isInteractive = true, orientation = 0, rtdbDragsRef, broadcastDrag, clearBroadcast, myUid, myClientId, baseVisibility, playerVisionSources, wallsArray, combinedLights, fowEnabled, alwaysVisible }) => {
   const meshRef = useRef();
   const visualsRef = useRef();
   const rotationRef = useRef();
@@ -862,7 +862,10 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
                 return; // Not the top hit, abort drag.
             }
             console.log(`[Token ${token.name}] onDragStart Fired!`);
-            if (controls) controls.enabled = false;
+            if (controls) {
+                controls.mouseButtons.LEFT = undefined;
+                controls.mouseButtons.RIGHT = 2;
+            }
             isLeftDragging.current = true;
             hasDragged.current = true;
             
@@ -909,7 +912,10 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
           }}
           onDragEnd={() => {
             console.log("[Token3D] onDragEnd triggered for", token.id);
-            if (controls) controls.enabled = true;
+            if (controls) {
+                controls.mouseButtons.LEFT = 2;
+                controls.mouseButtons.RIGHT = 0;
+            }
             hasDragged.current = false;
             isLeftDragging.current = false;
 

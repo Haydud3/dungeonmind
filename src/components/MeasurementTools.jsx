@@ -137,7 +137,6 @@ const RulerTool = ({ getTerrainHeight, gridSize }) => {
             <mesh
                 onPointerDown={handlePointerDown}
                 onPointerMove={handlePointerMove}
-                onContextMenu={handleContextMenu}
                 rotation={[-Math.PI / 2, 0, 0]}
             >
                 <planeGeometry args={[1000, 1000]} />
@@ -294,7 +293,6 @@ const ShapeToolBase = ({ children, onHitTest, tokens, onCompleteSelection, type,
                 onPointerMove={handlePointerMove}
                 onPointerUp={handlePointerUp}
                 onClick={handleClick}
-                onContextMenu={handleContextMenu}
                 rotation={[-Math.PI / 2, 0, 0]}
             >
                 <planeGeometry args={[1000, 1000]} />
@@ -488,9 +486,20 @@ const FreehandTool = ({ getTerrainHeight, isLingering, onSaveMeasurement, active
     });
 
     useEffect(() => {
-        if (controls) controls.enabled = (!isDrawing && points.length === 0) || isFading;
+        if (controls) {
+            if ((!isDrawing && points.length === 0) || isFading) {
+                controls.mouseButtons.LEFT = 2; // THREE.MOUSE.PAN
+                controls.mouseButtons.RIGHT = 0; // THREE.MOUSE.ROTATE
+            } else {
+                controls.mouseButtons.LEFT = 0;
+                controls.mouseButtons.RIGHT = 2; // THREE.MOUSE.PAN
+            }
+        }
         return () => {
-            if (controls) controls.enabled = true;
+            if (controls) {
+                controls.mouseButtons.LEFT = 2;
+                controls.mouseButtons.RIGHT = 0;
+            }
             if (lingerTimerRef.current) clearTimeout(lingerTimerRef.current);
         };
     }, [isDrawing, points, isFading, controls]);
@@ -568,7 +577,6 @@ const FreehandTool = ({ getTerrainHeight, isLingering, onSaveMeasurement, active
                 onPointerDown={handlePointerDown}
                 onPointerMove={handlePointerMove}
                 onPointerUp={handlePointerUp}
-                onContextMenu={handleContextMenu}
                 rotation={[-Math.PI / 2, 0, 0]}
             >
                 <planeGeometry args={[1000, 1000]} />
@@ -702,3 +710,4 @@ export const MeasurementTools = ({ activeTool, getTerrainHeight, gridSize, token
         </>
     );
 };
+;

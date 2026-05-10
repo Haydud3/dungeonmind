@@ -9,10 +9,16 @@ export const FreehandDrawingController = ({ isEnabled, color, lineWidth, onDrawE
 
     useCursor(isEnabled, 'crosshair', 'auto');
 
-    // This effect handles enabling/disabling controls
+    // This effect handles mapping controls so left click draws and right click pans
     useEffect(() => {
         if (controls) {
-            controls.enabled = !isEnabled;
+            if (isEnabled) {
+                controls.mouseButtons.LEFT = 0;
+                controls.mouseButtons.RIGHT = 2; // THREE.MOUSE.PAN
+            } else {
+                controls.mouseButtons.LEFT = 2; // THREE.MOUSE.PAN
+                controls.mouseButtons.RIGHT = 0; // THREE.MOUSE.ROTATE
+            }
         }
     }, [isEnabled, controls]);
 

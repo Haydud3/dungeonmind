@@ -44,11 +44,20 @@ const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate, isOwner, onUse })
         if(e) e.stopPropagation();
         
         // Log the spell to Chat/Toast
-        onLogAction && onLogAction(`
-            <div class="font-bold text-amber-500">${spell.name}</div>
-            <div class="text-xs text-slate-300 mt-1">${spell.desc.substring(0, 150)}...</div>
-            <div class="text-[10px] text-slate-500 mt-1 uppercase">${spell.school} • ${spell.time} ${spell.components ? `• ${spell.components}` : ''}</div>
-        `);
+        if (onDiceRoll) {
+            onDiceRoll('1d0', {
+                alias: spell.name,
+                description: spell.desc || "",
+                actionType: 'use',
+                characterName: character.name
+            });
+        } else if (onLogAction) {
+            onLogAction(`
+                <div class="font-bold text-amber-500">${spell.name}</div>
+                <div class="text-xs text-slate-300 mt-1">${spell.desc.substring(0, 150)}...</div>
+                <div class="text-[10px] text-slate-500 mt-1 uppercase">${spell.school} • ${spell.time} ${spell.components ? `• ${spell.components}` : ''}</div>
+            `);
+        }
 
         if (spell.level > 0 && castSpell) castSpell(spell.level);
     };
@@ -218,7 +227,7 @@ const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate, isOwner, onUse })
                         {/* Right: Buttons */}
                         <div className="flex items-center gap-2 shrink-0">
                             <button 
-                                onClick={() => onUse && onUse(spell, 'Spell')} 
+                                onClick={(e) => handleCast(spell, e)} 
                                 className="px-4 py-1 bg-slate-800 hover:bg-indigo-600 text-slate-300 hover:text-white rounded text-xs font-bold transition-colors"
                             >
                                 Cast
