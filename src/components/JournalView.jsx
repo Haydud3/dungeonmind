@@ -63,6 +63,8 @@ const JournalView = ({ role, userId, aiHelper, onClose }) => {
                 players={data.players || []} 
                 userId={userId}
                 campaignCode={gameParams?.code}
+                isDm={role === 'dm'}
+                assignments={data.assignments || {}}
 // --- 2 lines after changes ---
             />
         );

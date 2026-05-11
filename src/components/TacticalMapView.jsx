@@ -182,7 +182,7 @@ const ViewManager = React.memo(({ aspect, scale, orientation, fitTrigger }) => {
     return null;
 });
 
-export default React.memo(function TacticalMapView({ campaignCode, activeMapId, onOpenSheet, role, onOpenHandouts, onOpenChat, onOpenJournal, onOpenDiceTray, onOpenCast, isCastMode: propIsCastMode }) {
+export default React.memo(function TacticalMapView({ campaignCode, activeMapId, onOpenSheet, role, onOpenHandouts, onOpenChat, onOpenJournal, onOpenDiceTray, onOpenCast, isCastMode: propIsCastMode, onBack }) {
   const isCastMode = propIsCastMode || (typeof window !== 'undefined' && (new URLSearchParams(window.location.search).get('cast') === 'true' || window.location.hash.includes('cast=true')));
   const { campaign, updateCampaign, user } = useNewCampaign();
   const data = campaign;
@@ -2210,10 +2210,21 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       {/* Top-Left: Connection & Camera Controls */}
       {!isCastMode && (
           <div className={`absolute top-4 left-4 vtt-safe-top vtt-safe-left z-[70] flex flex-col gap-2 items-start ${uiOpacityClass}`}>
-              {/* Row 1: Connection Status */}
-              <div className="h-10 px-3 bg-slate-900/80 backdrop-blur border border-slate-700 rounded-xl shadow-2xl flex items-center gap-2 cursor-help hover:border-indigo-500 transition-colors" title={`Connected to Realm: ${campaignCode}`}>
-                  <div className="w-2 h-2 rounded-full shadow-[0_0_10px_rgba(34,197,94,0.5)] bg-green-500"></div>
-                  <span className="text-sm font-bold text-amber-500 fantasy-font tracking-widest">{campaignCode}</span>
+              {/* Row 1: Connection Status & Navigation */}
+              <div className="flex items-center gap-2">
+                  {onBack && (
+                      <button 
+                          onClick={onBack} 
+                          className="h-10 px-3 bg-slate-900/80 backdrop-blur border border-slate-700 rounded-xl shadow-2xl flex items-center justify-center text-slate-300 hover:text-white hover:border-amber-500 transition-colors"
+                          title="Back to Previous View"
+                      >
+                          <Icon name="arrow-left" size={18} />
+                      </button>
+                  )}
+                  <div className="h-10 px-3 bg-slate-900/80 backdrop-blur border border-slate-700 rounded-xl shadow-2xl flex items-center gap-2 cursor-help hover:border-indigo-500 transition-colors" title={`Connected to Realm: ${campaignCode}`}>
+                      <div className="w-2 h-2 rounded-full shadow-[0_0_10px_rgba(34,197,94,0.5)] bg-green-500"></div>
+                      <span className="text-sm font-bold text-amber-500 fantasy-font tracking-widest">{campaignCode}</span>
+                  </div>
               </div>
               
               {/* Row 2: View Modes */}

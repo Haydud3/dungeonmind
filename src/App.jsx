@@ -120,6 +120,15 @@ function DungeonMindApp() {
   };
 
   const [currentView, setCurrentView] = useState(getInitialView);
+  const [previousView, setPreviousView] = useState('session');
+
+  // Track previous view for VTT Back button
+  useEffect(() => {
+      setPreviousView(prev => {
+          if (currentView !== 'map') return currentView;
+          return prev;
+      });
+  }, [currentView]);
 
   // 3. Update URL when view changes
   useEffect(() => {
@@ -568,7 +577,7 @@ function DungeonMindApp() {
 
   return (
     <div className="fixed inset-0 w-full h-full flex flex-col md:flex-row bg-slate-900 text-slate-200 font-sans overflow-hidden pt-safe pb-safe pl-safe pr-safe">
-       {!isCastMode && <Sidebar view={currentView} setView={setCurrentView} onExit={leaveCampaign} />}
+       {!isCastMode && currentView !== 'map' && <Sidebar view={currentView} setView={setCurrentView} onExit={leaveCampaign} />}
        <main className="flex-1 flex flex-col overflow-hidden relative w-full h-full">
            {currentView !== 'map' && !isCastMode && (
                <div className="shrink-0 bg-slate-900/95 backdrop-blur border-b border-slate-800 pt-safe z-50">
@@ -585,7 +594,7 @@ function DungeonMindApp() {
            )}
 
            {/* UPDATED: Changed compact padding from 50px to 52px to match the new MobileNav height exactly */}
-           <div className={`flex-1 overflow-hidden relative p-0 md:pb-0 ${isCastMode ? 'pb-0' : (data.config?.mobileCompact ? 'pb-[52px]' : 'pb-[70px]')}`}>
+           <div className={`flex-1 overflow-hidden relative p-0 md:pb-0 ${isCastMode || currentView === 'map' ? 'pb-0' : (data.config?.mobileCompact ? 'pb-[52px]' : 'pb-[70px]')}`}>
              {/* 1. CHAT (Session) */}
               {currentView === 'session' && (
                   <SessionView 
@@ -624,6 +633,7 @@ function DungeonMindApp() {
                       onOpenChat={() => setVttSidebar('chat')}
                       onOpenJournal={() => setVttSidebar('journal')}
                       onOpenDiceTray={() => setShowTools(p => !p)}
+                      onBack={() => setCurrentView(previousView)}
                   />
               )}
               
@@ -837,7 +847,7 @@ function DungeonMindApp() {
        )}
 
        {/* UPDATED: Pass compact prop */}
-       {!isCastMode && <MobileNav view={currentView} setView={setCurrentView} compact={data.config?.mobileCompact} />}
+       {!isCastMode && currentView !== 'map' && <MobileNav view={currentView} setView={setCurrentView} compact={data.config?.mobileCompact} />}
        {!isCastMode && effectiveRole === 'dm' && !data.onboardingComplete && (
            <OnboardingWizard 
                onComplete={(wizData) => {

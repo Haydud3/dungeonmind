@@ -22,7 +22,7 @@ const stringToColor = (str) => {
 
 const JournalPageEditor = ({ 
     page, onSave, onDelete, onBack, aiHelper,
-    isDm, players = [], npcs = [], locations = [], onEntitySelect, userId, campaignCode
+    isDm, players = [], npcs = [], locations = [], onEntitySelect, userId, campaignCode, assignments = {}
 }) => {
     const [localContent, setLocalContent] = useState(page.content || "");
     const [resolvedContent, setResolvedContent] = useState("");
@@ -30,6 +30,11 @@ const JournalPageEditor = ({
     const [syncStatus, setSyncStatus] = useState("idle");
     const [aiWorking, setAiWorking] = useState(false);
     const [toolbarExpanded, setToolbarExpanded] = useState(false);
+    const [activeTypers, setActiveTypers] = useState([]);
+    
+    // Generate a unique session ID so multiple tabs from the same user can test live syncing
+    const sessionId = useMemo(() => Math.random().toString(36).substr(2, 9), []);
+
     const toast = useToast();
     const quillRef = useRef(null);
     const debounceRef = useRef(null);
@@ -40,7 +45,16 @@ const JournalPageEditor = ({
     
     const [zoom, setZoom] = useState(1);
 
-    const me = useMemo(() => players.find(p => String(p.ownerId) === String(userId)) || { name: 'Player' }, [players, userId]);
+    const me = useMemo(() => {
+        if (isDm) return { name: 'DM' };
+        
+        // Check assignments first, then fallback to ownerId
+        const assignedCharId = assignments[userId];
+        const assignedChar = assignedCharId ? players.find(p => String(p.id) === String(assignedCharId)) : null;
+        if (assignedChar) return assignedChar;
+        
+        return players.find(p => String(p.ownerId) === String(userId)) || { name: 'Player' };
+    }, [players, userId, isDm, assignments]);
     const myColor = useMemo(() => stringToColor(userId || 'anon'), [userId]);
 
     const adjustZoom = (delta) => {
@@ -75,82 +89,146 @@ const JournalPageEditor = ({
 
     // Load initial content or live updates when NOT editing
     useEffect(() => {
-        const resolve = async () => {
-            if (page.content !== lastLoadedPageRef.current?.content || page.id !== lastLoadedPageRef.current?.id) {
-                lastLoadedPageRef.current = { id: page.id, content: page.content };
-                // Update resolved content, which feeds the read-only view seamlessly
-                if (page.content) {
-                    const html = await resolveChunkedHtml(page.content);
-                    setResolvedContent(html);
-                    if (!isEditing) setLocalContent(html); // Keep local in sync if we aren't editing
-                } else {
-                    setResolvedContent("");
-                    if (!isEditing) setLocalContent("");
-                }
+        if (page.content !== lastLoadedPageRef.current?.content || page.id !== lastLoadedPageRef.current?.id) {
+            lastLoadedPageRef.current = { id: page.id, content: page.content };
+            
+            // Instantly apply raw content. Do not parse through resolveChunkedHtml 
+            // as ReactQuill handles chunkedImage natively, and passing massive base64 
+            // HTML strings causes severe flickering.
+            if (!isEditing) {
+                setLocalContent(page.content || "");
+                setResolvedContent(page.content || ""); 
             }
-        };
-        resolve();
+        }
     }, [page.id, page.content, isEditing]);
 
-    // Live Cursor Tracking
+    // Live Draft Sync
+    useEffect(() => {
+        if (!campaignCode || !page.id) return;
+        
+        // We use the live_drags path prefix to ensure it passes any existing RTDB rules 
+        // that the user might have set up which already allows token dragging to sync correctly.
+        const draftRef = dbRef(rtdb, `live_drags/journal_${campaignCode}_${page.id}/_draft`);
+        const unsub = onValue(draftRef, (snapshot) => {
+            const data = snapshot.val();
+            // Only update local if the incoming draft is newer and wasn't sent by us just now
+            if (data && data.content && data.lastUpdatedBy !== sessionId) {
+                // Apply Delta smoothly without HTML parsing flicker if available
+                if (data.delta && quillRef.current) {
+                    const editor = quillRef.current.getEditor();
+                    editor.setContents(data.delta, 'silent');
+                }
+                
+                // Keep local state in sync so toggling read/edit doesn't lose data
+                setLocalContent(data.content);
+                setResolvedContent(data.content); 
+                
+                // Tell cursors to reposition themselves after text changes
+                if (quillRef.current) {
+                    const cursorsModule = quillRef.current.getEditor()?.getModule('cursors');
+                    if (cursorsModule) {
+                        setTimeout(() => cursorsModule.update(), 50);
+                    }
+                }
+            }
+        });
+        
+        return () => unsub();
+    }, [campaignCode, page.id, sessionId]);
+
+    // Live Cursor & Presence Tracking
     useEffect(() => {
         if (!campaignCode || !userId || !page.id || !quillRef.current) return;
 
-        const editor = quillRef.current.getEditor();
-        const cursorsModule = editor.getModule('cursors');
-        if (!cursorsModule) return;
+        // Use a slight timeout to ensure ReactQuill has fully instantiated the editor instance
+        const timer = setTimeout(() => {
+            const editor = quillRef.current?.getEditor();
+            if (!editor) return;
+            const cursorsModule = editor.getModule('cursors');
+            if (!cursorsModule) return;
 
-        const cursorsRef = dbRef(rtdb, `journal_cursors/${campaignCode}/${page.id}`);
-        const myCursorRef = dbRef(rtdb, `journal_cursors/${campaignCode}/${page.id}/${userId}`);
+            const cursorsRef = dbRef(rtdb, `live_drags/journal_${campaignCode}_${page.id}`);
+            const myCursorRef = dbRef(rtdb, `live_drags/journal_${campaignCode}_${page.id}/${sessionId}`);
 
-        const onSelectionChange = (range) => {
-            if (range) {
-                set(myCursorRef, { range, name: me.name, color: myColor, timestamp: Date.now() });
-            } else {
-                remove(myCursorRef).catch(() => {});
-            }
-        };
-        
-        // Listen to cursor movement
-        editor.on('selection-change', onSelectionChange);
-        
-        // Ensure cleanup if disconnected abruptly
-        onDisconnect(myCursorRef).remove();
+            const onSelectionChange = (range) => {
+                if (range) {
+                    set(myCursorRef, { range, name: me.name, color: myColor, timestamp: Date.now(), isTyping: false, sessionId }).catch(() => {});
+                } else {
+                    set(myCursorRef, { range: null, name: me.name, color: myColor, timestamp: Date.now(), isTyping: false, sessionId }).catch(() => {});
+                }
+            };
 
-        const unsub = onValue(cursorsRef, (snapshot) => {
-            const val = snapshot.val() || {};
-            const activeIds = Object.keys(val);
+            let typingTimeout;
+            const onTextChange = (delta, oldDelta, source) => {
+                if (source === 'user') {
+                    const range = editor.getSelection();
+                    set(myCursorRef, { range: range || null, name: me.name, color: myColor, timestamp: Date.now(), isTyping: true, sessionId }).catch(() => {});
+                    
+                    clearTimeout(typingTimeout);
+                    typingTimeout = setTimeout(() => {
+                        set(myCursorRef, { range: editor.getSelection() || null, name: me.name, color: myColor, timestamp: Date.now(), isTyping: false, sessionId }).catch(() => {});
+                    }, 1500);
+                }
+            };
+            
+            // Listen to cursor movement & text changes
+            editor.on('selection-change', onSelectionChange);
+            editor.on('text-change', onTextChange);
+            
+            // Ensure cleanup if disconnected abruptly
+            onDisconnect(myCursorRef).remove();
 
-            Object.entries(val).forEach(([uid, data]) => {
-                if (uid === userId) return;
+            const unsub = onValue(cursorsRef, (snapshot) => {
+                const val = snapshot.val() || {};
+                const activeIds = Object.keys(val).filter(k => k !== '_draft');
+                const typers = [];
+
+                activeIds.forEach(uid => {
+                    const data = val[uid];
+                    // Skip if it's our own session
+                    if (data.sessionId === sessionId) return;
+                    
+                    if (data.isTyping) {
+                        typers.push({ id: uid, name: data.name, color: data.color });
+                    }
+                    
+                    try {
+                        const existingCursors = cursorsModule.cursors();
+                        if (!existingCursors.some(c => c.id === uid)) {
+                            cursorsModule.createCursor(uid, data.name, data.color);
+                        }
+                        if (data.range) {
+                            cursorsModule.moveCursor(uid, data.range);
+                            // Show the name tag next to the cursor!
+                            cursorsModule.toggleFlag(uid, data.isTyping || false);
+                        } else {
+                            cursorsModule.toggleFlag(uid, false);
+                        }
+                    } catch (err) {
+                        console.warn("Cursor sync warning:", err);
+                    }
+                });
                 
-                try {
-                    const existingCursors = cursorsModule.cursors();
-                    if (!existingCursors.some(c => c.id === uid)) {
-                        cursorsModule.createCursor(uid, data.name, data.color);
+                setActiveTypers(typers);
+
+                const existingCursors = cursorsModule.cursors();
+                existingCursors.forEach(cursor => {
+                    if (!activeIds.includes(cursor.id) || val[cursor.id]?.sessionId === sessionId) {
+                        cursorsModule.removeCursor(cursor.id);
                     }
-                    if (data.range) {
-                        cursorsModule.moveCursor(uid, data.range);
-                    }
-                } catch (err) {
-                    console.warn("Cursor sync warning:", err);
-                }
+                });
             });
 
-            const existingCursors = cursorsModule.cursors();
-            existingCursors.forEach(cursor => {
-                if (!activeIds.includes(cursor.id) && cursor.id !== userId) {
-                    cursorsModule.removeCursor(cursor.id);
-                }
-            });
-        });
-
-        return () => {
-            editor.off('selection-change', onSelectionChange);
-            unsub();
-            remove(myCursorRef).catch(() => {});
-        };
-    }, [campaignCode, userId, page.id, me.name, myColor]);
+            return () => {
+                editor.off('selection-change', onSelectionChange);
+                editor.off('text-change', onTextChange);
+                unsub();
+                remove(myCursorRef).catch(() => {});
+            };
+        }, 100);
+        
+        return () => clearTimeout(timer);
+    }, [campaignCode, userId, page.id, me.name, myColor, isEditing, sessionId]); // Re-attach when edit mode toggles
 
     const handleChange = (content, delta, source, editor) => {
         if (source !== 'user' || !isEditing) return; 
@@ -159,6 +237,18 @@ const JournalPageEditor = ({
         setLocalContent(content); 
         setSyncStatus("typing");
         
+        // Push draft to RTDB instantly
+        if (campaignCode && page.id) {
+            const draftRef = dbRef(rtdb, `live_drags/journal_${campaignCode}_${page.id}/_draft`);
+            set(draftRef, { 
+                content, 
+                delta: editor.getContents(),
+                lastUpdatedBy: sessionId, 
+                timestamp: Date.now() 
+            }).catch(e => console.warn('draft sync error', e));
+        }
+        
+        // Debounce Firestore Save
         if (debounceRef.current) clearTimeout(debounceRef.current);
         debounceRef.current = setTimeout(() => {
             setSyncStatus("saving");
@@ -167,7 +257,18 @@ const JournalPageEditor = ({
                 setSyncStatus("saved");
                 setTimeout(() => setSyncStatus("idle"), 2000);
             }, 500);
-        }, 700);
+        }, 3000);
+    };
+
+    const toggleEditMode = () => {
+        if (isEditing) {
+            // Turn off editing -> force save to Firestore
+            if (debounceRef.current) clearTimeout(debounceRef.current);
+            onSave(page.id, { ...page, content: localContent });
+            setSyncStatus("saved");
+            setTimeout(() => setSyncStatus("idle"), 2000);
+        }
+        setIsEditing(!isEditing);
     };
 
     const toggleVisibility = () => { 
@@ -376,7 +477,13 @@ const JournalPageEditor = ({
                 `}</style>
                 
                 <div className="flex items-center justify-between w-full">
-                    <button onClick={onBack} className="text-slate-400 hover:text-white mr-2 shrink-0">
+                    <button onClick={() => {
+                        if (isEditing) {
+                            if (debounceRef.current) clearTimeout(debounceRef.current);
+                            onSave(page.id, { ...page, content: localContent });
+                        }
+                        onBack();
+                    }} className="text-slate-400 hover:text-white mr-2 shrink-0">
                         <Icon name="arrow-left" size={24} />
                     </button>
 
@@ -415,7 +522,7 @@ const JournalPageEditor = ({
 
                     <div className="flex items-center gap-1 md:gap-3 ml-2 shrink-0">
                         <button 
-                            onClick={() => setIsEditing(!isEditing)} 
+                            onClick={toggleEditMode} 
                             className={`px-3 py-1.5 text-xs font-bold rounded flex items-center gap-2 transition-colors ${isEditing ? 'bg-amber-600 hover:bg-amber-500 text-white' : 'bg-slate-700 hover:bg-slate-600 text-slate-200'}`}
                             title={isEditing ? "Stop Editing" : "Edit Page"}
                         >
@@ -496,7 +603,11 @@ const JournalPageEditor = ({
                     style={{ 
                         transform: `scale(${zoom})`, 
                         transformOrigin: 'top center',
-                        marginTop: '2rem'
+                        marginTop: '2rem',
+                        cursor: !isEditing ? 'text' : 'auto'
+                    }}
+                    onClick={() => {
+                        if (!isEditing) setIsEditing(true);
                     }}
                 >
                     <input 
@@ -507,6 +618,16 @@ const JournalPageEditor = ({
                         className="journal-title-input"
                         readOnly={!isEditing}
                     />
+
+                    {activeTypers.length > 0 && (
+                        <div className="flex flex-wrap gap-2 px-8 mb-2">
+                            {activeTypers.map(t => (
+                                <div key={t.id} className="text-xs px-2 py-1 rounded-full text-white flex items-center gap-1 shadow-md bg-opacity-80 backdrop-blur" style={{ backgroundColor: t.color }}>
+                                    <Icon name="pencil" size={12} className="animate-bounce" /> {t.name} is typing...
+                                </div>
+                            ))}
+                        </div>
+                    )}
                     
                     <ReactQuill 
                         ref={quillRef} 
