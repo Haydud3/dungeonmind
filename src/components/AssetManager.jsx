@@ -1153,6 +1153,17 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                         </button>
                     </div>
 
+                    <div>
+                        <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">3D Mini Bases</label>
+                        <button
+                            onClick={() => updateMap(campaignCode, activeMapId, { hide3DTokenBases: mapData?.hide3DTokenBases !== false ? false : true })}
+                            className={`w-full py-2 border rounded text-center text-xs font-bold transition-colors flex items-center justify-center gap-2 ${mapData?.hide3DTokenBases !== false ? 'border-indigo-500 bg-indigo-900/20 text-indigo-400' : 'border-slate-600 text-slate-300 hover:border-indigo-500'}`}
+                        >
+                            <Icon name={mapData?.hide3DTokenBases !== false ? "eye-off" : "eye"} size={14} className="inline mr-1" />
+                            {mapData?.hide3DTokenBases !== false ? '3D Bases are HIDDEN' : '3D Bases are VISIBLE'}
+                        </button>
+                    </div>
+
                     <div className="border-t border-slate-800 pt-4">
                         <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">3D Heightmap Scale</label>
                         <ThrottledSlider 

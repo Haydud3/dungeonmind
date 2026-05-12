@@ -636,12 +636,12 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       let relevantTokens;
       if (role === 'dm' || isCastMode) {
           const playerCharIds = new Set((data?.players || []).map(p => String(p.id)));
-          relevantTokens = tokensList.filter(t => t.characterId && playerCharIds.has(String(t.characterId)));
+          relevantTokens = tokensList.filter(t => t.isSharedControl || (t.characterId && playerCharIds.has(String(t.characterId))));
       } else {
           const myCharId = stableAssignments[user?.uid];
           relevantTokens = tokensList.filter(t => {
-              if (!t.characterId) return false;
               if (t.isSharedControl) return true;
+              if (!t.characterId) return false;
               if (myCharId && String(t.characterId) === String(myCharId)) return true;
               const char = allCharacters.find(c => String(c.id) === String(t.characterId));
               return char && String(char.ownerId) === String(user?.uid);
@@ -801,8 +801,8 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       tokensList.forEach(t => {
           if (t.isHidden) return; // Hidden tokens are completely excluded
           
-          // In cast mode, always see all PCs
-          if (isCastMode && t.characterId && playerCharIds.has(String(t.characterId))) {
+          // In cast mode, always see all PCs and shared control tokens
+          if (isCastMode && (t.isSharedControl || (t.characterId && playerCharIds.has(String(t.characterId))))) {
               visibleIds.add(t.id);
               return;
           }
@@ -1063,13 +1063,41 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           }
           const acVal = Array.isArray(m.armor_class) ? m.armor_class[0].value : m.armor_class;
           const speedStr = typeof m.speed === 'object' ? Object.entries(m.speed).map(([k,v]) => `${k} ${v}`).join(', ') : m.speed;
-          const sensesObj = {
-              darkvision: m.senses?.darkvision || "",
-              passivePerception: m.senses?.passive_perception || 10,
-              blindsight: m.senses?.blindsight || "",
-              tremorsense: m.senses?.tremorsense || "",
-              truesight: m.senses?.truesight || ""
+          
+          // Parse Senses
+          const parseSenseString = (senseStr) => {
+              if (!senseStr) return 0;
+              const match = String(senseStr).match(/(\d+)/);
+              return match ? parseInt(match[1], 10) : 0;
           };
+
+          // Parse Proficiencies
+          const skills = {};
+          const savingThrows = {};
+          (m.proficiencies || []).forEach(p => {
+              const name = p.proficiency?.name || "";
+              if (name.startsWith("Skill:")) {
+                  skills[name.replace("Skill: ", "")] = true;
+              } else if (name.startsWith("Saving Throw:")) {
+                  const stat = name.replace("Saving Throw: ", "").substring(0, 3).toLowerCase();
+                  if (stat) savingThrows[stat] = true;
+              }
+          });
+
+          // Parse Actions and Reactions
+          const mappedActions = (m.actions || []).map(a => {
+              let dmgString = "";
+              if (a.damage && a.damage[0] && a.damage[0].damage_dice) {
+                  dmgString = a.damage[0].damage_dice;
+                  if(a.damage[0].damage_type?.name) dmgString += ` ${a.damage[0].damage_type.name}`;
+              }
+              return { name: a.name, desc: a.desc, type: "Action", hit: a.attack_bonus ? `+${a.attack_bonus}` : "", dmg: dmgString };
+          });
+          const mappedReactions = (m.reactions || []).map(r => {
+              return { name: r.name, desc: r.desc, type: "Reaction" };
+          });
+          const allCustomActions = [...mappedActions, ...mappedReactions];
+
           const newNpc = {
               id: Date.now(),
               isHidden: true,
@@ -1081,18 +1109,25 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
               ac: acVal,
               speed: speedStr,
               stats: { str: m.strength, dex: m.dexterity, con: m.constitution, int: m.intelligence, wis: m.wisdom, cha: m.charisma },
-              senses: sensesObj,
+              darkvision: parseSenseString(m.senses?.darkvision),
+              blindsight: parseSenseString(m.senses?.blindsight),
+              tremorsense: parseSenseString(m.senses?.tremorsense),
+              truesight: parseSenseString(m.senses?.truesight),
+              passivePerception: m.senses?.passive_perception || 10,
+              skills,
+              savingThrows,
+              defenses: {
+                  vulnerabilities: (m.damage_vulnerabilities || []).join(', ') || "",
+                  resistances: (m.damage_resistances || []).join(', ') || "",
+                  immunities: [
+                      ...(m.damage_immunities || []),
+                      ...(m.condition_immunities || []).map(c => typeof c === 'string' ? c : c.name).map(c => `${c} (Condition)`)
+                  ].join(', ') || ""
+              },
               image: imageUrl,
               quirk: "SRD Import",
               bio: { backstory: `Imported from D&D 5e API.\nXP: ${m.xp}\nLanguages: ${m.languages}`, appearance: `A ${m.size} ${m.type}.` },
-              customActions: (m.actions || []).map(a => {
-                  let dmgString = "";
-                  if (a.damage && a.damage[0] && a.damage[0].damage_dice) {
-                      dmgString = a.damage[0].damage_dice;
-                      if(a.damage[0].damage_type?.name) dmgString += ` ${a.damage[0].damage_type.name}`;
-                  }
-                  return { name: a.name, desc: a.desc, type: "Action", hit: a.attack_bonus ? `+${a.attack_bonus}` : "", dmg: dmgString };
-              }),
+              customActions: allCustomActions,
               features: (m.special_abilities || []).map(f => ({ name: f.name, desc: f.desc, source: "Trait" })),
               legendaryActions: (m.legendary_actions || []).map(l => ({ name: l.name, desc: l.desc }))
           };
@@ -1659,7 +1694,8 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           tokens: {},
           lights: {},
           fowEnabled: false,
-          fowWallsEnabled: true
+          fowWallsEnabled: true,
+          hide3DTokenBases: true
       };
       await createMap(campaignCode, newMapId, newMapData);
       await updateCampaign({ activeMapId: newMapId });
@@ -1718,7 +1754,8 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
             environment: 'day',
             tokens: {},
             fowEnabled: false,
-            fowWallsEnabled: true
+            fowWallsEnabled: true,
+            hide3DTokenBases: true
         };
         await createMap(campaignCode, newMapId, newMapData);
         await updateCampaign({ activeMapId: newMapId });
@@ -1843,6 +1880,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                       combinedLights={combinedLights}
                       fowEnabled={mapData?.fowEnabled}
                       alwaysVisible={(role === 'dm' && !isCastMode) || (isCastMode && type === 'pc') || (canControl && !isCastMode)}
+                      hideBaseIf3D={mapData?.hide3DTokenBases !== false}
                   />
               </ErrorBoundary>
           );

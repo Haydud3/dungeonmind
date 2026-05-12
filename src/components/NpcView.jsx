@@ -278,12 +278,10 @@ ${pasteTextContent}`;
             const acVal = Array.isArray(m.armor_class) ? m.armor_class[0].value : m.armor_class;
             const speedStr = typeof m.speed === 'object' ? Object.entries(m.speed).map(([k,v]) => `${k} ${v}`).join(', ') : m.speed;
 
-            const sensesObj = {
-                darkvision: m.senses?.darkvision || "",
-                passivePerception: m.senses?.passive_perception || 10,
-                blindsight: m.senses?.blindsight || "",
-                tremorsense: m.senses?.tremorsense || "",
-                truesight: m.senses?.truesight || ""
+            const parseSenseString = (senseStr) => {
+                if (!senseStr) return 0;
+                const match = String(senseStr).match(/(\d+)/);
+                return match ? parseInt(match[1], 10) : 0;
             };
 
             const getMod = (score) => Math.floor((score - 10) / 2);
@@ -363,10 +361,14 @@ ${pasteTextContent}`;
                 proficiencies: { armor: '', weapons: '', tools: '', languages: m.languages || '' },
                 defenses: {
                     resistances: (m.damage_resistances || []).join(', '),
-                    immunities: [...(m.damage_immunities || []), ...(m.condition_immunities?.map(c => c.name) || [])].join(', '),
+                    immunities: [...(m.damage_immunities || []), ...(m.condition_immunities?.map(c => c.name || (typeof c === 'string' ? c : '')) || [])].join(', '),
                     vulnerabilities: (m.damage_vulnerabilities || []).join(', ')
                 },
-                senses: sensesObj,
+                darkvision: parseSenseString(m.senses?.darkvision),
+                blindsight: parseSenseString(m.senses?.blindsight),
+                tremorsense: parseSenseString(m.senses?.tremorsense),
+                truesight: parseSenseString(m.senses?.truesight),
+                passivePerception: m.senses?.passive_perception || 10,
                 image: imageUrl,
                 quirk: "SRD Import",
                 bio: { backstory: `Imported from D&D 5e API.\nXP: ${m.xp}`, appearance: `A ${m.size} ${m.type}.` },

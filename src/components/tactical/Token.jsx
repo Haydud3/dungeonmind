@@ -70,7 +70,7 @@ const DragLine = React.forwardRef((props, ref) => {
 });
 
 // Interactive 3D Token
-const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gridOffsetY = 0, isSelected, onSelect, onContextMenu, role, getTerrainHeight, isSnapToGrid, isTerrainReady, activeTool, draggedTokenId, setDraggedTokenId, viewMode, showNameplates, selectedTokenIds, groupDragData, onGroupDragEnd, isActiveTurn, canControl, shiftHeldRef, tokenBaseOffset = -0.12, isInteractive = true, orientation = 0, rtdbDragsRef, broadcastDrag, clearBroadcast, myUid, myClientId, baseVisibility, playerVisionSources, wallsArray, combinedLights, fowEnabled, alwaysVisible }) => {
+const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gridOffsetY = 0, isSelected, onSelect, onContextMenu, role, getTerrainHeight, isSnapToGrid, isTerrainReady, activeTool, draggedTokenId, setDraggedTokenId, viewMode, showNameplates, selectedTokenIds, groupDragData, onGroupDragEnd, isActiveTurn, canControl, shiftHeldRef, tokenBaseOffset = -0.12, isInteractive = true, orientation = 0, rtdbDragsRef, broadcastDrag, clearBroadcast, myUid, myClientId, baseVisibility, playerVisionSources, wallsArray, combinedLights, fowEnabled, alwaysVisible, hideBaseIf3D }) => {
   const meshRef = useRef();
   const visualsRef = useRef();
   const rotationRef = useRef();
@@ -681,22 +681,26 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
               </>
           )}
 
-          {/* Stone Pedestal Base */}
-          <mesh position={[0, -0.0025, 0]}>
-            <cylinderGeometry args={[safeSize * 0.48, safeSize * 0.5, 0.015, 32]} />
-            <meshStandardMaterial color="#334155" roughness={0.9} metalness={0.1} transparent={true} opacity={opacity} />
-          </mesh>
-          
-          {/* Inner colored accent ring */}
-          <mesh position={[0, 0.006, 0]}>
-            <cylinderGeometry args={[safeSize * 0.46, safeSize * 0.46, 0.002, 32]} />
-            <meshStandardMaterial color={baseColor} roughness={0.5} metalness={0.2} emissive={baseColor} emissiveIntensity={hovered ? 0.5 : 0.1} transparent={true} opacity={opacity} />
-          </mesh>
-
-          <mesh position={[0, 0.006, safeSize * 0.45]} rotation={[Math.PI / 2, 0, 0]}>
-            <coneGeometry args={[safeSize * 0.15, safeSize * 0.2, 3]} />
-            <meshStandardMaterial color={baseColor} roughness={0.5} metalness={0.2} emissive={baseColor} emissiveIntensity={hovered ? 0.5 : 0.1} transparent={true} opacity={opacity} />
-          </mesh>
+          {!(hideBaseIf3D && showModel) && (
+              <>
+                {/* Stone Pedestal Base */}
+                <mesh position={[0, -0.0025, 0]}>
+                  <cylinderGeometry args={[safeSize * 0.48, safeSize * 0.5, 0.015, 32]} />
+                  <meshStandardMaterial color="#334155" roughness={0.9} metalness={0.1} transparent={true} opacity={opacity} />
+                </mesh>
+                
+                {/* Inner colored accent ring */}
+                <mesh position={[0, 0.006, 0]}>
+                  <cylinderGeometry args={[safeSize * 0.46, safeSize * 0.46, 0.002, 32]} />
+                  <meshStandardMaterial color={baseColor} roughness={0.5} metalness={0.2} emissive={baseColor} emissiveIntensity={hovered ? 0.5 : 0.1} transparent={true} opacity={opacity} />
+                </mesh>
+      
+                <mesh position={[0, 0.006, safeSize * 0.45]} rotation={[Math.PI / 2, 0, 0]}>
+                  <coneGeometry args={[safeSize * 0.15, safeSize * 0.2, 3]} />
+                  <meshStandardMaterial color={baseColor} roughness={0.5} metalness={0.2} emissive={baseColor} emissiveIntensity={hovered ? 0.5 : 0.1} transparent={true} opacity={opacity} />
+                </mesh>
+              </>
+          )}
 
           {isSelected && (
             <mesh position={[0, 0.001, 0]} rotation={[-Math.PI / 2, 0, 0]}>
@@ -1002,7 +1006,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
 
 const areTokensEqual = (prev, next) => {
     // Fast path: if the same object, they are equal
-    if (prev.token === next.token && prev.isSelected === next.isSelected && prev.draggedTokenId === next.draggedTokenId && prev.activeTool === next.activeTool && prev.baseVisibility === next.baseVisibility && prev.alwaysVisible === next.alwaysVisible && prev.fowEnabled === next.fowEnabled && prev.getTerrainHeight === next.getTerrainHeight && prev.tokenBaseOffset === next.tokenBaseOffset) {
+    if (prev.token === next.token && prev.isSelected === next.isSelected && prev.draggedTokenId === next.draggedTokenId && prev.activeTool === next.activeTool && prev.baseVisibility === next.baseVisibility && prev.alwaysVisible === next.alwaysVisible && prev.fowEnabled === next.fowEnabled && prev.getTerrainHeight === next.getTerrainHeight && prev.tokenBaseOffset === next.tokenBaseOffset && prev.hideBaseIf3D === next.hideBaseIf3D) {
         return true;
     }
     
@@ -1018,7 +1022,7 @@ const areTokensEqual = (prev, next) => {
     if ((pt.conditions || []).join(',') !== (nt.conditions || []).join(',')) return false;
     
     // Check primitive props
-    if (prev.isSelected !== next.isSelected || prev.role !== next.role || prev.gridSize !== next.gridSize || prev.isSnapToGrid !== next.isSnapToGrid || prev.isTerrainReady !== next.isTerrainReady || prev.activeTool !== next.activeTool || prev.draggedTokenId !== next.draggedTokenId || prev.viewMode !== next.viewMode || prev.showNameplates !== next.showNameplates || prev.isActiveTurn !== next.isActiveTurn || prev.canControl !== next.canControl || prev.isInteractive !== next.isInteractive || prev.orientation !== next.orientation || prev.baseVisibility !== next.baseVisibility || prev.alwaysVisible !== next.alwaysVisible || prev.fowEnabled !== next.fowEnabled || prev.getTerrainHeight !== next.getTerrainHeight || prev.tokenBaseOffset !== next.tokenBaseOffset) {
+    if (prev.isSelected !== next.isSelected || prev.role !== next.role || prev.gridSize !== next.gridSize || prev.isSnapToGrid !== next.isSnapToGrid || prev.isTerrainReady !== next.isTerrainReady || prev.activeTool !== next.activeTool || prev.draggedTokenId !== next.draggedTokenId || prev.viewMode !== next.viewMode || prev.showNameplates !== next.showNameplates || prev.isActiveTurn !== next.isActiveTurn || prev.canControl !== next.canControl || prev.isInteractive !== next.isInteractive || prev.orientation !== next.orientation || prev.baseVisibility !== next.baseVisibility || prev.alwaysVisible !== next.alwaysVisible || prev.fowEnabled !== next.fowEnabled || prev.getTerrainHeight !== next.getTerrainHeight || prev.tokenBaseOffset !== next.tokenBaseOffset || prev.hideBaseIf3D !== next.hideBaseIf3D) {
         return false;
     }
     
