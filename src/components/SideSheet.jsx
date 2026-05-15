@@ -13,6 +13,7 @@ const SideSheet = ({ characterId, onClose, role, onDiceRoll, onOpenDiceTray }) =
     const isVirtual = typeof characterId === 'object' && characterId !== null && characterId.isToken;
     const actualCharId = isVirtual ? characterId.characterId : characterId;
     const tokenId = isVirtual ? characterId.tokenId : null;
+    const initialTab = isVirtual ? characterId.initialTab : null;
     
     const [liveHp, setLiveHp] = useState(null);
     const [isSharedControl, setIsSharedControl] = useState(false);
@@ -216,6 +217,7 @@ const SideSheet = ({ characterId, onClose, role, onDiceRoll, onOpenDiceTray }) =
                     key={displayId} // Keep key for re-render on ID change
                     character={character} // Pass the actual character object
                     data={modifiedData}
+                    initialTab={initialTab}
                     onClose={onClose}
                     onBack={onClose}
                     onSave={handleSave}

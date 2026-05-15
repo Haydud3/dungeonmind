@@ -14,13 +14,15 @@ const fileToBase64 = (file) => new Promise((resolve, reject) => {
 
 const BioTab = ({ onOpenModelPicker }) => {
     const { character, updateInfo } = useCharacterStore();
-    const bio = character.bio || {};
+    const bio = character?.bio || {};
     const [isUploading, setIsUploading] = useState(false);
-    const [modelScale, setModelScale] = useState(character.modelScale || 1);
-    const [modelYOffset, setModelYOffset] = useState(character.modelYOffset || 0);
+    const [modelScale, setModelScale] = useState(character?.modelScale || 1);
+    const [modelYOffset, setModelYOffset] = useState(character?.modelYOffset || 0);
 
     const [isForging3D, setIsForging3D] = useState(false);
     const [forge3DStatus, setForge3DStatus] = useState("");
+
+    if (!character) return null;
 
     const handleForge3D = async (e) => {
         const file = e.target.files?.[0];

@@ -70,7 +70,7 @@ export const AmbientEcosystem = ({ environment, ambientLifeLevel = 'off' }) => {
                     )}
                     
                     {/* Falling Leaves: Forests (Reduced Clutter) */}
-                    {environment === 'forest' && <FallingLeaves count={200} />}
+                    {environment === 'forest' && <FallingLeaves count={200} color="#4ade80" emissive="#4ade80" emissiveIntensity={0.8} />}
                     
                     {/* Scuttling Critters: Dungeons/Cities (Sparse and Quick) */}
                     {['dungeon', 'city'].includes(environment) && (

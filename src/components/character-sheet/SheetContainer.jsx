@@ -13,12 +13,18 @@ import SpellsTab from './tabs/SpellsTab';
 import DmNotesTab from './tabs/DmNotesTab';
 import RollToast from './widgets/RollToast';
 
-function SheetContainer({ character, onSave, onDiceRoll, diceLog, onLogAction, onBack, role, isNpc = false, onOpenModelPicker, data, isOwner: isOwnerProp, onOpenDiceTray }) {
+function SheetContainer({ character, onSave, onDiceRoll, diceLog, onLogAction, onBack, role, isNpc = false, onOpenModelPicker, data, isOwner: isOwnerProp, onOpenDiceTray, initialTab }) {
   const { loadCharacter, updateCharacter } = useCharacterStore();
   const isDirty = useCharacterStore((state) => state.isDirty);
   const storeCharacter = useCharacterStore((state) => state.character);
   const markSaved = useCharacterStore((state) => state.markSaved);
-  const [activeTab, setActiveTab] = useState('actions');
+  const [activeTab, setActiveTab] = useState(initialTab || 'actions');
+
+  useEffect(() => {
+      if (initialTab) {
+          setActiveTab(initialTab);
+      }
+  }, [initialTab]);
 
   // Load the character into the store whenever the character prop changes
   useEffect(() => {

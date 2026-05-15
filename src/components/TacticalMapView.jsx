@@ -2730,6 +2730,24 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                 Open Sheet
               </button>
             )}
+
+            {contextMenu.characterId && onOpenSheet && (
+              <button 
+                className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors flex items-center gap-2"
+                onClick={() => {
+                  if (onOpenSheet) {
+                      const token = tokensList.find(t => t.id === contextMenu.tokenId);
+                      const char = allCharacters.find(c => String(c.id) === String(contextMenu.characterId));
+                      const hp = token?.hp?.current ?? char?.hp?.current ?? null;
+                      const maxHp = token?.hp?.max ?? char?.hp?.max ?? null;
+                      onOpenSheet({ isToken: true, tokenId: contextMenu.tokenId, characterId: contextMenu.characterId, hp, maxHp, initialTab: 'bio' });
+                  }
+                  setContextMenu(null);
+                }}
+              >
+                <Icon name="box" size={14} className="text-amber-400" /> Model Editor
+              </button>
+            )}
             
             {/* Reset Elevation is only visible if the token is currently flying */}
             {Math.abs(contextMenu.elevationOffset || 0) > 0.01 && (
