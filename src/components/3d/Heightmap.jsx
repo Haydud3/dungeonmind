@@ -40,7 +40,7 @@ export const HeightmapContent = ({ resolvedHeightmapUrl, resolvedBackgroundUrl, 
     }, [backgroundTexture, heightmapTexture, normalMapTexture, dynamicDisplacementMap]);
 
     return (
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]}>
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]} receiveShadow>
             <planeGeometry args={[scale * aspect, scale, subdivisions, subdivisions]} />
             <meshStandardMaterial
                 map={backgroundTexture}

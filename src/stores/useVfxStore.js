@@ -3,6 +3,8 @@ import { create } from 'zustand';
 export const useVfxStore = create((set, get) => ({
     activeEffects: [],
     targetingPreview: null,
+    ambientLifeLevel: 'low',
+    setAmbientLifeLevel: (level) => set({ ambientLifeLevel: level }),
     
     addEffect: (effect) => {
         const id = Date.now() + Math.random();

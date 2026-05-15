@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import Icon from './Icon';
 import { useNewCampaign } from '../contexts/NewCampaignProvider';
+import { useVfxStore } from '../stores/useVfxStore';
 
 const SettingsView = ({ 
     apiKey, setApiKey, 
@@ -13,6 +14,10 @@ const SettingsView = ({
     const { campaign, updateCampaign, kickPlayer, banPlayer, unbanPlayer } = useNewCampaign();
     const data = campaign; // for compatibility
     const [activeTab, setActiveTab] = useState('general');
+    
+    const ambientLifeLevel = useVfxStore(state => state.ambientLifeLevel);
+    const setAmbientLifeLevel = useVfxStore(state => state.setAmbientLifeLevel);
+
     
     // START CHANGE: Robust character detection (handles string/number mismatches)
     const myCharId = data.assignments?.[user?.uid];

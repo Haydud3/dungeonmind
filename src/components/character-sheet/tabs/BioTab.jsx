@@ -234,7 +234,7 @@ const BioTab = ({ onOpenModelPicker }) => {
 
                 <div className="relative w-full h-64 bg-slate-900 rounded-lg mt-4">
                     {character.modelUrl ? (
-                        <ModelViewer modelUrl={character.modelUrl} scale={modelScale} yOffset={modelYOffset} />
+                        <ModelViewer modelUrl={character.modelUrl} scale={modelScale} yOffset={modelYOffset} materialStyle={character.materialStyle} />
                     ) : (
                         <div className="flex flex-col items-center justify-center h-full text-slate-500">
                             <Icon name="swords" size={32} />
@@ -267,6 +267,20 @@ const BioTab = ({ onOpenModelPicker }) => {
                                 onChange={handleYOffsetChange}
                                 className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer"
                             />
+                        </div>
+                        <div className="col-span-2">
+                            <label className="text-xs text-slate-400">Material Style</label>
+                            <select 
+                                value={character.materialStyle || 'silver'} 
+                                onChange={e => updateInfo('materialStyle', e.target.value)}
+                                className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white text-sm outline-none focus:border-indigo-500 mt-1"
+                            >
+                                <option value="original">Original (None)</option>
+                                <option value="silver">Cast Silver (Default)</option>
+                                <option value="bronze">Cast Bronze (Metallic)</option>
+                                <option value="marble">Polished Marble (Resin)</option>
+                                <option value="stone">Carved Stone</option>
+                            </select>
                         </div>
                     </div>
                 )}

@@ -46,6 +46,7 @@ const WallDrawingController = lazy(() => import('./3d/controllers/WallDrawingCon
 const StampingController = lazy(() => import('./3d/controllers/StampingController').then(m => ({ default: m.StampingController })));
 const TerrainSculptorController = lazy(() => import('./3d/controllers/TerrainSculptorController').then(m => ({ default: m.TerrainSculptorController })));
 const WeatherParticles = lazy(() => import('./3d/WeatherParticles').then(m => ({ default: m.WeatherParticles })));
+const AmbientEcosystem = lazy(() => import('./3d/AmbientEcosystem').then(m => ({ default: m.AmbientEcosystem })));
 const PostProcessingEffects = lazy(() => import('./3d/PostProcessingEffects').then(m => ({ default: m.PostProcessingEffects })));
 import { DropZone } from './ui/DropZone';
 const DisplacedGrid = lazy(() => import('./3d/DisplacedGrid').then(m => ({ default: m.DisplacedGrid })));
@@ -184,6 +185,7 @@ const ViewManager = React.memo(({ aspect, scale, orientation, fitTrigger }) => {
 
 export default React.memo(function TacticalMapView({ campaignCode, activeMapId, onOpenSheet, role, onOpenHandouts, onOpenChat, onOpenJournal, onOpenDiceTray, onOpenCast, isCastMode: propIsCastMode, onBack }) {
   const isCastMode = propIsCastMode || (typeof window !== 'undefined' && (new URLSearchParams(window.location.search).get('cast') === 'true' || window.location.hash.includes('cast=true')));
+  const isLowPerformance = typeof window !== 'undefined' && localStorage.getItem('vtt_low_performance') === 'true';
   const { campaign, updateCampaign, user } = useNewCampaign();
   const data = campaign;
   const cameraControllerRef = useRef();
@@ -437,54 +439,87 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
         const u = (px_val / (mapScale * aspect)) + 0.5;
         const v = (pz_val / mapScale) + 0.5;
 
-        const clampedU = Math.max(0, Math.min(1, u));
-        const clampedV = Math.max(0, Math.min(1, v));
+        // The GPU uses a mesh with limited subdivisions. 
+        // We must sample the texture at the exact same vertices the GPU does, 
+        // and interpolate across the exact same triangles using Barycentric coordinates.
+        const isLowPerf = typeof window !== 'undefined' && window.localStorage?.getItem('vtt_low_performance') === 'true';
+        const subdivisions = isLowPerf ? 128 : 256;
 
-        const px = clampedU * (terrainData.width - 1);
-        const py = clampedV * (terrainData.height - 1);
+        const gridX = u * subdivisions;
+        const gridZ = v * subdivisions;
 
-        const x0 = Math.floor(px);
-        const x1 = Math.ceil(px);
-        const y0 = Math.floor(py);
-        const y1 = Math.ceil(py);
+        const x0 = Math.floor(gridX);
+        const x1 = Math.ceil(gridX);
+        const z0 = Math.floor(gridZ);
+        const z1 = Math.ceil(gridZ);
 
-        const tx = px - x0;
-        const ty = py - y0;
+        const tx = gridX - x0;
+        const tz = gridZ - z0;
 
-        const getH = (ix, iy) => {
-            const safeX = Math.max(0, Math.min(ix, terrainData.width - 1));
-            const safeY = Math.max(0, Math.min(iy, terrainData.height - 1));
-            return (terrainData.data[(safeY * terrainData.width + safeX) * 4] / 255.0) * mapHeightScale;
+        const getVertexHeight = (vx, vz) => {
+            const clampedVX = Math.max(0, Math.min(vx, subdivisions));
+            const clampedVZ = Math.max(0, Math.min(vz, subdivisions));
+            
+            const vu = clampedVX / subdivisions;
+            const vv = clampedVZ / subdivisions;
+
+            // WebGL texture sampling exact match: p = u * size - 0.5
+            let px = vu * terrainData.width - 0.5;
+            let py = vv * terrainData.height - 0.5;
+
+            const px0 = Math.floor(px);
+            const px1 = px0 + 1;
+            const py0 = Math.floor(py);
+            const py1 = py0 + 1;
+
+            const ix = px - px0;
+            const iy = py - py0;
+
+            // Emulate THREE.RepeatWrapping for texture boundaries
+            const wrap = (val, max) => {
+                let res = val % max;
+                return res < 0 ? res + max : res;
+            };
+
+            const getTex = (cx, cy) => {
+                const wx = Math.floor(wrap(cx, terrainData.width));
+                const wy = Math.floor(wrap(cy, terrainData.height));
+                
+                // Raw byte from canvas is sRGB (gamma encoded)
+                let val = terrainData.data[(wy * terrainData.width + wx) * 4] / 255.0;
+                
+                // Decode sRGB to Linear to perfectly match the GPU's hardware decode
+                val = val <= 0.04045 ? val / 12.92 : Math.pow((val + 0.055) / 1.055, 2.4);
+
+                return val * mapHeightScale;
+            };
+
+            const t00 = getTex(px0, py0);
+            const t10 = getTex(px1, py0);
+            const t01 = getTex(px0, py1);
+            const t11 = getTex(px1, py1);
+
+            const t0 = t00 * (1 - ix) + t10 * ix;
+            const t1 = t01 * (1 - ix) + t11 * ix;
+
+            return t0 * (1 - iy) + t1 * iy;
         };
 
-        const h00 = getH(x0, y0);
-        const h10 = getH(x1, y0);
-        const h01 = getH(x0, y1);
-        const h11 = getH(x1, y1);
+        const hA = getVertexHeight(x0, z0); // Top Left
+        const hB = getVertexHeight(x0, z1); // Bottom Left
+        const hC = getVertexHeight(x1, z1); // Bottom Right
+        const hD = getVertexHeight(x1, z0); // Top Right
 
-        const h0 = h00 * (1 - tx) + h10 * tx;
-        const h1 = h01 * (1 - tx) + h11 * tx;
-
-        return h0 * (1 - ty) + h1 * ty;
+        // Three.js PlaneGeometry splits quads into two triangles: (TopLeft, BottomLeft, TopRight) and (BottomLeft, BottomRight, TopRight)
+        if (tx + tz <= 1) {
+            return hA + tx * (hD - hA) + tz * (hB - hA);
+        } else {
+            return hC + (1 - tx) * (hB - hC) + (1 - tz) * (hD - hC);
+        }
       };
 
-      if (radius > 0) {
-          let maxHeight = getHForPoint(x, z);
-          const numSamples = 8;
-          for (let i = 0; i < numSamples; i++) {
-              const angle = (i / numSamples) * Math.PI * 2;
-              const sx = x + Math.cos(angle) * radius;
-              const sz = z + Math.sin(angle) * radius;
-              const h = getHForPoint(sx, sz);
-              if (h > maxHeight) maxHeight = h;
-              
-              const h2 = getHForPoint(x + Math.cos(angle) * (radius/2), z + Math.sin(angle) * (radius/2));
-              if (h2 > maxHeight) maxHeight = h2;
-          }
-          terrainHeight = maxHeight;
-      } else {
-          terrainHeight = getHForPoint(x, z);
-      }
+      // Use the center point for terrain elevation to prevent tokens from artificially floating on slopes.
+      terrainHeight = getHForPoint(x, z);
       
       // Add the visual mesh offsets so tokens perfectly align with the rendered mesh
       terrainHeight += 0.03; 
@@ -616,7 +651,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
 
           const radius = (tokenSize * gridSize) / 2;
           const terrainY = getTerrainHeight ? getTerrainHeight(finalX, finalZ, radius) : 0;
-          const finalY = terrainY + (t.elevationOffset || 0) + ((isCastMode || !mapData?.heightmapUrl) ? 0.04 : (mapData?.tokenElevationOffset ?? 0.04));
+          const finalY = terrainY + (t.elevationOffset || 0) + ((isCastMode || !mapData?.heightmapUrl) ? 0.04 : (mapData?.tokenElevationOffset ?? -0.12));
 
           updates[`tokens.${id}.x`] = finalX;
           updates[`tokens.${id}.y`] = finalY;
@@ -1280,7 +1315,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
     const newTokenId = `token_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const tokenData = {
         id: newTokenId, characterId: finalNpc.id, name: finalNpc.name,
-        type: 'npc', x: dropX, y: terrainY + ((isCastMode || !mapData?.heightmapUrl) ? 0.04 : (mapData?.tokenElevationOffset ?? 0.04)), z: dropZ,
+        type: 'npc', x: dropX, y: terrainY + ((isCastMode || !mapData?.heightmapUrl) ? 0.04 : (mapData?.tokenElevationOffset ?? -0.12)), z: dropZ,
         image: finalNpc.image || '', size: finalNpc.size || 1, hp: finalNpc.hp
     };
 
@@ -1569,7 +1604,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
             id: newTokenId,
             name: 'New Token',
             type: 'npc',
-            x: dropX, y: terrainY + ((isCastMode || !mapData?.heightmapUrl) ? 0.04 : (mapData?.tokenElevationOffset ?? 0.04)), z: dropZ,
+            x: dropX, y: terrainY + ((isCastMode || !mapData?.heightmapUrl) ? 0.04 : (mapData?.tokenElevationOffset ?? -0.12)), z: dropZ,
             image: payload.url || payload.image || '',
             size: 1,
             isHidden: false
@@ -1580,7 +1615,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
             characterId: payload.id || null, 
             name: payload.name || 'Unknown',
             type: payload.type || 'npc',
-        x: dropX, y: terrainY + ((isCastMode || !mapData?.heightmapUrl) ? 0.04 : (mapData?.tokenElevationOffset ?? 0.04)), z: dropZ,
+            x: dropX, y: terrainY + ((isCastMode || !mapData?.heightmapUrl) ? 0.04 : (mapData?.tokenElevationOffset ?? -0.12)), z: dropZ,
             image: payload.image || '',
             size: payload.size || 1,
         };
@@ -1814,10 +1849,18 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
               displayToken.modelUrl = character.modelUrl;
               displayToken.modelScale = character.modelScale;
               displayToken.modelYOffset = character.modelYOffset;
+              displayToken.materialStyle = character.materialStyle;
               displayToken.conditions = character.conditions || token.conditions || [];
           } else {
               displayToken.image = token.image || token.img;
               displayToken.conditions = token.conditions || [];
+          }
+
+          // Move 3D tokens down if their bases are hidden to match 2D token base height
+          const has3DModel = !!displayToken.modelUrl;
+          const hideBaseIf3D = mapData?.hide3DTokenBases !== false;
+          if (has3DModel && hideBaseIf3D) {
+              displayToken.y = (displayToken.y || 0) - 0.04;
           }
 
           // Fix CORS for token images in WebGL using a dedicated image proxy
@@ -1865,7 +1908,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                       isActiveTurn={activeCombatantId === token.id}
                       canControl={canControl && isInteractive}
                       shiftHeldRef={shiftHeldRef}
-                      tokenBaseOffset={(isCastMode || !mapData?.heightmapUrl) ? 0.04 : (mapData?.tokenElevationOffset ?? -0.12)}
+                      tokenBaseOffset={((isCastMode || !mapData?.heightmapUrl) ? 0.04 : (mapData?.tokenElevationOffset ?? -0.12)) - (has3DModel && hideBaseIf3D ? 0.04 : 0)}
                       isInteractive={isInteractive}
                       orientation={mapData?.orientation || 0}
                       activeTool={activeTool || (isDrawingFreehand ? 'freehand' : null)}
@@ -1912,6 +1955,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
         frameloop="always"
         camera={{ position: [0, 8, 8], fov: 50 }} 
         style={{ width: '100%', height: '100%' }}
+        shadows={!isLowPerformance}
         onCreated={({ gl }) => {
             gl.domElement.addEventListener('webglcontextlost', (event) => {
                 event.preventDefault(); // Prevent the default action which might be to simply lose the context
@@ -1950,7 +1994,21 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
         {/* Lighting setup */}
         <ambientLight color={envSetting.ambient.color} intensity={envSetting.ambient.intensity * lightingMultiplier} />
         <hemisphereLight color="#ffffff" groundColor="#444444" intensity={0.4 * lightingMultiplier} />
-        <directionalLight color={envSetting.dir.color} position={envSetting.dir.position} intensity={envSetting.dir.intensity * lightingMultiplier} />
+        <directionalLight 
+            color={envSetting.dir.color} 
+            position={envSetting.dir.position} 
+            intensity={envSetting.dir.intensity * lightingMultiplier} 
+            castShadow={!isLowPerformance}
+            shadow-mapSize={[512, 512]}
+            shadow-camera-near={0.1}
+            shadow-camera-far={200}
+            shadow-camera-left={-(mapData?.scale || 20)}
+            shadow-camera-right={mapData?.scale || 20}
+            shadow-camera-top={mapData?.scale || 20}
+            shadow-camera-bottom={-(mapData?.scale || 20)}
+            shadow-bias={-0.0005}
+            shadow-normalBias={0.05}
+        />
         
         <Suspense fallback={null}>
             <WeatherParticles 
@@ -1958,6 +2016,11 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                 viewMode={viewMode} 
                 mapScale={mapData?.scale || 20} 
                 aspect={aspect} 
+            />
+            {/* NEW SYSTEM: Ambient Life */}
+            <AmbientEcosystem 
+                environment={mapData?.biomeType || 'generic'} 
+                ambientLifeLevel={mapData?.ambientLifeLevel || 'off'}
             />
             <PostProcessingEffects 
                 environment={mapData?.environment} 

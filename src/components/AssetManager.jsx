@@ -894,6 +894,31 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                             <option value="spores">Magical Spores</option>
                             <option value="swamp">Gloomy Swamp</option>
                         </select>
+
+                        <label className="block text-xs uppercase font-bold text-slate-500 mb-2 mt-4 tracking-wider">Ambient Life Effects</label>
+                        <select 
+                            value={mapData?.ambientLifeLevel || 'off'} 
+                            onChange={(e) => updateMap(campaignCode, activeMapId, { ambientLifeLevel: e.target.value })}
+                            className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-xs outline-none focus:border-amber-500 mb-4"
+                        >
+                            <option value="off">Off (None)</option>
+                            <option value="low">Low (Particles Only)</option>
+                            <option value="high">High (Particles & Fauna)</option>
+                        </select>
+
+                        <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Ambient Ecosystem Biome</label>
+                        <select 
+                            value={mapData?.biomeType || 'generic'} 
+                            onChange={(e) => updateMap(campaignCode, activeMapId, { biomeType: e.target.value })}
+                            className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-xs outline-none focus:border-amber-500 mb-4"
+                        >
+                            <option value="generic">Generic (Dust, Shadows)</option>
+                            <option value="dungeon">Dungeon (Spores, Critters, Dust)</option>
+                            <option value="forest">Forest (Leaves, Birds, Spores, Shadows)</option>
+                            <option value="city">City (Dust, Birds, Critters, Shadows)</option>
+                            <option value="coast">Coast (Birds, Shadows)</option>
+                            <option value="desert">Desert (Dust, Shadows)</option>
+                        </select>
                         
                         <label className="block text-[10px] uppercase font-bold text-slate-500 mb-2 tracking-wider">Brightness Multiplier</label>
                         <ThrottledSlider 

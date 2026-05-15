@@ -1,6 +1,26 @@
 import React, { useRef, useMemo } from 'react';
 import { useThree, useFrame } from '@react-three/fiber';
 import { ENV_SETTINGS } from '../../constants/environment';
+import * as THREE from 'three';
+
+let circleTexture = null;
+function getCircleTexture() {
+    if (circleTexture) return circleTexture;
+    const canvas = document.createElement('canvas');
+    canvas.width = 64;
+    canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+    ctx.beginPath();
+    ctx.arc(32, 32, 30, 0, 2 * Math.PI);
+    const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 30);
+    gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
+    gradient.addColorStop(0.5, 'rgba(255, 255, 255, 0.8)');
+    gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    ctx.fillStyle = gradient;
+    ctx.fill();
+    circleTexture = new THREE.CanvasTexture(canvas);
+    return circleTexture;
+}
 
 export const WeatherParticles = ({ environment, viewMode, mapScale, aspect }) => {
     const ref = useRef();
@@ -9,7 +29,7 @@ export const WeatherParticles = ({ environment, viewMode, mapScale, aspect }) =>
     const envSetting = ENV_SETTINGS[environment || 'day'] || ENV_SETTINGS.day;
     const particleType = envSetting.particles;
     
-    const count = particleType === 'rain' ? 3000 : particleType === 'snow' ? 2000 : particleType === 'ash' ? 1000 : particleType === 'spores' ? 500 : 0;
+    const count = particleType === 'rain' ? 1000 : particleType === 'snow' ? 500 : particleType === 'ash' ? 200 : particleType === 'spores' ? 100 : 0;
 
     const [positions, velocities, colors, sizes] = useMemo(() => {
         if (!count) return [new Float32Array(), new Float32Array(), new Float32Array(), new Float32Array()];
@@ -177,12 +197,13 @@ export const WeatherParticles = ({ environment, viewMode, mapScale, aspect }) =>
                     <bufferAttribute attach="attributes-color" count={colors.length / 3} array={colors} itemSize={3} />
                 </bufferGeometry>
                 <pointsMaterial 
-                    size={0.15} 
+                    size={0.3} 
                     vertexColors 
                     transparent 
                     opacity={particleType === 'spores' ? 0.8 : 0.6} 
                     depthWrite={false} 
                     sizeAttenuation 
+                    map={getCircleTexture()}
                 />
             </points>
         );

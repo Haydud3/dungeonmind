@@ -30,7 +30,7 @@ const TokenImage = ({ imageUrl, size, opacity }) => {
         return new THREE.TextureLoader().load(imageUrl);
     }, [imageUrl]);
     return (
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.0075, 0]}>
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.0075, 0]} castShadow receiveShadow>
             <circleGeometry args={[size * 0.45, 32]} />
             <meshBasicMaterial map={texture} transparent opacity={opacity} />
         </mesh>
@@ -650,7 +650,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
           {showModel && (
             <Suspense fallback={null}>
               <group position={[0, 0.0075 + ((token.modelYOffset || 0) * safeSize), 0]}>
-                <CharacterModel modelUrl={token.modelUrl} scale={(token.modelScale || 1) * safeSize} forceStatue={token.forceStatue} opacity={opacity} />
+                <CharacterModel modelUrl={token.modelUrl} scale={(token.modelScale || 1) * safeSize} forceStatue={token.forceStatue} opacity={opacity} materialStyle={token.materialStyle} />
               </group>
             </Suspense>
           )}
@@ -662,7 +662,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
                         <TokenImage imageUrl={resolvedImage} size={safeSize} opacity={opacity} />
                     </Suspense>
                 ) : (
-                <mesh position={[0, 0.0075, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+                <mesh position={[0, 0.0075, 0]} rotation={[-Math.PI / 2, 0, 0]} castShadow receiveShadow>
                       <circleGeometry args={[safeSize * 0.45, 32]} />
                       <meshStandardMaterial color="#1e293b" transparent opacity={opacity} />
                       <Text
@@ -684,18 +684,18 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
           {!(hideBaseIf3D && showModel) && (
               <>
                 {/* Stone Pedestal Base */}
-                <mesh position={[0, -0.0025, 0]}>
+                <mesh position={[0, -0.0025, 0]} castShadow receiveShadow>
                   <cylinderGeometry args={[safeSize * 0.48, safeSize * 0.5, 0.015, 32]} />
                   <meshStandardMaterial color="#334155" roughness={0.9} metalness={0.1} transparent={true} opacity={opacity} />
                 </mesh>
                 
                 {/* Inner colored accent ring */}
-                <mesh position={[0, 0.006, 0]}>
+                <mesh position={[0, 0.006, 0]} castShadow receiveShadow>
                   <cylinderGeometry args={[safeSize * 0.46, safeSize * 0.46, 0.002, 32]} />
                   <meshStandardMaterial color={baseColor} roughness={0.5} metalness={0.2} emissive={baseColor} emissiveIntensity={hovered ? 0.5 : 0.1} transparent={true} opacity={opacity} />
                 </mesh>
       
-                <mesh position={[0, 0.006, safeSize * 0.45]} rotation={[Math.PI / 2, 0, 0]}>
+                <mesh position={[0, 0.006, safeSize * 0.45]} rotation={[Math.PI / 2, 0, 0]} castShadow receiveShadow>
                   <coneGeometry args={[safeSize * 0.15, safeSize * 0.2, 3]} />
                   <meshStandardMaterial color={baseColor} roughness={0.5} metalness={0.2} emissive={baseColor} emissiveIntensity={hovered ? 0.5 : 0.1} transparent={true} opacity={opacity} />
                 </mesh>

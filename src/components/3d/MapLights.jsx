@@ -64,7 +64,19 @@ const LightNodeComponent = ({ light, onContextMenu, role, gridSize, showLightRad
 
     return (
         <group position={[light.position.x, light.position.y || 1, light.position.z]} userData={{ isLight: true, lightId: light.id }}>
-            <pointLight ref={pointLightRef} color={light.color || "#fef08a"} intensity={2.5} distance={radiusInMapUnits * 1.5} decay={2} />
+            <pointLight 
+                ref={pointLightRef} 
+                color={light.color || "#fef08a"} 
+                intensity={2.5} 
+                distance={radiusInMapUnits * 1.5} 
+                decay={2} 
+                castShadow
+                shadow-mapSize={[256, 256]}
+                shadow-bias={-0.005}
+                shadow-normalBias={0.05}
+                shadow-camera-near={0.1}
+                shadow-camera-far={radiusInMapUnits * 1.5}
+            />
             {role === 'dm' && showLightRadius && !light.isTokenLight && (
                 <mesh 
                     renderOrder={200}

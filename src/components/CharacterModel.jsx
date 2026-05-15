@@ -3,7 +3,7 @@ import { useGLTF } from '@react-three/drei';
 import { retrieveChunkedMap } from '../utils/storageUtils';
 import * as THREE from 'three';
 
-const CharacterModel = ({ modelUrl, scale, forceStatue, opacity = 1 }) => {
+const CharacterModel = ({ modelUrl, scale, forceStatue, opacity = 1, materialStyle }) => {
     const [url, setUrl] = useState(null);
     const [error, setError] = useState(null);
 
@@ -44,102 +44,139 @@ const CharacterModel = ({ modelUrl, scale, forceStatue, opacity = 1 }) => {
 
     return (
         <Suspense fallback={null}>
-            <GLTFModel url={url} scale={scale} forceStatue={forceStatue} opacity={opacity} />
+            <GLTFModel url={url} scale={scale} forceStatue={forceStatue} opacity={opacity} materialStyle={materialStyle} />
         </Suspense>
     )
 };
 
-const GLTFModel = ({ url, scale, forceStatue, opacity = 1 }) => {
+const GLTFModel = ({ url, scale, forceStatue, opacity = 1, materialStyle }) => {
     const { scene } = useGLTF(url);
 
     const statueMaterial = useMemo(() => {
-        const mat = new THREE.MeshStandardMaterial({
-            color: '#a0aab5', // base stone gray
-            roughness: 0.9,
-            metalness: 0.1,
+        const style = materialStyle || 'silver';
+
+        if (style === 'original') return null;
+
+        if (style === 'bronze') {
+            return new THREE.MeshStandardMaterial({
+                color: '#8b6508', // Pewter/Bronze
+                roughness: 0.4,
+                metalness: 0.8,
+                transparent: opacity < 1,
+                opacity: opacity
+            });
+        }
+
+        if (style === 'marble') {
+            return new THREE.MeshPhysicalMaterial({
+                color: '#e2e8f0', // Resin/Polished Marble
+                roughness: 0.1,
+                metalness: 0.0,
+                clearcoat: 1.0,
+                clearcoatRoughness: 0.1,
+                transparent: opacity < 1,
+                opacity: opacity
+            });
+        }
+
+        if (style === 'stone') {
+            const mat = new THREE.MeshStandardMaterial({
+                color: '#a0aab5', // base stone gray
+                roughness: 0.9,
+                metalness: 0.0, // Zero metalness for stone
+                transparent: opacity < 1,
+                opacity: opacity
+            });
+
+            mat.onBeforeCompile = (shader) => {
+                // Pass world position from vertex to fragment shader
+                shader.vertexShader = shader.vertexShader.replace(
+                    '#include <common>',
+                    `
+                    #include <common>
+                    varying vec3 vWorldPos;
+                    `
+                );
+                shader.vertexShader = shader.vertexShader.replace(
+                    '#include <worldpos_vertex>',
+                    `
+                    #include <worldpos_vertex>
+                    vWorldPos = (modelMatrix * vec4(position, 1.0)).xyz;
+                    `
+                );
+                
+                // Add noise function and modify color and normal
+                shader.fragmentShader = shader.fragmentShader.replace(
+                    '#include <common>',
+                    `
+                    #include <common>
+                    varying vec3 vWorldPos;
+                    
+                    // Simple 3D noise
+                    float hash(vec3 p) {
+                        p = fract(p * 0.3183099 + .1);
+                        p *= 17.0;
+                        return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+                    }
+                    
+                    float noise(vec3 x) {
+                        vec3 i = floor(x);
+                        vec3 f = fract(x);
+                        f = f * f * (3.0 - 2.0 * f);
+                        
+                        return mix(mix(mix(hash(i + vec3(0,0,0)), hash(i + vec3(1,0,0)), f.x),
+                                       mix(hash(i + vec3(0,1,0)), hash(i + vec3(1,1,0)), f.x), f.y),
+                                   mix(mix(hash(i + vec3(0,0,1)), hash(i + vec3(1,0,1)), f.x),
+                                       mix(hash(i + vec3(0,1,1)), hash(i + vec3(1,1,1)), f.x), f.y), f.z);
+                    }
+                    `
+                );
+                
+                // Modify diffuse color based on noise
+                shader.fragmentShader = shader.fragmentShader.replace(
+                    '#include <color_fragment>',
+                    `
+                    #include <color_fragment>
+                    float n1 = noise(vWorldPos * 50.0);
+                    float n2 = noise(vWorldPos * 200.0);
+                    float totalNoise = n1 * 0.7 + n2 * 0.3;
+                    
+                    // Mix between dark gray and light gray
+                    vec3 stoneColor = mix(vec3(0.45, 0.47, 0.49), vec3(0.75, 0.78, 0.8), totalNoise);
+                    diffuseColor.rgb *= stoneColor;
+                    `
+                );
+
+                // Perturb normal to create bumpiness
+                shader.fragmentShader = shader.fragmentShader.replace(
+                    '#include <normal_fragment_begin>',
+                    `
+                    #include <normal_fragment_begin>
+                    
+                    // Calculate gradient of noise for bump mapping
+                    vec3 eps = vec3(0.01, 0.0, 0.0);
+                    float nx = noise(vWorldPos * 100.0 + eps.xyy) - noise(vWorldPos * 100.0 - eps.xyy);
+                    float ny = noise(vWorldPos * 100.0 + eps.yxy) - noise(vWorldPos * 100.0 - eps.yxy);
+                    float nz = noise(vWorldPos * 100.0 + eps.yyx) - noise(vWorldPos * 100.0 - eps.yyx);
+                    
+                    vec3 noiseNormal = normalize(vec3(nx, ny, nz));
+                    // Blend with original normal
+                    normal = normalize(normal + noiseNormal * 0.4);
+                    `
+                );
+            };
+            return mat;
+        }
+
+        // Default 'silver'
+        return new THREE.MeshStandardMaterial({
+            color: '#c0c0c0', // Silver/Steel
+            roughness: 0.3,
+            metalness: 0.9,
             transparent: opacity < 1,
             opacity: opacity
         });
-
-        mat.onBeforeCompile = (shader) => {
-            // Pass world position from vertex to fragment shader
-            shader.vertexShader = shader.vertexShader.replace(
-                '#include <common>',
-                `
-                #include <common>
-                varying vec3 vWorldPos;
-                `
-            );
-            shader.vertexShader = shader.vertexShader.replace(
-                '#include <worldpos_vertex>',
-                `
-                #include <worldpos_vertex>
-                vWorldPos = (modelMatrix * vec4(position, 1.0)).xyz;
-                `
-            );
-            
-            // Add noise function and modify color and normal
-            shader.fragmentShader = shader.fragmentShader.replace(
-                '#include <common>',
-                `
-                #include <common>
-                varying vec3 vWorldPos;
-                
-                // Simple 3D noise
-                float hash(vec3 p) {
-                    p = fract(p * 0.3183099 + .1);
-                    p *= 17.0;
-                    return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
-                }
-                
-                float noise(vec3 x) {
-                    vec3 i = floor(x);
-                    vec3 f = fract(x);
-                    f = f * f * (3.0 - 2.0 * f);
-                    
-                    return mix(mix(mix(hash(i + vec3(0,0,0)), hash(i + vec3(1,0,0)), f.x),
-                                   mix(hash(i + vec3(0,1,0)), hash(i + vec3(1,1,0)), f.x), f.y),
-                               mix(mix(hash(i + vec3(0,0,1)), hash(i + vec3(1,0,1)), f.x),
-                                   mix(hash(i + vec3(0,1,1)), hash(i + vec3(1,1,1)), f.x), f.y), f.z);
-                }
-                `
-            );
-            
-            // Modify diffuse color based on noise
-            shader.fragmentShader = shader.fragmentShader.replace(
-                '#include <color_fragment>',
-                `
-                #include <color_fragment>
-                float n1 = noise(vWorldPos * 50.0);
-                float n2 = noise(vWorldPos * 200.0);
-                float totalNoise = n1 * 0.7 + n2 * 0.3;
-                
-                // Mix between dark gray and light gray
-                vec3 stoneColor = mix(vec3(0.45, 0.47, 0.49), vec3(0.75, 0.78, 0.8), totalNoise);
-                diffuseColor.rgb *= stoneColor;
-                `
-            );
-
-            // Perturb normal to create bumpiness
-            shader.fragmentShader = shader.fragmentShader.replace(
-                '#include <normal_fragment_begin>',
-                `
-                #include <normal_fragment_begin>
-                
-                // Calculate gradient of noise for bump mapping
-                vec3 eps = vec3(0.01, 0.0, 0.0);
-                float nx = noise(vWorldPos * 100.0 + eps.xyy) - noise(vWorldPos * 100.0 - eps.xyy);
-                float ny = noise(vWorldPos * 100.0 + eps.yxy) - noise(vWorldPos * 100.0 - eps.yxy);
-                float nz = noise(vWorldPos * 100.0 + eps.yyx) - noise(vWorldPos * 100.0 - eps.yyx);
-                
-                vec3 noiseNormal = normalize(vec3(nx, ny, nz));
-                // Blend with original normal
-                normal = normalize(normal + noiseNormal * 0.4);
-                `
-            );
-        };
-        return mat;
-    }, [opacity]);
+    }, [materialStyle, opacity]);
 
     const clonedScene = useMemo(() => {
         const clone = scene.clone(true);
@@ -159,6 +196,20 @@ const GLTFModel = ({ url, scale, forceStatue, opacity = 1 }) => {
 
         clone.traverse((child) => {
             if (child.isMesh) {
+                child.castShadow = true;
+                child.receiveShadow = true;
+                
+                if (statueMaterial === null) {
+                    if (child.material) {
+                        if (Array.isArray(child.material)) {
+                            child.material = child.material.map(mat => applyOpacity(mat));
+                        } else {
+                            child.material = applyOpacity(child.material);
+                        }
+                    }
+                    return;
+                }
+
                 if (forceStatue) {
                     if (Array.isArray(child.material)) {
                         child.material = child.material.map(mat => applyOpacity(mat.map || mat.vertexColors ? mat : statueMaterial));
