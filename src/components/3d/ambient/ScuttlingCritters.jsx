@@ -28,7 +28,7 @@ export const ScuttlingCritters = ({ count = 5, mapBounds = 30 }) => {
     }, [count, mapBounds]);
 
     const dummy = useMemo(() => new THREE.Object3D(), []);
-    const material = useMemo(() => new THREE.MeshLambertMaterial({ color: 0x222222 }), []);
+    const material = useMemo(() => new THREE.MeshBasicMaterial({ color: 0x222222, toneMapped: false }), []);
 
     useFrame((state, delta) => {
         if (!meshRef.current) return;

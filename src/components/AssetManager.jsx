@@ -265,6 +265,9 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
         } else if (layerType === 'normalMap') {
             updates.generatedNormalMapUrl = data;
             mapUpdates.normalMapUrl = data;
+        } else if (layerType === 'materialMask') {
+            updates.generatedMaterialMaskUrl = data;
+            mapUpdates.materialMaskUrl = data;
         } else if (layerType === 'architectMask') {
             const currentFeatures = asset.generatedFeatures || { walls: {}, lights: [] };
             updates.generatedFeatures = { ...currentFeatures, walls: data.walls };
@@ -920,6 +923,18 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                             <option value="desert">Desert (Dust, Shadows)</option>
                         </select>
                         
+                        <label className="block text-[10px] uppercase font-bold text-slate-500 mb-2 tracking-wider">Particle Density Multiplier</label>
+                        <ThrottledSlider 
+                            type="range" 
+                            min="0" 
+                            max="5" 
+                            step="0.1" 
+                            value={mapData?.particleDensity ?? 1.0} 
+                            onChange={(val) => throttledUpdateMap({ particleDensity: val })}
+                            className="w-full accent-indigo-500" 
+                        />
+                        <div className="text-right text-xs text-slate-400 mt-1 mb-4">{mapData?.particleDensity ?? 1.0}x</div>
+
                         <label className="block text-[10px] uppercase font-bold text-slate-500 mb-2 tracking-wider">Brightness Multiplier</label>
                         <ThrottledSlider 
                             type="range" 

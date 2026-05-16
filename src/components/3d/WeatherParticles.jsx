@@ -22,14 +22,15 @@ function getCircleTexture() {
     return circleTexture;
 }
 
-export const WeatherParticles = ({ environment, viewMode, mapScale, aspect }) => {
+export const WeatherParticles = ({ environment, viewMode, mapScale, aspect, particleDensity = 1.0 }) => {
     const ref = useRef();
     const { camera } = useThree();
     
     const envSetting = ENV_SETTINGS[environment || 'day'] || ENV_SETTINGS.day;
     const particleType = envSetting.particles;
     
-    const count = particleType === 'rain' ? 1000 : particleType === 'snow' ? 500 : particleType === 'ash' ? 200 : particleType === 'spores' ? 100 : 0;
+    const baseCount = particleType === 'rain' ? 1000 : particleType === 'snow' ? 500 : particleType === 'ash' ? 200 : particleType === 'spores' ? 100 : 0;
+    const count = Math.max(0, Math.floor(baseCount * particleDensity * 0.4));
 
     const [positions, velocities, colors, sizes] = useMemo(() => {
         if (!count) return [new Float32Array(), new Float32Array(), new Float32Array(), new Float32Array()];

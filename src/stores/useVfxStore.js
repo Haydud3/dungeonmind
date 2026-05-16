@@ -4,6 +4,11 @@ export const useVfxStore = create((set, get) => ({
     activeEffects: [],
     targetingPreview: null,
     ambientLifeLevel: 'low',
+    
+    // Global Environmental Factors
+    globalWind: { x: 1.0, y: 0.0, z: 0.5 }, // Vector direction & strength
+    setGlobalWind: (wind) => set({ globalWind: wind }),
+    
     setAmbientLifeLevel: (level) => set({ ambientLifeLevel: level }),
     
     addEffect: (effect) => {

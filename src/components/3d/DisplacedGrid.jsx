@@ -1,6 +1,5 @@
 import React, { useMemo } from 'react';
 import * as THREE from 'three';
-import { useTexture } from '@react-three/drei';
 
 const DisplacedGridContent = ({ mapData, aspect, resolvedHeightmapUrl, resolvedNormalMapUrl, dynamicDisplacementMap }) => {
     const { scale = 20, gridSize = 1, heightScale = 1, gridOffsetX = 0, gridOffsetY = 0, gridColor = '#ffffff', gridThickness = 1 } = mapData;
@@ -10,23 +9,19 @@ const DisplacedGridContent = ({ mapData, aspect, resolvedHeightmapUrl, resolvedN
     const isLowPerf = localStorage.getItem('vtt_low_performance') === 'true';
     const subdivisions = isLowPerf ? 128 : 256;
 
-    const safeHeightmapUrl = resolvedHeightmapUrl || "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
-    const heightmapTexture = useTexture(safeHeightmapUrl);
-    
-    const safeNormalMapUrl = resolvedNormalMapUrl || "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="; 
-    const normalMapTexture = useTexture(safeNormalMapUrl);
+    const heightmapTexture = useMemo(() => {
+        const url = resolvedHeightmapUrl || "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+        const tex = new THREE.TextureLoader().load(url);
+        tex.colorSpace = THREE.NoColorSpace;
+        return tex;
+    }, [resolvedHeightmapUrl]);
 
-    // Force data textures to linear color space to match CPU height calculations perfectly
-    React.useLayoutEffect(() => {
-        if (heightmapTexture) {
-            heightmapTexture.colorSpace = THREE.NoColorSpace;
-            heightmapTexture.needsUpdate = true;
-        }
-        if (normalMapTexture) {
-            normalMapTexture.colorSpace = THREE.NoColorSpace;
-            normalMapTexture.needsUpdate = true;
-        }
-    }, [heightmapTexture, normalMapTexture]);
+    const normalMapTexture = useMemo(() => {
+        const url = resolvedNormalMapUrl || "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="; 
+        const tex = new THREE.TextureLoader().load(url);
+        tex.colorSpace = THREE.NoColorSpace;
+        return tex;
+    }, [resolvedNormalMapUrl]);
 
     const gridTexture = useMemo(() => {
         if (!gridSize || gridSize <= 0) return null;

@@ -83,6 +83,7 @@ const MapGenerator = ({ asset, onUpdateLayer, mapData }) => {
         normalMap: null,
         architectMask: null,
         illuminationMask: null,
+        materialMask: null,
     });
     const [isProcessing, setIsProcessing] = useState({});
     const [copied, setCopied] = useState(null);
@@ -92,7 +93,8 @@ const MapGenerator = ({ asset, onUpdateLayer, mapData }) => {
         heightMap: "System Role: You are the DungeonMind Architect Engine. First, perfectly visualize how the previous 2D battlemap would look as a physical 3D environment with depth and verticality. Then, generate a clean, colored topographical heightmap of this 3D structure. Use smooth, continuous color gradients to represent elevation (darker for low ground, lighter for high structures). CRITICAL AVOIDANCE: Do NOT add any noise, textures, patterns, or 'dots'. The gradients MUST be perfectly smooth to prevent jagged spikes when rendered in 3D. NO text or labels.",
         normalMap: "System Role: You are the DungeonMind Architect Engine. Generate a perfect orthographic, top-down tangent-space normal map of the provided battlemap. The base, flat areas (such as floors and water surfaces) must be represented as neutral, non-sloping (128, 128, 255) cyan/magenta.\n\nSurface Encoding Logic:\n- Red Channel (X-axis slope): Gradients from left (0) to right (255), where '0' is a downward slope to the left (cyan) and '255' is a downward slope to the right (red).\n- Green Channel (Y-axis slope): Gradients from top (0) to bottom (255), where '0' is an upward slope (magenta) and '255' is a downward slope (green).\n- Blue Channel (Z-axis direction): A constant (128) on flat areas, increasing to (255) for all raised surfaces.\n\nDetailed Feature Mapping:\n- Vertical Structures (Walls, Buildings, Cliffs): Must have raised Z-values (255) with sharp, crisp color-shifts at the edges to show steep slope directions: cyan on left edges, red on right, magenta on top, and green on bottom.\n- Ground Textures (Tiles, Planks): The main surfaces must remain mostly neutral but have fine, narrow color-shifts at the seams/cracks to represent recessed grooves.\n- Natural Terrain (Dirt, Rock): Show micro-bumpiness (slight color variances) across the surface.\n- Organic Objects (Trees, Boulders, Props): Simplify complex geometry. Treat round objects as smooth, raised domes, with symmetrical gradients: magenta (top) fading to green (bottom) and cyan (left) fading to red (right).\n- Elevation Changes: Drop-offs, ramps, and stairs must have dramatic normal map gradients from the high edge to the low level. NO text or labels.",
         architectMask: "System Role: You are a Virtual Tabletop (VTT) Line-of-Sight engine. Generate a vision-blocking Architect Mask. This mask will be scanned by a script to extract 2D collision geometry for dynamic lighting and fog of war. Pure Black background. Draw THIN, 1-PIXEL solid lines representing ONLY the absolute boundaries that block a player's vision (walls, heavy doors, closed rooms, cave boundaries). CRITICAL INSTRUCTIONS: 1. For thick walls, do NOT outline both the inner and outer edges; instead, draw exactly ONE single line directly down the center of the wall's mass. 2. Ignore all scatter terrain that doesn't fully block tall vision (tables, wagons, barrels, bushes, trees, statues). Use Pure Red (#FF0000) for vision-blocking walls, Pure Blue (#0000FF) for doors, and Pure Cyan (#00FFFF) for windows. The result must be a clean, minimalist neon wireframe. Precision is required for the engine to parse the lines.",
-        illuminationMask: "System Role: You are the DungeonMind Architect Engine. Generate Illumination Data of the battlemap. This mask will be scanned by a script to place interactive 3D point lights in the game engine. Pure Black background. Pure Yellow (#FFFF00) solid circles representing EXACTLY the origins of light sources (e.g., torches, lanterns, campfires, glowing crystals). Do NOT draw light gradients or ambient light, ONLY solid yellow circles at the exact source emitter."
+        illuminationMask: "System Role: You are the DungeonMind Architect Engine. Generate Illumination Data of the battlemap. This mask will be scanned by a script to place interactive 3D point lights in the game engine. Pure Black background. Pure Yellow (#FFFF00) solid circles representing EXACTLY the origins of light sources (e.g., torches, lanterns, campfires, glowing crystals). Do NOT draw light gradients or ambient light, ONLY solid yellow circles at the exact source emitter.",
+        materialMask: "System Role: You are the DungeonMind Architect Engine. Generate an RGB Material Mask for this battlemap to drive interactive 3D shader effects. Pure Black background. Paint specific features using ONLY these solid, pure colors: Pure Green (#00FF00) for short, flat vegetation like grass or wheat fields. CRITICAL: Do NOT paint tall objects like trees or large bushes green. Pure Magenta (#FF00FF) for tall vegetation like tree canopies, leaves, and large bushes. Pure Blue (#0000FF) for water/liquids/acid. Pure Red (#FF0000) for emissive/glowing objects like lava, fire, or magic runes. Pure Yellow (#FFFF00) for slippery/shiny surfaces like ice or polished glass. Do not use gradients or anti-aliasing; use flat blocks of color."
     };
 
     const handleCopy = (layerType, text) => {
@@ -119,7 +121,7 @@ const MapGenerator = ({ asset, onUpdateLayer, mapData }) => {
             const scale = mapData?.scale || 20;
             const dataUrl = images[layerType];
 
-            if (['baseMap', 'heightMap', 'normalMap'].includes(layerType)) {
+            if (['baseMap', 'heightMap', 'normalMap', 'materialMask'].includes(layerType)) {
                 let finalDataUrl = dataUrl;
                 
                 if (layerType === 'baseMap') {
@@ -187,6 +189,7 @@ const MapGenerator = ({ asset, onUpdateLayer, mapData }) => {
         if (type === 'normalMap') hasLayer = !!asset.generatedNormalMapUrl;
         if (type === 'architectMask') hasLayer = !!asset.generatedFeatures?.walls && Object.keys(asset.generatedFeatures.walls).length > 0;
         if (type === 'illuminationMask') hasLayer = !!asset.generatedFeatures?.lights && Object.keys(asset.generatedFeatures.lights).length > 0;
+        if (type === 'materialMask') hasLayer = !!asset.materialMaskUrl || !!asset.generatedMaterialMaskUrl;
 
         return (
             <div className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden shadow-lg">
@@ -285,6 +288,11 @@ const MapGenerator = ({ asset, onUpdateLayer, mapData }) => {
                     type="illuminationMask" 
                     title="5. Illumination Data" 
                     description="Identifies the position and radius of built-in light sources." 
+                />
+                <LayerSection 
+                    type="materialMask" 
+                    title="6. Material Mask (RGB)" 
+                    description="Drives animated grass, tree canopies, flowing water, and pulsing lava." 
                 />
             </div>
         </div>

@@ -75,7 +75,7 @@ export const CloudShadows = ({ bounds = 100, height = 30 }) => {
 
     useFrame((state) => {
         if (materialRef.current) {
-            materialRef.current.uniforms.time.value = state.clock.getElapsedTime();
+            materialRef.current.uniforms.time.value = state.clock.elapsedTime;
         }
     });
 

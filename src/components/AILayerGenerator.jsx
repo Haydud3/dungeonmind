@@ -92,7 +92,8 @@ const AILayerGenerator = ({ asset, onUpdateLayer, mapData }) => {
         heightMap: "System Role: You are the DungeonMind Architect Engine. First, perfectly visualize how the previous 2D battlemap would look as a physical 3D environment with depth and verticality. Then, generate a clean, colored topographical heightmap of this 3D structure. Use smooth, continuous color gradients to represent elevation (darker for low ground, lighter for high structures). CRITICAL AVOIDANCE: Do NOT add any noise, textures, patterns, or 'dots'. The gradients MUST be perfectly smooth to prevent jagged spikes when rendered in 3D. NO text or labels.",
         normalMap: "System Role: You are the DungeonMind Architect Engine. Generate a tangent-space normal map of the battlemap. NO text or labels.",
         architectMask: "System Role: You are a Virtual Tabletop (VTT) Line-of-Sight engine. Generate a vision-blocking Architect Mask. This mask will be scanned by a script to extract 2D collision geometry for dynamic lighting and fog of war. Pure Black background. Draw THIN, 1-PIXEL solid lines representing ONLY the absolute boundaries that block a player's vision (walls, heavy doors, closed rooms, cave boundaries). CRITICAL INSTRUCTIONS: 1. For thick walls, do NOT outline both the inner and outer edges; instead, draw exactly ONE single line directly down the center of the wall's mass. 2. Ignore all scatter terrain that doesn't fully block tall vision (tables, wagons, barrels, bushes, trees, statues). Use Pure Red (#FF0000) for vision-blocking walls, Pure Blue (#0000FF) for doors, and Pure Cyan (#00FFFF) for windows. The result must be a clean, minimalist neon wireframe. Precision is required for the engine to parse the lines.",
-        illuminationMask: "System Role: You are the DungeonMind Architect Engine. Generate Illumination Data of the battlemap. This mask will be scanned by a script to place interactive 3D point lights in the game engine. Pure Black background. Pure Yellow (#FFFF00) solid circles representing EXACTLY the origins of light sources (e.g., torches, lanterns, campfires, glowing crystals). Do NOT draw light gradients or ambient light, ONLY solid yellow circles at the exact source emitter."
+        illuminationMask: "System Role: You are the DungeonMind Architect Engine. Generate Illumination Data of the battlemap. This mask will be scanned by a script to place interactive 3D point lights in the game engine. Pure Black background. Pure Yellow (#FFFF00) solid circles representing EXACTLY the origins of light sources (e.g., torches, lanterns, campfires, glowing crystals). Do NOT draw light gradients or ambient light, ONLY solid yellow circles at the exact source emitter.",
+        materialMask: "System Role: You are the DungeonMind Architect Engine. Generate an RGB Material Mask for this battlemap to drive interactive 3D shader effects. Pure Black background. Paint specific features using ONLY these solid, pure colors: Pure Green (#00FF00) for short, flat vegetation like grass or wheat fields. CRITICAL: Do NOT paint tall objects like trees or large bushes green. Pure Magenta (#FF00FF) for tall vegetation like tree canopies, leaves, and large bushes. Pure Blue (#0000FF) for water/liquids/acid. Pure Red (#FF0000) for emissive/glowing objects like lava, fire, or magic runes. Pure Yellow (#FFFF00) for slippery/shiny surfaces like ice or polished glass. Do not use gradients or anti-aliasing; use flat blocks of color."
     };
 
     const handleCopy = (type, text) => {
@@ -277,12 +278,26 @@ const AILayerGenerator = ({ asset, onUpdateLayer, mapData }) => {
                     description="Tangent-space vector map used for dynamic 3D lighting calculation." 
                 />
                 <LayerSection 
+                    type="materialMask" 
+                    title="4. Material Mask (Water, Lava, Grass)" 
+                    description="RGB mask that drives animated map shaders (flowing water, tree canopies, emissive glow)." 
+                />
+                <LayerSection 
                     type="architectMask" 
-                    title="4. Architect Mask (Walls, Doors, Windows)" 
+                    title="5. Architect Mask (Walls, Doors, Windows)" 
                     description="Extracts physical 3D walls and boundaries automatically." 
                 />
                 <LayerSection 
                     type="illuminationMask" 
+                    title="6. Illumination Data" 
+                    description="Identifies the position and radius of built-in light sources." 
+                />
+            </div>
+        </div>
+    );
+};
+
+export default AILayerGenerator;ionMask" 
                     title="5. Illumination Data" 
                     description="Identifies the position and radius of built-in light sources." 
                 />

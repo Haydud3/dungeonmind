@@ -45,6 +45,7 @@ const ZoomHandler = lazy(() => import('./3d/ZoomHandler').then(m => ({ default: 
 const WallDrawingController = lazy(() => import('./3d/controllers/WallDrawingController').then(m => ({ default: m.WallDrawingController })));
 const StampingController = lazy(() => import('./3d/controllers/StampingController').then(m => ({ default: m.StampingController })));
 const TerrainSculptorController = lazy(() => import('./3d/controllers/TerrainSculptorController').then(m => ({ default: m.TerrainSculptorController })));
+const MaterialPainterController = lazy(() => import('./3d/controllers/MaterialPainterController').then(m => ({ default: m.MaterialPainterController })));
 const WeatherParticles = lazy(() => import('./3d/WeatherParticles').then(m => ({ default: m.WeatherParticles })));
 const AmbientEcosystem = lazy(() => import('./3d/AmbientEcosystem').then(m => ({ default: m.AmbientEcosystem })));
 const PostProcessingEffects = lazy(() => import('./3d/PostProcessingEffects').then(m => ({ default: m.PostProcessingEffects })));
@@ -236,6 +237,13 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
   const [sculptBrushSize, setSculptBrushSize] = useState(2);
   const [sculptBrushStrength, setSculptBrushStrength] = useState(0.05);
 
+  const [materialData, setMaterialData] = useState(null);
+  const [materialBrushType, setMaterialBrushType] = useState('#00FF00'); // Green = Grass by default
+  const [materialBrushSize, setMaterialBrushSize] = useState(15);
+  const [materialBrushShape, setMaterialBrushShape] = useState('circle');
+  const [materialBrushSoftness, setMaterialBrushSoftness] = useState(0);
+  const [materialLimitToGround, setMaterialLimitToGround] = useState(false);
+
   const shiftHeldRef = useRef(false);
   const [fitTrigger, setFitTrigger] = useState(0);
 
@@ -351,6 +359,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
   const resolvedBackgroundUrl = useResolvedUrl(mapData?.backgroundUrl);
   const resolvedHeightmapUrl = useResolvedUrl(mapData?.heightmapUrl);
   const resolvedNormalMapUrl = useResolvedUrl(mapData?.normalMapUrl);
+  const resolvedMaterialMaskUrl = useResolvedUrl(mapData?.materialMaskUrl);
 
   useEffect(() => {
     if (!resolvedBackgroundUrl) {
@@ -420,6 +429,46 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
     img.src = resolvedHeightmapUrl;
     return () => { isActive = false; };
   }, [resolvedHeightmapUrl]);
+
+  useEffect(() => {
+      const size = 1024;
+      if (!resolvedMaterialMaskUrl) {
+          const canvas = document.createElement('canvas');
+          canvas.width = size;
+          canvas.height = size;
+          const ctx = canvas.getContext('2d', { willReadFrequently: true });
+          ctx.fillStyle = '#000000'; // Black background
+          ctx.fillRect(0, 0, size, size);
+          
+          const texture = new THREE.CanvasTexture(canvas);
+          texture.colorSpace = THREE.NoColorSpace;
+          texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+          
+          setMaterialData({ width: size, height: size, canvas: canvas, ctx: ctx, texture: texture });
+          return () => texture.dispose();
+      }
+      let isActive = true;
+      let texture = null;
+      const img = new Image();
+      if (!resolvedMaterialMaskUrl.startsWith('blob:') && !resolvedMaterialMaskUrl.startsWith('data:')) {
+          img.crossOrigin = "Anonymous";
+      }
+      img.onload = () => {
+          if (!isActive) return;
+          const canvas = document.createElement('canvas');
+          canvas.width = img.width;
+          canvas.height = img.height;
+          const ctx = canvas.getContext('2d', { willReadFrequently: true });
+          ctx.drawImage(img, 0, 0);
+          
+          texture = new THREE.CanvasTexture(canvas);
+          texture.colorSpace = THREE.NoColorSpace;
+          texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+          setMaterialData({ width: img.width, height: img.height, canvas: canvas, ctx: ctx, texture: texture });
+      };
+      img.src = resolvedMaterialMaskUrl;
+      return () => { isActive = false; if (texture) texture.dispose(); };
+  }, [resolvedMaterialMaskUrl]);
 
   const mapScale = mapData?.scale || 20;
   const mapHeightScale = mapData?.heightScale || 1;
@@ -2016,11 +2065,14 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                 viewMode={viewMode} 
                 mapScale={mapData?.scale || 20} 
                 aspect={aspect} 
+                particleDensity={mapData?.particleDensity ?? 1.0}
             />
             {/* NEW SYSTEM: Ambient Life */}
             <AmbientEcosystem 
                 environment={mapData?.biomeType || 'generic'} 
                 ambientLifeLevel={mapData?.ambientLifeLevel || 'off'}
+                mapScale={mapData?.scale || 20}
+                particleDensity={mapData?.particleDensity ?? 1.0}
             />
             <PostProcessingEffects 
                 environment={mapData?.environment} 
@@ -2057,13 +2109,20 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                         heightmapUrl={mapData.heightmapUrl}
                         backgroundUrl={mapData.backgroundUrl}
                         normalMapUrl={mapData.normalMapUrl}
+                        materialMaskUrl={mapData.materialMaskUrl}
+                        dynamicMaterialMask={materialData?.texture}
                         heightScale={mapData.heightScale || 1}
                         scale={mapData.scale || 20}
                         aspect={aspect}
                         dynamicDisplacementMap={terrainData?.texture}
+                        tokensList={tokensList}
+                        rtdbDragsRef={rtdbDragsRef}
+                        gridSize={gridSize}
+                        animatedEnvironment={mapData?.animatedEnvironment !== false}
+                        isPaintingMaterial={activeTool === 'paintMaterial'}
                     />
                 ) : (
-                    showPlane && <MapPlane backgroundUrl={mapData.backgroundUrl} scale={mapData.scale || 20} />
+                    showPlane && <MapPlane backgroundUrl={mapData.backgroundUrl} materialMaskUrl={mapData.materialMaskUrl} dynamicMaterialMask={materialData?.texture} scale={mapData.scale || 20} tokensList={tokensList} rtdbDragsRef={rtdbDragsRef} gridSize={gridSize} animatedEnvironment={mapData?.animatedEnvironment !== false} isPaintingMaterial={activeTool === 'paintMaterial'} />
                 )}
             </ErrorBoundary>
         </Suspense>
@@ -2239,6 +2298,26 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                         } catch (err) {
                             console.error("Failed to upload sculpted terrain", err);
                         }
+                    }}
+                />
+                <MaterialPainterController
+                    isEnabled={activeTool === 'paintMaterial'}
+                    materialData={materialData}
+                    mapData={mapData}
+                    aspect={aspect}
+                    brushSize={materialBrushSize}
+                    brushColor={materialBrushType}
+                    brushShape={materialBrushShape}
+                    brushSoftness={materialBrushSoftness}
+                    limitToGround={materialLimitToGround}
+                    getTerrainHeight={getTerrainHeight}
+                    onPaintEnd={async () => {
+                        if (!materialData || !materialData.canvas) return;
+                        try {
+                            const base64 = materialData.canvas.toDataURL('image/png'); // Needs to be lossless PNG to retain solid colors
+                            const url = await storeChunkedMap(base64, `material_${Date.now()}.png`);
+                            updateMap(campaignCode, activeMapId, { materialMaskUrl: url });
+                        } catch (err) { console.error("Failed to upload material mask", err); }
                     }}
                 />
             </Suspense>
@@ -2488,6 +2567,38 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                               <div className="w-px h-6 bg-slate-700 mx-1"></div>
                               <input type="range" min="0.5" max="10" step="0.5" value={sculptBrushSize} onChange={e => setSculptBrushSize(Number(e.target.value))} className="w-20 accent-amber-500" title="Brush Size" />
                               <input type="range" min="0.01" max="0.2" step="0.01" value={sculptBrushStrength} onChange={e => setSculptBrushStrength(Number(e.target.value))} className="w-20 accent-blue-500" title="Brush Strength" />
+                          </div>
+                      )}
+                  </div>
+              )}
+
+              {role === 'dm' && (
+                  <div className="relative group flex justify-center">
+                      <ToolButton
+                          name="Paint Effects" icon="brush" isActive={activeTool === 'paintMaterial'} isStandalone={true}
+                          onClick={() => {
+                              setIsToolbarOpen(p => p === 'paintMaterial' ? null : 'paintMaterial');
+                              if (activeTool !== 'paintMaterial') {
+                                  setActiveTool('paintMaterial'); setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); setIsDeleting(false);
+                              } else { setActiveTool(null); }
+                          }}
+                      />
+                      {isToolbarOpen === 'paintMaterial' && (
+                          <div className="absolute top-1/2 right-[110%] -translate-y-1/2 flex items-center gap-2 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-2 rounded-full shadow-2xl animate-in slide-in-from-right-2">
+                              <ToolButton name="Grass" icon="leaf" isActive={materialBrushType === '#00FF00'} onClick={() => setMaterialBrushType('#00FF00')} title="Grass (Green)" />
+                              <ToolButton name="Trees" icon="tree-pine" isActive={materialBrushType === '#FF00FF'} onClick={() => setMaterialBrushType('#FF00FF')} title="Trees (Magenta)" />
+                              <ToolButton name="Water" icon="droplets" isActive={materialBrushType === '#0000FF'} onClick={() => setMaterialBrushType('#0000FF')} title="Water (Blue)" />
+                              <ToolButton name="Lava" icon="flame" isActive={materialBrushType === '#FF0000'} onClick={() => setMaterialBrushType('#FF0000')} title="Lava (Red)" />
+                              <ToolButton name="Ice" icon="snowflake" isActive={materialBrushType === '#FFFF00'} onClick={() => setMaterialBrushType('#FFFF00')} title="Ice (Yellow)" />
+                              <div className="w-px h-6 bg-slate-700 mx-1"></div>
+                              <ToolButton name="Erase" icon="eraser" isActive={materialBrushType === '#000000'} onClick={() => setMaterialBrushType('#000000')} title="Erase (Black)" />
+                              <div className="w-px h-6 bg-slate-700 mx-1"></div>
+                              <ToolButton name="Circle Brush" icon="circle" isActive={materialBrushShape === 'circle'} onClick={() => setMaterialBrushShape('circle')} title="Circle Brush" />
+                              <ToolButton name="Square Brush" icon="square" isActive={materialBrushShape === 'square'} onClick={() => setMaterialBrushShape('square')} title="Square Brush" />
+                              <ToolButton name="Ground Only" icon="mountain" isActive={materialLimitToGround} onClick={() => setMaterialLimitToGround(p => !p)} title="Limit to Ground (Don't paint walls)" />
+                              <div className="w-px h-6 bg-slate-700 mx-1"></div>
+                              <input type="range" min="2" max="100" step="2" value={materialBrushSize} onChange={e => setMaterialBrushSize(Number(e.target.value))} className="w-20 accent-amber-500" title="Brush Size" />
+                              <input type="range" min="0" max="1" step="0.1" value={materialBrushSoftness} onChange={e => setMaterialBrushSoftness(Number(e.target.value))} className="w-20 accent-blue-500" title="Brush Softness" />
                           </div>
                       )}
                   </div>

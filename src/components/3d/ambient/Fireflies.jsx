@@ -7,12 +7,19 @@ let circleTexture = null;
 function getCircleTexture() {
     if (circleTexture) return circleTexture;
     const canvas = document.createElement('canvas');
-    canvas.width = 64;
-    canvas.height = 64;
+    canvas.width = 32;
+    canvas.height = 32;
     const ctx = canvas.getContext('2d');
     ctx.beginPath();
-    ctx.arc(32, 32, 30, 0, 2 * Math.PI);
-    ctx.fillStyle = 'white';
+    ctx.arc(16, 16, 15, 0, 2 * Math.PI);
+    
+    // Glowing gradient
+    const gradient = ctx.createRadialGradient(16, 16, 0, 16, 16, 15);
+    gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
+    gradient.addColorStop(0.2, 'rgba(255, 255, 100, 0.8)');
+    gradient.addColorStop(1, 'rgba(200, 255, 50, 0)');
+    
+    ctx.fillStyle = gradient;
     ctx.fill();
     circleTexture = new THREE.CanvasTexture(canvas);
     return circleTexture;
@@ -23,53 +30,52 @@ const vertexShader = `
     uniform vec3 uWind;
     uniform vec3 uBounds;
     uniform float uMapScale;
+    uniform vec3 uCameraPos;
 
     attribute float aSpeed;
     attribute float aPhase;
-    attribute vec3 aColor;
+    attribute float aBlinkSpeed;
 
-    varying vec3 vColor;
+    varying float vAlpha;
 
     void main() {
         vec3 pos = position;
         
-        // Wobble and drift
-        pos.y += sin(uTime * aSpeed + aPhase) * 1.0 + uWind.y * uTime * 0.5;
-        pos.x += cos(uTime * aSpeed + aPhase) * 2.0 + uWind.x * uTime * 0.5;
-        pos.z += sin(uTime * aSpeed * 0.8 + aPhase) * 2.0 + uWind.z * uTime * 0.5;
+        // Erratic wandering
+        pos.y += sin(uTime * aSpeed * 2.0 + aPhase) * 1.5;
+        pos.x += cos(uTime * aSpeed * 1.5 + aPhase) * 1.5 + uWind.x * uTime * 0.2;
+        pos.z += sin(uTime * aSpeed * 1.7 + aPhase) * 1.5 + uWind.z * uTime * 0.2;
 
-        // Modulo wrapping for bounds
+        // Camera-centric modulo wrapping
         vec3 halfBounds = uBounds * 0.5;
-        
-        pos.x = mod(pos.x + halfBounds.x, uBounds.x) - halfBounds.x;
-        pos.z = mod(pos.z + halfBounds.z, uBounds.z) - halfBounds.z;
+        pos.x = mod(pos.x - uCameraPos.x + halfBounds.x, uBounds.x) - halfBounds.x + uCameraPos.x;
+        pos.z = mod(pos.z - uCameraPos.z + halfBounds.z, uBounds.z) - halfBounds.z + uCameraPos.z;
         pos.y = mod(pos.y, uBounds.y);
 
-        vColor = aColor;
+        // Blinking logic
+        vAlpha = (sin(uTime * aBlinkSpeed + aPhase) + 1.0) * 0.5;
 
         vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
-        gl_PointSize = 15.0 * ((400.0 / uMapScale) / -mvPosition.z);
+        gl_PointSize = 40.0 * ((400.0 / uMapScale) / -mvPosition.z);
         gl_Position = projectionMatrix * mvPosition;
     }
 `;
 
 const fragmentShader = `
-    uniform float uOpacity;
     uniform sampler2D uMap;
-
-    varying vec3 vColor;
+    varying float vAlpha;
 
     void main() {
         vec4 texColor = texture2D(uMap, gl_PointCoord);
         if (texColor.a < 0.01) discard;
         
-        gl_FragColor = vec4(vColor, uOpacity * texColor.a);
+        gl_FragColor = vec4(texColor.rgb, texColor.a * vAlpha);
     }
 `;
 
-const DEFAULT_BOUNDS = { x: 40, y: 8, z: 40 };
+const DEFAULT_BOUNDS = { x: 40, y: 5, z: 40 };
 
-export const FloatingSpores = ({ count = 300, bounds = DEFAULT_BOUNDS, mapScale = 20 }) => {
+export const Fireflies = ({ count = 50, bounds = DEFAULT_BOUNDS, mapScale = 20 }) => {
     const materialRef = useRef();
     const globalWind = useVfxStore(state => state.globalWind);
 
@@ -77,29 +83,24 @@ export const FloatingSpores = ({ count = 300, bounds = DEFAULT_BOUNDS, mapScale 
         const pos = new Float32Array(count * 3);
         const speed = new Float32Array(count);
         const phase = new Float32Array(count);
-        const color = new Float32Array(count * 3);
+        const blinkSpeed = new Float32Array(count);
 
-        const tempColor = new THREE.Color();
         for (let i = 0; i < count; i++) {
             pos[i * 3 + 0] = (Math.random() - 0.5) * bounds.x;
             pos[i * 3 + 1] = Math.random() * bounds.y;
             pos[i * 3 + 2] = (Math.random() - 0.5) * bounds.z;
             
-            speed[i] = 0.5 + Math.random() * 1.5;
+            speed[i] = 0.2 + Math.random() * 0.5;
             phase[i] = Math.random() * Math.PI * 2;
-            
-            tempColor.setHSL(0.3 + Math.random() * 0.1, 0.8, 0.5); // Greenish/yellowish
-            tempColor.toArray(color, i * 3);
+            blinkSpeed[i] = 2.0 + Math.random() * 3.0;
         }
-        return [pos, { speed, phase, color }];
+        return [pos, { speed, phase, blinkSpeed }];
     }, [count, bounds]);
 
     const uniforms = useMemo(() => ({
         uTime: { value: 0 },
         uWind: { value: new THREE.Vector3(globalWind.x, globalWind.y, globalWind.z) },
         uBounds: { value: new THREE.Vector3(bounds.x, bounds.y, bounds.z) },
-        uCameraPos: { value: new THREE.Vector3() },
-        uOpacity: { value: 0.4 },
         uMap: { value: getCircleTexture() },
         uMapScale: { value: mapScale }
     }), [bounds, mapScale]);
@@ -108,17 +109,16 @@ export const FloatingSpores = ({ count = 300, bounds = DEFAULT_BOUNDS, mapScale 
         if (materialRef.current) {
             materialRef.current.uniforms.uTime.value = state.clock.elapsedTime;
             materialRef.current.uniforms.uWind.value.set(globalWind.x, globalWind.y, globalWind.z);
-            materialRef.current.uniforms.uCameraPos.value.copy(state.camera.position);
         }
     });
 
     return (
-        <points renderOrder={1} frustumCulled={false}>
+        <points renderOrder={2} frustumCulled={false}>
             <bufferGeometry>
                 <bufferAttribute attach="attributes-position" count={count} array={positions} itemSize={3} />
                 <bufferAttribute attach="attributes-aSpeed" count={count} array={attributes.speed} itemSize={1} />
                 <bufferAttribute attach="attributes-aPhase" count={count} array={attributes.phase} itemSize={1} />
-                <bufferAttribute attach="attributes-aColor" count={count} array={attributes.color} itemSize={3} />
+                <bufferAttribute attach="attributes-aBlinkSpeed" count={count} array={attributes.blinkSpeed} itemSize={1} />
             </bufferGeometry>
             <shaderMaterial
                 ref={materialRef}
