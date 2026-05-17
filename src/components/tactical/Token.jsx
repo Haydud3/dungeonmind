@@ -154,6 +154,10 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
   // START CHANGE: Make token position reactive to props
   useEffect(() => {
     if (meshRef.current && !isLeftDragging.current) {
+        // If the token is currently being dragged by someone else via RTDB, ignore Firestore updates to prevent teleporting/snapping back
+        const isRemoteDragging = rtdbDragsRef?.current?.[token.id] && rtdbDragsRef.current[token.id].clientId !== myClientId;
+        if (isRemoteDragging) return;
+
         const targetPosition = new THREE.Vector3(token.x || 0, token.y || tokenBaseOffset, token.z || 0);
 
         if (getTerrainHeight && isTerrainReady) {
@@ -175,7 +179,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
             hasInitialized.current = true;
         }
     }
-  }, [token.x, token.y, token.z, token.id, getTerrainHeight, isTerrainReady, safeSize, token.elevationOffset, tokenBaseOffset]);
+  }, [token.x, token.y, token.z, token.id, getTerrainHeight, isTerrainReady, safeSize, token.elevationOffset, tokenBaseOffset, rtdbDragsRef, myClientId]);
 
   useFrame((state, delta) => {
     if (nameplateGlowRef.current && isActiveTurn) {

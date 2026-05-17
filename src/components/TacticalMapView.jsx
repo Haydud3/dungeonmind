@@ -2451,7 +2451,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
 
       {/* Primary Right Dock */}
       {!isCastMode && (
-          <div className={`absolute top-4 right-4 vtt-safe-right z-[70] flex flex-col gap-2 ${uiOpacityClass}`}>
+          <div className={`absolute top-4 right-4 vtt-safe-right z-[70] flex flex-col gap-2 max-h-[calc(100vh-2rem)] overflow-y-auto overflow-x-hidden pb-4 ${uiOpacityClass} custom-scrollbar-hide`}>
                   {role === 'dm' && (
                       <>
                       <ToolButton name="Tokens" icon="users" isActive={showTokenManager} onClick={() => { setActiveTool(null); setShowAssetManager(false); setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); setShowTokenManager(p => !p); }} isStandalone={true} />
