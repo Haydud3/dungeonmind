@@ -5,6 +5,8 @@ import { useNewCampaign } from '../contexts/NewCampaignProvider';
 import { searchGithubModels } from '../utils/miniManifest';
 import Icon from './Icon';
 import { subscribeToMap, updateMap } from '../utils/mapService';
+import { parseDndBeyondJson } from './character-sheet/dndBeyondParser.js';
+import { enrichCharacter } from '../utils/srdEnricher.js';
 
 const SideSheet = ({ characterId, onClose, role, onDiceRoll, onOpenDiceTray }) => {
     const { campaign: data, user, updateCampaign, gameParams } = useNewCampaign();
@@ -23,6 +25,8 @@ const SideSheet = ({ characterId, onClose, role, onDiceRoll, onOpenDiceTray }) =
     const [isSearchingMinis, setIsSearchingMinis] = useState(false);
     const [editableName, setEditableName] = useState('');
     const [sheetWidth, setSheetWidth] = useState(550);
+    const [showRefreshModal, setShowRefreshModal] = useState(false);
+    const [isRefreshing, setIsRefreshing] = useState(false);
 
     useEffect(() => {
         window.dispatchEvent(new CustomEvent('sidesheet-resize', { detail: sheetWidth }));
@@ -129,6 +133,47 @@ const SideSheet = ({ characterId, onClose, role, onDiceRoll, onOpenDiceTray }) =
         }
     };
 
+    const handleRefreshDndBeyond = async (mode) => {
+        if (!character?.dndBeyondId) return;
+        setIsRefreshing(true);
+        try {
+            const dndBeyondRaw = String(character.dndBeyondId);
+            const dndBeyondCharId = dndBeyondRaw.match(/\/characters\/(\d+)/)?.[1] || dndBeyondRaw.match(/^\d+$/)?.[0] || dndBeyondRaw;
+            const encodedUrl = encodeURIComponent(`https://character-service.dndbeyond.com/character/v5/character/${dndBeyondCharId}`);
+            let response = await fetch(`https://corsproxy.io/?url=${encodedUrl}`).catch(() => null);
+
+            if (!response || !response.ok) {
+                response = await fetch(`https://api.allorigins.win/raw?url=${encodedUrl}`).catch(() => null);
+            }
+
+            if (!response || !response.ok) throw new Error(`Fetch failed. D&D Beyond's security might be blocking the request.`);
+            const jsonData = await response.json();
+            const parsedData = parseDndBeyondJson(jsonData);
+            const enrichedChar = await enrichCharacter(parsedData);
+            
+            let cleanChar;
+            
+            if (mode === 'combine') {
+                cleanChar = JSON.parse(JSON.stringify({
+                    ...enrichedChar, id: character.id, ownerId: character.ownerId, image: character.image || enrichedChar.image,
+                    hp: character.hp, inventory: character.inventory, conditions: character.conditions,
+                    bio: { ...enrichedChar.bio, notes: character.bio?.notes || enrichedChar.bio?.notes },
+                    spellSlots: character.spellSlots, currency: character.currency, dndBeyondId: character.dndBeyondId
+                }, (k, v) => v === undefined ? null : v));
+            } else {
+                cleanChar = JSON.parse(JSON.stringify({
+                    ...enrichedChar, id: character.id, ownerId: character.ownerId, image: character.image || enrichedChar.image,
+                    bio: { ...enrichedChar.bio, notes: character.bio?.notes || enrichedChar.bio?.notes }, dndBeyondId: character.dndBeyondId
+                }, (k, v) => v === undefined ? null : v));
+            }
+            
+            handleSave(cleanChar);
+            alert(mode === 'combine' ? `Combined updates for ${cleanChar.name}` : `Overwrote ${cleanChar.name} with fresh D&D Beyond data.`);
+        } catch(err) { alert("Refresh failed: " + err.message); }
+        setShowRefreshModal(false);
+        setIsRefreshing(false);
+    };
+
     const handleOpenModelPicker = () => {
         if (!character) return;
         setAvailableModels([]);
@@ -219,7 +264,16 @@ const SideSheet = ({ characterId, onClose, role, onDiceRoll, onOpenDiceTray }) =
                     onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); }}
                     className="text-xl font-bold text-white bg-transparent outline-none focus:bg-slate-800 rounded px-2 -mx-2 w-full"
                 />
-                <button onClick={onClose} className="text-slate-400 hover:text-white">
+                {character?.dndBeyondId && (
+                    <button 
+                        onClick={() => setShowRefreshModal(true)} 
+                        className="text-blue-400 hover:text-white transition-colors p-1 shrink-0"
+                        title="Refresh from D&D Beyond"
+                    >
+                        <Icon name="refresh-cw" size={24} />
+                    </button>
+                )}
+                <button onClick={onClose} className="text-slate-400 hover:text-white shrink-0">
                     <Icon name="x" size={24} />
                 </button>
             </div>
@@ -301,6 +355,37 @@ const SideSheet = ({ characterId, onClose, role, onDiceRoll, onOpenDiceTray }) =
                         </div>
                     </div>
                 </div>
+                )}
+                
+                {/* Refresh Character Modal */}
+                {showRefreshModal && character && (
+                    <div className="fixed inset-0 z-[110] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
+                        <div className="max-w-md w-full bg-slate-900 rounded-xl overflow-hidden shadow-2xl border border-slate-700 p-6 relative">
+                            <button onClick={() => setShowRefreshModal(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white"><Icon name="x" size={24}/></button>
+                            <h3 className="text-xl font-bold text-white mb-2 flex items-center gap-2"><Icon name="refresh-cw" className="text-blue-400"/> Refresh {character.name}</h3>
+                            
+                            {isRefreshing ? (
+                                <div className="py-8 text-center">
+                                    <Icon name="loader-2" size={48} className="animate-spin text-blue-500 mx-auto mb-4"/>
+                                    <p className="text-blue-400 font-bold animate-pulse">Fetching from D&D Beyond...</p>
+                                </div>
+                            ) : (
+                                <>
+                                    <p className="text-sm text-slate-400 mb-6">How would you like to apply the fresh data from D&D Beyond?</p>
+                                    <div className="space-y-4">
+                                        <button onClick={() => handleRefreshDndBeyond('combine')} className="w-full text-left bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded-lg p-4 group transition-colors">
+                                            <div className="font-bold text-white group-hover:text-blue-400 flex items-center gap-2 mb-1"><Icon name="git-merge" size={16}/> Combine (Recommended)</div>
+                                            <p className="text-xs text-slate-400">Updates stats, spells, and features but keeps your current Inventory, HP, and Conditions.</p>
+                                        </button>
+                                        <button onClick={() => handleRefreshDndBeyond('overwrite')} className="w-full text-left bg-slate-800 hover:bg-red-900/50 border border-slate-600 hover:border-red-500/50 rounded-lg p-4 group transition-colors">
+                                            <div className="font-bold text-white group-hover:text-red-400 flex items-center gap-2 mb-1"><Icon name="alert-triangle" size={16}/> Overwrite</div>
+                                            <p className="text-xs text-slate-400">Completely replaces this character with the D&D Beyond sheet. You will lose local inventory changes.</p>
+                                        </button>
+                                    </div>
+                                </>
+                            )}
+                        </div>
+                    </div>
                 )}
             </div>
         </div>
