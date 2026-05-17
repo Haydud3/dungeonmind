@@ -24,6 +24,11 @@ const SideSheet = ({ characterId, onClose, role, onDiceRoll, onOpenDiceTray }) =
     const [editableName, setEditableName] = useState('');
     const [sheetWidth, setSheetWidth] = useState(550);
 
+    useEffect(() => {
+        window.dispatchEvent(new CustomEvent('sidesheet-resize', { detail: sheetWidth }));
+        return () => window.dispatchEvent(new CustomEvent('sidesheet-resize', { detail: 0 }));
+    }, [sheetWidth]);
+
     // START CHANGE: Enhance isOwner logic to correctly identify the DM and the assigned player
     const isOwner = role === 'dm' || 
                     isSharedControl ||
@@ -32,23 +37,28 @@ const SideSheet = ({ characterId, onClose, role, onDiceRoll, onOpenDiceTray }) =
     // END CHANGE
 
     const handleMouseDown = useCallback((e) => {
-        e.preventDefault();
-        const startX = e.clientX;
+        if (e.cancelable) e.preventDefault();
+        const startX = e.clientX || (e.touches && e.touches[0].clientX) || 0;
         const startWidth = sheetWidth;
 
         const handleMouseMove = (moveEvent) => {
-            const deltaX = startX - moveEvent.clientX;
-            const newWidth = Math.max(400, Math.min(1000, startWidth + deltaX));
+            const clientX = moveEvent.clientX || (moveEvent.touches && moveEvent.touches[0].clientX) || 0;
+            const deltaX = startX - clientX;
+            const newWidth = Math.max(300, Math.min(window.innerWidth - 50, startWidth + deltaX));
             setSheetWidth(newWidth);
         };
 
         const handleMouseUp = () => {
             document.removeEventListener('mousemove', handleMouseMove);
             document.removeEventListener('mouseup', handleMouseUp);
+            document.removeEventListener('touchmove', handleMouseMove);
+            document.removeEventListener('touchend', handleMouseUp);
         };
 
         document.addEventListener('mousemove', handleMouseMove);
         document.addEventListener('mouseup', handleMouseUp);
+        document.addEventListener('touchmove', handleMouseMove, { passive: false });
+        document.addEventListener('touchend', handleMouseUp);
     }, [sheetWidth]);
 
     const handleMiniSearch = async (overrideQuery, typeFallback) => {
@@ -196,8 +206,9 @@ const SideSheet = ({ characterId, onClose, role, onDiceRoll, onOpenDiceTray }) =
             style={{ width: `${sheetWidth}px` }}
         >
             <div 
-                className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-amber-500/50 z-10"
+                className="absolute left-0 top-0 bottom-0 w-4 cursor-col-resize hover:bg-amber-500/50 z-10 touch-none"
                 onMouseDown={handleMouseDown}
+                onTouchStart={handleMouseDown}
             />
             <div className="p-4 border-b border-slate-700 flex items-center gap-4 shrink-0">
                 <input 

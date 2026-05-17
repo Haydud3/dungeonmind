@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import Icon from '../Icon';
 import { updateMap } from '../../utils/mapService';
+import { useCharacterStore } from '../../stores/useCharacterStore';
 
 export const CombatRibbon = ({ combat, tokens, role, className = "" }) => {
     if (role === 'dm' || !combat?.active || !combat?.combatants?.length) return null;
@@ -57,7 +58,7 @@ export const EditableHP = ({ currentHp, maxHp, onSave }) => {
     useEffect(() => setVal(currentHp), [currentHp]);
     
     return (
-        <div className="flex items-center bg-slate-900 border border-slate-600 rounded overflow-hidden">
+        <div className="flex items-center bg-slate-900 border border-slate-600 rounded overflow-hidden" onClick={e => e.stopPropagation()}>
             <input 
                 className="w-10 bg-transparent text-center text-xs font-bold text-green-400 outline-none py-1"
                 value={val}
@@ -77,6 +78,45 @@ export const EditableHP = ({ currentHp, maxHp, onSave }) => {
 
 export const CombatTrackerSidebar = ({ combat, updateCampaign, tokens, role, campaignData, allCharacters, onOpenSheet, data, campaignCode, activeMapId, className = "", onClose }) => {
     const [showAddModal, setShowAddModal] = useState(false);
+    const selectedTokenIds = useCharacterStore(state => state.selectedTokenIds);
+    const setSelectedTokenIds = useCharacterStore(state => state.setSelectedTokenIds);
+    const scrollContainerRef = useRef(null);
+    const [sidebarWidth, setSidebarWidth] = useState(288);
+
+    const handleResizeMouseDown = useCallback((e) => {
+        if (e.cancelable) e.preventDefault();
+        const startX = e.clientX || (e.touches && e.touches[0].clientX) || 0;
+        const startWidth = sidebarWidth;
+
+        const handleMouseMove = (moveEvent) => {
+            const clientX = moveEvent.clientX || (moveEvent.touches && moveEvent.touches[0].clientX) || 0;
+            const deltaX = clientX - startX;
+            const newWidth = Math.max(250, Math.min(800, startWidth + deltaX));
+            setSidebarWidth(newWidth);
+        };
+
+        const handleMouseUp = () => {
+            document.removeEventListener('mousemove', handleMouseMove);
+            document.removeEventListener('mouseup', handleMouseUp);
+            document.removeEventListener('touchmove', handleMouseMove);
+            document.removeEventListener('touchend', handleMouseUp);
+        };
+
+        document.addEventListener('mousemove', handleMouseMove);
+        document.addEventListener('mouseup', handleMouseUp);
+        document.addEventListener('touchmove', handleMouseMove, { passive: false });
+        document.addEventListener('touchend', handleMouseUp);
+    }, [sidebarWidth]);
+
+    // Auto-scroll to selected token in the initiative list
+    useEffect(() => {
+        if (selectedTokenIds.length > 0 && scrollContainerRef.current) {
+            const selectedEl = scrollContainerRef.current.querySelector(`[data-token-id="${selectedTokenIds[0]}"]`);
+            if (selectedEl) {
+                selectedEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }
+        }
+    }, [selectedTokenIds]);
 
     // The initiative tracker is a DM-only tool. Players see the top ribbon instead.
     if (role !== 'dm') return null;
@@ -152,7 +192,15 @@ export const CombatTrackerSidebar = ({ combat, updateCampaign, tokens, role, cam
     };
 
     return (
-        <div className={`absolute top-44 vtt-safe-left left-4 bottom-24 w-72 bg-slate-900/95 backdrop-blur border border-slate-700 shadow-2xl rounded-xl z-[60] flex flex-col overflow-hidden transition-all ${className} ${combat.active ? 'border-amber-500/30' : 'border-slate-700'}`}>
+        <div 
+            className={`absolute top-44 vtt-safe-left left-4 max-h-[calc(100vh-12rem)] bg-slate-900/95 backdrop-blur border border-slate-700 shadow-2xl rounded-xl z-[60] flex flex-col overflow-hidden transition-all ${className} ${combat.active ? 'border-amber-500/30' : 'border-slate-700'}`}
+            style={{ width: `${sidebarWidth}px` }}
+        >
+            <div 
+                className="absolute right-0 top-0 bottom-0 w-4 cursor-col-resize hover:bg-amber-500/50 z-[100] touch-none"
+                onMouseDown={handleResizeMouseDown}
+                onTouchStart={handleResizeMouseDown}
+            />
             <div className="p-3 bg-slate-800 border-b border-slate-700 flex justify-between items-center shrink-0">
                 <h3 className="font-bold text-amber-500 flex items-center gap-2"><Icon name="sword" size={16}/> Initiative</h3>
                 {role === 'dm' && (
@@ -168,11 +216,12 @@ export const CombatTrackerSidebar = ({ combat, updateCampaign, tokens, role, cam
                 )}
             </div>
             
-            <div className="flex-1 overflow-y-auto custom-scroll p-2 space-y-2">
+            <div className="flex-1 overflow-y-auto custom-scroll p-2 space-y-2" ref={scrollContainerRef}>
                 {sortedCombatants.length > 0 ? sortedCombatants.map((c, i) => {
                     const t = tokens.find(tok => tok.id === c.tokenId);
                     const char = allCharacters.find(ch => String(ch.id) === String(t?.characterId || c.characterId || c.tokenId));
                     const isActive = combat.active && activeCombatant?.tokenId === c.tokenId;
+                    const isSelected = selectedTokenIds.includes(c.tokenId);
                     
                     const isNpc = c.isNpc;
                     const hp = isNpc ? (t?.hp?.current ?? char?.hp?.current ?? '-') : (char?.hp?.current ?? '-');
@@ -184,12 +233,23 @@ export const CombatTrackerSidebar = ({ combat, updateCampaign, tokens, role, cam
                     const charIdForSheet = t?.characterId || char?.id;
                     
                     return (
-                        <div key={c.tokenId} className={`relative flex flex-col rounded-lg border p-2 transition-all ${isActive ? 'bg-slate-800 border-amber-500 shadow-[0_0_10px_rgba(245,158,11,0.2)]' : 'bg-slate-800/50 border-slate-700'}`}>
+                        <div 
+                            key={c.tokenId} 
+                            data-token-id={c.tokenId}
+                            onClick={() => setSelectedTokenIds([c.tokenId])}
+                            className={`relative flex flex-col rounded-lg border p-2 transition-all cursor-pointer ${
+                                isActive ? 'bg-slate-800 border-amber-500 shadow-[0_0_10px_rgba(245,158,11,0.2)]' : 
+                                isSelected ? 'bg-indigo-900/40 border-indigo-500 shadow-[0_0_10px_rgba(99,102,241,0.2)]' : 
+                                'bg-slate-800/50 border-slate-700 hover:border-slate-500'
+                            }`}
+                        >
                             <div className="flex items-center gap-3">
                                 {/* Avatar (Click to open sheet) */}
                                 <div 
                                     className="w-10 h-10 rounded bg-slate-900 border border-slate-600 shrink-0 overflow-hidden cursor-pointer hover:border-amber-400 transition-colors"
-                                    onClick={() => {
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        setSelectedTokenIds([c.tokenId]);
                                         if (charIdForSheet && onOpenSheet) {
                                             const tokenHp = t?.hp?.current ?? char?.hp?.current;
                                             const tokenMaxHp = t?.hp?.max ?? char?.hp?.max;
@@ -208,7 +268,10 @@ export const CombatTrackerSidebar = ({ combat, updateCampaign, tokens, role, cam
                                         {/* Init */}
                                         <div 
                                             className={`flex items-center gap-1 text-[10px] uppercase font-bold cursor-pointer hover:text-amber-400 ${isActive ? 'text-amber-500' : 'text-slate-400'}`}
-                                            onClick={() => editInit(c.tokenId, c.initiative)}
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                editInit(c.tokenId, c.initiative);
+                                            }}
                                             title="Edit Initiative"
                                         >
                                             <Icon name="clock" size={10}/> {c.initiative}

@@ -167,7 +167,14 @@ function DungeonMindApp() {
   const [rightPanel, setRightPanel] = useState({ mode: 'closed', data: null });
   const [vttSidebar, setVttSidebar] = useState(null); // 'chat' | 'journal' | null
   
-  const handleOpenSheet = (id) => setRightPanel({ mode: 'sheet', data: id });
+  const closeAllSidebars = () => {
+      setRightPanel({ mode: 'closed', data: null });
+      setVttSidebar(null);
+      setShowTools(false);
+      setShowHandoutCreator(false);
+  };
+
+  const handleOpenSheet = (id) => { closeAllSidebars(); setRightPanel({ mode: 'sheet', data: id }); };
   const handleToggleChat = () => setRightPanel(prev => prev.mode === 'chat' ? { mode: 'closed', data: null } : { mode: 'chat', data: null });
   const handleClosePanel = () => setRightPanel({ mode: 'closed', data: null });
 
@@ -575,6 +582,12 @@ function DungeonMindApp() {
     }
 
 
+  let rightOffset = 0;
+  if (rightPanel.mode === 'sheet') rightOffset = 550;
+  else if (vttSidebar === 'journal') rightOffset = 500;
+  else if (vttSidebar === 'chat') rightOffset = 350;
+  else if (!isCastMode && showTools) rightOffset = 320;
+
   return (
     <div className="fixed inset-0 w-full h-full flex flex-col md:flex-row bg-slate-900 text-slate-200 font-sans overflow-hidden pt-safe pb-safe pl-safe pr-safe">
        {!isCastMode && currentView !== 'map' && <Sidebar view={currentView} setView={setCurrentView} onExit={leaveCampaign} />}
@@ -629,11 +642,45 @@ function DungeonMindApp() {
                       activeMapId={data.activeMapId || 'test-map'} 
                       onOpenSheet={handleOpenSheet} 
                       role={effectiveRole} 
-                      onOpenHandouts={() => setShowHandoutCreator(true)}
-                      onOpenChat={() => setVttSidebar('chat')}
-                      onOpenJournal={() => setVttSidebar('journal')}
-                      onOpenDiceTray={() => setShowTools(p => !p)}
+                      onOpenHandouts={() => {
+                          if (showHandoutCreator) {
+                              setShowHandoutCreator(false);
+                          } else {
+                              closeAllSidebars();
+                              setShowHandoutCreator(true);
+                          }
+                      }}
+                      onOpenChat={() => {
+                          if (vttSidebar === 'chat') {
+                              setVttSidebar(null);
+                          } else {
+                              closeAllSidebars();
+                              setVttSidebar('chat');
+                          }
+                      }}
+                      onOpenJournal={() => {
+                          if (vttSidebar === 'journal') {
+                              setVttSidebar(null);
+                          } else {
+                              closeAllSidebars();
+                              setVttSidebar('journal');
+                          }
+                      }}
+                      onOpenDiceTray={() => {
+                          if (showTools) {
+                              setShowTools(false);
+                          } else {
+                              closeAllSidebars();
+                              setShowTools(true);
+                          }
+                      }}
+                      isChatOpen={vttSidebar === 'chat'}
+                      isJournalOpen={vttSidebar === 'journal'}
+                      isHandoutsOpen={showHandoutCreator}
+                      isDiceTrayOpen={showTools}
+                      onSidebarOpen={closeAllSidebars}
                       onBack={() => setCurrentView(previousView)}
+                      rightOffset={rightOffset}
                   />
               )}
               

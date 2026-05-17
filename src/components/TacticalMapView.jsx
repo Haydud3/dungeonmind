@@ -184,7 +184,7 @@ const ViewManager = React.memo(({ aspect, scale, orientation, fitTrigger }) => {
     return null;
 });
 
-export default React.memo(function TacticalMapView({ campaignCode, activeMapId, onOpenSheet, role, onOpenHandouts, onOpenChat, onOpenJournal, onOpenDiceTray, onOpenCast, isCastMode: propIsCastMode, onBack }) {
+export default React.memo(function TacticalMapView({ campaignCode, activeMapId, onOpenSheet, role, onOpenHandouts, onOpenChat, onOpenJournal, onOpenDiceTray, onOpenCast, isCastMode: propIsCastMode, onBack, rightOffset, onSidebarOpen, isChatOpen, isJournalOpen, isHandoutsOpen, isDiceTrayOpen }) {
   const isCastMode = propIsCastMode || (typeof window !== 'undefined' && (new URLSearchParams(window.location.search).get('cast') === 'true' || window.location.hash.includes('cast=true')));
   const isLowPerformance = typeof window !== 'undefined' && localStorage.getItem('vtt_low_performance') === 'true';
   const { campaign, updateCampaign, user } = useNewCampaign();
@@ -194,11 +194,68 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
   const [mapData, setMapData] = useState(null);
   const selectedTokenIds = useCharacterStore(state => state.selectedTokenIds);
   const setSelectedTokenIds = useCharacterStore(state => state.setSelectedTokenIds);
+  const viewedCharacterId = useCharacterStore(state => state.character?.id);
   const [contextMenu, setContextMenu] = useState(null);
   const [showAssetManager, setShowAssetManager] = useState(false);
   const [showTokenManager, setShowTokenManager] = useState(false);
   const [showInitiativeTracker, setShowInitiativeTracker] = useState(false);
   
+  const [tokenManagerWidth, setTokenManagerWidth] = useState(320);
+  const [sideSheetWidth, setSideSheetWidth] = useState(0);
+
+  useEffect(() => {
+      const handleSideSheetResize = (e) => setSideSheetWidth(e.detail);
+      window.addEventListener('sidesheet-resize', handleSideSheetResize);
+      return () => window.removeEventListener('sidesheet-resize', handleSideSheetResize);
+  }, []);
+
+  const handleTokenManagerMouseDown = useCallback((e) => {
+      if (e.cancelable) e.preventDefault();
+      const startX = e.clientX || (e.touches && e.touches[0].clientX) || 0;
+      const startWidth = tokenManagerWidth;
+
+      const handleMouseMove = (moveEvent) => {
+          const clientX = moveEvent.clientX || (moveEvent.touches && moveEvent.touches[0].clientX) || 0;
+          const deltaX = startX - clientX;
+          const newWidth = Math.max(250, Math.min(window.innerWidth - 50, startWidth + deltaX));
+          setTokenManagerWidth(newWidth);
+      };
+
+      const handleMouseUp = () => {
+          document.removeEventListener('mousemove', handleMouseMove);
+          document.removeEventListener('mouseup', handleMouseUp);
+          document.removeEventListener('touchmove', handleMouseMove);
+          document.removeEventListener('touchend', handleMouseUp);
+      };
+
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
+      document.addEventListener('touchmove', handleMouseMove, { passive: false });
+      document.addEventListener('touchend', handleMouseUp);
+  }, [tokenManagerWidth]);
+
+  useEffect(() => {
+      if (rightOffset > 0 || sideSheetWidth > 0) {
+          setShowAssetManager(false);
+          setShowTokenManager(false);
+          setIsToolbarOpen(false);
+      }
+  }, [rightOffset, sideSheetWidth]);
+
+  // Auto-select token when a character is loaded into the store (e.g. from Party or NPC view)
+  useEffect(() => {
+      if (viewedCharacterId && mapData?.tokens) {
+          const matchingToken = Object.values(mapData.tokens).find(t => String(t.characterId) === String(viewedCharacterId));
+          if (matchingToken) {
+              const currentSelection = useCharacterStore.getState().selectedTokenIds || [];
+              if (!currentSelection.includes(matchingToken.id)) {
+                  setSelectedTokenIds([matchingToken.id]);
+              }
+          }
+      }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewedCharacterId]); // Intentional: only trigger when viewedCharacterId changes
+
   useEffect(() => {
       if (data?.campaign?.combat?.active && !isCastMode) {
           setShowInitiativeTracker(true);
@@ -224,6 +281,15 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
   const lightMenuRef = useRef(null);
   const propMenuRef = useRef(null);
   const [activeTool, setActiveTool] = useState(null);
+
+  const resetAllTools = useCallback(() => {
+      setActiveTool(null);
+      setIsDrawingWalls(false);
+      setIsArchitectMode(false);
+      setIsPlacingLights(false);
+      setIsDeleting(false);
+      setIsDrawingFreehand(false);
+  }, []);
   const [activeMeasurementStyle, setActiveMeasurementStyle] = useState('default');
   const [isToolbarOpen, setIsToolbarOpen] = useState(true);
   const [viewModeState, setViewModeState] = useState('isometric');
@@ -2451,11 +2517,14 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
 
       {/* Primary Right Dock */}
       {!isCastMode && (
-          <div className={`absolute top-4 right-4 vtt-safe-right z-[70] flex flex-col gap-2 max-h-[calc(100vh-2rem)] overflow-y-auto overflow-x-hidden pb-4 ${uiOpacityClass} custom-scrollbar-hide`}>
+          <div 
+              className={`absolute top-4 right-4 vtt-safe-right z-[70] flex flex-col gap-2 max-h-[calc(100vh-2rem)] pb-4 ${uiOpacityClass} custom-scrollbar-hide`}
+              style={{ transform: `translateX(-${Math.max(sideSheetWidth > 0 ? sideSheetWidth : (rightOffset || 0), showTokenManager ? tokenManagerWidth : (showAssetManager ? 320 : 0))}px)`, transition: 'transform 0.3s ease-in-out' }}
+          >
                   {role === 'dm' && (
                       <>
-                      <ToolButton name="Tokens" icon="users" isActive={showTokenManager} onClick={() => { setActiveTool(null); setShowAssetManager(false); setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); setShowTokenManager(p => !p); }} isStandalone={true} />
-                      <ToolButton name="Map" icon="map" isActive={showAssetManager} onClick={() => { setActiveTool(null); setShowTokenManager(false); setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); setShowAssetManager(p => !p); }} isStandalone={true} />
+                      <ToolButton name="Tokens" icon="users" isActive={showTokenManager} onClick={() => { setActiveTool(null); setShowAssetManager(false); setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); setShowTokenManager(p => { const next = !p; if (next && onSidebarOpen) onSidebarOpen(); return next; }); }} isStandalone={true} />
+                      <ToolButton name="Map" icon="map" isActive={showAssetManager} onClick={() => { setActiveTool(null); setShowTokenManager(false); setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); setShowAssetManager(p => { const next = !p; if (next && onSidebarOpen) onSidebarOpen(); return next; }); }} isStandalone={true} />
                       <ToolButton 
                           name="Combat" 
                           icon="swords" 
@@ -2491,10 +2560,10 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                   </>
               )}
 
-              {onOpenDiceTray && <ToolButton name="Dice" icon="dices" onClick={onOpenDiceTray} isStandalone={true} />}
-              {onOpenHandouts && <ToolButton name="Handouts" icon="scroll" onClick={onOpenHandouts} isStandalone={true} />}
-              {onOpenChat && <ToolButton name="Chat" icon="message-circle" onClick={onOpenChat} isStandalone={true} />}
-              {onOpenJournal && <ToolButton name="Journal" icon="book" onClick={onOpenJournal} isStandalone={true} />}
+              {onOpenDiceTray && <ToolButton name="Dice" icon="dices" onClick={onOpenDiceTray} isActive={isDiceTrayOpen} isStandalone={true} />}
+              {onOpenHandouts && <ToolButton name="Handouts" icon="scroll" onClick={onOpenHandouts} isActive={isHandoutsOpen} isStandalone={true} />}
+              {onOpenChat && <ToolButton name="Chat" icon="message-circle" onClick={onOpenChat} isActive={isChatOpen} isStandalone={true} />}
+              {onOpenJournal && <ToolButton name="Journal" icon="book" onClick={onOpenJournal} isActive={isJournalOpen} isStandalone={true} />}
               
               <div className="h-px w-8 bg-slate-700/50 my-1 mx-auto"></div>
 
@@ -2504,7 +2573,10 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                       name="Measure" 
                       icon="ruler" 
                       isActive={['freehand', 'freehand-linger', 'ruler', 'ruler-linger', 'cone', 'cone-linger', 'circle', 'circle-linger', 'box', 'box-linger'].includes(activeTool) || isDrawingFreehand || !!activeStampingAsset} 
-                      onClick={() => setIsToolbarOpen(p => p === 'measure' ? null : 'measure')} 
+                      onClick={() => {
+                          if (isToolbarOpen !== 'measure') resetAllTools();
+                          setIsToolbarOpen(p => p === 'measure' ? null : 'measure');
+                      }} 
                       isStandalone={true} 
                   />
                   {isToolbarOpen === 'measure' && (
@@ -2560,10 +2632,14 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                       <ToolButton
                           name="Sculpt" icon="mountain" isActive={activeTool === 'sculpt'} isStandalone={true}
                           onClick={() => {
-                              setIsToolbarOpen(p => p === 'sculpt' ? null : 'sculpt');
-                              if (activeTool !== 'sculpt') {
-                                  setActiveTool('sculpt'); setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); setIsDeleting(false);
-                              } else { setActiveTool(null); }
+                              if (isToolbarOpen !== 'sculpt') {
+                                  resetAllTools();
+                                  setActiveTool('sculpt');
+                                  setIsToolbarOpen('sculpt');
+                              } else {
+                                  resetAllTools();
+                                  setIsToolbarOpen(null);
+                              }
                           }}
                       />
                       {isToolbarOpen === 'sculpt' && (
@@ -2585,10 +2661,14 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                       <ToolButton
                           name="Paint Effects" icon="brush" isActive={activeTool === 'paintMaterial'} isStandalone={true}
                           onClick={() => {
-                              setIsToolbarOpen(p => p === 'paintMaterial' ? null : 'paintMaterial');
-                              if (activeTool !== 'paintMaterial') {
-                                  setActiveTool('paintMaterial'); setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); setIsDeleting(false);
-                              } else { setActiveTool(null); }
+                              if (isToolbarOpen !== 'paintMaterial') {
+                                  resetAllTools();
+                                  setActiveTool('paintMaterial');
+                                  setIsToolbarOpen('paintMaterial');
+                              } else {
+                                  resetAllTools();
+                                  setIsToolbarOpen(null);
+                              }
                           }}
                       />
                       {isToolbarOpen === 'paintMaterial' && (
@@ -2618,7 +2698,10 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                           name="Architect" 
                           icon="hammer" 
                           isActive={isArchitectMode || isDrawingWalls || isPlacingLights || isDeleting} 
-                          onClick={() => setIsToolbarOpen(p => p === 'architect' ? null : 'architect')} 
+                          onClick={() => {
+                              if (isToolbarOpen !== 'architect') resetAllTools();
+                              setIsToolbarOpen(p => p === 'architect' ? null : 'architect');
+                          }} 
                           isStandalone={true} 
                       />
                       {isToolbarOpen === 'architect' && (
@@ -2679,7 +2762,15 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
 
       {/* Actors Manager Drawer */}
       {showTokenManager && role === 'dm' && (
-        <div className="absolute top-0 right-0 bottom-0 w-80 bg-slate-900 border-l border-slate-700 shadow-2xl z-[80] flex flex-col animate-in slide-in-from-right duration-300">
+        <div 
+            className="absolute top-0 right-0 bottom-0 bg-slate-900 border-l border-slate-700 shadow-2xl z-[80] flex flex-col animate-in slide-in-from-right duration-300"
+            style={{ width: `${tokenManagerWidth}px` }}
+        >
+            <div 
+                className="absolute left-0 top-0 bottom-0 w-4 cursor-col-resize hover:bg-amber-500/50 z-10 touch-none"
+                onMouseDown={handleTokenManagerMouseDown}
+                onTouchStart={handleTokenManagerMouseDown}
+            />
             <div className="flex-none p-4 border-b border-slate-800 flex justify-between items-center bg-slate-950">
                 <h3 className="font-bold text-indigo-500 flex items-center gap-2"><Icon name="users" size={18} /> Actors</h3>
                 <div className="flex items-center gap-2">
