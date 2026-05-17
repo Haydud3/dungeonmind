@@ -1,10 +1,64 @@
 import React, { useState, useRef } from 'react';
-import { useFrame } from '@react-three/fiber';
+import { useFrame, useThree } from '@react-three/fiber';
 import { useCursor } from '@react-three/drei';
+
+const LightPool = ({ lights, gridSize = 1, maxLights = 8 }) => {
+    const poolRefs = useRef([]);
+    const { camera } = useThree();
+
+    useFrame((state) => {
+        const t = state.clock.elapsedTime;
+        const lightsArray = Object.values(lights || {}).filter(Boolean);
+        
+        // Sort by distance to camera's position (ignoring Y to prevent top-down sorting bias)
+        const sorted = lightsArray.map(l => {
+            const dx = l.position.x - camera.position.x;
+            const dz = l.position.z - camera.position.z;
+            return { light: l, distSq: dx*dx + dz*dz };
+        }).sort((a, b) => a.distSq - b.distSq);
+
+        for (let i = 0; i < maxLights; i++) {
+            const pl = poolRefs.current[i];
+            if (!pl) continue;
+
+            if (i < sorted.length) {
+                const l = sorted[i].light;
+                const radiusInMapUnits = (l.radius || 15) / 5 * gridSize;
+                
+                pl.position.set(l.position.x, l.position.y || 1, l.position.z);
+                pl.color.set(l.color || "#fef08a");
+                pl.distance = radiusInMapUnits * 1.5;
+                
+                let flicker = Math.sin(t * 10) * 0.05 + Math.sin(t * 23) * 0.05;
+                const isFlame = l.color === '#fb923c' || l.color === '#fef08a' || l.color === '#fde047';
+                if (isFlame) {
+                    flicker += Math.sin(t * 45) * 0.05 + Math.random() * 0.1;
+                }
+                pl.intensity = (l.intensity || 2.5) + flicker;
+                pl.visible = true;
+            } else {
+                pl.visible = false;
+                pl.intensity = 0;
+            }
+        }
+    });
+
+    return (
+        <group>
+            {Array.from({ length: maxLights }).map((_, i) => (
+                <pointLight 
+                    key={`pool-light-${i}`} 
+                    ref={el => poolRefs.current[i] = el} 
+                    decay={2} 
+                    castShadow={false}
+                />
+            ))}
+        </group>
+    );
+};
 
 const LightNodeComponent = ({ light, onContextMenu, role, gridSize, showLightRadius, onDelete, hovered, setHover }) => {
     const touchStartPos = useRef({ x: 0, y: 0 });
-    const pointLightRef = useRef();
     const longPressTimer = useRef(null);
 
     const handleTouchStart = (e) => {
@@ -43,40 +97,8 @@ const LightNodeComponent = ({ light, onContextMenu, role, gridSize, showLightRad
 
     const radiusInMapUnits = (light.radius || 15) / 5 * gridSize; 
 
-    // Add a dynamic flicker effect to lights (more intense for orange/yellow flame colors)
-    useFrame((state) => {
-        if (pointLightRef.current) {
-            const t = state.clock.elapsedTime;
-            // Base subtle pulse for all lights
-            let flicker = Math.sin(t * 10) * 0.05 + Math.sin(t * 23) * 0.05;
-            
-            // If the light is orange or yellow (like a torch/candle), make it flicker more erratically
-            const isFlame = light.color === '#fb923c' || light.color === '#fef08a' || light.color === '#fde047';
-            if (isFlame) {
-                flicker += Math.sin(t * 45) * 0.05 + Math.random() * 0.1;
-            }
-            
-            // Prevent intensity from dropping too low or spiking too high
-            const baseIntensity = light.intensity || 2.5;
-            pointLightRef.current.intensity = baseIntensity + flicker;
-        }
-    });
-
     return (
         <group position={[light.position.x, light.position.y || 1, light.position.z]} userData={{ isLight: true, lightId: light.id }}>
-            <pointLight 
-                ref={pointLightRef} 
-                color={light.color || "#fef08a"} 
-                intensity={2.5} 
-                distance={radiusInMapUnits * 1.5} 
-                decay={2} 
-                castShadow
-                shadow-mapSize={[256, 256]}
-                shadow-bias={-0.005}
-                shadow-normalBias={0.05}
-                shadow-camera-near={0.1}
-                shadow-camera-far={radiusInMapUnits * 1.5}
-            />
             {role === 'dm' && showLightRadius && !light.isTokenLight && (
                 <mesh 
                     renderOrder={200}
@@ -138,8 +160,12 @@ export const MapLights = ({ lights, onContextMenu, role, gridSize = 1, showLight
 
     if (!lights) return null;
 
+    const isLowPerf = typeof window !== 'undefined' && localStorage.getItem('vtt_low_performance') === 'true';
+    const maxLights = isLowPerf ? 4 : 8;
+
     return (
         <group>
+            <LightPool lights={lights} gridSize={gridSize} maxLights={maxLights} />
             {Object.values(lights).filter(Boolean).map(light => (
                 <LightNode
                     key={light.id}

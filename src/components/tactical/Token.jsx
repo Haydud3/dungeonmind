@@ -329,68 +329,73 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
       }
 
       // --- LIVE VISIBILITY ENGINE ---
-      let currentVisibility = baseVisibility;
-      let hasActiveDrag = false;
-      if (rtdbDragsRef?.current) {
-          hasActiveDrag = Object.keys(rtdbDragsRef.current).length > 0;
-      }
+      const t = state.clock.elapsedTime;
+      // We throttle visibility checks to ~10 FPS to save CPU, especially on intense maps
+      if (t - (visualsRef.current.lastVisibilityCheck || 0) > 0.1) {
+          visualsRef.current.lastVisibilityCheck = t;
+          let currentVisibility = baseVisibility;
+          let hasActiveDrag = false;
+          if (rtdbDragsRef?.current) {
+              hasActiveDrag = Object.keys(rtdbDragsRef.current).length > 0;
+          }
 
-      if (hasActiveDrag && !alwaysVisible) {
-          let isVisible = false;
-          const targetPt = { x: meshRef.current.position.x, z: meshRef.current.position.z };
-          const isTargetInvisible = (token.conditions || []).some(c => (typeof c === 'string' ? c : c.name)?.toLowerCase() === 'invisible');
+          if (hasActiveDrag && !alwaysVisible) {
+              let isVisible = false;
+              const targetPt = { x: meshRef.current.position.x, z: meshRef.current.position.z };
+              const isTargetInvisible = (token.conditions || []).some(c => (typeof c === 'string' ? c : c.name)?.toLowerCase() === 'invisible');
 
-          const activeVisionSources = (playerVisionSources || []).map(source => {
-              if (rtdbDragsRef.current[source.id]) {
-                  const drag = rtdbDragsRef.current[source.id];
-                  return { ...source, x: drag.x, z: drag.z };
-              }
-              return source;
-          });
-
-          for (const src of activeVisionSources) {
-              const dist = Math.sqrt(Math.pow(src.x - targetPt.x, 2) + Math.pow(src.z - targetPt.z, 2));
-              const truesightRange = src.truesight ?? 0;
-              const blindsightRange = src.blindsight ?? 0;
-              const tremorsenseRange = src.tremorsense ?? 0;
-              const baseVisionRange = src.darkvision ?? src.range;
-
-              const hasLOS = checkLineOfSight(src, targetPt, wallsArray);
-
-              if ((dist <= truesightRange && hasLOS) || 
-                  (dist <= blindsightRange && hasLOS) || 
-                  (dist <= tremorsenseRange && (token.elevationOffset || 0) === 0)) {
-                  isVisible = true; break;
-              }
-
-              if (isTargetInvisible) continue;
-
-              if (dist <= baseVisionRange && hasLOS) {
-                  isVisible = true; break;
-              }
-
-              if (combinedLights && fowEnabled !== false && hasLOS) {
-                  let illuminated = false;
-                  for (const light of Object.values(combinedLights)) {
-                      const lightRange = (light.radius || 15) / 5 * gridSize;
-                      const lightPt = { x: light.position.x, z: light.position.z };
-                      const distToLight = Math.sqrt(Math.pow(lightPt.x - targetPt.x, 2) + Math.pow(lightPt.z - targetPt.z, 2));
-                      
-                      if (distToLight <= lightRange && checkLineOfSight(lightPt, targetPt, wallsArray)) {
-                          illuminated = true; break;
-                      }
+              const activeVisionSources = (playerVisionSources || []).map(source => {
+                  if (rtdbDragsRef.current[source.id]) {
+                      const drag = rtdbDragsRef.current[source.id];
+                      return { ...source, x: drag.x, z: drag.z };
                   }
-                  if (illuminated) {
+                  return source;
+              });
+
+              for (const src of activeVisionSources) {
+                  const dist = Math.sqrt(Math.pow(src.x - targetPt.x, 2) + Math.pow(src.z - targetPt.z, 2));
+                  const truesightRange = src.truesight ?? 0;
+                  const blindsightRange = src.blindsight ?? 0;
+                  const tremorsenseRange = src.tremorsense ?? 0;
+                  const baseVisionRange = src.darkvision ?? src.range;
+
+                  const hasLOS = checkLineOfSight(src, targetPt, wallsArray);
+
+                  if ((dist <= truesightRange && hasLOS) || 
+                      (dist <= blindsightRange && hasLOS) || 
+                      (dist <= tremorsenseRange && (token.elevationOffset || 0) === 0)) {
                       isVisible = true; break;
                   }
-              }
-          }
-          currentVisibility = isVisible;
-      } else if (alwaysVisible) {
-          currentVisibility = true;
-      }
 
-      meshRef.current.visible = currentVisibility;
+                  if (isTargetInvisible) continue;
+
+                  if (dist <= baseVisionRange && hasLOS) {
+                      isVisible = true; break;
+                  }
+
+                  if (combinedLights && fowEnabled !== false && hasLOS) {
+                      let illuminated = false;
+                      for (const light of Object.values(combinedLights)) {
+                          const lightRange = (light.radius || 15) / 5 * gridSize;
+                          const lightPt = { x: light.position.x, z: light.position.z };
+                          const distToLight = Math.sqrt(Math.pow(lightPt.x - targetPt.x, 2) + Math.pow(lightPt.z - targetPt.z, 2));
+                          
+                          if (distToLight <= lightRange && checkLineOfSight(lightPt, targetPt, wallsArray)) {
+                              illuminated = true; break;
+                          }
+                      }
+                      if (illuminated) {
+                          isVisible = true; break;
+                      }
+                  }
+              }
+              currentVisibility = isVisible;
+          } else if (alwaysVisible) {
+              currentVisibility = true;
+          }
+
+          meshRef.current.visible = currentVisibility;
+      }
     }
   });
   // END CHANGE

@@ -153,21 +153,20 @@ export const Wall = ({ wall, onContextMenu, onToggleDoor, showWalls, role, playe
             )}
 
             {(type === 'door' || type === 'window') && showIcon && (
-                <Billboard position={[center.x, 0.5, center.z]}>
-                    <Text 
-                        fontSize={0.8}
+                <Billboard position={[center.x, 0.3, center.z]}>
+                    <Text
+                        fontSize={0.35}
                         anchorX="center"
                         anchorY="middle"
                         depthTest={false}
                         renderOrder={201}
-                        fillOpacity={wall.isOpen ? 0.3 : 1}
+                        fillOpacity={wall.isOpen ? 0.2 : 0.7}
                         color={isSelected ? '#fef08a' : '#ffffff'}
                     >
                         {type === 'door' ? '🚪' : '🪟'}
                     </Text>
                 </Billboard>
-            )}
-            
+            )}            
             {segments}
         </group>
     );

@@ -8,7 +8,7 @@ export const PostProcessingEffects = ({ environment, lightingMultiplier }) => {
 
     // Filter out null/undefined children explicitly to prevent EffectComposer from breaking
     return (
-        <EffectComposer disableNormalPass>
+        <EffectComposer disableNormalPass multisampling={0}>
             {envSetting.effects.bloom ? (
                 <Bloom 
                     intensity={envSetting.effects.bloom.intensity * (lightingMultiplier || 1)} 

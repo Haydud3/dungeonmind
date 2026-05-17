@@ -1,6 +1,6 @@
 import React, { useState, useEffect, Suspense, useRef, useCallback, useMemo, lazy } from 'react';
 import { Canvas, useThree, useFrame } from '@react-three/fiber';
-import { MapControls, Grid, useTexture, DragControls, Html, useCursor, Line, Text, RoundedBox, Billboard, useProgress } from '@react-three/drei';
+import { MapControls, Grid, useTexture, DragControls, Html, useCursor, Line, Text, RoundedBox, Billboard, useProgress, PerformanceMonitor } from '@react-three/drei';
 import * as THREE from 'three';
 import { subscribeToMap, updateMap, createMap } from '../utils/mapService';
 import { useNewCampaign } from '../contexts/NewCampaignProvider';
@@ -232,6 +232,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
   const [draggedTokenId, setDraggedTokenId] = useState(null);
   const [remountKey, setRemountKey] = useState(0);
   const [assetTab, setAssetTab] = useState('library');
+  const [dpr, setDpr] = useState(typeof window !== 'undefined' ? Math.min(window.devicePixelRatio, 2) : 1);
 
   const [sculptBrushType, setSculptBrushType] = useState('raise');
   const [sculptBrushSize, setSculptBrushSize] = useState(2);
@@ -2005,6 +2006,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
         camera={{ position: [0, 8, 8], fov: 50 }} 
         style={{ width: '100%', height: '100%' }}
         shadows={!isLowPerformance}
+        dpr={dpr}
         onCreated={({ gl }) => {
             gl.domElement.addEventListener('webglcontextlost', (event) => {
                 event.preventDefault(); // Prevent the default action which might be to simply lose the context
@@ -2035,6 +2037,12 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
         }}
         onContextMenu={(e) => { e.preventDefault(); }}
       >
+        <PerformanceMonitor 
+          onIncline={() => setDpr(typeof window !== 'undefined' ? Math.min(window.devicePixelRatio, 2) : 1)}
+          onDecline={() => setDpr(typeof window !== 'undefined' ? Math.max(1, Math.min(window.devicePixelRatio, 1.5)) : 1)}
+          flipflops={3}
+          onFallback={() => setDpr(typeof window !== 'undefined' ? Math.max(1, window.devicePixelRatio > 1 ? 1.25 : 1) : 1)} 
+        />
         <DropZone onMapDrop={handleDrop} />
         {/* Explicitly set the 3D scene background color */}
         <color attach="background" args={[envSetting.bg]} />
