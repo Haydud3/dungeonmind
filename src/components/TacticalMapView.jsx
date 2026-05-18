@@ -245,7 +245,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
   // Auto-select token when a character is loaded into the store (e.g. from Party or NPC view)
   useEffect(() => {
       if (viewedCharacterId && mapData?.tokens) {
-          const matchingToken = Object.values(mapData.tokens).find(t => String(t.characterId) === String(viewedCharacterId));
+          const matchingToken = Object.values(mapData.tokens).find(t => t && String(t.characterId) === String(viewedCharacterId));
           if (matchingToken) {
               const currentSelection = useCharacterStore.getState().selectedTokenIds || [];
               if (!currentSelection.includes(matchingToken.id)) {
