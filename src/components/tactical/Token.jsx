@@ -898,12 +898,6 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
             const isShiftHeld = shiftHeldRef?.current;
             let isGroupDrag = selectedTokenIds && selectedTokenIds.includes(token.id) && selectedTokenIds.length > 1;
 
-            if (!isShiftHeld && isGroupDrag && !e?.event?.shiftKey) {
-                // User started dragging one token of a selected stack without holding shift.
-                // We should break it out of the group and drag it alone.
-                isGroupDrag = false;
-            }
-
             if (groupDragData) {
                 if (isGroupDrag) {
                     groupDragData.current.activeTokenId = token.id;

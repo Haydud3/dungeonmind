@@ -152,7 +152,9 @@ const JournalPageEditor = ({
 
             const onSelectionChange = (range) => {
                 if (range) {
-                    set(myCursorRef, { range, name: me.name, color: myColor, timestamp: Date.now(), isTyping: false, sessionId }).catch(() => {});
+                    let safeRange = null;
+                    try { safeRange = JSON.parse(JSON.stringify(range)); } catch(e) {}
+                    set(myCursorRef, { range: safeRange, name: me.name, color: myColor, timestamp: Date.now(), isTyping: false, sessionId }).catch(() => {});
                 } else {
                     set(myCursorRef, { range: null, name: me.name, color: myColor, timestamp: Date.now(), isTyping: false, sessionId }).catch(() => {});
                 }
@@ -162,11 +164,20 @@ const JournalPageEditor = ({
             const onTextChange = (delta, oldDelta, source) => {
                 if (source === 'user') {
                     const range = editor.getSelection();
-                    set(myCursorRef, { range: range || null, name: me.name, color: myColor, timestamp: Date.now(), isTyping: true, sessionId }).catch(() => {});
+                    let safeRange = null;
+                    if (range) {
+                        try { safeRange = JSON.parse(JSON.stringify(range)); } catch(e) {}
+                    }
+                    set(myCursorRef, { range: safeRange, name: me.name, color: myColor, timestamp: Date.now(), isTyping: true, sessionId }).catch(() => {});
                     
                     clearTimeout(typingTimeout);
                     typingTimeout = setTimeout(() => {
-                        set(myCursorRef, { range: editor.getSelection() || null, name: me.name, color: myColor, timestamp: Date.now(), isTyping: false, sessionId }).catch(() => {});
+                        const finalRange = editor.getSelection();
+                        let finalSafeRange = null;
+                        if (finalRange) {
+                            try { finalSafeRange = JSON.parse(JSON.stringify(finalRange)); } catch(e) {}
+                        }
+                        set(myCursorRef, { range: finalSafeRange, name: me.name, color: myColor, timestamp: Date.now(), isTyping: false, sessionId }).catch(() => {});
                     }, 1500);
                 }
             };
@@ -240,9 +251,12 @@ const JournalPageEditor = ({
         // Push draft to RTDB instantly
         if (campaignCode && page.id) {
             const draftRef = dbRef(rtdb, `live_drags/journal_${campaignCode}_${page.id}/_draft`);
+            let safeDelta = null;
+            try { safeDelta = JSON.parse(JSON.stringify(editor.getContents())); } catch(e) {}
+            
             set(draftRef, { 
                 content, 
-                delta: editor.getContents(),
+                delta: safeDelta,
                 lastUpdatedBy: sessionId, 
                 timestamp: Date.now() 
             }).catch(e => console.warn('draft sync error', e));

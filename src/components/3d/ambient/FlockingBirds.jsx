@@ -6,8 +6,8 @@ export const FlockingBirds = ({ count = 50, mapScale = 20, altitude = 25, color 
     const meshRef = useRef();
     const { camera } = useThree();
 
-    const actualBoundsX = mapScale * 3.5;
-    const actualBoundsZ = mapScale * 3.5;
+    const actualBoundsX = mapScale * 2.0;
+    const actualBoundsZ = mapScale * 2.0;
     const actualBoundsY = 15;
 
     // Boids setup
