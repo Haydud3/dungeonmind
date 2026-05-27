@@ -236,7 +236,7 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                     let imageUrl = null;
                     if (window.puter?.ai?.txt2img) {
                         try {
-                            const imgEl = await window.puter.ai.txt2img(imagePrompt);
+                            const imgEl = await window.puter.ai.txt2img(imagePrompt, { provider: 'replicate-image-generation', model: 'black-forest-labs/flux-schnell', ratio: { w: 1, h: 1 } });
                             const response = await fetch(imgEl.src);
                             const blob = await response.blob();
                             imageUrl = await new Promise((resolve) => {
@@ -268,7 +268,7 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
             let imageUrl = null;
             if (window.puter?.ai?.txt2img) {
                 try {
-                    const imgEl = await window.puter.ai.txt2img(imagePrompt);
+                    const imgEl = await window.puter.ai.txt2img(imagePrompt, { provider: 'replicate-image-generation', model: 'black-forest-labs/flux-schnell', ratio: { w: 1, h: 1 } });
                     const response = await fetch(imgEl.src);
                     const blob = await response.blob();
                     imageUrl = await new Promise((resolve) => {

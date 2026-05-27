@@ -78,7 +78,7 @@ const MapSourcingModal = ({ sourcingMap, onClose, campaignCode, skeleton, update
                     const imagePrompt = `Dungeons and dragons official digital character illustration of a ${m.name}. 2D fantasy character concept art, flat colors, solid white background, stylized token art, not photorealistic.`;
                     if (window.puter?.ai?.txt2img) {
                         try {
-                            const imgEl = await window.puter.ai.txt2img(imagePrompt);
+                            const imgEl = await window.puter.ai.txt2img(imagePrompt, { provider: 'replicate-image-generation', model: 'black-forest-labs/flux-schnell', ratio: { w: 1, h: 1 } });
                             const response = await fetch(imgEl.src);
                             const blob = await response.blob();
                             imageUrl = await new Promise((resolve) => {
@@ -118,7 +118,7 @@ const MapSourcingModal = ({ sourcingMap, onClose, campaignCode, skeleton, update
             let imageUrl = null;
             if (window.puter?.ai?.txt2img) {
                 try {
-                    const imgEl = await window.puter.ai.txt2img(imagePrompt);
+                    const imgEl = await window.puter.ai.txt2img(imagePrompt, { provider: 'replicate-image-generation', model: 'black-forest-labs/flux-schnell', ratio: { w: 1, h: 1 } });
                     const response = await fetch(imgEl.src);
                     const blob = await response.blob();
                     imageUrl = await new Promise((resolve) => {

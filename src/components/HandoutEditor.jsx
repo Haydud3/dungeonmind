@@ -5,6 +5,7 @@ import Icon from './Icon';
 import { useToast } from './ToastProvider';
 import { storeChunkedMap, retrieveChunkedMap, resolveChunkedHtml } from '../utils/storageUtils';
 import { compressImage } from '../utils/imageCompressor';
+import ResolvedImage from './ResolvedImage';
 
 // Define and Register Custom Blot globally to ensure registration happens once
 const ImageBlot = Quill.import('formats/image');
@@ -340,8 +341,12 @@ const HandoutEditor = ({ onCancel, onLocalReveal }) => {
                                                 </div>
                                                 <p className="text-xs text-slate-500 mb-3">{new Date(h.timestamp).toLocaleDateString()}</p>
                                                 <div className={`h-24 rounded p-2 text-[10px] overflow-hidden opacity-80 ${h.theme === 'parchment' ? 'bg-[#f5e6c8] text-amber-900' : h.theme === 'stone' ? 'bg-[#1c1917] text-slate-400' : 'bg-white text-black'} relative`}>
-                                                    {h.imageUrl && <div className="absolute top-1 right-1 bg-blue-500 text-white text-[8px] px-1 rounded">IMAGE</div>}
-                                                    <div dangerouslySetInnerHTML={{__html: h.content || (h.imageUrl ? "Standalone Image Handout" : "No content")}} />
+                                                    {h.imageUrl && (
+                                                        <div className="absolute inset-0 z-0 pointer-events-none">
+                                                            <ResolvedImage id={h.imageUrl} className={`w-full h-full object-contain ${h.content ? 'opacity-30' : 'opacity-100'}`} />
+                                                        </div>
+                                                    )}
+                                                    <div className="relative z-10" dangerouslySetInnerHTML={{__html: h.content || (h.imageUrl ? "" : "No content")}} />
                                                 </div>
                                             </div>
                                         ))}
@@ -372,8 +377,12 @@ const HandoutEditor = ({ onCancel, onLocalReveal }) => {
                                             </div>
                                             <p className="text-xs text-slate-500 mb-3">{new Date(h.timestamp).toLocaleDateString()}</p>
                                             <div className={`h-24 rounded p-2 text-[10px] overflow-hidden opacity-60 grayscale-[0.5] ${h.theme === 'parchment' ? 'bg-[#f5e6c8] text-amber-900' : h.theme === 'stone' ? 'bg-[#1c1917] text-slate-400' : 'bg-white text-black'} relative`}>
-                                                {h.imageUrl && <div className="absolute top-1 right-1 bg-blue-500 text-white text-[8px] px-1 rounded grayscale-0">IMAGE</div>}
-                                                <div dangerouslySetInnerHTML={{__html: h.content || (h.imageUrl ? "Standalone Image Handout" : "No content")}} />
+                                                {h.imageUrl && (
+                                                    <div className="absolute inset-0 z-0 pointer-events-none">
+                                                        <ResolvedImage id={h.imageUrl} className={`w-full h-full object-contain ${h.content ? 'opacity-30' : 'opacity-100'}`} />
+                                                    </div>
+                                                )}
+                                                <div className="relative z-10" dangerouslySetInnerHTML={{__html: h.content || (h.imageUrl ? "" : "No content")}} />
                                             </div>
                                         </div>
                                     ))}

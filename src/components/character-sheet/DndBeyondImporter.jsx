@@ -1,119 +1,108 @@
 import React, { useState } from 'react';
-import { parseDndBeyondJson } from './dndBeyondParser';
 import Icon from '../Icon';
+import { parseDndBeyondJson } from './dndBeyondParser';
+import { enrichCharacter } from '../../utils/srdEnricher';
 
 const DndBeyondImporter = ({ onImport, onCancel }) => {
-  const [input, setInput] = useState('');
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState('url'); // 'url' or 'json'
+    const [mode, setMode] = useState('url'); // 'url' or 'json'
+    const [inputValue, setInputValue] = useState('');
+    const [isLoading, setIsLoading] = useState(false);
+    const [error, setError] = useState(null);
 
-  const handleImportUrl = async () => {
-    const characterId = input.match(/\/characters\/(\d+)/)?.[1] || input.match(/^\d+$/)?.[0];
-    if (!characterId) {
-      setError('Invalid D&D Beyond URL. Please use the format: https://www.dndbeyond.com/characters/123456');
-      return;
-    }
+    const handleImport = async () => {
+        setIsLoading(true);
+        setError(null);
+        let characterData = null;
 
-    setLoading(true);
-    setError('');
+        try {
+            if (mode === 'url') {
+                const idMatch = inputValue.match(/\/characters\/(\d+)|^\d+$/);
+                const characterId = idMatch ? (idMatch[1] || idMatch[0]) : inputValue.replace(/\D/g, '');
 
-    try {
-      const encodedUrl = encodeURIComponent(`https://character-service.dndbeyond.com/character/v5/character/${characterId}`);
-      let response = await fetch(`https://corsproxy.io/?url=${encodedUrl}`).catch(() => null);
-      
-      if (!response || !response.ok) {
-          response = await fetch(`https://api.allorigins.win/raw?url=${encodedUrl}`).catch(() => null);
-      }
+                if (!characterId) {
+                    throw new Error("Invalid D&D Beyond URL or Character ID.");
+                }
 
-      if (!response || !response.ok) {
-        throw new Error(`Failed to fetch character. D&D Beyond's security might be blocking the request. Please use the "Manual JSON Paste" tab instead.`);
-      }
-      const jsonData = await response.json();
-      console.log("Raw D&D Beyond JSON Data:", jsonData);
-      const parsedData = parseDndBeyondJson(jsonData);
-      console.log("Parsed Character Data:", parsedData);
-      onImport(parsedData);
+                const encodedUrl = encodeURIComponent(`https://character-service.dndbeyond.com/character/v5/character/${characterId}`);
+                let response = await fetch(`https://corsproxy.io/?url=${encodedUrl}`).catch(() => null);
 
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
+                if (!response || !response.ok) {
+                    response = await fetch(`https://api.allorigins.win/raw?url=${encodedUrl}`).catch(() => null);
+                }
 
-  const handleImportJson = () => {
-      try {
-          const jsonData = JSON.parse(input);
-          const parsedData = parseDndBeyondJson(jsonData);
-          onImport(parsedData);
-      } catch (err) {
-          setError("Invalid JSON format. Please ensure you copied the entire page content.");
-      }
-  };
+                if (!response || !response.ok) {
+                    throw new Error("Failed to fetch character. Make sure the sheet is public, or try Manual JSON mode.");
+                }
 
-  return (
-    <div className="bg-slate-800 p-6 rounded-xl border border-slate-600 shadow-xl animate-in slide-in-from-top-2 w-full max-w-lg">
-        <div className="flex justify-between items-center mb-4">
-            <h3 className="text-xl font-bold text-white flex items-center gap-2">
-                <Icon name="download-cloud" className="text-red-500"/>
-                Import from D&D Beyond
-            </h3>
-            <button onClick={onCancel} className="text-slate-400 hover:text-white"><Icon name="x"/></button>
-        </div>
+                characterData = await response.json();
+            } else {
+                characterData = JSON.parse(inputValue);
+            }
 
-        {/* Tabs */}
-        <div className="flex gap-2 mb-4 border-b border-slate-700 pb-2">
-            <button onClick={() => { setActiveTab('url'); setInput(''); setError(''); }} className={`px-4 py-2 rounded text-sm font-bold transition-colors ${activeTab === 'url' ? 'bg-red-600 text-white' : 'text-slate-400 hover:text-white'}`}>Auto URL Import</button>
-            <button onClick={() => { setActiveTab('json'); setInput(''); setError(''); }} className={`px-4 py-2 rounded text-sm font-bold transition-colors ${activeTab === 'json' ? 'bg-red-600 text-white' : 'text-slate-400 hover:text-white'}`}>Manual JSON Paste</button>
-        </div>
+            // Parse using the local schema translator
+            const parsedChar = parseDndBeyondJson(characterData);
+            
+            // Add Spells, Descriptions, and SRD info
+            const enrichedChar = await enrichCharacter(parsedChar);
+            
+            await onImport(enrichedChar);
+        } catch (err) {
+            console.error(err);
+            setError(err.message || "Failed to parse character data. Please check your input.");
+        } finally {
+            setIsLoading(false);
+        }
+    };
 
-        {activeTab === 'url' ? (
-            <>
-                <div className="bg-slate-900/50 p-3 rounded-lg border border-slate-700 text-xs text-slate-400 space-y-1 mb-4">
-                    <p className="font-bold text-slate-300">Instructions:</p>
-                    <p>1. Go to your character sheet on D&D Beyond.</p>
-                    <p>2. Under 'Description', change Privacy to 'Public'.</p>
-                    <p>3. Copy the URL and paste it below.</p>
-                    <p className="text-amber-500 mt-2 font-bold">Note: D&D Beyond frequently blocks automatic imports. If this fails, use the Manual JSON Paste tab.</p>
-                </div>
-                <div className="space-y-4">
-                    <input 
-                        className="w-full bg-slate-900 border border-slate-700 rounded p-3 text-white text-sm focus:border-red-500 outline-none" 
-                        value={input} 
-                        onChange={e => setInput(e.target.value)} 
-                        placeholder="https://www.dndbeyond.com/characters/123456789"
-                    />
-                    {error && <p className="text-xs text-red-400 bg-red-900/20 p-2 rounded border border-red-500/30">{error}</p>}
-                    <button onClick={handleImportUrl} disabled={loading || !input} className="w-full bg-red-600 hover:bg-red-500 text-white font-bold py-3 rounded-lg flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed">
-                        {loading ? <><Icon name="loader-2" className="animate-spin"/> Importing...</> : <><Icon name="import"/> Import via URL</>}
+    return (
+        <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-full max-w-lg overflow-hidden relative">
+            <div className="flex items-center justify-between p-4 border-b border-slate-700 bg-slate-800">
+                <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                    <Icon name="download" className="text-blue-400" />
+                    Import from D&D Beyond
+                </h2>
+                <button onClick={onCancel} className="text-slate-400 hover:text-white transition-colors">
+                    <Icon name="x" size={20} />
+                </button>
+            </div>
+
+            <div className="p-6 space-y-6">
+                <div className="flex bg-slate-800 rounded-lg p-1 border border-slate-700">
+                    <button className={`flex-1 flex items-center justify-center gap-2 py-2 text-sm font-bold rounded-md transition-colors ${mode === 'url' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-white'}`} onClick={() => setMode('url')}>
+                        <Icon name="link" size={16} /> URL Link
+                    </button>
+                    <button className={`flex-1 flex items-center justify-center gap-2 py-2 text-sm font-bold rounded-md transition-colors ${mode === 'json' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-white'}`} onClick={() => setMode('json')}>
+                        <Icon name="file-json" size={16} /> Manual JSON
                     </button>
                 </div>
-            </>
-        ) : (
-            <>
-                <div className="bg-slate-900/50 p-3 rounded-lg border border-slate-700 text-xs text-slate-400 space-y-1 mb-4">
-                    <p className="font-bold text-slate-300">Instructions:</p>
-                    <p>1. Open your character sheet on D&D Beyond.</p>
-                    <p>2. Add <b>/json</b> to the end of the URL and press Enter. <br/><span className="opacity-70">(e.g. dndbeyond.com/characters/123456/json)</span></p>
-                    <p>3. Copy all the text on that page and paste it below.</p>
+
+                <div>
+                    {mode === 'url' ? (
+                        <div className="space-y-2">
+                            <label className="text-xs uppercase font-bold text-slate-500">D&D Beyond Character URL</label>
+                            <input type="text" placeholder="https://www.dndbeyond.com/characters/12345678" className="w-full bg-slate-950 border border-slate-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500" value={inputValue} onChange={(e) => setInputValue(e.target.value)} />
+                            <p className="text-xs text-slate-500">Make sure your character sheet is set to "Public" on D&D Beyond.</p>
+                        </div>
+                    ) : (
+                        <div className="space-y-2">
+                            <label className="text-xs uppercase font-bold text-slate-500">Paste Character JSON</label>
+                            <textarea placeholder='{"id": 12345678, "name": "...", ...}' className="w-full bg-slate-950 border border-slate-700 rounded-lg px-4 py-3 text-white h-32 font-mono text-xs focus:outline-none focus:border-blue-500 resize-none" value={inputValue} onChange={(e) => setInputValue(e.target.value)} />
+                            <p className="text-xs text-slate-500">Use this fallback if Cloudflare blocks the URL import. Add `/json` to the end of your DDB URL to get the raw JSON.</p>
+                        </div>
+                    )}
                 </div>
-                <div className="space-y-4">
-                    <textarea 
-                        className="w-full bg-slate-900 border border-slate-700 rounded p-3 text-white text-sm focus:border-red-500 outline-none h-32 resize-none font-mono" 
-                        value={input} 
-                        onChange={e => setInput(e.target.value)} 
-                        placeholder='{&#10;  "id": 123456,&#10;  "character": { ... }&#10;}'
-                    />
-                    {error && <p className="text-xs text-red-400 bg-red-900/20 p-2 rounded border border-red-500/30">{error}</p>}
-                    <button onClick={handleImportJson} disabled={loading || !input} className="w-full bg-red-600 hover:bg-red-500 text-white font-bold py-3 rounded-lg flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed">
-                        <Icon name="file-json"/> Import JSON
-                    </button>
-                </div>
-            </>
-        )}
-    </div>
-  );
+
+                {error && <div className="bg-red-900/30 border border-red-800 text-red-400 p-3 rounded-lg text-sm font-medium flex gap-2"><Icon name="alert-triangle" size={18} className="shrink-0" /><span>{error}</span></div>}
+            </div>
+
+            <div className="p-4 border-t border-slate-700 bg-slate-800 flex justify-end gap-3">
+                <button onClick={onCancel} className="px-4 py-2 text-sm font-bold text-slate-400 hover:text-white transition-colors">Cancel</button>
+                <button onClick={handleImport} disabled={isLoading || !inputValue.trim()} className="px-6 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-bold rounded-lg transition-colors flex items-center gap-2 shadow-lg">
+                    {isLoading ? <Icon name="loader-2" size={16} className="animate-spin" /> : <Icon name="download" size={16} />}
+                    {isLoading ? 'Importing...' : 'Import Character'}
+                </button>
+            </div>
+        </div>
+    );
 };
-
 export default DndBeyondImporter;

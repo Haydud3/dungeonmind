@@ -70,13 +70,12 @@ const DragLine = React.forwardRef((props, ref) => {
 });
 
 // Interactive 3D Token
-const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gridOffsetY = 0, isSelected, onSelect, onContextMenu, role, getTerrainHeight, isSnapToGrid, isTerrainReady, activeTool, draggedTokenId, setDraggedTokenId, viewMode, showNameplates, selectedTokenIds, groupDragData, onGroupDragEnd, isActiveTurn, canControl, shiftHeldRef, tokenBaseOffset = -0.12, isInteractive = true, orientation = 0, rtdbDragsRef, broadcastDrag, clearBroadcast, myUid, myClientId, baseVisibility, playerVisionSources, wallsArray, combinedLights, fowEnabled, alwaysVisible, hideBaseIf3D }) => {
+const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gridOffsetY = 0, isSelected, onSelect, onContextMenu, role, getTerrainHeight, isSnapToGrid, isTerrainReady, activeTool, draggedTokenId, setDraggedTokenId, viewMode, showNameplates, selectedTokenIds, groupDragData, onGroupDragEnd, isActiveTurn, canControl, shiftHeldRef, tokenBaseOffset = -0.12, isInteractive = true, orientation = 0, rtdbDragsRef, broadcastDrag, clearBroadcast, myUid, myClientId, baseVisibility, playerVisionSources, wallsArray, combinedLights, fowEnabled, alwaysVisible, hideBaseIf3D, isGlobalHovered }) => {
   const meshRef = useRef();
   const visualsRef = useRef();
   const rotationRef = useRef();
   const nameplateGlowRef = useRef();
   const { controls } = useThree();
-  const [hovered, setHover] = useState(false);
   const [resolvedImage, setResolvedImage] = useState(null);
   const polarAngleRef = useRef(0);
   const [saveStatus, setSaveStatus] = useState(null); // 'saving' | 'saved' | null
@@ -117,13 +116,11 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
   if (token.isHidden && role !== 'dm') return null;
   const opacity = token.isHidden ? 0.4 : (token.conditions?.includes('Invisible') ? 0.6 : 1);
 
-  useCursor(hovered, 'pointer', 'auto');
-
   const isPc = token.type === 'pc';
   const baseColor = token.color || (isPc ? "#22c55e" : "#ef4444");
   const size = (token.size || 1) * gridSize;
   const safeSize = !Number.isFinite(size) || size < 0.001 ? gridSize : size;
-  const scale = hovered ? 1.1 : 1;
+  const scale = isGlobalHovered ? 1.1 : 1;
 
   const isLeftDragging = useRef(false);
   const isRightDragging = useRef(false); // Add this line to define isRightDragging
@@ -138,8 +135,8 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
   const isWaitingForSync = useRef(false);
   const syncTarget = useRef(new THREE.Vector3());
   const hasInitialized = useRef(false);
-  const isTopHitRef = useRef(false);
 
+  useCursor(isGlobalHovered, 'pointer', 'auto');
   // Calculate the exact starting position so the token doesn't spawn at [0,0,0] for one frame
   const initialPosition = useMemo(() => {
       const pos = new THREE.Vector3(token.x || 0, token.y || tokenBaseOffset, token.z || 0);
@@ -579,71 +576,24 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
       ref={meshRef} 
       position={initialPosition}
       scale={[scale, scale, scale]}
+      userData={{ tokenId: token.id }}
       onPointerDown={(!isInteractive || activeTool) ? undefined : (e) => {
-        isTopHitRef.current = false;
-        if (isTerrainReady) {
-            const firstHit = e.intersections[0];
-            let isMyHit = false;
-            if (firstHit) {
-                let obj = firstHit.object;
-                while (obj) {
-                    if (obj === meshRef.current) {
-                        isMyHit = true;
-                        break;
-                    }
-                    obj = obj.parent;
-                }
-            }
-            if (!isMyHit) {
-                console.log(`[Token ${token.name}] Swallowing pointer down! firstHit is someone else.`);
-                e.stopPropagation();
-                return;
-            }
-            isTopHitRef.current = true;
+        if (!isGlobalHovered) {
+            e.stopPropagation();
+            return;
         }
-        console.log(`[Token ${token.name}] Accepted pointer down!`);
         handlePointerDown(e);
       }}
       onPointerMove={(!isInteractive || activeTool) ? undefined : handlePointerMove}
       onPointerUp={(!isInteractive || activeTool) ? undefined : handlePointerUp}
-      onPointerOver={(!isInteractive || activeTool) ? undefined : (e) => { 
-        e.stopPropagation(); 
-        if (isTerrainReady) {
-            const firstHit = e.intersections[0];
-            let isMyHit = false;
-            if (firstHit) {
-                let obj = firstHit.object;
-                while (obj) {
-                    if (obj === meshRef.current) {
-                        isMyHit = true;
-                        break;
-                    }
-                    obj = obj.parent;
-                }
-            }
-            if (isMyHit) setHover(true);
-        }
-      }}
-      onPointerOut={(!isInteractive || activeTool) ? undefined : (e) => { cancelLongPress(); if (isTerrainReady) setHover(false); }}
+      onPointerOut={(!isInteractive || activeTool) ? undefined : cancelLongPress}
       onPointerCancel={(!isInteractive || activeTool) ? undefined : cancelLongPress}
       onPointerLeave={(!isInteractive || activeTool) ? undefined : cancelLongPress}
       onClick={(!isInteractive || activeTool) ? undefined : (e) => { 
         e.stopPropagation(); 
         if (e.button === 2) return; 
         if (isTerrainReady) {
-            const firstHit = e.intersections[0];
-            let isMyHit = false;
-            if (firstHit) {
-                let obj = firstHit.object;
-                while (obj) {
-                    if (obj === meshRef.current) {
-                        isMyHit = true;
-                        break;
-                    }
-                    obj = obj.parent;
-                }
-            }
-            if (isMyHit) onSelect(token.id, e.shiftKey);
+            if (isGlobalHovered) onSelect(e, token.id, e.shiftKey);
         }
       }}
       onContextMenu={(!isInteractive || activeTool) ? undefined : (e) => {
@@ -701,12 +651,12 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
                 {/* Inner colored accent ring */}
                 <mesh position={[0, 0.006, 0]} castShadow receiveShadow>
                   <cylinderGeometry args={[safeSize * 0.46, safeSize * 0.46, 0.002, 32]} />
-                  <meshStandardMaterial color={baseColor} roughness={0.5} metalness={0.2} emissive={baseColor} emissiveIntensity={hovered ? 0.5 : 0.1} transparent={true} opacity={opacity} />
+                  <meshStandardMaterial color={baseColor} roughness={0.5} metalness={0.2} emissive={baseColor} emissiveIntensity={isGlobalHovered ? 0.5 : 0.1} transparent={true} opacity={opacity} />
                 </mesh>
       
                 <mesh position={[0, 0.006, safeSize * 0.45]} rotation={[Math.PI / 2, 0, 0]} castShadow receiveShadow>
                   <coneGeometry args={[safeSize * 0.15, safeSize * 0.2, 3]} />
-                  <meshStandardMaterial color={baseColor} roughness={0.5} metalness={0.2} emissive={baseColor} emissiveIntensity={hovered ? 0.5 : 0.1} transparent={true} opacity={opacity} />
+                  <meshStandardMaterial color={baseColor} roughness={0.5} metalness={0.2} emissive={baseColor} emissiveIntensity={isGlobalHovered ? 0.5 : 0.1} transparent={true} opacity={opacity} />
                 </mesh>
               </>
           )}
@@ -868,13 +818,8 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
         <DragControls
           ref={dragControlsRef}
           axisLock="y"
-          enabled={isTerrainReady && !activeTool && (draggedTokenId === token.id || (draggedTokenId === null && hovered))}
+          enabled={isTerrainReady && !activeTool && (draggedTokenId === token.id || (draggedTokenId === null && isGlobalHovered))}
           onDragStart={(e) => {
-            if (!isTopHitRef.current && draggedTokenId !== token.id) {
-                console.log(`[Token ${token.name}] Aborting drag: not top hit.`);
-                return; // Not the top hit, abort drag.
-            }
-            console.log(`[Token ${token.name}] onDragStart Fired!`);
             if (controls) {
                 controls.mouseButtons.LEFT = undefined;
                 controls.mouseButtons.RIGHT = 2;
@@ -1009,7 +954,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
 
 const areTokensEqual = (prev, next) => {
     // Fast path: if the same object, they are equal
-    if (prev.token === next.token && prev.isSelected === next.isSelected && prev.draggedTokenId === next.draggedTokenId && prev.activeTool === next.activeTool && prev.baseVisibility === next.baseVisibility && prev.alwaysVisible === next.alwaysVisible && prev.fowEnabled === next.fowEnabled && prev.getTerrainHeight === next.getTerrainHeight && prev.tokenBaseOffset === next.tokenBaseOffset && prev.hideBaseIf3D === next.hideBaseIf3D) {
+    if (prev.token === next.token && prev.isSelected === next.isSelected && prev.draggedTokenId === next.draggedTokenId && prev.activeTool === next.activeTool && prev.baseVisibility === next.baseVisibility && prev.alwaysVisible === next.alwaysVisible && prev.fowEnabled === next.fowEnabled && prev.getTerrainHeight === next.getTerrainHeight && prev.tokenBaseOffset === next.tokenBaseOffset && prev.hideBaseIf3D === next.hideBaseIf3D && prev.isGlobalHovered === next.isGlobalHovered) {
         return true;
     }
     
@@ -1025,7 +970,7 @@ const areTokensEqual = (prev, next) => {
     if ((pt.conditions || []).join(',') !== (nt.conditions || []).join(',')) return false;
     
     // Check primitive props
-    if (prev.isSelected !== next.isSelected || prev.role !== next.role || prev.gridSize !== next.gridSize || prev.isSnapToGrid !== next.isSnapToGrid || prev.isTerrainReady !== next.isTerrainReady || prev.activeTool !== next.activeTool || prev.draggedTokenId !== next.draggedTokenId || prev.viewMode !== next.viewMode || prev.showNameplates !== next.showNameplates || prev.isActiveTurn !== next.isActiveTurn || prev.canControl !== next.canControl || prev.isInteractive !== next.isInteractive || prev.orientation !== next.orientation || prev.baseVisibility !== next.baseVisibility || prev.alwaysVisible !== next.alwaysVisible || prev.fowEnabled !== next.fowEnabled || prev.getTerrainHeight !== next.getTerrainHeight || prev.tokenBaseOffset !== next.tokenBaseOffset || prev.hideBaseIf3D !== next.hideBaseIf3D) {
+    if (prev.isSelected !== next.isSelected || prev.role !== next.role || prev.gridSize !== next.gridSize || prev.isSnapToGrid !== next.isSnapToGrid || prev.isTerrainReady !== next.isTerrainReady || prev.activeTool !== next.activeTool || prev.draggedTokenId !== next.draggedTokenId || prev.viewMode !== next.viewMode || prev.showNameplates !== next.showNameplates || prev.isActiveTurn !== next.isActiveTurn || prev.canControl !== next.canControl || prev.isInteractive !== next.isInteractive || prev.orientation !== next.orientation || prev.baseVisibility !== next.baseVisibility || prev.alwaysVisible !== next.alwaysVisible || prev.fowEnabled !== next.fowEnabled || prev.getTerrainHeight !== next.getTerrainHeight || prev.tokenBaseOffset !== next.tokenBaseOffset || prev.hideBaseIf3D !== next.hideBaseIf3D || prev.isGlobalHovered !== next.isGlobalHovered) {
         return false;
     }
     

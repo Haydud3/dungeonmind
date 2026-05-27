@@ -287,7 +287,7 @@ ${pasteTextContent}`;
                 imageUrl = `https://www.dnd5eapi.co${m.image}`;
             } else if (window.puter) {
                 try {
-                    const imgEl = await window.puter.ai.txt2img(`D&D Beyond official digital character illustration of a ${m.name} (${m.type}). 2D fantasy character concept art, flat colors, solid white background, stylized token art, not photorealistic.`, { model: 'dall-e-3' });
+                    const imgEl = await window.puter.ai.txt2img(`High quality fantasy digital character illustration of a ${m.name} (${m.type}). 2D fantasy character concept art, flat colors, solid white background, stylized token art, not photorealistic.`, { provider: 'replicate-image-generation', model: 'black-forest-labs/flux-schnell', ratio: { w: 1, h: 1 } });
                     imageUrl = await processPuterImage(imgEl);
                 } catch (e) { console.error("Image gen failed", e); }
             }
@@ -848,7 +848,7 @@ ${pasteTextContent}`;
         {/* CREATION HUB MODAL */}
         {showCreationMenu && (
                 <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
-                    <div className="max-w-5xl w-full bg-slate-900 rounded-xl overflow-hidden shadow-2xl relative border border-slate-700">
+                    <div className="max-w-3xl w-full bg-slate-900 rounded-xl overflow-hidden shadow-2xl relative border border-slate-700">
                         <button onClick={() => setShowCreationMenu(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white"><Icon name="x" size={24}/></button>
                         <div className="p-8 text-center">
                             <h2 className="text-3xl fantasy-font text-amber-500 mb-2">Summon an Entity</h2>
@@ -861,39 +861,20 @@ ${pasteTextContent}`;
                             ) : (
                                 <>
                                     <p className="text-slate-400 mb-8">How shall this creature arrive?</p>
-                                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-                                        <div onClick={createManualNpc} className="bg-slate-800 border-2 border-slate-700 hover:border-green-500 rounded-xl p-4 cursor-pointer group transition-all hover:-translate-y-1 col-span-2 md:col-span-1">
-                                            <div className="w-12 h-12 bg-green-900/30 text-green-500 rounded-full flex items-center justify-center mx-auto mb-2"><Icon name="pencil" size={24}/></div>
-                                            <h3 className="font-bold text-white">Manual</h3>
-                                            <p className="text-[10px] text-slate-400">Blank sheet.</p>
-                                        </div>
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                                         <div onClick={() => { setShowCreationMenu(false); setShowCompendium(true); }} className="bg-slate-800 border-2 border-slate-700 hover:border-blue-500 rounded-xl p-4 cursor-pointer group transition-all hover:-translate-y-1">
                                             <div className="w-12 h-12 bg-blue-900/30 text-blue-500 rounded-full flex items-center justify-center mx-auto mb-2"><Icon name="book" size={24}/></div>
                                             <h3 className="font-bold text-white">5e API</h3>
                                             <p className="text-[10px] text-slate-400">Search Database.</p>
-                                        </div>
-                                        <div onClick={() => debugInputRef.current.click()} className="bg-slate-800 border-2 border-slate-700 hover:border-amber-500 rounded-xl p-4 cursor-pointer group transition-all hover:-translate-y-1">
-                                            <div className="w-12 h-12 bg-amber-900/30 text-amber-500 rounded-full flex items-center justify-center mx-auto mb-2"><Icon name="bug" size={24}/></div>
-                                            <h3 className="font-bold text-white">Debug Parser</h3>
-                                            <p className="text-[10px] text-slate-400">View Raw PDF JSON.</p>
-                                            <input type="file" accept=".pdf" className="hidden" ref={debugInputRef} onChange={handleDebugPdf}/>
-                                        </div>
-                                        <div onClick={() => fileInputRef.current.click()} className="bg-slate-800 border-2 border-slate-700 hover:border-red-500 rounded-xl p-4 cursor-pointer group transition-all hover:-translate-y-1">
-                                            <div className="w-12 h-12 bg-red-900/30 text-red-500 rounded-full flex items-center justify-center mx-auto mb-2"><Icon name="file-text" size={24}/></div>
-                                            <h3 className="font-bold text-white">PDF</h3>
-                                            <p className="text-[10px] text-slate-400">Import + SRD Enrich.</p>
-                                            <input type="file" accept=".pdf" className="hidden" ref={fileInputRef} onChange={handlePdfImport}/>
                                         </div>
                                         <div onClick={() => { setShowCreationMenu(false); setForgeTab('paste'); setShowForge(true); }} className="bg-slate-800 border-2 border-slate-700 hover:border-orange-500 rounded-xl p-4 cursor-pointer group transition-all hover:-translate-y-1">
                                             <div className="w-12 h-12 bg-orange-900/30 text-orange-500 rounded-full flex items-center justify-center mx-auto mb-2"><Icon name="clipboard" size={24}/></div>
                                             <h3 className="font-bold text-white">Paste Text</h3>
                                             <p className="text-[10px] text-slate-400">Parse raw statblock.</p>
                                         </div>
-                                        {/* START CHANGE: Open new Forge Modal instead of old Creator */}
                                         <div onClick={() => { setShowCreationMenu(false); setForgeTab('generate'); setShowForge(true); }} className="bg-slate-800 border-2 border-slate-700 hover:border-purple-500 rounded-xl p-4 cursor-pointer group transition-all hover:-translate-y-1">
                                             <div className="w-12 h-12 bg-purple-900/30 text-purple-500 rounded-full flex items-center justify-center mx-auto mb-2"><Icon name="sparkles" size={24}/></div>
                                             <h3 className="font-bold text-white">AI Forge</h3>
-                                        {/* END CHANGE */}
                                             <p className="text-[10px] text-slate-400">Generative NPC.</p>
                                         </div>
                                     </div>

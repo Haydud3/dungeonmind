@@ -184,10 +184,10 @@ const ViewManager = React.memo(({ aspect, scale, orientation, fitTrigger }) => {
     return null;
 });
 
-export default React.memo(function TacticalMapView({ campaignCode, activeMapId, onOpenSheet, role, onOpenHandouts, onOpenChat, onOpenJournal, onOpenDiceTray, onOpenCast, isCastMode: propIsCastMode, onBack, rightOffset, onSidebarOpen, isChatOpen, isJournalOpen, isHandoutsOpen, isDiceTrayOpen, aiHelper, generateNpc, hideInviteCode, setHideInviteCode }) {
+export default React.memo(function TacticalMapView({ campaignCode, activeMapId, onOpenSheet, role, onOpenHandouts, onOpenChat, onOpenJournal, onOpenDiceTray, onOpenCast, isCastMode: propIsCastMode, onBack, rightOffset, onSidebarOpen, isChatOpen, isJournalOpen, isHandoutsOpen, isDiceTrayOpen, aiHelper, generateNpc, hideInviteCode, setHideInviteCode, onSendMessage }) {
   const isCastMode = propIsCastMode || (typeof window !== 'undefined' && (new URLSearchParams(window.location.search).get('cast') === 'true' || window.location.hash.includes('cast=true')));
   const isLowPerformance = typeof window !== 'undefined' && localStorage.getItem('vtt_low_performance') === 'true';
-  const { campaign, updateCampaign, user } = useNewCampaign();
+  const { campaign, updateCampaign, user, sendMessage } = useNewCampaign();
   const data = campaign;
   const cameraControllerRef = useRef();
   const zoomRef = useRef();
@@ -283,6 +283,9 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
   const [activeTool, setActiveTool] = useState(null);
   const [activeLorePin, setActiveLorePin] = useState(null);
     const [isMovingLorePin, setIsMovingLorePin] = useState(null);
+  const [isEditingLorePin, setIsEditingLorePin] = useState(false);
+  const [editedLorePinLabel, setEditedLorePinLabel] = useState('');
+  const [editedLorePinContent, setEditedLorePinContent] = useState('');
 
   const resetAllTools = useCallback(() => {
       setActiveTool(null);
@@ -292,6 +295,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       setIsDeleting(false);
       setIsDrawingFreehand(false);
         setIsMovingLorePin(null);
+        setIsEditingLorePin(false);
   }, []);
   const [activeMeasurementStyle, setActiveMeasurementStyle] = useState('default');
   const [isToolbarOpen, setIsToolbarOpen] = useState(true);
@@ -323,6 +327,16 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
   const [compendiumSearch, setCompendiumSearch] = useState("");
   const [compendiumResults, setCompendiumResults] = useState([]);
   const [isLoadingCompendium, setIsLoadingCompendium] = useState(false);
+
+  const [showCreationMenu, setShowCreationMenu] = useState(false);
+  const [showForge, setShowForge] = useState(false);
+  const [forgeTab, setForgeTab] = useState('generate');
+  const [forgeName, setForgeName] = useState('');
+  const [forgeContext, setForgeContext] = useState('');
+  const [isForging, setIsForging] = useState(false);
+  
+  const [pasteTextContent, setPasteTextContent] = useState('');
+  const [isParsingText, setIsParsingText] = useState(false);
 
   const [pendingNpc, setPendingNpc] = useState(null);
   const [showModelPicker, setShowModelPicker] = useState(false);
@@ -802,6 +816,18 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           });
       }
       
+      if (relevantTokens.length === 0 && mapData?.fowEnabled === false && mapData?.fowWallsEnabled === false) {
+          return [{
+              id: 'global_vision',
+              x: 0, y: 0, z: 0,
+              range: 9999,
+              darkvision: 9999,
+              blindsight: 9999,
+              truesight: 9999,
+              tremorsense: 9999
+          }];
+      }
+
       return relevantTokens.map(t => {
           const character = allCharacters.find(c => String(c.id) === String(t.characterId));
           if (!character) return null;
@@ -886,12 +912,16 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           };
       }).filter(Boolean);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tokensList, role, user?.uid, stableAssignments, allCharacters, gridSize, playersStr, mapData?.fowEnabled]);
+  }, [tokensList, role, user?.uid, stableAssignments, allCharacters, gridSize, playersStr, mapData?.fowEnabled, mapData?.fowWallsEnabled]);
 
   // Calculate which doors and windows are visible to players based on their vision sources
   const visibleDoorWindowIds = useMemo(() => {
       if (role === 'dm' && !isCastMode) {
           // DM sees all walls, so all doors/windows are visible to DM
+          return new Set(Object.values(mapData?.walls || {}).filter(w => w && (w.type === 'door' || w.type === 'window')).map(w => w.id));
+      }
+
+      if (mapData?.fowEnabled === false && mapData?.fowWallsEnabled === false) {
           return new Set(Object.values(mapData?.walls || {}).filter(w => w && (w.type === 'door' || w.type === 'window')).map(w => w.id));
       }
 
@@ -948,6 +978,11 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
   // CPU-based Line of Sight / Token Visibility Filter
   const visibleTokenIds = useMemo(() => {
       if (role === 'dm' && !isCastMode) return new Set(tokensList.map(t => t.id)); // DM sees everything
+      
+      if (mapData?.fowEnabled === false && mapData?.fowWallsEnabled === false) {
+          return new Set(tokensList.filter(t => !t.isHidden).map(t => t.id));
+      }
+
       const visibleIds = new Set();
 
       const playerCharIds = isCastMode ? new Set((data?.players || []).map(p => String(p.id))) : new Set();
@@ -1036,6 +1071,10 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       const props = mapData?.props ? Object.values(mapData.props).filter(Boolean) : [];
       if (role === 'dm' && !isCastMode) return new Set(props.map(p => p.id)); // DM sees everything
       
+      if (mapData?.fowEnabled === false && mapData?.fowWallsEnabled === false) {
+          return new Set(props.map(p => p.id));
+      }
+
       const visibleIds = new Set();
       const wallsArray = mapData?.fowWallsEnabled !== false ? Object.values(mapData?.walls || {}) : [];
 
@@ -1114,15 +1153,125 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       ? data.campaign.combat.combatants[(data.campaign.combat.turn || 0) % data.campaign.combat.combatants.length].tokenId 
       : null;
 
+  const [topHoveredTokenId, setTopHoveredTokenId] = useState(null);
+
+  const getTokenPriority = useCallback((tid) => {
+      const t = latestTokensRef.current[tid];
+      if (!t) return 0;
+      
+      let priority = 0;
+      const char = allCharacters.find(c => String(c.id) === String(t.characterId));
+      const isOwner = (char?.ownerId && String(char.ownerId) === String(user?.uid)) || (t.ownerId && String(t.ownerId) === String(user?.uid));
+      const myCharAssigned = stableAssignments[user?.uid] && String(t.characterId) === String(stableAssignments[user?.uid]);
+      const canControl = role === 'dm' || isOwner || myCharAssigned || t.isSharedControl;
+      
+      if (canControl) priority += 100; // You always grab tokens you own first
+      
+      const conditions = t.conditions || char?.conditions || [];
+      const isDead = conditions.some(c => (typeof c === 'string' ? c : c.name)?.toLowerCase() === 'dead' || (typeof c === 'string' ? c : c.name)?.toLowerCase() === 'unconscious');
+      if (!isDead) priority += 10; // Alive over dead
+      
+      priority += (1 / (t.size || 1)); // Smaller models intercept over massive ones
+      
+      return priority;
+  }, [allCharacters, user?.uid, stableAssignments, role]);
+
+  const handleGlobalTokenPointerMove = useCallback((e) => {
+      if (activeTool || draggedTokenId) return;
+
+      const hitTokenIds = [];
+      e.intersections.forEach(hit => {
+          let current = hit.object;
+          while (current) {
+              if (current.userData?.tokenId) {
+                  if (!hitTokenIds.includes(current.userData.tokenId)) {
+                      hitTokenIds.push(current.userData.tokenId);
+                  }
+                  break;
+              }
+              current = current.parent;
+          }
+      });
+
+      if (hitTokenIds.length === 0) {
+          setTopHoveredTokenId(null);
+          return;
+      }
+
+      const sortedHitIds = [...hitTokenIds].sort((a, b) => getTokenPriority(b) - getTokenPriority(a));
+      const topId = sortedHitIds[0];
+      
+      setTopHoveredTokenId(prev => prev !== topId ? topId : prev);
+  }, [activeTool, draggedTokenId, getTokenPriority]);
+
+  const handleGlobalTokenPointerOut = useCallback(() => {
+      if (!draggedTokenId) {
+          setTopHoveredTokenId(null);
+      }
+  }, [draggedTokenId]);
+
   // Handle clicking a token to both select it and open the side sheet
-  const handleSelectToken = useCallback((tokenId, isMulti) => {
+  const handleSelectToken = useCallback((arg1, arg2, arg3) => {
+    let e, tokenId, isMulti;
+    
+    // Backward compatibility: check if the first arg is a 3D event object
+    if (arg1 && typeof arg1.stopPropagation === 'function') {
+        e = arg1;
+        tokenId = arg2;
+        isMulti = arg3;
+    } else {
+        e = null;
+        tokenId = arg1;
+        isMulti = arg2;
+    }
+
+    setContextMenu(null);
+
     if (isMulti) {
         setSelectedTokenIds(prev => prev.includes(tokenId) ? prev.filter(id => id !== tokenId) : [...prev, tokenId]);
-    } else {
-        setSelectedTokenIds([tokenId]);
+        return;
     }
-    setContextMenu(null);
-  }, [setSelectedTokenIds]);
+
+    // If we didn't receive an event or intersections, fallback to standard single selection
+    if (!e || !e.intersections || e.intersections.length === 0) {
+        setSelectedTokenIds([tokenId]);
+        return;
+    }
+
+    // Map out every unique token ID hit by the Raycaster
+    const hitTokenIds = [];
+    e.intersections.forEach(hit => {
+        let current = hit.object;
+        while (current) {
+            if (current.userData?.tokenId) {
+                if (!hitTokenIds.includes(current.userData.tokenId)) {
+                    hitTokenIds.push(current.userData.tokenId);
+                }
+                break; // Stop climbing the tree once we identify the token
+            }
+            current = current.parent;
+        }
+    });
+
+    if (hitTokenIds.length <= 1) {
+        setSelectedTokenIds([tokenId]);
+        return;
+    }
+
+
+    // Sort the stack of tokens by priority
+    const sortedHitIds = [...hitTokenIds].sort((a, b) => getTokenPriority(b) - getTokenPriority(a));
+
+    // Cycle through the stack if clicking the same crowded square
+    setSelectedTokenIds(prev => {
+        if (prev.length === 1 && sortedHitIds.includes(prev[0])) {
+            const currentIndex = sortedHitIds.indexOf(prev[0]);
+            const nextIndex = (currentIndex + 1) % sortedHitIds.length;
+            return [sortedHitIds[nextIndex]];
+        }
+        return [sortedHitIds[0]];
+    });
+  }, [setSelectedTokenIds, allCharacters, user?.uid, stableAssignments, role]);
 
   // Group Initiative Roller
   const rollGroupInitiative = (tokenIds) => {
@@ -1193,6 +1342,81 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           alert("Could not connect to D&D 5e API.");
       }
       setIsLoadingCompendium(false);
+  };
+
+  const handleForgeSubmit = async () => {
+      if (!forgeName.trim() || !generateNpc) return;
+      setIsForging(true);
+      try {
+          const instruction = forgeContext ? `Role/Vibe: ${forgeContext}` : "Standard 5e Statblock.";
+          const newNpc = await generateNpc(forgeName, instruction);
+          if (newNpc) {
+              const finalNpc = { ...newNpc, quirk: "Forged from Lore" };
+              setShowForge(false);
+              setForgeName('');
+              setForgeContext('');
+              
+              setPendingNpc(finalNpc);
+              setAvailableModels([]);
+              setShowModelPicker(true);
+              setMiniSearchQuery(finalNpc.name);
+              handleMiniSearch(finalNpc.name, finalNpc.race);
+          } else { alert("The Forge failed."); }
+      } catch (e) {
+          console.error(e);
+          alert("The Forge encountered an error: " + e.message);
+      }
+      setIsForging(false);
+  };
+
+  const handlePasteTextSubmit = async () => {
+      if (!pasteTextContent.trim() || !aiHelper) return;
+      setIsParsingText(true);
+      try {
+          const prompt = `You are a D&D 5e parser. The user will paste raw text from a monster stat block. Extract the stats, actions, HP, AC, and spells, and return it in this exact JSON format. DO NOT WRAP IN MARKDOWN. Only return valid JSON.
+{
+  "name": "Monster Name",
+  "race": "Size Type (Alignment)",
+  "class": "Monster",
+  "level": "CR",
+  "hp": { "current": 20, "max": 20 },
+  "ac": 15,
+  "speed": "30 ft.",
+  "stats": { "str": 10, "dex": 10, "con": 10, "int": 10, "wis": 10, "cha": 10 },
+  "senses": { "darkvision": "60 ft.", "passivePerception": 10 },
+  "bio": { "backstory": "Imported from text.", "appearance": "" },
+  "customActions": [ { "name": "Bite", "desc": "Melee Weapon Attack...", "type": "Action", "hit": "+5", "dmg": "1d6+3 piercing" } ],
+  "features": [ { "name": "Pack Tactics", "desc": "The creature has advantage...", "source": "Trait" } ],
+  "spells": [],
+  "skills": { "perception": true, "stealth": true },
+  "savingThrows": { "dex": true, "con": true },
+  "defenses": { "vulnerabilities": "", "resistances": "", "immunities": "" }
+}
+Return only JSON.
+
+STATBLOCK TEXT:
+${pasteTextContent}`;
+          const response = await aiHelper(prompt, "You are a parser. Return only JSON.");
+          const parsed = JSON.parse(response);
+          const finalNpc = {
+              ...parsed,
+              id: Date.now(),
+              isHidden: true,
+              quirk: "Pasted Text Import",
+              image: ""
+          };
+          setShowForge(false);
+          setPasteTextContent('');
+          setPendingNpc(finalNpc);
+          setAvailableModels([]);
+          setShowModelPicker(true);
+          setMiniSearchQuery(finalNpc.name);
+          handleMiniSearch(finalNpc.name, finalNpc.race);
+      } catch(e) {
+          console.error(e);
+          alert("Failed to parse text. Make sure it's a valid 5e statblock.");
+      }
+      setIsParsingText(false);
   };
 
   const importFromApi = async (monsterIndexUrl) => {
@@ -1606,6 +1830,9 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
 
   const handleLorePinClick = useCallback((pin) => {
       setActiveLorePin(pin);
+      setIsEditingLorePin(false);
+      setEditedLorePinLabel(pin.label || '');
+      setEditedLorePinContent(pin.content || '');
   }, []);
 
   const sendLoreToChat = useCallback(() => {
@@ -1623,22 +1850,31 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           </div>
       `;
       
-      const chatMessage = {
-          content: messageHtml,
-          type: 'chat-public',
-          role: 'dm',
-          senderId: user?.uid || 'anon',
-          senderName: 'Dungeon Master',
-          targetId: null,
-          timestamp: Date.now()
-      };
+      if (onSendMessage) {
+          onSendMessage(messageHtml, 'chat-public', null);
+          if (!isChatOpen && onOpenChat) {
+              onOpenChat();
+          }
+      } else {
+          // Fallback just in case
+          const chatMessage = {
+              id: Date.now().toString() + Math.random().toString(36).substring(2, 5),
+              content: messageHtml,
+              type: 'chat-public',
+              role: 'dm',
+              senderId: user?.uid || 'anon',
+              senderName: 'Dungeon Master',
+              targetId: null,
+              timestamp: Date.now()
+          };
 
-      updateCampaign({
-          chatLog: [...(data?.chatLog || []), chatMessage]
-      });
+          updateCampaign({
+              chatLog: [...(data?.chatLog || []), chatMessage]
+          });
+      }
       
       setActiveLorePin(null);
-  }, [activeLorePin, campaignCode, user, data?.chatLog, updateCampaign]);
+  }, [activeLorePin, campaignCode, user, data?.chatLog, updateCampaign, onSendMessage, isChatOpen, onOpenChat]);
 
   const handleToggleDoor = useCallback((e, wallId) => {
       e.stopPropagation();
@@ -2072,6 +2308,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                       fowEnabled={mapData?.fowEnabled}
                       alwaysVisible={(role === 'dm' && !isCastMode) || (isCastMode && type === 'pc') || (canControl && !isCastMode)}
                       hideBaseIf3D={mapData?.hide3DTokenBases !== false}
+                      isGlobalHovered={topHoveredTokenId === token.id}
                   />
               </ErrorBoundary>
           );
@@ -2081,7 +2318,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       handleUpdateTokenPosition, gridSize, mapData?.gridOffsetX, mapData?.gridOffsetY, selectedTokenIds,
       handleSelectToken, handleContextMenu, getTerrainHeight, isSnapToGrid, draggedTokenId, viewMode, showNameplates,
       activeCombatantId, mapData?.tokenElevationOffset, groupDragData, handleGroupDragEnd, shiftHeldRef,
-          mapData?.orientation, isCastMode, activeTool, isDrawingFreehand
+          mapData?.orientation, isCastMode, activeTool, isDrawingFreehand, topHoveredTokenId
   ]);
 
 
@@ -2287,7 +2524,12 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
 
         {/* Render all tokens on the map */}
         <Suspense fallback={null}>
-            {tokensJSX}
+            <group 
+                onPointerMove={handleGlobalTokenPointerMove}
+                onPointerOut={handleGlobalTokenPointerOut}
+            >
+                {tokensJSX}
+            </group>
         </Suspense>
 
         <Suspense fallback={null}>
@@ -2554,7 +2796,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                   onClick={() => setHideInviteCode && setHideInviteCode(!hideInviteCode)}
               >
                       <div className="w-2 h-2 rounded-full shadow-[0_0_10px_rgba(34,197,94,0.5)] bg-green-500"></div>
-                  <span className="text-sm font-bold text-amber-500 fantasy-font tracking-widest">{hideInviteCode ? '••••••' : campaignCode}</span>
+                  <span className="text-sm font-bold text-amber-500 fantasy-font tracking-widest truncate max-w-[200px]">{data?.campaign?.genesis?.campaignName || (hideInviteCode ? 'Realm ••••••' : `Realm ${campaignCode}`)}</span>
                   </div>
               </div>
               
@@ -2905,8 +3147,8 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                 <div>
                   <div className="flex justify-between items-center mb-3">
                       <h4 className="text-xs uppercase font-bold text-slate-500 tracking-wider">Bestiary</h4>
-                      <button onClick={() => setShowCompendium(true)} className="text-[10px] bg-blue-900/40 text-blue-400 hover:text-blue-300 hover:bg-blue-900/60 border border-blue-800/50 px-2 py-0.5 rounded flex items-center gap-1 transition-colors">
-                          <Icon name="book" size={12}/> 5e API
+                      <button onClick={() => setShowCreationMenu(true)} className="text-[10px] bg-gradient-to-r from-red-800 to-red-600 hover:from-red-700 hover:to-red-500 text-white px-2 py-0.5 rounded flex items-center gap-1 transition-colors shadow-lg">
+                          <Icon name="plus-circle" size={12}/> Summon Entity
                       </button>
                   </div>
                   <div className={actorViewMode === 'grid' ? "grid grid-cols-2 gap-3" : "flex flex-col gap-2"}>
@@ -3565,6 +3807,99 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
         </>
       )}
 
+      {showCreationMenu && (
+          <div className="fixed inset-0 z-[100] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
+              <div className="max-w-3xl w-full bg-slate-900 rounded-xl overflow-hidden shadow-2xl relative border border-slate-700">
+                  <button onClick={() => setShowCreationMenu(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white"><Icon name="x" size={24}/></button>
+                  <div className="p-8 text-center">
+                      <h2 className="text-3xl fantasy-font text-amber-500 mb-2">Summon an Entity</h2>
+                      <p className="text-slate-400 mb-8">How shall this creature arrive?</p>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                          <div onClick={() => { setShowCreationMenu(false); setShowCompendium(true); }} className="bg-slate-800 border-2 border-slate-700 hover:border-blue-500 rounded-xl p-4 cursor-pointer group transition-all hover:-translate-y-1">
+                              <div className="w-12 h-12 bg-blue-900/30 text-blue-500 rounded-full flex items-center justify-center mx-auto mb-2"><Icon name="book" size={24}/></div>
+                              <h3 className="font-bold text-white">5e API</h3>
+                              <p className="text-[10px] text-slate-400">Search Database.</p>
+                          </div>
+                          <div onClick={() => { setShowCreationMenu(false); setForgeTab('paste'); setShowForge(true); }} className="bg-slate-800 border-2 border-slate-700 hover:border-orange-500 rounded-xl p-4 cursor-pointer group transition-all hover:-translate-y-1">
+                              <div className="w-12 h-12 bg-orange-900/30 text-orange-500 rounded-full flex items-center justify-center mx-auto mb-2"><Icon name="clipboard" size={24}/></div>
+                              <h3 className="font-bold text-white">Paste Text</h3>
+                              <p className="text-[10px] text-slate-400">Parse raw statblock.</p>
+                          </div>
+                          <div onClick={() => { setShowCreationMenu(false); setForgeTab('generate'); setShowForge(true); }} className="bg-slate-800 border-2 border-slate-700 hover:border-purple-500 rounded-xl p-4 cursor-pointer group transition-all hover:-translate-y-1">
+                              <div className="w-12 h-12 bg-purple-900/30 text-purple-500 rounded-full flex items-center justify-center mx-auto mb-2"><Icon name="sparkles" size={24}/></div>
+                              <h3 className="font-bold text-white">AI Forge</h3>
+                              <p className="text-[10px] text-slate-400">Generative NPC.</p>
+                          </div>
+                      </div>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {showForge && (
+          <div className="fixed inset-0 z-[100] bg-slate-900/90 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-slate-800 border border-slate-600 rounded-lg shadow-2xl w-full max-w-2xl p-6 animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
+                  <div className="flex justify-between items-center mb-6 border-b border-slate-700 pb-2 shrink-0">
+                      <div className="flex gap-6">
+                          <button onClick={() => setForgeTab('generate')} className={`text-xl font-bold flex items-center gap-2 transition-colors ${forgeTab === 'generate' ? 'text-white' : 'text-slate-500 hover:text-slate-300'}`}>
+                              <Icon name="sparkles" className={forgeTab === 'generate' ? "text-purple-500" : ""} /> AI Generate
+                          </button>
+                          <span className="text-slate-600 text-xl">|</span>
+                          <button onClick={() => setForgeTab('paste')} className={`text-xl font-bold flex items-center gap-2 transition-colors ${forgeTab === 'paste' ? 'text-white' : 'text-slate-500 hover:text-slate-300'}`}>
+                              <Icon name="clipboard" className={forgeTab === 'paste' ? "text-orange-500" : ""} /> Paste Text
+                          </button>
+                      </div>
+                      <button onClick={() => setShowForge(false)} className="text-slate-400 hover:text-white"><Icon name="x"/></button>
+                  </div>
+                  
+                  {forgeTab === 'generate' ? (
+                      isForging ? (
+                          <div className="text-center py-8">
+                              <Icon name="loader-2" size={48} className="animate-spin text-purple-500 mx-auto mb-4"/>
+                              <p className="text-purple-300 font-bold animate-pulse">Consulting the Archives...</p>
+                              <p className="text-xs text-slate-500 mt-2">Checking Lore for stats...</p>
+                          </div>
+                      ) : (
+                          <div className="space-y-4">
+                              <div>
+                                  <label className="block text-xs font-bold text-slate-400 mb-1">Name / Creature Type</label>
+                                  <input autoFocus className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white" placeholder="e.g. Glasstaff OR Redbrand Ruffian" value={forgeName} onChange={e => setForgeName(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleForgeSubmit()}/>
+                                  <p className="text-[10px] text-slate-500 mt-1">If this name appears in your PDFs, we use those stats!</p>
+                              </div>
+                              <div>
+                                  <label className="block text-xs font-bold text-slate-400 mb-1">Context (Optional)</label>
+                                  <input className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white" placeholder="e.g. CR 4, fire themed" value={forgeContext} onChange={e => setForgeContext(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleForgeSubmit()}/>
+                              </div>
+                              <button onClick={handleForgeSubmit} disabled={!forgeName.trim()} className="w-full bg-purple-800 hover:bg-purple-700 text-white font-bold py-3 rounded flex justify-center items-center gap-2 mt-4"><Icon name="hammer" size={18}/> Forge Monster</button>
+                          </div>
+                      )
+                  ) : (
+                      isParsingText ? (
+                          <div className="text-center py-12 flex-1 flex flex-col justify-center">
+                              <Icon name="loader-2" size={48} className="animate-spin text-orange-500 mx-auto mb-4"/>
+                              <p className="text-orange-300 font-bold animate-pulse">Parsing Statblock...</p>
+                              <p className="text-xs text-slate-500 mt-2">The DungeonMind is extracting the stats.</p>
+                          </div>
+                      ) : (
+                          <div className="space-y-4 flex-1 flex flex-col min-h-0">
+                              <div className="flex-1 flex flex-col min-h-0">
+                                  <label className="block text-xs font-bold text-slate-400 mb-2">Raw Text</label>
+                                  <textarea 
+                                      autoFocus 
+                                      className="flex-1 w-full bg-slate-900 border border-slate-600 rounded p-3 text-white text-sm font-mono custom-scroll resize-none min-h-[200px]" 
+                                      placeholder="Paste the raw text from D&D Beyond or a PDF here..." 
+                                      value={pasteTextContent} 
+                                      onChange={e => setPasteTextContent(e.target.value)} 
+                                  />
+                              </div>
+                              <button onClick={handlePasteTextSubmit} disabled={!pasteTextContent.trim()} className="w-full bg-orange-700 hover:bg-orange-600 text-white font-bold py-3 rounded flex justify-center items-center gap-2 shrink-0"><Icon name="wand-2" size={18}/> Extract NPC</button>
+                          </div>
+                      )
+                  )}
+              </div>
+          </div>
+      )}
+
       {showCompendium && (
           <div className="fixed inset-0 z-[100] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
               <div className="max-w-xl w-full bg-slate-900 rounded-xl border border-slate-700 shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
@@ -3654,15 +3989,47 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
     {activeLorePin && (
         <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[100] w-96 max-w-[90vw] bg-slate-900 border-2 border-amber-500/50 rounded-xl shadow-2xl overflow-hidden animate-in slide-in-from-top-4 fade-in">
             <div className="p-3 bg-amber-900/30 border-b border-amber-900/50 flex justify-between items-center">
-                <h3 className="font-bold text-amber-500 flex items-center gap-2"><Icon name="book" size={16} /> {activeLorePin.label}</h3>
+                {isEditingLorePin ? (
+                    <input 
+                        value={editedLorePinLabel} 
+                        onChange={(e) => setEditedLorePinLabel(e.target.value)}
+                        className="flex-1 bg-slate-800 border border-slate-600 rounded px-2 py-1 text-amber-500 font-bold outline-none focus:border-amber-500 mr-2 text-sm"
+                    />
+                ) : (
+                    <h3 className="font-bold text-amber-500 flex items-center gap-2"><Icon name="book" size={16} /> {activeLorePin.label}</h3>
+                )}
                 <button onClick={() => setActiveLorePin(null)} className="text-amber-500/70 hover:text-amber-400 p-1 rounded transition-colors"><Icon name="x" size={16}/></button>
             </div>
             <div className="p-4 max-h-[40vh] overflow-y-auto custom-scroll text-sm text-slate-300 font-serif leading-relaxed italic">
-                "{activeLorePin.content}"
+                {isEditingLorePin ? (
+                    <textarea 
+                        value={editedLorePinContent}
+                        onChange={(e) => setEditedLorePinContent(e.target.value)}
+                        className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-slate-300 outline-none focus:border-amber-500 resize-none h-32"
+                    />
+                ) : (
+                    `"${activeLorePin.content}"`
+                )}
             </div>
             <div className="p-3 border-t border-slate-800 bg-slate-950 flex flex-wrap justify-end gap-2">
                 {role === 'dm' && (
                     <>
+                        {isEditingLorePin ? (
+                            <button onClick={() => {
+                                updateMap(campaignCode, activeMapId, {
+                                    [`pings.${activeLorePin.id}.label`]: editedLorePinLabel,
+                                    [`pings.${activeLorePin.id}.content`]: editedLorePinContent
+                                });
+                                setActiveLorePin({ ...activeLorePin, label: editedLorePinLabel, content: editedLorePinContent });
+                                setIsEditingLorePin(false);
+                            }} className="px-3 py-1.5 text-xs bg-green-600 hover:bg-green-500 text-white rounded font-bold shadow transition-colors flex items-center gap-1">
+                                <Icon name="check" size={12}/> Save
+                            </button>
+                        ) : (
+                            <button onClick={() => setIsEditingLorePin(true)} className="px-3 py-1.5 text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded font-bold shadow transition-colors flex items-center gap-1">
+                                <Icon name="pencil" size={12}/> Edit
+                            </button>
+                        )}
                         <button onClick={() => {
                             setIsMovingLorePin(activeLorePin);
                             setActiveLorePin(null);

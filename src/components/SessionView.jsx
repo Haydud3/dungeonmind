@@ -665,12 +665,12 @@ const SessionView = ({
                         {sendMode === 'chat-private' && (
                             <select value={targetUser} onChange={(e) => setTargetUser(e.target.value)} className="flex-1 min-w-0 md:w-32 bg-purple-900/20 text-xs text-purple-200 border border-purple-500/50 rounded px-2 py-1.5 outline-none">
                                 <option value="">To whom?</option>
-                                {Object.entries(data.activeUsers || {}).map(([uid, email]) => {
+                                {Object.entries(data.activeUsers || {}).map(([uid, userName]) => {
                                     if (uid === user.uid) return null;
                                     if (data.dmIds?.includes(uid)) return <option key={uid} value={uid}>Dungeon Master</option>;
                                     const charId = data.assignments?.[uid];
                                     const char = data.players?.find(p => p.id == charId);
-                                    const displayName = char ? `${char.name} (${char.class})` : email.split('@')[0];
+                                    const displayName = char ? `${char.name} (${char.class})` : userName;
                                     return <option key={uid} value={uid}>{displayName}</option>;
                                 })}
                             </select>
@@ -701,7 +701,7 @@ const SessionView = ({
                             onChange={e => setInputText(e.target.value)} 
                             onKeyDown={handleKeyDown} 
                             placeholder={
-                                sendMode === 'chat-private' ? `Whispering to ${data.activeUsers?.[targetUser]?.split('@')[0] || 'Player'}...` :
+                                sendMode === 'chat-private' ? `Whispering to ${data.activeUsers?.[targetUser] || 'Player'}...` :
                                 sendMode.includes('ai') ? "Ask the DungeonMind..." :
                                 possessedNpcId ? `Speaking as ${data.npcs?.find(n=>n.id===possessedNpcId)?.name}...` : 
                                 "Message..."

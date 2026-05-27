@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import Icon from './Icon';
 import { useNewCampaign } from '../contexts/NewCampaignProvider';
 import { useVfxStore } from '../stores/useVfxStore';
+import { doc, updateDoc } from 'firebase/firestore';
+import { db } from '../firebase';
 
 const SettingsView = ({ 
     apiKey, setApiKey, 
@@ -11,12 +13,14 @@ const SettingsView = ({
     openAiModel, setOpenAiModel, 
     puterModel, setPuterModel,
     hideInviteCode,
-    setHideInviteCode
+    setHideInviteCode,
+    joinRequests = []
 }) => {
     const { campaign, updateCampaign, kickPlayer, banPlayer, unbanPlayer } = useNewCampaign();
     const data = campaign; // for compatibility
     const [activeTab, setActiveTab] = useState('general');
     
+    const [autoJoin, setAutoJoin] = useState(() => localStorage.getItem('dm_auto_join') === 'true');
     const ambientLifeLevel = useVfxStore(state => state.ambientLifeLevel);
     const setAmbientLifeLevel = useVfxStore(state => state.setAmbientLifeLevel);
 
@@ -34,6 +38,31 @@ const SettingsView = ({
     const [localUseExternal, setLocalUseExternal] = useState(myChar?.useExternalSheet || false);
     const [hfToken, setHfToken] = useState(() => localStorage.getItem('hf_token') || '');
     const [forgeEngine, setForgeEngine] = useState(() => localStorage.getItem('forge_engine') || 'stabilityai/TripoSR');
+
+    // Profile Edit State
+    const [localDisplayName, setLocalDisplayName] = useState(user?.displayName || 'Adventurer');
+    const [localPhotoUrl, setLocalPhotoUrl] = useState(user?.photoURL || '');
+
+    React.useEffect(() => {
+        if (user) {
+            setLocalDisplayName(user.displayName || 'Adventurer');
+            setLocalPhotoUrl(user.photoURL || '');
+        }
+    }, [user]);
+
+    const handleSaveProfile = async () => {
+        const newName = localDisplayName.trim() || 'Adventurer';
+        const newPhoto = localPhotoUrl.trim();
+        try {
+            await user.updateProfile({ displayName: newName, photoURL: newPhoto });
+            updateCampaign({ [`activeUsers.${user.uid}`]: newName });
+            alert("Profile updated successfully!");
+            window.location.reload(); // Refresh to instantly apply the name to the global chat handlers
+        } catch (err) {
+            console.error("Failed to update profile", err);
+            alert("Failed to update profile.");
+        }
+    };
 
     // Sync local state if props change (e.g. on initial load)
     React.useEffect(() => {
@@ -95,11 +124,16 @@ const SettingsView = ({
     // START CHANGE: Safe Exit Handler to prevent Auto-Join loop
     const handleSafeExit = () => {
         if (window.confirm("Disconnect from session?")) {
-            localStorage.removeItem('dm_last_code'); // Kill the auto-save code
+            localStorage.removeItem('dm_last_session'); // Prevent auto-join loop
+            sessionStorage.removeItem('dm_auto_join_attempted');
             if (onExit) onExit(); // Now exit the view
         }
     };
     // END CHANGE
+    
+    // Generate the secure URL (fall back to direct code join for legacy realms)
+    const currentInviteParam = data.campaign?.inviteToken ? `invite=${data.campaign.inviteToken}` : `join=${code}`;
+    const inviteUrl = `${window.location.origin}${import.meta.env.BASE_URL}?${currentInviteParam}`;
 
     // [DELETED handleRetroactiveFix FUNCTION]
 
@@ -126,15 +160,120 @@ const SettingsView = ({
                     {myChar && <button onClick={() => setActiveTab('character')} className={`flex-1 py-2 px-4 rounded-md text-sm font-bold transition-all whitespace-nowrap ${activeTab === 'character' ? 'bg-slate-700 text-indigo-400 shadow' : 'text-slate-400 hover:text-slate-200'}`}>My Character</button>}
                     <button onClick={() => setActiveTab('bible')} className={`flex-1 py-2 px-4 rounded-md text-sm font-bold transition-all whitespace-nowrap ${activeTab === 'bible' ? 'bg-slate-700 text-amber-500 shadow' : 'text-slate-400 hover:text-slate-200'}`}>Campaign Bible</button>
                     <button onClick={() => setActiveTab('ai')} className={`flex-1 py-2 px-4 rounded-md text-sm font-bold transition-all whitespace-nowrap ${activeTab === 'ai' ? 'bg-slate-700 text-purple-400 shadow' : 'text-slate-400 hover:text-slate-200'}`}>AI Config</button>
-                    {role === 'dm' && <button onClick={() => setActiveTab('players')} className={`flex-1 py-2 px-4 rounded-md text-sm font-bold transition-all whitespace-nowrap ${activeTab === 'players' ? 'bg-slate-700 text-red-400 shadow' : 'text-slate-400 hover:text-slate-200'}`}>Players</button>}
+                    {role === 'dm' && (
+                        <button onClick={() => setActiveTab('players')} className={`flex-1 py-2 px-4 rounded-md text-sm font-bold transition-all whitespace-nowrap relative ${activeTab === 'players' ? 'bg-slate-700 text-red-400 shadow' : 'text-slate-400 hover:text-slate-200'}`}>
+                            Players
+                            {joinRequests.length > 0 && (
+                                <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-indigo-500 text-[9px] font-bold text-white shadow-lg">{joinRequests.length}</span>
+                            )}
+                        </button>
+                    )}
                 </div>
 
                 {/* --- GENERAL SETTINGS --- */}
                 {activeTab === 'general' && (
                     <div className="space-y-6 animate-in fade-in">
+                        {/* User Profile Settings (Visible to everyone) */}
+                        <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-lg">
+                            <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2"><Icon name="user" size={20}/> My Profile</h3>
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="block text-xs uppercase font-bold text-slate-500 mb-1">Display Name</label>
+                                    <input 
+                                        value={localDisplayName} 
+                                        onChange={(e) => setLocalDisplayName(e.target.value)}
+                                        className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white focus:border-indigo-500 outline-none"
+                                    />
+                                    <p className="text-[10px] text-slate-500 mt-1">This name appears in chat if you don't have an active character assigned.</p>
+                                </div>
+                                <div>
+                                    <label className="block text-xs uppercase font-bold text-slate-500 mb-1">Profile Avatar URL</label>
+                                    <input 
+                                        value={localPhotoUrl} 
+                                        onChange={(e) => setLocalPhotoUrl(e.target.value)}
+                                        placeholder="https://..."
+                                        className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white focus:border-indigo-500 outline-none font-mono text-sm"
+                                    />
+                                </div>
+                                <button 
+                                    onClick={handleSaveProfile}
+                                    className="bg-indigo-600 hover:bg-indigo-500 px-4 py-2 rounded text-white font-bold transition-colors w-full sm:w-auto"
+                                >
+                                    Save Profile
+                                </button>
+                            </div>
+                        </div>
+
                         <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-lg">
                             <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2"><Icon name="settings" size={20}/> Game Options</h3>
                             <div className="space-y-4">
+                                {role === 'dm' && (
+                                    <div>
+                                        <label className="block text-xs uppercase font-bold text-slate-500 mb-1">Realm Name</label>
+                                        <div className="flex gap-2">
+                                            <input 
+                                                value={bibleData.campaignName || ''} 
+                                                onChange={(e) => setBibleData(prev => ({...prev, campaignName: e.target.value}))}
+                                                className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white focus:border-indigo-500 outline-none"
+                                            />
+                                            <button 
+                                                onClick={handleBibleSave}
+                                                className="bg-amber-600 hover:bg-amber-500 px-4 py-2 rounded text-white font-bold transition-colors"
+                                            >
+                                                Save
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+                                <div>
+                                    <label className="block text-xs uppercase font-bold text-slate-500 mb-1">Invite Link</label>
+                                    <div className="flex gap-2">
+                                        <input 
+                                            readOnly
+                                            value={hideInviteCode ? "•••••••••••••••••••••••••••• (HIDDEN)" : inviteUrl} 
+                                            className={`w-full bg-slate-900 border border-slate-600 rounded p-2 outline-none font-mono text-sm ${hideInviteCode ? 'text-slate-500 select-none pointer-events-none' : 'text-slate-300'}`}
+                                        />
+                                        <button 
+                                            onClick={() => {
+                                                navigator.clipboard.writeText(inviteUrl);
+                                                alert("Invite link copied to clipboard!");
+                                            }}
+                                            className="bg-indigo-600 hover:bg-indigo-500 px-4 py-2 rounded text-white font-bold transition-colors whitespace-nowrap"
+                                        >
+                                            Copy Link
+                                        </button>
+                                        {role === 'dm' && (
+                                            <button 
+                                                onClick={() => {
+                                                    if(window.confirm("Invalidate the old invite link and generate a new one?")) {
+                                                        updateCampaign({ 'campaign.inviteToken': Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15) });
+                                                    }
+                                                }}
+                                                className="bg-red-900/50 hover:bg-red-800 text-red-400 hover:text-white px-4 py-2 rounded font-bold transition-colors whitespace-nowrap"
+                                                title="Generate a new secure invite token"
+                                            >
+                                                Reset
+                                            </button>
+                                        )}
+                                    </div>
+                                    <p className="text-xs text-slate-500 mt-1">Share this secure link with your players. It hides your 6-character room code from streams.</p>
+                                </div>
+                                
+                                {role === 'dm' && (
+                                    <div className="flex items-center gap-3 p-3 bg-slate-900/50 rounded border border-slate-700">
+                                        <input 
+                                            type="checkbox" 
+                                            checked={data.campaign?.requireApproval || false} 
+                                            onChange={(e) => updateCampaign({ 'campaign.requireApproval': e.target.checked })}
+                                            className="w-5 h-5 accent-indigo-500"
+                                        />
+                                        <div>
+                                            <div className="font-bold text-slate-200">Require DM Approval (Waiting Room)</div>
+                                            <div className="text-xs text-slate-500">Players joining via the invite link will need your approval before entering the game.</div>
+                                        </div>
+                                    </div>
+                                )}
+
                                 <div>
                                     <label className="block text-xs uppercase font-bold text-slate-500 mb-1">Edition / Ruleset</label>
                                     <select 
@@ -195,16 +334,44 @@ const SettingsView = ({
                                 {/* END CHANGE */}
 
                             {/* Streamer Mode Toggle */}
-                            <div className="flex items-center gap-3 p-3 bg-slate-900/50 rounded border border-slate-700 hover:border-slate-500 transition-colors cursor-pointer" onClick={() => setHideInviteCode && setHideInviteCode(!hideInviteCode)}>
+                            <div className="flex items-center gap-3 p-3 bg-slate-900/50 rounded border border-slate-700 hover:border-slate-500 transition-colors cursor-pointer" onClick={() => {
+                                if (setHideInviteCode) {
+                                    const newValue = !hideInviteCode;
+                                    setHideInviteCode(newValue);
+                                }
+                            }}>
                                 <input 
                                     type="checkbox" 
                                     checked={hideInviteCode || false} 
-                                    onChange={(e) => setHideInviteCode && setHideInviteCode(e.target.checked)}
+                                    onChange={(e) => {
+                                        if (setHideInviteCode) {
+                                            const newValue = e.target.checked;
+                                            setHideInviteCode(newValue);
+                                        }
+                                    }}
                                     className="w-5 h-5 accent-red-500 cursor-pointer pointer-events-none"
                                 />
                                 <div>
                                     <div className="font-bold text-slate-200">Streamer Mode (Hide Invite Code)</div>
                                     <div className="text-xs text-slate-500">Masks your game code in the UI to prevent unwanted players from joining your stream.</div>
+                                </div>
+                            </div>
+
+                            {/* Auto-Join Toggle */}
+                            <div className="flex items-center gap-3 p-3 bg-slate-900/50 rounded border border-slate-700 hover:border-slate-500 transition-colors cursor-pointer" onClick={() => {
+                                const newValue = !autoJoin;
+                                setAutoJoin(newValue);
+                                localStorage.setItem('dm_auto_join', String(newValue));
+                            }}>
+                                <input 
+                                    type="checkbox" 
+                                    checked={autoJoin} 
+                                    onChange={() => {}} // Handled by parent div
+                                    className="w-5 h-5 accent-indigo-500 cursor-pointer pointer-events-none"
+                                />
+                                <div>
+                                    <div className="font-bold text-slate-200">Auto-Join Previous Session</div>
+                                    <div className="text-xs text-slate-500">Skips the dashboard and loads directly into your last active realm when opening DungeonMind.</div>
                                 </div>
                             </div>
                         </div>
@@ -497,6 +664,45 @@ const SettingsView = ({
                                             </div>
                                         ))}
                                     </div>
+                                </div>
+                            )}
+
+                            {(data.campaign?.requireApproval || joinRequests.length > 0) && (
+                                <div className="mt-6 pt-6 border-t border-slate-700">
+                                    <h4 className="text-sm font-bold text-slate-500 uppercase mb-4 flex items-center justify-between">
+                                        Pending Join Requests
+                                        {joinRequests.length > 0 && <span className="bg-indigo-600 text-white px-2 py-0.5 rounded-full text-xs">{joinRequests.length}</span>}
+                                    </h4>
+                                    {joinRequests.length === 0 ? (
+                                        <div className="text-slate-500 text-sm italic bg-slate-900/50 p-6 rounded-lg border border-slate-700/50 text-center">No pending requests at the moment.</div>
+                                    ) : (
+                                        <div className="space-y-3">
+                                            {joinRequests.map(req => (
+                                                <div key={req.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-slate-900/80 rounded-lg border border-indigo-500/30 gap-4 shadow-md hover:border-indigo-500/50 transition-colors">
+                                                    <div>
+                                                        <div className="font-bold text-base text-white">{req.name}</div>
+                                                        <div className="text-xs text-slate-400">ID: {req.uid?.substring(0,8)}...</div>
+                                                        {req.characterName && <div className="text-xs text-indigo-400 mt-1 font-medium flex items-center gap-1"><Icon name="user" size={12}/> Joining as: {req.characterName}</div>}
+                                                        <div className="text-[10px] text-slate-500 mt-1 flex items-center gap-1"><Icon name="clock" size={10}/> {new Date(req.timestamp).toLocaleString()}</div>
+                                                    </div>
+                                                    <div className="flex gap-2 w-full sm:w-auto">
+                                                        <button 
+                                                            onClick={() => updateDoc(doc(db, 'campaigns', code, 'joinRequests', req.id), { status: 'approved' })} 
+                                                            className="flex-1 sm:flex-none bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-bold px-6 py-2.5 rounded-lg transition-colors shadow-lg shadow-indigo-900/20"
+                                                        >
+                                                            Approve
+                                                        </button>
+                                                        <button 
+                                                            onClick={() => updateDoc(doc(db, 'campaigns', code, 'joinRequests', req.id), { status: 'denied' })} 
+                                                            className="flex-1 sm:flex-none bg-slate-800 hover:bg-red-900/80 text-slate-300 hover:text-white border border-slate-600 hover:border-red-500/50 text-sm font-bold px-6 py-2.5 rounded-lg transition-colors"
+                                                        >
+                                                            Deny
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
                                 </div>
                             )}
                         </div>

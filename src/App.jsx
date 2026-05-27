@@ -23,6 +23,7 @@ import { useCharacterStore } from './stores/useCharacterStore';
 import { retrieveContext, buildPrompt, buildCastList } from './utils/loreEngine';
 import { retrieveChunkedMap, resolveChunkedHtml, parseHandoutBody } from './utils/storageUtils';
 import { searchGithubModels } from './utils/miniManifest';
+import { collection, query, where, onSnapshot, doc, updateDoc } from 'firebase/firestore';
 
 import SheetContainer from './components/character-sheet/SheetContainer';
 import SideSheet from './components/SideSheet';
@@ -135,6 +136,14 @@ function DungeonMindApp() {
 
   // 3. Update URL when view changes
   useEffect(() => {
+      if (!gameParams) {
+          const dashboardUrl = `${BASE_PATH}/dashboard`;
+          if (window.location.pathname !== dashboardUrl) {
+              window.history.replaceState({ view: 'dashboard' }, document.title, dashboardUrl + window.location.search);
+          }
+          return;
+      }
+
       const slug = VIEW_SLUGS[currentView] || 'session';
       const url = `${BASE_PATH}/${slug}`;
       
@@ -142,7 +151,7 @@ function DungeonMindApp() {
       if (window.location.pathname !== url) {
           window.history.pushState({ view: currentView }, '', url);
       }
-  }, [currentView]);
+  }, [currentView, gameParams]);
 
   // 4. Handle Back/Forward Browser Buttons
   useEffect(() => {
@@ -169,6 +178,24 @@ function DungeonMindApp() {
 
   const [rightPanel, setRightPanel] = useState({ mode: 'closed', data: null });
   const [vttSidebar, setVttSidebar] = useState(null); // 'chat' | 'journal' | null
+  const [joinRequests, setJoinRequests] = useState([]);
+
+  const effectiveRole = (
+    gameParams?.role === 'dm' || 
+    (data?.dmIds && user?.uid && data.dmIds.map(id => String(id)).includes(String(user.uid)))
+  ) ? 'dm' : 'player';
+
+  // DM Waiting Room Listener
+  useEffect(() => {
+      if (effectiveRole !== 'dm' || !gameParams?.code) return;
+      const q = query(collection(fb.db, 'campaigns', gameParams.code, 'joinRequests'), where('status', '==', 'pending'));
+      const unsub = onSnapshot(q, (snapshot) => {
+          const reqs = [];
+          snapshot.forEach(d => reqs.push({ id: d.id, ...d.data() }));
+          setJoinRequests(reqs);
+      });
+      return () => unsub();
+  }, [effectiveRole, gameParams?.code]);
   
   const closeAllSidebars = () => {
       setRightPanel({ mode: 'closed', data: null });
@@ -248,11 +275,6 @@ function DungeonMindApp() {
       isMatch: data?.dmIds?.includes(user?.uid) 
   });
 
-  const effectiveRole = (
-    gameParams?.role === 'dm' || 
-    (data?.dmIds && user?.uid && data.dmIds.map(id => String(id)).includes(String(user.uid)))
-) ? 'dm' : 'player';
-
   // --- HELPER FUNCTIONS ---
   const handleDiceRoll = (formula, options = {}) => {
       try {
@@ -304,7 +326,7 @@ function DungeonMindApp() {
           const myChar = data?.players?.find(p => p.ownerId === user?.uid);
           const defaultSenderName = possessedNpcId
               ? data?.npcs?.find(n => n.id === possessedNpcId)?.name
-              : (isDm ? 'Dungeon Master' : (myChar?.name || user?.email?.split('@')[0] || 'Player'));
+              : (isDm ? 'Dungeon Master' : (myChar?.name || user?.displayName || 'Player'));
           const derivedCharacterName = options.characterName || defaultSenderName;
 
           const rollLog = {
@@ -464,11 +486,11 @@ function DungeonMindApp() {
           const charClass = char.class || 'Creature';
           const appearance = char.bio?.appearance || '';
           
-          const imagePrompt = `D&D Beyond official digital character illustration of a ${char.name || ''}, ${race} ${charClass}. ${appearance.substring(0, 150)}. 2D fantasy character concept art, flat colors, solid white background, stylized token art, not photorealistic.`;
+          const imagePrompt = `High quality fantasy digital character illustration of a ${char.name || ''}, ${race} ${charClass}. ${appearance.substring(0, 150)}. 2D fantasy character concept art, flat colors, solid white background, stylized token art, not photorealistic.`;
           
           if (window.puter?.ai?.txt2img) {
               try {
-                  const imgEl = await window.puter.ai.txt2img(imagePrompt);
+                  const imgEl = await window.puter.ai.txt2img(imagePrompt, { provider: 'replicate-image-generation', model: 'black-forest-labs/flux-schnell', ratio: { w: 1, h: 1 } });
                   const response = await fetch(imgEl.src);
                   const blob = await response.blob();
                   return await new Promise((resolve) => {
@@ -559,7 +581,7 @@ function DungeonMindApp() {
           type,
           role: type.includes('ai') ? 'user' : (isDm ? 'dm' : 'player'),
           senderId: user?.uid || 'anon',
-          senderName: possessedNpcId ? data?.npcs?.find(n=>n.id===possessedNpcId)?.name : (isDm ? 'Dungeon Master' : (myChar?.name || user?.email?.split('@')[0] || 'Player')),
+              senderName: possessedNpcId ? data?.npcs?.find(n=>n.id===possessedNpcId)?.name : (isDm ? 'Dungeon Master' : (myChar?.name || user?.displayName || 'Player')),
           targetId: targetId || null,
           timestamp: Date.now()
       });
@@ -581,7 +603,7 @@ function DungeonMindApp() {
     // 2. If NO game is active (We are at the Lobby)
     if (!gameParams) {
         // Note: user might be null here if not logged in; Lobby handles the login button
-        return <Lobby user={user} />;
+        return <Lobby user={user} hideInviteCode={hideInviteCode} setHideInviteCode={setHideInviteCode} />;
     }
 
     // 3. If a game is active but no DATA has arrived from Firestore yet
@@ -637,11 +659,30 @@ function DungeonMindApp() {
            {currentView !== 'map' && !isCastMode && (
                <div className="shrink-0 bg-slate-900/95 backdrop-blur border-b border-slate-800 pt-safe z-50">
                    <div className="h-14 flex items-center justify-between px-4">
-                       <div 
-                           className="flex gap-2 items-center cursor-pointer hover:opacity-80 transition-opacity"
-                           onClick={() => setHideInviteCode(!hideInviteCode)}
-                           title="Click to toggle Invite Code visibility (Streamer Mode)"
-                       >
+                       
+                       {/* DM Join Requests Toasts */}
+                       {joinRequests.length > 0 && effectiveRole === 'dm' && (
+                           <div className="absolute top-16 right-4 z-[999] flex flex-col gap-2 pointer-events-none">
+                               {joinRequests.map(req => (
+                                   <div key={req.id} className="pointer-events-auto bg-slate-800 border-2 border-indigo-500 rounded-lg p-3 shadow-2xl w-80 animate-in slide-in-from-top-4">
+                                       <div className="flex items-center gap-3 mb-2">
+                                           <div className="bg-indigo-900/50 p-2 rounded-full"><Icon name="user" size={16} className="text-indigo-400" /></div>
+                                           <div>
+                                               <div className="font-bold text-sm text-white">Knock knock!</div>
+                                               <div className="text-xs text-slate-300"><span className="text-indigo-400 font-bold">{req.name}</span> wants to join the realm.</div>
+                                               {req.characterName && <div className="text-[10px] text-slate-500 mt-0.5">As: {req.characterName}</div>}
+                                           </div>
+                                       </div>
+                                       <div className="flex gap-2">
+                                           <button onClick={() => updateDoc(doc(fb.db, 'campaigns', gameParams.code, 'joinRequests', req.id), { status: 'approved' })} className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold py-1.5 rounded transition-colors">Let In</button>
+                                           <button onClick={() => updateDoc(doc(fb.db, 'campaigns', gameParams.code, 'joinRequests', req.id), { status: 'denied' })} className="flex-1 bg-slate-700 hover:bg-red-900/80 text-slate-300 hover:text-red-400 text-xs font-bold py-1.5 rounded transition-colors">Deny</button>
+                                       </div>
+                                   </div>
+                               ))}
+                           </div>
+                       )}
+
+                       <div className="flex gap-2 items-center">
                            <div className={`w-2 h-2 rounded-full shadow-[0_0_10px_rgba(34,197,94,0.5)] ${gameParams?.isOffline || !isConnected ? 'bg-slate-500' : 'bg-green-500'}`}></div>
                            <span className="text-sm font-bold text-amber-500 truncate fantasy-font tracking-wide">{hideInviteCode ? '••••••' : gameParams?.code} • {possessedNpcId ? "POSSESSING NPC" : data?.campaign?.location}</span>
                        </div>
@@ -731,6 +772,7 @@ function DungeonMindApp() {
                       generateNpc={generateNpc}
                       hideInviteCode={hideInviteCode}
                       setHideInviteCode={setHideInviteCode}
+                      onSendMessage={sendChatMessage}
                   />
               )}
               
@@ -805,6 +847,7 @@ function DungeonMindApp() {
                   puterModel={puterModel} setPuterModel={setPuterModel} 
                   hideInviteCode={hideInviteCode}
                   setHideInviteCode={setHideInviteCode}
+                  joinRequests={joinRequests}
               />}
 
               {/* SIDE PANELS */}

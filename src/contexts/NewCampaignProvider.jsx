@@ -28,31 +28,6 @@ export const NewCampaignProvider = ({ children }) => {
         return unsubscribe;
     }, []);
 
-    useEffect(() => {
-        const code = localStorage.getItem('dm_last_code');
-        const role = localStorage.getItem('dm_last_role');
-        
-        if (code) {
-            setGameParams({ code, role: role || 'player' });
-        } else {
-            // Fallback to older session keys
-            const lastCampaign = localStorage.getItem('dungeonmind_last_campaign');
-            if (lastCampaign) {
-                try {
-                    const parsed = JSON.parse(lastCampaign);
-                    if (parsed.code) {
-                        setGameParams(parsed);
-                        localStorage.setItem('dm_last_code', parsed.code);
-                        localStorage.setItem('dm_last_role', parsed.role || 'player');
-                    }
-                } catch (e) {
-                    console.error("Failed to parse last campaign data:", e);
-                    localStorage.removeItem('dungeonmind_last_campaign');
-                }
-            }
-        }
-    }, []);
-
     const [loreChunks, setLoreChunks] = useState([]);
 
     useEffect(() => {
@@ -292,7 +267,7 @@ export const NewCampaignProvider = ({ children }) => {
         await batch.commit();
     };
 
-    const joinCampaign = async (code, role, uid, isNew = false) => {
+    const joinCampaign = async (code, role, uid, isNew = false, initialData = {}, selectedCharacter = null) => {
         // Path: artifacts -> dungeonmind -> public -> data -> campaigns -> CODE
         const campaignRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', code);
 
@@ -301,12 +276,20 @@ export const NewCampaignProvider = ({ children }) => {
                 await setDoc(campaignRef, {
                     hostId: uid,
                     dmIds: [uid],
-                    onboardingComplete: false,
+                    onboardingComplete: initialData.onboardingComplete ?? false,
                     createdAt: Date.now(),
                     players: [],
                     npcs: [],
                     journal_pages: {},
-                    activeUsers: { [uid]: user?.email || 'DM' }
+                    activeUsers: { [uid]: user?.displayName || 'DM' },
+                    campaign: {
+                        genesis: {
+                            campaignName: initialData.campaignName || 'New Campaign',
+                            tone: initialData.tone || 'Heroic',
+                            conflict: initialData.conflict || 'Evil Arising'
+                        }
+                    },
+                    ...initialData
                 }, { merge: true });
                 console.log("Database initialized for", code);
             } catch (e) {
@@ -315,9 +298,41 @@ export const NewCampaignProvider = ({ children }) => {
         } else if (uid && uid !== 'anon') {
             // Register player presence in the activeUsers map so they show up in DM Settings
             try {
-                await setDoc(campaignRef, {
-                    activeUsers: { [uid]: user?.email || 'Player' }
-                }, { merge: true });
+                const updateData = {
+                    [`activeUsers.${uid}`]: user?.displayName || 'Player'
+                };
+                await setDoc(campaignRef, updateData, { merge: true });
+                
+                // If a character was selected from the vault, we should add it to the players array
+                if (selectedCharacter) {
+                    const docSnap = await getDoc(campaignRef);
+                    if (docSnap.exists()) {
+                        const data = docSnap.data();
+                        const players = data.players || [];
+                        
+                        // Check if a character with this ownerId already exists in this campaign
+                        const existingIndex = players.findIndex(p => p.ownerId === uid && p.id === selectedCharacter.id);
+                        
+                        let updatedPlayers = [...players];
+                        const charData = { 
+                            ...selectedCharacter, 
+                            ownerId: uid,
+                            // Ensure the character has the correct shape for the campaign
+                            hp: selectedCharacter.hp || { current: 10, max: 10, temp: 0 }
+                        };
+                        
+                        if (existingIndex >= 0) {
+                            // Update existing
+                            updatedPlayers[existingIndex] = charData;
+                        } else {
+                            // Add new
+                            updatedPlayers.push(charData);
+                        }
+                        
+                        await setDoc(campaignRef, { players: updatedPlayers, [`assignments.${uid}`]: selectedCharacter.id }, { merge: true });
+                    }
+                }
+                
             } catch (e) {
                 console.error("Failed to register player presence:", e);
             }
@@ -325,8 +340,6 @@ export const NewCampaignProvider = ({ children }) => {
 
         // Now set params to trigger the switch to the game view
         setGameParams({ code, role, uid });
-        localStorage.setItem('dm_last_code', code);
-        localStorage.setItem('dm_last_role', role);
     };
 
     const leaveCampaign = () => {
