@@ -1,7 +1,9 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useThree, useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
+import { Html } from '@react-three/drei';
 import { updateMap } from '../../utils/mapService';
+import Icon from '../Icon';
 
 const PingEffect = ({ ping }) => {
     const meshRef = useRef();
@@ -50,14 +52,64 @@ const PingEffect = ({ ping }) => {
     );
 };
 
-export const MapPings = ({ pings = {}, campaignCode, activeMapId, getTerrainHeight, userColor = "#ef4444" }) => {
+const LorePin = ({ ping, onClick }) => {
+    const groupRef = useRef();
+    const [hovered, setHovered] = useState(false);
+
+    useFrame((state) => {
+        if (!groupRef.current) return;
+        groupRef.current.position.y = (ping.y || 0) + 1.5 + Math.sin(state.clock.elapsedTime * 2) * 0.2;
+        groupRef.current.rotation.y = state.clock.elapsedTime * 0.5;
+    });
+
+    return (
+        <group 
+            ref={groupRef} 
+            position={[ping.x, (ping.y || 0) + 1.5, ping.z]}
+            onPointerOver={(e) => { e.stopPropagation(); setHovered(true); document.body.style.cursor = 'pointer'; }}
+            onPointerOut={(e) => { e.stopPropagation(); setHovered(false); document.body.style.cursor = 'auto'; }}
+            onClick={(e) => { e.stopPropagation(); onClick(ping); }}
+        >
+            <mesh>
+                <octahedronGeometry args={[0.5, 0]} />
+                <meshStandardMaterial 
+                    color={ping.color || "#eab308"} 
+                    emissive={ping.color || "#eab308"}
+                    emissiveIntensity={hovered ? 0.8 : 0.4}
+                    wireframe={hovered}
+                    transparent
+                    opacity={0.9}
+                />
+            </mesh>
+            <pointLight color={ping.color || "#eab308"} distance={3} intensity={2} />
+            <Html center position={[0, 0.8, 0]} className="pointer-events-none z-50">
+                <div className={`transition-opacity duration-200 ${hovered ? 'opacity-100' : 'opacity-0'} bg-black/80 text-amber-400 border border-amber-500/50 px-2 py-1 rounded text-xs whitespace-nowrap font-bold flex items-center gap-1 shadow-lg backdrop-blur-sm`}>
+                    <Icon name="book" size={12} /> {ping.label || "Lore"}
+                </div>
+            </Html>
+        </group>
+    );
+};
+
+export const MapPings = ({ pings = {}, campaignCode, activeMapId, getTerrainHeight, userColor = "#ef4444", onLorePinClick, role }) => {
     const { gl, camera, raycaster } = useThree();
     
-    // We only render active pings (ones created in the last 3 seconds)
+    // Split into transient click pings and persistent lore pins
     const now = Date.now();
-    const activePings = Object.values(pings).filter(p => p && (now - p.createdAt < 3000));
+    const activePings = [];
+    const lorePins = [];
+
+    Object.values(pings).forEach(p => {
+        if (!p) return;
+        if (p.isLore) {
+            // Only DM sees lore pins (or you could let players see them if discovered)
+            if (role === 'dm') lorePins.push(p);
+        } else if (now - p.createdAt < 3000) {
+            activePings.push(p);
+        }
+    });
     
-    // Cleanup old pings periodically
+    // Cleanup old click pings periodically
     useEffect(() => {
         const interval = setInterval(() => {
             const currentNow = Date.now();
@@ -65,7 +117,7 @@ export const MapPings = ({ pings = {}, campaignCode, activeMapId, getTerrainHeig
             let hasUpdates = false;
             
             Object.entries(pings).forEach(([id, p]) => {
-                if (p && (currentNow - p.createdAt > 3500)) {
+                if (p && !p.isLore && (currentNow - p.createdAt > 3500)) {
                     updates[`pings.${id}`] = null;
                     hasUpdates = true;
                 }
@@ -127,6 +179,9 @@ export const MapPings = ({ pings = {}, campaignCode, activeMapId, getTerrainHeig
         <group>
             {activePings.map(ping => (
                 <PingEffect key={ping.id} ping={ping} />
+            ))}
+            {lorePins.map(pin => (
+                <LorePin key={pin.id} ping={pin} onClick={onLorePinClick} />
             ))}
         </group>
     );

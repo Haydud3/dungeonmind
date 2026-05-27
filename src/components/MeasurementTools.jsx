@@ -34,9 +34,15 @@ const RulerTool = ({ getTerrainHeight, gridSize }) => {
     });
 
     useEffect(() => {
-        if (controls) controls.enabled = points.length === 0 || isFading;
+        if (controls) {
+            if (points.length === 0 || isFading) {
+                controls.mouseButtons.LEFT = 2; // THREE.MOUSE.PAN
+            } else {
+                controls.mouseButtons.LEFT = 0; // Disable left-click pan to allow clicking map
+            }
+        }
         return () => {
-            if (controls) controls.enabled = true;
+            if (controls) controls.mouseButtons.LEFT = 2;
             if (lingerTimerRef.current) clearTimeout(lingerTimerRef.current);
         };
     }, [points, isFading, controls]);
@@ -171,9 +177,15 @@ const ShapeToolBase = ({ children, onHitTest, tokens, onCompleteSelection, type,
     });
 
     useEffect(() => {
-        if (controls) controls.enabled = (!startPoint && !isDrawing) || isFading;
+        if (controls) {
+            if ((!startPoint && !isDrawing) || isFading) {
+                controls.mouseButtons.LEFT = 2; // THREE.MOUSE.PAN
+            } else {
+                controls.mouseButtons.LEFT = 0; // Disable left-click pan to allow drawing
+            }
+        }
         return () => {
-            if (controls) controls.enabled = true;
+            if (controls) controls.mouseButtons.LEFT = 2;
             if (lingerTimerRef.current) clearTimeout(lingerTimerRef.current);
         };
     }, [startPoint, isDrawing, isFading, controls]);
@@ -489,7 +501,7 @@ const FreehandTool = ({ getTerrainHeight, isLingering, onSaveMeasurement, active
         if (controls) {
             if ((!isDrawing && points.length === 0) || isFading) {
                 controls.mouseButtons.LEFT = 2; // THREE.MOUSE.PAN
-                controls.mouseButtons.RIGHT = 0; // THREE.MOUSE.ROTATE
+                controls.mouseButtons.RIGHT = 2; // THREE.MOUSE.PAN
             } else {
                 controls.mouseButtons.LEFT = 0;
                 controls.mouseButtons.RIGHT = 2; // THREE.MOUSE.PAN
@@ -498,7 +510,7 @@ const FreehandTool = ({ getTerrainHeight, isLingering, onSaveMeasurement, active
         return () => {
             if (controls) {
                 controls.mouseButtons.LEFT = 2;
-                controls.mouseButtons.RIGHT = 0;
+                controls.mouseButtons.RIGHT = 2;
             }
             if (lingerTimerRef.current) clearTimeout(lingerTimerRef.current);
         };

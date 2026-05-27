@@ -2,7 +2,7 @@ import React, { useMemo } from 'react';
 import * as THREE from 'three';
 
 const DisplacedGridContent = ({ mapData, aspect, resolvedHeightmapUrl, resolvedNormalMapUrl, dynamicDisplacementMap }) => {
-    const { scale = 20, gridSize = 1, heightScale = 1, gridOffsetX = 0, gridOffsetY = 0, gridColor = '#ffffff', gridThickness = 1 } = mapData;
+    const { scale = 20, gridSize = 1, heightScale = 1, gridOffsetX = 0, gridOffsetY = 0, gridColor = '#ffffff', gridThickness = 0.5 } = mapData;
     const width = scale * aspect;
     const height = scale;
 

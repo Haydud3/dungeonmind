@@ -11,6 +11,7 @@ const Sidebar = ({ view, setView }) => {
         { id: 'party', icon: 'users', label: 'Party' },
         { id: 'npcs', icon: 'skull', label: 'Bestiary' },
         { id: 'lore', icon: 'library', label: 'Lore' },
+        { id: 'module', icon: 'book-plus', label: 'Module Hub' },
         { id: 'settings', icon: 'settings', label: 'Settings' }
     ];
 

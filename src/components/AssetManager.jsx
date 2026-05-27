@@ -8,7 +8,9 @@ import SketchfabImporter from './SketchfabImporter';
 import MapGenerator from './MapGenerator';
 import ResolvedImage from './ResolvedImage'; // Add this import
 
+import { useToast } from './ToastProvider';
 import { useResolvedUrl } from '../utils/useResolvedUrl';
+import { fulfillMapData } from '../utils/moduleFulfillment';
 
 // Helper to generate a lightweight thumbnail so the gallery loads instantly
 const generateThumbnail = (dataUrl) => {
@@ -66,35 +68,280 @@ const AssetThumbnail = ({ asset }) => {
 
     const resolvedUrl = useResolvedUrl(imgUrl);
 
-    if (resolvedUrl || (!asset.is3D && asset.url)) {
+    if (resolvedUrl || (imgUrl && typeof imgUrl === 'string' && !imgUrl.startsWith('chunked:'))) {
         return <img src={resolvedUrl || imgUrl} className="w-full h-full object-cover" alt={asset.name} draggable={false} />;
     }
-    return <div className="w-full h-full flex items-center justify-center bg-slate-900 border border-slate-700"><Icon name="box" size={32} className="text-slate-600"/></div>;
+    return <div className="w-full h-full flex items-center justify-center bg-slate-900 border border-slate-700"><Icon name={asset.is3D ? "box" : "image"} size={32} className="text-slate-600 animate-pulse"/></div>;
 };
 
 const CharacterThumbnail = ({ char }) => {
-    let imgUrl = char.avatarUrl || char.imageUrl;
+    let imgUrl = char.avatarUrl || char.imageUrl || char.image;
     if (imgUrl && typeof imgUrl === 'string' && imgUrl.startsWith('http') && !imgUrl.includes('firebasestorage.googleapis.com') && !imgUrl.includes('wsrv.nl')) {
         imgUrl = `https://wsrv.nl/?url=${encodeURIComponent(imgUrl)}&cors=1&w=256`;
     }
     const resolvedUrl = useResolvedUrl(imgUrl);
 
-    if (resolvedUrl) {
-        return <img src={resolvedUrl} className="w-full h-full object-cover" alt={char.name} draggable={false} />;
+    if (resolvedUrl || (imgUrl && typeof imgUrl === 'string' && !imgUrl.startsWith('chunked:'))) {
+        return <img src={resolvedUrl || imgUrl} className="w-full h-full object-cover" alt={char.name} draggable={false} />;
     }
-    return <div className="w-full h-full flex items-center justify-center bg-slate-900 border border-slate-700 text-slate-500"><Icon name="user" size={32}/></div>;
+    return <div className="w-full h-full flex items-center justify-center bg-slate-900 border border-slate-700 text-slate-500"><Icon name="user" size={32} className="animate-pulse"/></div>;
 };
 
-const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, onSetBackground, onSetHeightmap, onGenerateMap, onNewBlankMap, allCharacters, campaignData, updateCampaign, onSelectStamper }) => {
+const ResolvedMapImage = ({ url, name, className }) => {
+    const resolvedUrl = useResolvedUrl(url);
+    if (!resolvedUrl && url && url.startsWith('chunked:')) {
+        return <div className="w-full h-full flex items-center justify-center bg-slate-800"><Icon name="loader" className="animate-spin text-slate-600" size={24} /></div>;
+    }
+    if (resolvedUrl || url) {
+        return <img src={resolvedUrl || url} className={className} alt={name} />;
+    }
+    return <div className="w-full h-full flex items-center justify-center text-slate-600 bg-slate-800"><Icon name="map" size={24} /></div>;
+};
+
+const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, onSetBackground, onSetHeightmap, onGenerateMap, onNewBlankMap, allCharacters, campaignData, updateCampaign, onSelectStamper, importTarget, aiHelper, generateNpc }) => {
+    const toast = useToast();
     const [assets, setAssets] = useState([]);
     const [isUploading, setIsUploading] = useState(false);
     const [isExporting, setIsExporting] = useState(false);
     const [isImporting, setIsImporting] = useState(false);
     const fileInputRef = useRef(null);
     const importPresetRef = useRef(null);
-    const [activeTab, setActiveTab] = useState('library');
+    const [activeTab, setActiveTab] = useState(importTarget ? 'web' : 'library');
     const [selectedAsset, setSelectedAsset] = useState(null);
     const [assetCategory, setAssetCategory] = useState('Maps');
+
+    const [isProcessingMap, setIsProcessingMap] = useState(false);
+    const [processingStep, setProcessingStep] = useState('');
+
+    // Reddit Sourcing States
+    const [redditQuery, setRedditQuery] = useState(importTarget?.name || '');
+    const [redditResults, setRedditResults] = useState([]);
+    const [isSourcing, setIsSourcing] = useState(false);
+    const [currentImageIndex, setCurrentImageIndex] = useState(0);
+    const [internalImportTarget, setInternalImportTarget] = useState(importTarget || null);
+
+    const [uploadTargetMap, setUploadTargetMap] = useState(null);
+    const mapFileInputRef = useRef(null);
+
+    const [expandedChapters, setExpandedChapters] = useState(() => {
+        const skeleton = campaignData?.moduleSkeleton || campaignData?.campaign?.moduleSkeleton;
+        const initial = {};
+        if (skeleton?.chapters) {
+            let foundActive = false;
+            skeleton.chapters.forEach(c => {
+                if (c.maps?.some(m => m.activeMapId === activeMapId)) {
+                    initial[c.id] = true;
+                    foundActive = true;
+                }
+            });
+            if (!foundActive && skeleton.chapters.length > 0) {
+                initial[skeleton.chapters[0].id] = true;
+            }
+        }
+        return initial;
+    });
+
+    const localAiHelper = async (messages) => {
+        if (typeof aiHelper === 'function') {
+            const res = await aiHelper(messages);
+            let extracted = res;
+            if (typeof res === 'string') return res;
+            if (res?.message?.content) extracted = res.message.content;
+            else if (typeof res?.response?.text === 'function') extracted = await res.response.text();
+            else if (typeof res?.text === 'function') extracted = await res.text();
+            else if (res?.text) extracted = res.text;
+            return typeof extracted === 'string' ? extracted : JSON.stringify(extracted);
+        }
+        
+        try {
+            if (window.puter?.ai?.chat) {
+                const promptString = Array.isArray(messages) ? messages.map(m => m.content).join('\n') : messages;
+                const response = await window.puter.ai.chat(promptString);
+                let extracted = response;
+                if (typeof response === 'string') return response;
+                if (response?.message?.content) extracted = response.message.content;
+                else if (typeof response?.response?.text === 'function') extracted = await response.response.text();
+                else if (typeof response?.text === 'function') extracted = await response.text();
+                else if (response?.text) extracted = response.text;
+                return typeof extracted === 'string' ? extracted : JSON.stringify(extracted);
+            }
+        } catch (e) {
+            console.error("Fallback AI failed", e);
+        }
+        toast("AI functions are not available in this view.", "warning");
+        return null;
+    };
+
+    const localGenerateNpc = async (monsterName, instruction) => {
+        if (!monsterName || monsterName.toLowerCase() === 'unknown') return null;
+        if (typeof generateNpc === 'function') return generateNpc(monsterName, instruction);
+        
+        toast(`Searching 5e Archives for: ${monsterName}...`, "info");
+        try {
+            const res = await fetch(`https://www.dnd5eapi.co/api/monsters?name=${encodeURIComponent(monsterName)}`);
+            const data = await res.json();
+            if (data.count > 0) {
+                const match = data.results.find(r => r?.name?.toLowerCase() === monsterName?.toLowerCase()) || data.results[0];
+                const detailRes = await fetch(`https://www.dnd5eapi.co${match.url}`);
+                const m = await detailRes.json();
+                
+                const acVal = Array.isArray(m.armor_class) ? m.armor_class[0].value : m.armor_class;
+                const speedStr = typeof m.speed === 'object' ? Object.entries(m.speed).map(([k,v]) => `${k} ${v}`).join(', ') : m.speed;
+
+                const getMod = (score) => Math.floor((score - 10) / 2);
+                const modifiers = {
+                    str: getMod(m.strength), dex: getMod(m.dexterity), con: getMod(m.constitution),
+                    int: getMod(m.intelligence), wis: getMod(m.wisdom), cha: getMod(m.charisma)
+                };
+
+                const mapAction = (a, type) => {
+                    let dmgString = (a.damage || []).map(d => `${d.damage_dice || ''} ${d.damage_type?.name || ''}`).join(' + ').trim();
+                    let hitString = a.attack_bonus ? `+${a.attack_bonus}` : "";
+                    let dcString = a.dc ? `DC ${a.dc.dc_value} ${a.dc.dc_type?.name || ''}` : "";
+                    return {
+                        name: a.name + (a.usage ? ` (${a.usage.type} ${a.usage.times || a.usage.dice || ''})` : ""),
+                        desc: a.desc || "",
+                        type: type,
+                        category: "Attack",
+                        hit: hitString || dcString,
+                        dmg: dmgString
+                    };
+                };
+
+                const npc = {
+                    id: Date.now(),
+                    isHidden: true,
+                    name: m.name,
+                    race: `${m.size} ${m.type} (${m.alignment})`,
+                    class: "Monster",
+                    level: m.challenge_rating,
+                    hp: { current: m.hit_points, max: m.hit_points },
+                    ac: acVal,
+                    speed: speedStr,
+                    stats: { str: m.strength, dex: m.dexterity, con: m.constitution, int: m.intelligence, wis: m.wisdom, cha: m.charisma },
+                    modifiers: modifiers,
+                    image: m.image ? `https://www.dnd5eapi.co${m.image}` : null,
+                    quirk: "SRD Import",
+                    bio: { backstory: `Imported from D&D 5e API.\nXP: ${m.xp}`, appearance: `A ${m.size} ${m.type}.` },
+                    customActions: [
+                        ...(m.actions || []).map(a => mapAction(a, 'Action')),
+                        ...(m.legendary_actions || []).map(a => mapAction(a, 'Legendary Action')),
+                        ...(m.reactions || []).map(a => mapAction(a, 'Reaction'))
+                    ],
+                    features: (m.special_abilities || []).map(f => ({ name: f.name, desc: f.desc, source: "Trait" }))
+                };
+                
+                if (!npc.image) {
+                    const imagePrompt = `Dungeons and dragons official digital character illustration of a ${npc.name} ${npc.race || ''}. 2D fantasy character concept art, flat colors, solid white background, stylized token art, not photorealistic.`;
+                    let imageUrl = null;
+                    if (window.puter?.ai?.txt2img) {
+                        try {
+                            const imgEl = await window.puter.ai.txt2img(imagePrompt);
+                            const response = await fetch(imgEl.src);
+                            const blob = await response.blob();
+                            imageUrl = await new Promise((resolve) => {
+                                const reader = new FileReader();
+                                reader.onloadend = () => resolve(reader.result);
+                                reader.readAsDataURL(blob);
+                            });
+                        } catch (e) {
+                            console.error("Puter image gen failed", e);
+                        }
+                    }
+                    npc.image = imageUrl || `https://image.pollinations.ai/prompt/${encodeURIComponent(imagePrompt)}?width=512&height=512&nologo=true&seed=${Math.floor(Math.random() * 100000)}`;
+                }
+                return npc;
+            }
+        } catch (e) {
+            console.error("5e API error", e);
+        }
+        
+        toast(`Forging missing monster: ${monsterName} with AI...`, "info");
+        const prompt = `Role: Fantasy bestiary writer. Task: Create a D&D 5e statblock for "${monsterName}". ${instruction || ''}\nOutput ONLY valid JSON.\n{\n  "name": "${monsterName}",\n  "race": "Medium Humanoid (Any Alignment)",\n  "class": "Monster",\n  "stats": { "str": 10, "dex": 10, "con": 10, "int": 10, "wis": 10, "cha": 10 },\n  "hp": { "current": 15, "max": 15 },\n  "ac": 12,\n  "speed": "30 ft.",\n  "bio": { "appearance": "...", "backstory": "..." },\n  "customActions": [{ "name": "Shortsword", "desc": "Melee Weapon Attack", "type": "Action", "hit": "+4", "dmg": "1d6+2" }]\n}`;
+        try {
+            const res = await localAiHelper([{ role: 'user', content: prompt }]);
+            if (!res) return null;
+            const match = res.match(/\{[\s\S]*\}/);
+            const parsed = JSON.parse(match[0]);
+            
+            const imagePrompt = `Dungeons and dragons official digital character illustration of a ${parsed.name} ${parsed.race || ''}. 2D fantasy character concept art, flat colors, solid white background, stylized token art, not photorealistic.`;
+            let imageUrl = null;
+            if (window.puter?.ai?.txt2img) {
+                try {
+                    const imgEl = await window.puter.ai.txt2img(imagePrompt);
+                    const response = await fetch(imgEl.src);
+                    const blob = await response.blob();
+                    imageUrl = await new Promise((resolve) => {
+                        const reader = new FileReader();
+                        reader.onloadend = () => resolve(reader.result);
+                        reader.readAsDataURL(blob);
+                    });
+                } catch (e) {
+                    console.error("Puter image gen failed", e);
+                }
+            }
+            parsed.image = imageUrl || `https://image.pollinations.ai/prompt/${encodeURIComponent(imagePrompt)}?width=512&height=512&nologo=true&seed=${Math.floor(Math.random() * 100000)}`;
+            
+            return parsed;
+        } catch (e) {
+            console.error("AI Generation failed", e);
+        }
+        return null;
+    };
+
+    useEffect(() => {
+        if (importTarget) {
+            setInternalImportTarget(importTarget);
+            setRedditQuery(importTarget.name);
+            setActiveTab('web');
+            handleRedditSearch(importTarget.name);
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    const handleRedditSearch = async (queryToSearch = redditQuery) => {
+        if (!queryToSearch) return;
+        setIsSourcing(true);
+        setRedditResults([]);
+        try {
+            const query = encodeURIComponent(queryToSearch);
+            const urls = [
+                `https://corsproxy.io/?https://www.reddit.com/r/battlemaps/search.json?q=${query}&restrict_sr=1&limit=15`,
+                `https://corsproxy.io/?https://www.reddit.com/r/dndmaps/search.json?q=${query}&restrict_sr=1&limit=15`
+            ];
+            
+            let maps = [];
+            for (const url of urls) {
+                try {
+                    const res = await fetch(url);
+                    if (!res.ok) continue;
+                    
+                    const data = await res.json();
+                    const posts = data?.data?.children || [];
+                    
+                    posts.forEach(post => {
+                        const d = post.data;
+                        if (d.url && (d.url.match(/\.(jpeg|jpg|gif|png|webp)$/i))) {
+                            maps.push({ title: d.title, url: d.url, author: d.author });
+                        } else if (d.media_metadata) {
+                            Object.values(d.media_metadata).forEach(media => {
+                                if (media.s && media.s.u) {
+                                    maps.push({ title: d.title, url: media.s.u.replace(/&amp;/g, '&'), author: d.author });
+                                }
+                            });
+                        }
+                    });
+                } catch(e) { console.warn("Reddit search sub-query failed", e); }
+            }
+
+            setRedditResults(maps);
+            setCurrentImageIndex(0);
+        } catch (e) {
+            console.error("Reddit search failed", e);
+            toast("Failed to search Reddit. Check console.", "error");
+        }
+        setIsSourcing(false);
+    };
 
     // Grid Auto-Detection States
     const [isDetectingGrid, setIsDetectingGrid] = useState(false);
@@ -289,7 +536,37 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
             mapUpdates.lights = data.lights || {};
         }
 
-        await updateDoc(assetRef, updates);
+        if (asset.isSkeletonMap) {
+            const newSkeleton = JSON.parse(JSON.stringify(campaignData?.moduleSkeleton || campaignData?.campaign?.moduleSkeleton));
+            let skeletonUpdated = false;
+            newSkeleton.chapters.forEach(c => {
+                c.maps?.forEach(m => {
+                    if (m.id === asset.id) {
+                        if (layerType === 'baseMap') {
+                            m.mapUrl = data;
+                            m.image = data;
+                            m.backgroundUrl = data;
+                        } else if (layerType === 'heightMap') {
+                            m.generatedHeightmapUrl = data;
+                        } else if (layerType === 'normalMap') {
+                            m.generatedNormalMapUrl = data;
+                        } else if (layerType === 'materialMask') {
+                            m.generatedMaterialMaskUrl = data;
+                        } else if (layerType === 'architectMask' || layerType === 'illuminationMask') {
+                            m.generatedFeatures = m.generatedFeatures || {};
+                            if (layerType === 'architectMask') m.generatedFeatures.walls = data.walls;
+                            if (layerType === 'illuminationMask') m.generatedFeatures.lights = data.lights;
+                        }
+                        skeletonUpdated = true;
+                    }
+                });
+            });
+            if (skeletonUpdated && updateCampaign) {
+                await updateCampaign({ moduleSkeleton: newSkeleton });
+            }
+        } else {
+            await updateDoc(assetRef, updates);
+        }
         
         // Update local selectedAsset state to reflect changes instantly (green checkmarks)
         if (selectedAsset && selectedAsset.id === asset.id) {
@@ -414,7 +691,7 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                 gridOffsetX: mapData?.gridOffsetX || 0,
                 gridOffsetY: mapData?.gridOffsetY || 0,
                 gridColor: mapData?.gridColor || '#888888',
-                gridThickness: mapData?.gridThickness || 1,
+                gridThickness: mapData?.gridThickness || 0.5,
                 scale: mapData?.scale || 20,
                 environment: mapData?.environment || 'day',
                 lightingIntensity: mapData?.lightingIntensity || 1,
@@ -582,17 +859,74 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
         if (e.target) e.target.value = null;
     };
 
+    const handleMapUpload = (e) => {
+        const file = e.target.files?.[0];
+        if (!file || !uploadTargetMap) return;
+        
+        setIsProcessingMap(true);
+        setProcessingStep(`Uploading ${uploadTargetMap.name}...`);
+        
+        const reader = new FileReader();
+        reader.onloadend = async () => {
+            try {
+                const targetMap = { ...uploadTargetMap, id: uploadTargetMap.mapId || uploadTargetMap.id };
+                const newMapId = await fulfillMapData({
+                    imgUrl: reader.result,
+                    targetMap,
+                    campaignCode,
+                    skeleton: campaignData?.moduleSkeleton || campaignData?.campaign?.moduleSkeleton,
+                    data: {
+                        ...campaignData,
+                        npcs: (campaignData?.npcs || []).filter(n => n && n.name),
+                        players: (campaignData?.players || []).filter(p => p && p.name)
+                    },
+                    aiHelper: localAiHelper,
+                    generateNpc: localGenerateNpc,
+                    updateCampaign,
+                    setProcessingStep: setProcessingStep
+                });
+                toast(`${targetMap.name} is now Ready!`, "success");
+                setProcessingStep('Populating Entities...');
+                await new Promise(r => setTimeout(r, 3500));
+                await updateCampaign({ activeMapId: newMapId });
+                setInternalImportTarget(null);
+                setSelectedAsset({ ...targetMap, url: reader.result, isSkeletonMap: true });
+                setActiveTab('settings');
+                handleAutoDetectGrid(reader.result);
+            } catch (err) {
+                console.error(err);
+                toast("Fulfillment failed.", "error");
+            } finally {
+                setIsProcessingMap(false);
+                setProcessingStep('');
+                setUploadTargetMap(null);
+            }
+            if (mapFileInputRef.current) mapFileInputRef.current.value = null;
+        };
+        reader.readAsDataURL(file);
+    };
+
     const activeScaleData = useRef(null);
 
     return (
         <div className="absolute top-0 right-0 bottom-0 w-80 bg-slate-900 border-l border-slate-700 shadow-2xl z-[80] flex flex-col animate-in slide-in-from-right duration-300">
             
             {/* Loading Overlay */}
-            {(isDetectingGrid || isImporting) && (
-                <div className="fixed inset-0 z-[100] bg-slate-900/80 backdrop-blur-sm flex flex-col items-center justify-center text-center p-6">
-                    <Icon name="loader" className="animate-spin text-amber-500 mb-4" size={48} />
-                    <h3 className="text-xl font-bold text-white mb-2">{isImporting ? 'Importing Preset...' : 'Analyzing Frequencies...'}</h3>
-                    <p className="text-sm text-slate-400">{isImporting ? 'Please wait while assets are loaded and applied.' : 'Running Computer Vision Grid Detection'}</p>
+            {(isDetectingGrid || isImporting || isProcessingMap) && (
+                <div className="fixed inset-0 z-[100] bg-slate-900/90 backdrop-blur-sm flex flex-col items-center justify-center text-center p-6">
+                    {isProcessingMap ? (
+                        <>
+                            <div className="w-16 h-16 border-4 border-amber-500 border-t-transparent rounded-full animate-spin mb-6 shadow-[0_0_15px_rgba(245,158,11,0.5)]"></div>
+                            <h3 className="text-2xl font-bold text-white mb-2 tracking-wider">Forging Scene</h3>
+                            <p className="text-amber-400 animate-pulse font-mono bg-black/50 px-4 py-2 rounded border border-amber-500/20">{processingStep || 'Processing...'}</p>
+                        </>
+                    ) : (
+                        <>
+                            <Icon name="loader" className="animate-spin text-amber-500 mb-4" size={48} />
+                            <h3 className="text-xl font-bold text-white mb-2">{isImporting ? 'Importing Preset...' : 'Analyzing Frequencies...'}</h3>
+                            <p className="text-sm text-slate-400">{isImporting ? 'Please wait while assets are loaded and applied.' : 'Running Computer Vision Grid Detection'}</p>
+                        </>
+                    )}
                 </div>
             )}
 
@@ -671,12 +1005,133 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
             </div>
 
             <div className="flex-none border-b border-slate-800 flex overflow-x-auto no-scrollbar">
+                <TabButton name="web" activeTab={activeTab} onClick={setActiveTab} icon="search">Web</TabButton>
                 <TabButton name="library" activeTab={activeTab} onClick={setActiveTab} icon="library">Assets</TabButton>
                 <TabButton name="sketchfab" activeTab={activeTab} onClick={setActiveTab} icon="globe">Sketchfab</TabButton>
                 {activeTab === 'settings' && <TabButton name="settings" activeTab={activeTab} onClick={setActiveTab} icon="sliders-horizontal">Settings</TabButton>}
                 {activeTab === 'ai' && <TabButton name="ai" activeTab={activeTab} onClick={setActiveTab} icon="layers">Layers</TabButton>}
             </div>
             
+            {activeTab === 'web' && (
+                <div className="flex-1 min-h-0 flex flex-col bg-slate-900">
+                    <div className="p-4 border-b border-slate-800 bg-slate-950 flex gap-2 shrink-0">
+                        <input 
+                            value={redditQuery} 
+                            onChange={(e) => setRedditQuery(e.target.value)} 
+                            onKeyDown={(e) => e.key === 'Enter' && handleRedditSearch()}
+                            placeholder="Search r/battlemaps..." 
+                            className="flex-1 bg-slate-900 border border-slate-700 rounded px-3 py-2 text-white outline-none focus:border-amber-500"
+                        />
+                        <button onClick={() => handleRedditSearch()} disabled={isSourcing} className="bg-amber-600 hover:bg-amber-500 px-4 rounded text-white font-bold flex items-center justify-center">
+                            {isSourcing ? <Icon name="loader" className="animate-spin" /> : <Icon name="search" />}
+                        </button>
+                    </div>
+                    <div className="flex-1 relative flex items-center justify-center overflow-hidden">
+                        {isSourcing ? (
+                            <div className="text-center animate-pulse">
+                                <Icon name="loader" size={48} className="animate-spin text-amber-500 mx-auto mb-4" />
+                                <div className="text-slate-300 font-bold">Scouring the internet...</div>
+                            </div>
+                        ) : redditResults.length > 0 ? (
+                            <>
+                                <div className="absolute inset-0 flex items-center justify-center p-4">
+                                    <img src={`https://wsrv.nl/?url=${encodeURIComponent(redditResults[currentImageIndex].url)}&cors=1&w=800`} className="max-h-full max-w-full object-contain shadow-2xl rounded" alt="Map Preview" />
+                                </div>
+                                
+                                <button 
+                                    onClick={() => setCurrentImageIndex(prev => prev > 0 ? prev - 1 : redditResults.length - 1)}
+                                    className="absolute left-4 top-1/2 -translate-y-1/2 bg-black/50 hover:bg-black/80 text-white p-3 rounded-full backdrop-blur transition-colors border border-slate-700 shadow-xl"
+                                >
+                                    <Icon name="chevron-left" size={24}/>
+                                </button>
+                                <button 
+                                    onClick={() => setCurrentImageIndex(prev => prev < redditResults.length - 1 ? prev + 1 : 0)}
+                                    className="absolute right-4 top-1/2 -translate-y-1/2 bg-black/50 hover:bg-black/80 text-white p-3 rounded-full backdrop-blur transition-colors border border-slate-700 shadow-xl"
+                                >
+                                    <Icon name="chevron-right" size={24}/>
+                                </button>
+
+                                <div className="absolute bottom-4 left-0 right-0 text-center flex flex-col items-center">
+                                    <div className="inline-block bg-black/70 backdrop-blur px-4 py-2 rounded-lg border border-slate-700 shadow-xl max-w-[80%] mb-2">
+                                        <p className="text-white font-bold text-sm truncate">{redditResults[currentImageIndex].title}</p>
+                                        <p className="text-slate-400 text-xs mt-1">by u/{redditResults[currentImageIndex].author} • Result {currentImageIndex + 1} of {redditResults.length}</p>
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <button 
+                                             onClick={() => setActiveTab('ai')}
+                                             className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded shadow-lg flex items-center gap-2 border border-purple-500"
+                                         >
+                                             <Icon name="sparkles" size={16}/> Use AI
+                                         </button>
+                                        <button 
+                                             onClick={async () => {
+                                                 const selectedMap = redditResults[currentImageIndex];
+                                                 if (internalImportTarget) {
+                                                     setIsProcessingMap(true);
+                                                     try {
+                                                         const targetMap = { ...internalImportTarget, id: internalImportTarget.mapId };
+                                                         const newMapId = await fulfillMapData({
+                                                             imgUrl: selectedMap.url,
+                                                             targetMap,
+                                                             campaignCode,
+                                                             skeleton: campaignData?.moduleSkeleton || campaignData?.campaign?.moduleSkeleton,
+                                                             data: {
+                                                                 ...campaignData,
+                                                                 npcs: (campaignData?.npcs || []).filter(n => n && n.name),
+                                                                 players: (campaignData?.players || []).filter(p => p && p.name)
+                                                             },
+                                                             aiHelper: localAiHelper,
+                                                             generateNpc: localGenerateNpc,
+                                                             updateCampaign,
+                                                             setProcessingStep: setProcessingStep
+                                                         });
+                                                         toast(`${internalImportTarget.name} is now Ready!`, "success");
+                                                         setProcessingStep('Populating Entities...');
+                                                         await new Promise(r => setTimeout(r, 3500));
+                                                         await updateCampaign({ activeMapId: newMapId });
+                                                         setInternalImportTarget(null);
+                                                         setSelectedAsset({ ...targetMap, url: selectedMap.url, isSkeletonMap: true });
+                                                         setActiveTab('settings');
+                                                         handleAutoDetectGrid(selectedMap.url);
+                                                     } catch (e) {
+                                                         console.error(e);
+                                                         toast("Fulfillment failed.", "error");
+                                                     } finally {
+                                                         setIsProcessingMap(false);
+                                                         setProcessingStep('');
+                                                     }
+                                                 } else {
+                                                     const isNew = await onSetBackground({ name: selectedMap.title, url: selectedMap.url }, false);
+                                                     setSelectedAsset({ name: selectedMap.title, url: selectedMap.url });
+                                                     setActiveTab('settings');
+                                                     if (isNew) {
+                                                         handleAutoDetectGrid(selectedMap.url);
+                                                     }
+                                                 }
+                                             }}
+                                             className="px-6 py-2 bg-green-600 hover:bg-green-500 text-white font-bold rounded shadow-lg flex items-center gap-2 border border-green-500"
+                                         >
+                                             <Icon name="check" size={18}/> Accept Map
+                                         </button>
+                                    </div>
+                                </div>
+                            </>
+                        ) : (
+                            <div className="text-center text-slate-500 p-6">
+                                <Icon name="search-x" size={48} className="mx-auto mb-4 opacity-50" />
+                                <p>No suitable maps found.</p>
+                                <button 
+                                     onClick={() => setActiveTab('ai')}
+                                     className="mt-4 px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded font-bold transition-colors shadow-lg flex items-center justify-center gap-2 mx-auto"
+                                >
+                                     <Icon name="sparkles" size={16} /> Generate with AI Instead
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+
             {activeTab === 'sketchfab' && (
                 <SketchfabImporter 
                     onSelectStamper={onSelectStamper} 
@@ -698,12 +1153,52 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                 />
             )}
 
-            {activeTab === 'ai' && selectedAsset && (
+            {activeTab === 'ai' && (selectedAsset || importTarget) && (
                 <div className="flex-1 min-h-0 overflow-y-auto custom-scroll bg-slate-900">
                     <MapGenerator 
-                        asset={selectedAsset}
+                        asset={selectedAsset || { name: internalImportTarget?.name || importTarget?.name }}
                         mapData={mapData} 
-                        onUpdateLayer={(layerType, data) => handleUpdateAssetLayer(selectedAsset, layerType, data)} 
+                        importTarget={internalImportTarget || importTarget}
+                        onUpdateLayer={async (layerType, data) => {
+                            if (selectedAsset) {
+                                handleUpdateAssetLayer(selectedAsset, layerType, data);
+                            } else if (layerType === 'baseMap' && (internalImportTarget || importTarget)) {
+                                const target = internalImportTarget || importTarget;
+                                setIsProcessingMap(true);
+                                try {
+                                    const targetMap = { ...target, id: target.mapId || target.id };
+                                    const newMapId = await fulfillMapData({
+                                        imgUrl: data,
+                                        targetMap,
+                                        campaignCode,
+                                        skeleton: campaignData?.moduleSkeleton || campaignData?.campaign?.moduleSkeleton,
+                                        data: {
+                                            ...campaignData,
+                                            npcs: (campaignData?.npcs || []).filter(n => n && n.name),
+                                            players: (campaignData?.players || []).filter(p => p && p.name)
+                                        },
+                                        aiHelper: localAiHelper,
+                                        generateNpc: localGenerateNpc,
+                                        updateCampaign,
+                                        setProcessingStep: setProcessingStep
+                                    });
+                                    toast(`${target.name} is now Ready!`, "success");
+                                    setProcessingStep('Populating Entities...');
+                                    await new Promise(r => setTimeout(r, 3500));
+                                    await updateCampaign({ activeMapId: newMapId });
+                                    setInternalImportTarget(null);
+                                    setSelectedAsset({ ...targetMap, url: data, isSkeletonMap: true });
+                                    setActiveTab('settings');
+                                    handleAutoDetectGrid(data);
+                                } catch (e) {
+                                    console.error(e);
+                                    toast("Fulfillment failed.", "error");
+                                } finally {
+                                    setIsProcessingMap(false);
+                                    setProcessingStep('');
+                                }
+                            }
+                        }} 
                     />
                 </div>
             )}
@@ -748,6 +1243,197 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                         ))}
                     </div>
                     <div className="flex-1 min-h-0 overflow-y-auto custom-scroll p-4">
+                        
+                        {/* CAMPAIGN ATLAS / MODULE SKELETON */}
+                        {['Maps', 'All'].includes(assetCategory) && (campaignData?.moduleSkeleton || campaignData?.campaign?.moduleSkeleton)?.chapters && (
+                            <div className="mb-8 space-y-4">
+                                <div className="flex items-center gap-2 border-b border-amber-500/30 pb-2 mb-4">
+                                    <Icon name="book-open" className="text-amber-500" size={18} />
+                                    <h3 className="text-lg font-bold text-amber-500 fantasy-font truncate">{(campaignData?.moduleSkeleton || campaignData?.campaign?.moduleSkeleton).title || 'Campaign Module'}</h3>
+                                </div>
+                                
+                                {(campaignData?.moduleSkeleton || campaignData?.campaign?.moduleSkeleton).chapters.map(chapter => {
+                                    const isExpanded = expandedChapters[chapter.id];
+                                    return (
+                                    <div key={chapter.id} className="bg-slate-900/60 rounded-xl border border-slate-800/80 mb-4 shadow-sm overflow-hidden">
+                                        <div 
+                                            className="p-3 flex items-center justify-between cursor-pointer hover:bg-slate-800/60 transition-colors"
+                                            onClick={() => setExpandedChapters(prev => ({ ...prev, [chapter.id]: !prev[chapter.id] }))}
+                                        >
+                                            <h4 className="text-sm font-bold text-slate-300 flex items-center gap-2">
+                                                <Icon name={isExpanded ? "folder-open" : "folder"} size={14} className="text-indigo-400 shrink-0" />
+                                                <span className="truncate">{chapter.title}</span>
+                                            </h4>
+                                            <Icon name={isExpanded ? "chevron-down" : "chevron-right"} size={16} className="text-slate-500" />
+                                        </div>
+                                        {isExpanded && (
+                                        <div className="p-3 pt-2 grid grid-cols-2 gap-3 border-t border-slate-800/50">
+                                            {chapter.maps?.map(map => {
+                                                const isMissing = map.status === 'missing';
+                                                if (isMissing) {
+                                                    return (
+                                                        <div key={map.id} className="flex flex-col gap-1.5 group">
+                                                            <div className="relative aspect-square rounded-lg transition-all duration-300 bg-indigo-950/20 border border-dashed border-indigo-500/40 hover:border-indigo-400 hover:bg-indigo-900/40 overflow-hidden shadow-inner">
+                                                                <div 
+                                                                    onClick={() => {
+                                                                        setInternalImportTarget({ ...map, chapterId: chapter.id, mapId: map.id });
+                                                                        setRedditQuery(map.name);
+                                                                        setActiveTab('web');
+                                                                        handleRedditSearch(map.name);
+                                                                    }}
+                                                                    className="absolute inset-0 flex flex-col items-center justify-center cursor-pointer"
+                                                                >
+                                                                    <Icon name="search" size={20} className="text-indigo-400 mb-1 group-hover:scale-110 transition-transform" />
+                                                                    <span className="text-[10px] font-bold text-indigo-300">Search Map</span>
+                                                                </div>
+                                                                <div className="absolute top-1 left-1 opacity-0 group-hover:opacity-100 transition-opacity z-10 flex gap-1">
+                                                                    <button 
+                                                                        onClick={(e) => {
+                                                                            e.stopPropagation();
+                                                                            setUploadTargetMap({ ...map, chapterId: chapter.id, mapId: map.id });
+                                                                            mapFileInputRef.current?.click();
+                                                                        }}
+                                                                        className="bg-black/80 text-slate-300 hover:text-white p-1.5 rounded shadow-md border border-slate-700 hover:border-amber-500 transition-colors"
+                                                                        title="Upload Custom Map"
+                                                                    >
+                                                                        <Icon name="upload" size={14} />
+                                                                    </button>
+                                                                </div>
+                                                            </div>
+                                                            <div className="text-center">
+                                                                <div className="text-xs font-bold text-slate-300 truncate px-1" title={map.name}>{map.name}</div>
+                                                                <div className="text-[9px] text-slate-500 font-mono uppercase tracking-widest mt-0.5">Missing</div>
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                } else {
+                                                    return (
+                                                        <div key={map.id} className="flex flex-col gap-1.5 group">
+                                                            <div 
+                                                                className="relative aspect-square rounded-lg transition-all duration-300 bg-slate-900 border border-slate-700 hover:border-amber-500/80 shadow-md overflow-hidden cursor-pointer"
+                                                                onClick={async () => {
+                                                                    if (map.activeMapId) {
+                                                                        if (updateCampaign) await updateCampaign({ activeMapId: map.activeMapId });
+                                                                        if (onClose) onClose();
+                                                                    } else {
+                                                                        const mapImg = map.mapUrl || map.image || map.backgroundUrl || '';
+                                                                        const isNew = await onSetBackground({ name: map.name, url: mapImg }, false);
+                                                                        if (isNew && mapImg) {
+                                                                            setSelectedAsset({ ...map, url: mapImg, isSkeletonMap: true });
+                                                                            setActiveTab('settings');
+                                                                            handleAutoDetectGrid(mapImg);
+                                                                        } else {
+                                                                            if (onClose) onClose();
+                                                                        }
+                                                                    }
+                                                                }}
+                                                            >
+                                                                <ResolvedMapImage url={map.mapUrl || map.image || map.backgroundUrl} name={map.name} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" />
+                                                                
+                                                                <div className="absolute top-1 left-1 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                                    <button onClick={async (e) => { 
+                                                                        e.stopPropagation(); 
+                                                                        if (map.activeMapId) {
+                                                                            if (updateCampaign) await updateCampaign({ activeMapId: map.activeMapId });
+                                                                            if (onClose) onClose();
+                                                                        } else {
+                                                                            const mapImg = map.mapUrl || map.image || map.backgroundUrl || '';
+                                                                            const isNew = await onSetBackground({ name: map.name, url: mapImg }, false); 
+                                                                            setSelectedAsset({ ...map, url: mapImg, isSkeletonMap: true });
+                                                                            setActiveTab('settings');
+                                                                            if (isNew && mapImg) {
+                                                                                handleAutoDetectGrid(mapImg);
+                                                                            }
+                                                                        }
+                                                                    }} className="bg-black/80 text-amber-500 hover:text-white p-1.5 rounded shadow-md" title={map.activeMapId ? "Load Map & Tokens" : "Set as Map Background"}>
+                                                                        <Icon name="map" size={14}/>
+                                                                    </button>
+                                                                    <button onClick={(e) => { 
+                                                                        e.stopPropagation(); 
+                                                                        const mapImg = map.mapUrl || map.image || map.backgroundUrl || '';
+                                                                        setSelectedAsset({ ...map, url: mapImg, isSkeletonMap: true }); 
+                                                                        setActiveTab('settings'); 
+                                                                    }} className="bg-black/80 text-cyan-400 hover:text-white p-1.5 rounded shadow-md" title="Map Settings">
+                                                                        <Icon name="settings" size={14}/>
+                                                                    </button>
+                                                                    <button onClick={(e) => { 
+                                                                        e.stopPropagation(); 
+                                                                        const mapImg = map.mapUrl || map.image || map.backgroundUrl || '';
+                                                                        setSelectedAsset({ ...map, url: mapImg, isSkeletonMap: true }); 
+                                                                        setActiveTab('ai'); 
+                                                                    }} className="bg-black/80 text-purple-400 hover:text-white p-1.5 rounded shadow-md" title="Map Layers & Importers">
+                                                                        <Icon name="layers" size={14}/>
+                                                                    </button>
+                                                                </div>
+                                                                <div className="absolute top-1 right-1 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                                    <button onClick={(e) => { 
+                                                                        e.stopPropagation(); 
+                                                                        const newName = prompt("Enter new name for map:", map.name);
+                                                                        if (newName && newName !== map.name) {
+                                                                            const newSkeleton = JSON.parse(JSON.stringify(campaignData?.moduleSkeleton || campaignData?.campaign?.moduleSkeleton));
+                                                                            const chap = newSkeleton.chapters.find(c => c.id === chapter.id);
+                                                                            const mapToUpdate = chap?.maps.find(m => m.id === map.id);
+                                                                            if (mapToUpdate) {
+                                                                                mapToUpdate.name = newName;
+                                                                                if (updateCampaign) updateCampaign({ moduleSkeleton: newSkeleton });
+                                                                            }
+                                                                        }
+                                                                    }} className="bg-black/80 text-green-400 hover:text-white p-1.5 rounded shadow-md" title="Rename Map">
+                                                                        <Icon name="pencil" size={14}/>
+                                                                    </button>
+                                                                    <button onClick={(e) => { 
+                                                                        e.stopPropagation(); 
+                                                                        if (confirm(`Remove "${map.name}" and mark as missing?`)) {
+                                                                            const newSkeleton = JSON.parse(JSON.stringify(campaignData?.moduleSkeleton || campaignData?.campaign?.moduleSkeleton));
+                                                                            const chap = newSkeleton.chapters.find(c => c.id === chapter.id);
+                                                                            const mapToUpdate = chap?.maps.find(m => m.id === map.id);
+                                                                            if (mapToUpdate) {
+                                                                                mapToUpdate.status = 'missing';
+                                                                                delete mapToUpdate.image;
+                                                                                delete mapToUpdate.mapUrl;
+                                                                                delete mapToUpdate.backgroundUrl;
+                                                                                delete mapToUpdate.generatedHeightmapUrl;
+                                                                                delete mapToUpdate.generatedNormalMapUrl;
+                                                                                delete mapToUpdate.generatedMaterialMaskUrl;
+                                                                                delete mapToUpdate.generatedFeatures;
+                                                                                if (updateCampaign) updateCampaign({ moduleSkeleton: newSkeleton });
+                                                                                
+                                                                                if (selectedAsset?.id === map.id) {
+                                                                                    setSelectedAsset(null);
+                                                                                    if (activeTab === 'settings' || activeTab === 'ai') {
+                                                                                        setActiveTab('library');
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    }} className="bg-black/80 text-red-500 hover:text-white p-1.5 rounded shadow-md" title="Delete Map Data">
+                                                                        <Icon name="trash" size={14}/>
+                                                                    </button>
+                                                                </div>
+                                                            </div>
+                                                            <div className="text-center">
+                                                                <div className="text-xs font-bold text-slate-200 truncate px-1 group-hover:text-amber-400" title={map.name}>{map.name}</div>
+                                                                <div className="text-[9px] text-green-500 font-mono uppercase tracking-widest mt-0.5">Ready</div>
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                }
+                                            })}
+                                            {(!chapter.maps || chapter.maps.length === 0) && (
+                                                <div className="col-span-full text-slate-500 text-sm italic">No maps required for this chapter.</div>
+                                            )}
+                                        </div>
+                                        )}
+                                    </div>
+                                )})}
+                                
+                                <div className="flex items-center gap-2 border-b border-slate-700 pb-2 mt-8 mb-4">
+                                    <Icon name="globe" className="text-slate-400" size={18} />
+                                    <h3 className="text-lg font-bold text-slate-200 fantasy-font">Sandbox Assets</h3>
+                                </div>
+                            </div>
+                        )}
+
                         <div className="grid grid-cols-2 gap-2">
                             {['Tokens', 'All'].includes(assetCategory) && allCharacters?.map((char) => {
                                 return (
@@ -787,15 +1473,55 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                                         {asset.category !== 'Props' && asset.category !== 'Tokens' && (
                                             <>
                                                 <button onClick={async (e) => { 
-                                                    e.stopPropagation(); 
-                                                    const isNew = await onSetBackground(asset, false); 
-                                                    setSelectedAsset(asset);
-                                                    setActiveTab('settings');
-                                                    if (isNew) {
-                                                        handleAutoDetectGrid(asset.generatedMapUrl || asset.url);
+                                                    e.stopPropagation();
+                                                    const target = internalImportTarget || importTarget;
+                                                    if (target) {
+                                                        setIsProcessingMap(true);
+                                                        setProcessingStep(`Fulfilling ${target.name}...`);
+                                                        try {
+                                                            const targetMap = { ...target, id: target.mapId || target.id };
+                                                            const newMapId = await fulfillMapData({
+                                                                imgUrl: asset.generatedMapUrl || asset.url,
+                                                                targetMap,
+                                                                campaignCode,
+                                                                skeleton: campaignData?.moduleSkeleton || campaignData?.campaign?.moduleSkeleton,
+                                                                data: {
+                                                                    ...campaignData,
+                                                                    npcs: (campaignData?.npcs || []).filter(n => n && n.name),
+                                                                    players: (campaignData?.players || []).filter(p => p && p.name)
+                                                                },
+                                                                aiHelper: localAiHelper,
+                                                                generateNpc: localGenerateNpc,
+                                                                updateCampaign,
+                                                                setProcessingStep: setProcessingStep
+                                                            });
+                                                            toast(`${targetMap.name} is now Ready!`, "success");
+                                                            setProcessingStep('Populating Entities...');
+                                                            await new Promise(r => setTimeout(r, 3500));
+                                                            if (updateCampaign) await updateCampaign({ activeMapId: newMapId });
+                                                            setInternalImportTarget(null);
+                                                            setSelectedAsset({ ...targetMap, url: asset.generatedMapUrl || asset.url, isSkeletonMap: true });
+                                                            setActiveTab('settings');
+                                                            handleAutoDetectGrid(asset.generatedMapUrl || asset.url);
+                                                        } catch (err) {
+                                                            console.error(err);
+                                                            toast("Fulfillment failed.", "error");
+                                                        } finally {
+                                                            setIsProcessingMap(false);
+                                                            setProcessingStep('');
+                                                        }
+                                                    } else {
+                                                        const isNew = await onSetBackground(asset, false); 
+                                                        if (isNew) {
+                                                            setSelectedAsset(asset);
+                                                            setActiveTab('settings');
+                                                            handleAutoDetectGrid(asset.generatedMapUrl || asset.url);
+                                                        } else {
+                                                            if (onClose) onClose();
+                                                        }
                                                     }
-                                                }} className="bg-black/80 text-amber-500 hover:text-white p-1.5 rounded shadow-md" title="Set as Map Background">
-                                                    <Icon name="map" size={14}/>
+                                                }} className="bg-black/80 text-amber-500 hover:text-white p-1.5 rounded shadow-md" title={internalImportTarget || importTarget ? "Use Asset for Missing Map" : "Set as Map Background"}>
+                                                    <Icon name={internalImportTarget || importTarget ? "check" : "map"} size={14}/>
                                                 </button>
                                                 <button onClick={(e) => { e.stopPropagation(); setSelectedAsset(asset); setActiveTab('settings'); }} className="bg-black/80 text-cyan-400 hover:text-white p-1.5 rounded shadow-md" title="Map Settings">
                                                     <Icon name="settings" size={14}/>
@@ -1095,11 +1821,11 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                             min="0.5" 
                             max="5" 
                             step="0.5" 
-                            value={mapData?.gridThickness || 1} 
+                            value={mapData?.gridThickness || 0.5} 
                             onChange={(val) => throttledUpdateMap({ gridThickness: val })}
                             className="w-full accent-amber-500"
                         />
-                        <div className="text-right text-xs text-slate-400 mt-1">{mapData?.gridThickness || 1}x</div>
+                        <div className="text-right text-xs text-slate-400 mt-1">{mapData?.gridThickness || 0.5}x</div>
                     </div>
 
                     <div>
@@ -1238,6 +1964,14 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                     </div>
                 </div>
             )}
+
+            <input 
+                type="file" 
+                ref={mapFileInputRef} 
+                onChange={handleMapUpload} 
+                accept="image/*" 
+                className="hidden" 
+            />
         </div>
     );
 };

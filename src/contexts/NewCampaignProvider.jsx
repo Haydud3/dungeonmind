@@ -152,7 +152,27 @@ export const NewCampaignProvider = ({ children }) => {
         }
         const campaignRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code);
         try {
-            const updatesCopy = { ...updates };
+            // Expand dot-notation keys into nested objects so setDoc({merge: true}) deeply merges them properly
+            const expandDotNotation = (obj) => {
+                const result = {};
+                for (const key in obj) {
+                    if (key.includes('.')) {
+                        const parts = key.split('.');
+                        let current = result;
+                        for (let i = 0; i < parts.length - 1; i++) {
+                            if (!current[parts[i]]) current[parts[i]] = {};
+                            current = current[parts[i]];
+                        }
+                        current[parts[parts.length - 1]] = obj[key];
+                    } else {
+                        result[key] = obj[key];
+                    }
+                }
+                return result;
+            };
+
+            const expandedUpdates = expandDotNotation(updates);
+            const updatesCopy = { ...expandedUpdates };
             let hasBatch = false;
 
             if (updatesCopy.players || updatesCopy.npcs) {

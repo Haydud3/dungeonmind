@@ -10,6 +10,15 @@ import { useNewCampaign } from '../contexts/NewCampaignProvider';
 import { searchGithubModels } from '../utils/miniManifest';
 import { Client } from "@gradio/client";
 import { retrieveChunkedMap, storeChunkedMap } from '../utils/storageUtils';
+import ResolvedImage from './ResolvedImage';
+
+const SafeImage = ({ src, className, alt }) => {
+    if (!src) return null;
+    if (src.startsWith('chunked:')) {
+        return <ResolvedImage id={src} className={className} alt={alt} />;
+    }
+    return <img src={src} className={className} alt={alt} draggable={false} />;
+};
 
 // START CHANGE: Add generateNpc to props
 const NpcView = ({ data, setData, role, setChatInput, setView, onPossess, aiHelper, apiKey, edition, onDiceRoll, diceLog, generateNpc, onOpenDiceTray }) => {
@@ -196,7 +205,15 @@ Raw Statblock:
 ${pasteTextContent}`;
 
         try {
-            const resultText = await aiHelper([{ role: 'user', content: prompt }]);
+            let resultText = await aiHelper([{ role: 'user', content: prompt }]);
+            if (typeof resultText !== 'string') {
+                let extracted = resultText;
+                if (resultText?.message?.content) extracted = resultText.message.content;
+                else if (typeof resultText?.response?.text === 'function') extracted = await resultText.response.text();
+                else if (typeof resultText?.text === 'function') extracted = await resultText.text();
+                else if (resultText?.text) extracted = resultText.text;
+                resultText = typeof extracted === 'string' ? extracted : JSON.stringify(extracted);
+            }
             let parsedData = {};
             try {
                 const jsonMatch = resultText.match(/\{[\s\S]*\}/);
@@ -773,7 +790,7 @@ ${pasteTextContent}`;
                         viewMode === 'grid' ? (
                             <div key={npc.id} onClick={() => openSheet(npc)} className={`group relative bg-slate-800 rounded-xl overflow-hidden border transition-all hover:-translate-y-1 cursor-pointer shadow-lg ${npc.isHidden ? 'border-dashed border-slate-600 opacity-75' : 'border-slate-700 hover:border-amber-500/50'}`}>
                             <div className="h-32 bg-slate-700 relative overflow-hidden">
-                                {npc.image ? <img src={npc.image} className="w-full h-full object-cover opacity-60 group-hover:opacity-80 transition-opacity" alt={npc.name} /> : <div className="w-full h-full flex items-center justify-center bg-slate-700 opacity-20"><Icon name="skull" size={64}/></div>}
+                                {npc.image ? <SafeImage src={npc.image} className="w-full h-full object-cover opacity-60 group-hover:opacity-80 transition-opacity" alt={npc.name} /> : <div className="w-full h-full flex items-center justify-center bg-slate-700 opacity-20"><Icon name="skull" size={64}/></div>}
                                 <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-transparent to-transparent"></div>
                                 <div className="absolute top-2 right-2 flex gap-2">
                                     {npc.isHidden && <div className="bg-slate-900/80 text-slate-300 text-xs font-bold px-2 py-1 rounded border border-slate-600 flex items-center gap-1"><Icon name="eye-off" size={12}/> Hidden</div>}
@@ -782,7 +799,7 @@ ${pasteTextContent}`;
                             <div className="p-4 relative -mt-8">
                                 <div className="flex justify-between items-end">
                                     <div className="w-16 h-16 rounded-xl bg-slate-800 border-2 border-slate-600 shadow-2xl flex items-center justify-center overflow-hidden">
-                                        {npc.image ? <img src={npc.image} className="w-full h-full object-cover" /> : <span className="text-2xl font-bold text-slate-500">{npc.name?.[0]}</span>}
+                                        {npc.image ? <SafeImage src={npc.image} className="w-full h-full object-cover" alt={npc.name} /> : <span className="text-2xl font-bold text-slate-500">{npc.name?.[0]}</span>}
                                     </div>
                                     <div className="flex-1 ml-3 mb-1 min-w-0">
                                         <h3 className="text-xl font-bold text-slate-100 leading-tight group-hover:text-amber-400 truncate">{npc.name}</h3>
@@ -804,7 +821,7 @@ ${pasteTextContent}`;
                         ) : (
                             <div key={npc.id} onClick={() => openSheet(npc)} className={`group bg-slate-800 border rounded-xl p-3 flex items-center gap-4 cursor-pointer shadow-lg transition-all hover:-translate-y-0.5 ${npc.isHidden ? 'border-dashed border-slate-600 opacity-75' : 'border-slate-700 hover:border-amber-500/50'}`}>
                                 <div className="w-12 h-12 rounded-lg bg-slate-700 border border-slate-600 overflow-hidden shrink-0 relative">
-                                    {npc.image ? <img src={npc.image} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center font-bold text-slate-500 text-xl">{npc.name?.[0]}</div>}
+                                    {npc.image ? <SafeImage src={npc.image} className="w-full h-full object-cover" alt={npc.name} /> : <div className="w-full h-full flex items-center justify-center font-bold text-slate-500 text-xl">{npc.name?.[0]}</div>}
                                     {npc.isHidden && <div className="absolute inset-0 bg-black/50 flex items-center justify-center"><Icon name="eye-off" size={16} className="text-slate-300"/></div>}
                                 </div>
                                 <div className="flex-1 min-w-0">

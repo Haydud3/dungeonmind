@@ -184,7 +184,7 @@ const ViewManager = React.memo(({ aspect, scale, orientation, fitTrigger }) => {
     return null;
 });
 
-export default React.memo(function TacticalMapView({ campaignCode, activeMapId, onOpenSheet, role, onOpenHandouts, onOpenChat, onOpenJournal, onOpenDiceTray, onOpenCast, isCastMode: propIsCastMode, onBack, rightOffset, onSidebarOpen, isChatOpen, isJournalOpen, isHandoutsOpen, isDiceTrayOpen }) {
+export default React.memo(function TacticalMapView({ campaignCode, activeMapId, onOpenSheet, role, onOpenHandouts, onOpenChat, onOpenJournal, onOpenDiceTray, onOpenCast, isCastMode: propIsCastMode, onBack, rightOffset, onSidebarOpen, isChatOpen, isJournalOpen, isHandoutsOpen, isDiceTrayOpen, aiHelper, generateNpc, hideInviteCode, setHideInviteCode }) {
   const isCastMode = propIsCastMode || (typeof window !== 'undefined' && (new URLSearchParams(window.location.search).get('cast') === 'true' || window.location.hash.includes('cast=true')));
   const isLowPerformance = typeof window !== 'undefined' && localStorage.getItem('vtt_low_performance') === 'true';
   const { campaign, updateCampaign, user } = useNewCampaign();
@@ -281,6 +281,8 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
   const lightMenuRef = useRef(null);
   const propMenuRef = useRef(null);
   const [activeTool, setActiveTool] = useState(null);
+  const [activeLorePin, setActiveLorePin] = useState(null);
+    const [isMovingLorePin, setIsMovingLorePin] = useState(null);
 
   const resetAllTools = useCallback(() => {
       setActiveTool(null);
@@ -289,6 +291,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       setIsPlacingLights(false);
       setIsDeleting(false);
       setIsDrawingFreehand(false);
+        setIsMovingLorePin(null);
   }, []);
   const [activeMeasurementStyle, setActiveMeasurementStyle] = useState('default');
   const [isToolbarOpen, setIsToolbarOpen] = useState(true);
@@ -1200,17 +1203,9 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           let imageUrl = "";
           if (m.image) {
               imageUrl = `https://www.dnd5eapi.co${m.image}`;
-          } else if (window.puter) {
-              try {
-                  const imgEl = await window.puter.ai.txt2img(`D&D Beyond official digital character illustration of a ${m.name} (${m.type}). 2D fantasy character concept art, flat colors, solid white background, stylized token art, not photorealistic.`, { model: 'dall-e-3' });
-                  const response = await fetch(imgEl.src);
-                  const blob = await response.blob();
-                  imageUrl = await new Promise((resolve) => {
-                      const reader = new FileReader();
-                      reader.onloadend = () => resolve(reader.result);
-                      reader.readAsDataURL(blob);
-                  });
-              } catch (e) { console.error("Image gen failed", e); }
+          } else {
+              const prompt = `Dungeons and dragons official digital character illustration of a ${m.name} (${m.type}). 2D fantasy character concept art, flat colors, solid white background, stylized token art, not photorealistic.`;
+              imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=512&height=512&nologo=true&seed=${Math.floor(Math.random() * 100000)}`;
           }
           const acVal = Array.isArray(m.armor_class) ? m.armor_class[0].value : m.armor_class;
           const speedStr = typeof m.speed === 'object' ? Object.entries(m.speed).map(([k,v]) => `${k} ${v}`).join(', ') : m.speed;
@@ -1609,6 +1604,42 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       });
   }, []);
 
+  const handleLorePinClick = useCallback((pin) => {
+      setActiveLorePin(pin);
+  }, []);
+
+  const sendLoreToChat = useCallback(() => {
+      if (!activeLorePin || !campaignCode) return;
+      
+      const messageHtml = `
+          <div class="space-y-1 text-left w-full border border-amber-900/50 p-2 rounded bg-amber-900/10">
+              <div class="font-bold text-amber-500 border-b border-amber-900/50 pb-1 flex items-center gap-2">
+                  <span class="inline-flex"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"></path></svg></span>
+                  ${activeLorePin.label}
+              </div>
+              <div class="text-sm text-slate-300 mt-2 font-serif leading-relaxed italic">
+                  "${activeLorePin.content}"
+              </div>
+          </div>
+      `;
+      
+      const chatMessage = {
+          content: messageHtml,
+          type: 'chat-public',
+          role: 'dm',
+          senderId: user?.uid || 'anon',
+          senderName: 'Dungeon Master',
+          targetId: null,
+          timestamp: Date.now()
+      };
+
+      updateCampaign({
+          chatLog: [...(data?.chatLog || []), chatMessage]
+      });
+      
+      setActiveLorePin(null);
+  }, [activeLorePin, campaignCode, user, data?.chatLog, updateCampaign]);
+
   const handleToggleDoor = useCallback((e, wallId) => {
       e.stopPropagation();
       const wall = mapData?.walls?.[wallId];
@@ -1798,6 +1829,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
               setIsPlacingLights(false); 
               setActiveStampingAsset(null); 
               setIsDeleting(false); 
+            setIsMovingLorePin(null);
           }
           setActiveTool(null);
           setIsDrawingFreehand(false);
@@ -1855,7 +1887,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
   const handleSetBackground = async (asset, closeManager = true) => {
     if (!campaignCode) return false;
 
-    const assetUrl = asset.generatedMapUrl || asset.url;
+    const assetUrl = asset.generatedMapUrl || asset.url || asset.mapUrl || asset.image || asset.backgroundUrl || '';
     const assetName = asset.name;
 
     const mapsRef = collection(db, 'artifacts', appId, 'public', 'data', 'campaigns', campaignCode, 'maps');
@@ -2085,8 +2117,9 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
         }}
         /* Clear selection and context menu when clicking the background void */
         onPointerMissed={(e) => {
-          if (isDrawingWalls || isArchitectMode || isPlacingLights || activeStampingAsset) {
+          if (isDrawingWalls || isArchitectMode || isPlacingLights || activeStampingAsset || isMovingLorePin) {
               if (e.button === 2 && activeStampingAsset) setActiveStampingAsset(null); // Right click cancels stamp
+              if (e.button === 2 && isMovingLorePin) setIsMovingLorePin(null); // Right click cancels move
               return;
           }
           // If a measurement tool is active, a missed click should clear it.
@@ -2234,8 +2267,8 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                   fadeDistance={60} 
                   sectionColor={mapData?.gridColor || "#888888"} 
                   cellColor={mapData?.gridColor || "#888888"} 
-                  sectionThickness={mapData?.gridThickness || 1}
-                  cellThickness={(mapData?.gridThickness || 1) * 0.5}
+                  sectionThickness={mapData?.gridThickness || 0.5}
+                  cellThickness={(mapData?.gridThickness || 0.5) * 0.5}
                   cellSize={gridSize}
                   sectionSize={gridSize}
                 />
@@ -2273,6 +2306,27 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
             />
         </Suspense>
 
+        {isMovingLorePin && (
+            <mesh
+                rotation={[-Math.PI / 2, 0, 0]}
+                onClick={(e) => {
+                    if (e.delta > 2) return; // Allow camera panning without accidentally placing the pin
+                    e.stopPropagation();
+                    const pt = e.point.clone();
+                    const terrainY = getTerrainHeight ? getTerrainHeight(pt.x, pt.z) : 0;
+                    updateMap(campaignCode, activeMapId, {
+                        [`pings.${isMovingLorePin.id}.x`]: pt.x,
+                        [`pings.${isMovingLorePin.id}.y`]: terrainY,
+                        [`pings.${isMovingLorePin.id}.z`]: pt.z,
+                    });
+                    setIsMovingLorePin(null);
+                }}
+            >
+                <planeGeometry args={[1000, 1000]} />
+                <meshBasicMaterial transparent opacity={0} colorWrite={false} depthWrite={false} />
+            </mesh>
+        )}
+
         {/* The Dynamic Fog of War layer */}
         <Suspense fallback={null}>
             {mapData && <GpuFogOfWar
@@ -2307,15 +2361,16 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
         </Suspense>
 
         <Suspense fallback={null}>
-            <MapPings 
-                pings={mapData?.pings || {}} 
-                campaignCode={campaignCode} 
-                activeMapId={activeMapId} 
+            <MapPings
+                pings={mapData?.pings || {}}
+                campaignCode={campaignCode}
+                activeMapId={activeMapId}
                 getTerrainHeight={getTerrainHeight}
                 userColor={role === 'dm' ? "#ef4444" : "#3b82f6"}
+                role={role}
+                onLorePinClick={handleLorePinClick}
             />
         </Suspense>
-
         {role === 'dm' && (
             <Suspense fallback={null}>
                 <WallDrawingController
@@ -2436,6 +2491,11 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           maxDistance={500} // Limit max zoom out so large maps can still "Fit to Screen"
           enableDamping={true} // Smooth camera movements
           enableRotate={false}
+          mouseButtons={{
+            LEFT: THREE.MOUSE.PAN,
+            MIDDLE: THREE.MOUSE.DOLLY,
+            RIGHT: THREE.MOUSE.PAN
+          }}
         />
         <CameraController ref={cameraControllerRef} view={viewMode} />
         <Suspense fallback={null}>
@@ -2460,6 +2520,19 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
               </button>
           </div>
       )}
+    {isMovingLorePin && !isCastMode && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[70] flex flex-col items-center">
+            <div className="bg-indigo-900/90 text-white px-4 py-2 rounded-full font-bold shadow-xl flex items-center gap-2 border border-indigo-500 animate-pulse text-sm">
+                <Icon name="mouse-pointer-2" size={16}/> Click anywhere to move "{isMovingLorePin.label}"
+            </div>
+            <button 
+                onClick={() => setIsMovingLorePin(null)}
+                className="mt-2 bg-red-600 hover:bg-red-500 text-white px-3 py-1 rounded-full text-xs font-bold shadow-xl flex items-center gap-1 transition-colors border border-red-800"
+            >
+                <Icon name="x" size={12}/> Cancel (Esc or Right Click)
+            </button>
+        </div>
+    )}
 
       {/* Top-Left: Connection & Camera Controls */}
       {!isCastMode && (
@@ -2475,9 +2548,13 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                           <Icon name="arrow-left" size={18} />
                       </button>
                   )}
-                  <div className="h-10 px-3 bg-slate-900/80 backdrop-blur border border-slate-700 rounded-xl shadow-2xl flex items-center gap-2 cursor-help hover:border-indigo-500 transition-colors" title={`Connected to Realm: ${campaignCode}`}>
+              <div 
+                  className="h-10 px-3 bg-slate-900/80 backdrop-blur border border-slate-700 rounded-xl shadow-2xl flex items-center gap-2 cursor-pointer hover:border-indigo-500 transition-colors" 
+                  title="Click to toggle Invite Code visibility"
+                  onClick={() => setHideInviteCode && setHideInviteCode(!hideInviteCode)}
+              >
                       <div className="w-2 h-2 rounded-full shadow-[0_0_10px_rgba(34,197,94,0.5)] bg-green-500"></div>
-                      <span className="text-sm font-bold text-amber-500 fantasy-font tracking-widest">{campaignCode}</span>
+                  <span className="text-sm font-bold text-amber-500 fantasy-font tracking-widest">{hideInviteCode ? '••••••' : campaignCode}</span>
                   </div>
               </div>
               
@@ -2886,6 +2963,8 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
             allCharacters={allCharacters}
             campaignData={data}
             updateCampaign={updateCampaign}
+            aiHelper={aiHelper}
+            generateNpc={generateNpc}
             onSelectStamper={(asset) => {
                setActiveStampingAsset(asset);
                setShowAssetManager(false);
@@ -3571,6 +3650,42 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
               </div>
           </div>
       )}
+    {/* ACTIVE LORE PIN MODAL */}
+    {activeLorePin && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[100] w-96 max-w-[90vw] bg-slate-900 border-2 border-amber-500/50 rounded-xl shadow-2xl overflow-hidden animate-in slide-in-from-top-4 fade-in">
+            <div className="p-3 bg-amber-900/30 border-b border-amber-900/50 flex justify-between items-center">
+                <h3 className="font-bold text-amber-500 flex items-center gap-2"><Icon name="book" size={16} /> {activeLorePin.label}</h3>
+                <button onClick={() => setActiveLorePin(null)} className="text-amber-500/70 hover:text-amber-400 p-1 rounded transition-colors"><Icon name="x" size={16}/></button>
+            </div>
+            <div className="p-4 max-h-[40vh] overflow-y-auto custom-scroll text-sm text-slate-300 font-serif leading-relaxed italic">
+                "{activeLorePin.content}"
+            </div>
+            <div className="p-3 border-t border-slate-800 bg-slate-950 flex flex-wrap justify-end gap-2">
+                {role === 'dm' && (
+                    <>
+                        <button onClick={() => {
+                            setIsMovingLorePin(activeLorePin);
+                            setActiveLorePin(null);
+                        }} className="px-3 py-1.5 text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded font-bold shadow transition-colors flex items-center gap-1">
+                            <Icon name="move" size={12}/> Move
+                        </button>
+                        <button onClick={() => {
+                            if (confirm("Are you sure you want to delete this Lore Pin?")) {
+                                updateMap(campaignCode, activeMapId, { [`pings.${activeLorePin.id}`]: null });
+                                setActiveLorePin(null);
+                            }
+                        }} className="px-3 py-1.5 text-xs bg-red-900/50 hover:bg-red-800 text-red-400 hover:text-white rounded font-bold shadow transition-colors flex items-center gap-1">
+                            <Icon name="trash-2" size={12}/> Delete
+                        </button>
+                    </>
+                )}
+                <div className="flex-1"></div>
+                <button onClick={() => setActiveLorePin(null)} className="px-3 py-1.5 text-xs text-slate-400 hover:text-white transition-colors">Close</button>
+                <button onClick={sendLoreToChat} className="px-3 py-1.5 text-xs bg-indigo-600 hover:bg-indigo-500 text-white rounded font-bold shadow transition-colors flex items-center gap-1"><Icon name="message-circle" size={12}/> Send to Chat</button>
+            </div>
+        </div>
+    )}
+
     </div>
-  );
-});
+    );
+    });

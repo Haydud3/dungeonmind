@@ -15,12 +15,14 @@ import TacticalMapView from './components/TacticalMapView';
 import NpcView from './components/NpcView';
 import DiceOverlay from './components/DiceOverlay';
 import DiceTray from './components/DiceTray';
+import ModuleHub from './components/ModuleHub';
 import ResolvedImage from './components/ResolvedImage';
 import HandoutEditor from './components/HandoutEditor';
 import LoreView from './components/LoreView';
 import { useCharacterStore } from './stores/useCharacterStore'; 
 import { retrieveContext, buildPrompt, buildCastList } from './utils/loreEngine';
 import { retrieveChunkedMap, resolveChunkedHtml, parseHandoutBody } from './utils/storageUtils';
+import { searchGithubModels } from './utils/miniManifest';
 
 import SheetContainer from './components/character-sheet/SheetContainer';
 import SideSheet from './components/SideSheet';
@@ -109,6 +111,7 @@ function DungeonMindApp() {
       'party': 'player-character',
       'npcs': 'bestiary',
       'lore': 'lore',
+      'module': 'module',
       'settings': 'settings'
   };
 
@@ -187,6 +190,9 @@ function DungeonMindApp() {
   const [aiProvider, setAiProvider] = useState(() => localStorage.getItem('dm_ai_provider') || 'puter');
   const [openAiModel, setOpenAiModel] = useState(() => localStorage.getItem('dm_openai_model') || 'gpt-4o');
   const [puterModel, setPuterModel] = useState(() => localStorage.getItem('dm_puter_model') || 'mistral-large-latest');
+
+  const [hideInviteCode, setHideInviteCode] = useState(() => localStorage.getItem('dm_hide_invite_code') === 'true');
+  useEffect(() => { localStorage.setItem('dm_hide_invite_code', hideInviteCode); }, [hideInviteCode]);
 
   useEffect(() => { localStorage.setItem('dm_api_key', apiKey); }, [apiKey]);
   useEffect(() => { localStorage.setItem('dm_ai_provider', aiProvider); }, [aiProvider]);
@@ -453,25 +459,38 @@ function DungeonMindApp() {
 
   // Helper to generate an image and convert it to a Base64 string for storage
   const generatePortrait = async (char) => {
-      if (window.puter && aiProvider === 'puter') {
-          try {
-              const race = char.race || 'Humanoid';
-              const charClass = char.class || 'Creature';
-              const appearance = char.bio?.appearance || '';
-              
-              const imagePrompt = `D&D Beyond official digital character illustration of a ${race} ${charClass}. ${appearance.substring(0, 150)}. 2D fantasy character concept art, flat colors, solid white background, stylized token art, not photorealistic.`;
-              
-              const imgEl = await window.puter.ai.txt2img(imagePrompt, { model: 'dall-e-3' });
-              const response = await fetch(imgEl.src);
-              const blob = await response.blob();
-              return await new Promise((resolve) => {
-                  const reader = new FileReader();
-                  reader.onloadend = () => resolve(reader.result);
-                  reader.readAsDataURL(blob);
-              });
-          } catch (e) {
-              console.error("Image generation failed", e);
+      try {
+          const race = char.race || 'Humanoid';
+          const charClass = char.class || 'Creature';
+          const appearance = char.bio?.appearance || '';
+          
+          const imagePrompt = `D&D Beyond official digital character illustration of a ${char.name || ''}, ${race} ${charClass}. ${appearance.substring(0, 150)}. 2D fantasy character concept art, flat colors, solid white background, stylized token art, not photorealistic.`;
+          
+          if (window.puter?.ai?.txt2img) {
+              try {
+                  const imgEl = await window.puter.ai.txt2img(imagePrompt);
+                  const response = await fetch(imgEl.src);
+                  const blob = await response.blob();
+                  return await new Promise((resolve) => {
+                      const reader = new FileReader();
+                      reader.onloadend = () => resolve(reader.result);
+                      reader.readAsDataURL(blob);
+                  });
+              } catch (e) {
+                  console.error("Puter image generation failed, falling back to pollinations...", e);
+              }
           }
+
+          // Pollinations.ai is a free image generation API that returns an image buffer directly
+          const response = await fetch(`https://image.pollinations.ai/prompt/${encodeURIComponent(imagePrompt)}?width=512&height=512&nologo=true&seed=${Math.floor(Math.random() * 100000)}`);
+          const blob = await response.blob();
+          return await new Promise((resolve) => {
+              const reader = new FileReader();
+              reader.onloadend = () => resolve(reader.result);
+              reader.readAsDataURL(blob);
+          });
+      } catch (e) {
+          console.error("Image generation failed", e);
       }
       return "";
   };
@@ -491,17 +510,40 @@ function DungeonMindApp() {
   };
 
   const generateNpc = async (name, contextStr) => {
-      const prompt = `Generate a D&D 5e monster/NPC JSON for ${name}. Context: ${contextStr}.\nCRITICAL INSTRUCTION: Output ONLY pure JSON matching EXACTLY this schema. Do not add markdown or backticks:\n${DND_BEYOND_SCHEMA}`;
+      let apiContext = "";
+      try {
+          const searchRes = await fetch(`https://www.dnd5eapi.co/api/monsters/?name=${encodeURIComponent(name)}`);
+          const searchData = await searchRes.json();
+          if (searchData.count > 0) {
+              const exactMatch = await fetch(`https://www.dnd5eapi.co${searchData.results[0].url}`);
+              const exactData = await exactMatch.json();
+              apiContext = `\n\nFound Official 5e SRD Data to use as a baseline:\n${JSON.stringify(exactData)}`;
+          }
+      } catch (e) {
+          console.error("5eAPI fetch failed for NPC", e);
+      }
+
+      const prompt = `Generate a D&D 5e monster/NPC JSON for ${name}. Context: ${contextStr}.${apiContext}\nCRITICAL INSTRUCTION: Output ONLY pure JSON matching EXACTLY this schema. Do not add markdown or backticks:\n${DND_BEYOND_SCHEMA}`;
+      
       const res = await queryAiService([{ role: 'user', content: prompt }]);
       try { 
-          const char = sanitizeAiCharacter(JSON.parse(res.match(/\{[\s\S]*\}/)[0])); 
+          const match = res.match(/\{[\s\S]*\}/);
+          if (!match) throw new Error("No JSON returned from AI for NPC");
+          const char = sanitizeAiCharacter(JSON.parse(match[0])); 
           if (char) {
               const img = await generatePortrait(char);
               if (img) { char.image = img; char.avatarUrl = img; }
+              
+              let results = await searchGithubModels(char.name);
+              if (results.length === 0 && char.type) results = await searchGithubModels(char.type);
+              if (results.length > 0) char.model3d = results[0].url;
           }
           return char;
       } 
-      catch (e) { return null; }
+      catch (e) { 
+          console.error("Failed to generate NPC:", e);
+          return null; 
+      }
   };
 
   const savePlayer = () => console.log('savePlayer called');
@@ -549,7 +591,7 @@ function DungeonMindApp() {
                 <div className="flex flex-col items-center gap-4 bg-slate-800 p-8 rounded-2xl border border-slate-700 shadow-2xl">
                     <div className="w-12 h-12 border-4 border-amber-500 border-t-transparent rounded-full animate-spin"></div>
                     <div className="text-center">
-                        <h2 className="text-amber-500 font-bold text-xl">Entering Realm {gameParams?.code}</h2>
+                        <h2 className="text-amber-500 font-bold text-xl">Entering Realm {hideInviteCode ? '••••••' : gameParams?.code}</h2>
                         <p className="text-slate-500 text-xs mt-1 font-mono">Status: Awaiting Archive Data...</p>
                     </div>
 
@@ -595,9 +637,13 @@ function DungeonMindApp() {
            {currentView !== 'map' && !isCastMode && (
                <div className="shrink-0 bg-slate-900/95 backdrop-blur border-b border-slate-800 pt-safe z-50">
                    <div className="h-14 flex items-center justify-between px-4">
-                       <div className="flex gap-2 items-center">
+                       <div 
+                           className="flex gap-2 items-center cursor-pointer hover:opacity-80 transition-opacity"
+                           onClick={() => setHideInviteCode(!hideInviteCode)}
+                           title="Click to toggle Invite Code visibility (Streamer Mode)"
+                       >
                            <div className={`w-2 h-2 rounded-full shadow-[0_0_10px_rgba(34,197,94,0.5)] ${gameParams?.isOffline || !isConnected ? 'bg-slate-500' : 'bg-green-500'}`}></div>
-                           <span className="text-sm font-bold text-amber-500 truncate fantasy-font tracking-wide">{gameParams?.code} • {possessedNpcId ? "POSSESSING NPC" : data?.campaign?.location}</span>
+                           <span className="text-sm font-bold text-amber-500 truncate fantasy-font tracking-wide">{hideInviteCode ? '••••••' : gameParams?.code} • {possessedNpcId ? "POSSESSING NPC" : data?.campaign?.location}</span>
                        </div>
                        <div className="flex gap-2">
                            <button onClick={() => setShowHandoutCreator(true)} className="text-xs bg-amber-900/50 hover:bg-amber-800 px-3 py-1 rounded border border-amber-800 text-amber-200 flex items-center gap-2"><Icon name="scroll" size={14}/> <span>Handouts</span></button>
@@ -681,6 +727,10 @@ function DungeonMindApp() {
                       onSidebarOpen={closeAllSidebars}
                       onBack={() => setCurrentView(previousView)}
                       rightOffset={rightOffset}
+                      aiHelper={queryAiService}
+                      generateNpc={generateNpc}
+                      hideInviteCode={hideInviteCode}
+                      setHideInviteCode={setHideInviteCode}
                   />
               )}
               
@@ -739,6 +789,9 @@ function DungeonMindApp() {
 
               {/* 6. LORE (Bible) */}
               {currentView === 'lore' && <LoreView aiHelper={queryAiService} />}
+
+              {/* MODULE HUB */}
+              {currentView === 'module' && <ModuleHub data={data} updateCampaign={updateCampaign} aiHelper={queryAiService} loreChunks={context.loreChunks} campaignCode={gameParams?.code} generateNpc={generateNpc} />}
               
               {/* 7. SETTINGS */}
               {currentView === 'settings' && <SettingsView 
@@ -750,6 +803,8 @@ function DungeonMindApp() {
                   aiProvider={aiProvider} setAiProvider={setAiProvider} 
                   openAiModel={openAiModel} setOpenAiModel={setOpenAiModel} 
                   puterModel={puterModel} setPuterModel={setPuterModel} 
+                  hideInviteCode={hideInviteCode}
+                  setHideInviteCode={setHideInviteCode}
               />}
 
               {/* SIDE PANELS */}

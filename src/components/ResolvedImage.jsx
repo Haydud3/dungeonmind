@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { retrieveChunkedMap } from '../utils/storageUtils';
 import Icon from './Icon';
 
-const ResolvedImage = ({ id }) => {
+const ResolvedImage = ({ id, className, alt }) => {
     const [url, setUrl] = useState(null);
     const [loading, setLoading] = useState(true);
 
@@ -45,8 +45,8 @@ const ResolvedImage = ({ id }) => {
     return (
         <img 
             src={url} 
-            className="max-w-full h-auto block mx-auto my-6 rounded-lg shadow-lg border border-black/10" 
-            alt="Handout Asset"
+            className={className || "max-w-full h-auto block mx-auto my-6 rounded-lg shadow-lg border border-black/10"} 
+            alt={alt || "Handout Asset"}
         />
     );
 };

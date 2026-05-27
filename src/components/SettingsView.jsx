@@ -9,7 +9,9 @@ const SettingsView = ({
     code, user, onExit, 
     aiProvider, setAiProvider, 
     openAiModel, setOpenAiModel, 
-    puterModel, setPuterModel
+    puterModel, setPuterModel,
+    hideInviteCode,
+    setHideInviteCode
 }) => {
     const { campaign, updateCampaign, kickPlayer, banPlayer, unbanPlayer } = useNewCampaign();
     const data = campaign; // for compatibility
@@ -113,7 +115,7 @@ const SettingsView = ({
                     </div>
                     <div className="bg-slate-800 px-4 py-2 rounded-lg border border-slate-600 flex items-center gap-3">
                         <span className="text-xs text-slate-500 uppercase font-bold">Game Code</span>
-                        <span className="text-xl font-mono text-white tracking-widest">{code}</span>
+                    <span className="text-xl font-mono text-white tracking-widest">{hideInviteCode ? '••••••' : code}</span>
                         <button onClick={() => navigator.clipboard.writeText(code)} className="text-indigo-400 hover:text-white"><Icon name="copy" size={16}/></button>
                     </div>
                 </div>
@@ -191,6 +193,20 @@ const SettingsView = ({
                                     </div>
                                 </div>
                                 {/* END CHANGE */}
+
+                            {/* Streamer Mode Toggle */}
+                            <div className="flex items-center gap-3 p-3 bg-slate-900/50 rounded border border-slate-700 hover:border-slate-500 transition-colors cursor-pointer" onClick={() => setHideInviteCode && setHideInviteCode(!hideInviteCode)}>
+                                <input 
+                                    type="checkbox" 
+                                    checked={hideInviteCode || false} 
+                                    onChange={(e) => setHideInviteCode && setHideInviteCode(e.target.checked)}
+                                    className="w-5 h-5 accent-red-500 cursor-pointer pointer-events-none"
+                                />
+                                <div>
+                                    <div className="font-bold text-slate-200">Streamer Mode (Hide Invite Code)</div>
+                                    <div className="text-xs text-slate-500">Masks your game code in the UI to prevent unwanted players from joining your stream.</div>
+                                </div>
+                            </div>
                         </div>
                     </div>
 

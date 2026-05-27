@@ -123,7 +123,7 @@ const SideSheet = ({ characterId, onClose, role, onDiceRoll, onOpenDiceTray }) =
 
     useEffect(() => {
         if (character) {
-            setEditableName(character.name);
+            setEditableName(character.name || '');
         }
     }, [character]);
 
@@ -178,8 +178,8 @@ const SideSheet = ({ characterId, onClose, role, onDiceRoll, onOpenDiceTray }) =
         if (!character) return;
         setAvailableModels([]);
         setShowModelPicker(true);
-        setMiniSearchQuery(character.name);
-        handleMiniSearch(character.name, character.race);
+        setMiniSearchQuery(character.name || '');
+        handleMiniSearch(character.name || '', character.race);
     };
 
     const handleModelSelect = (model, forceStatue = false) => {

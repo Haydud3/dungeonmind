@@ -8,7 +8,14 @@ import { compressImage } from '../utils/imageCompressor';
 import { storeChunkedMap } from '../utils/storageUtils';
 import { getMapRef, updateMap } from '../utils/mapService';
 import { getDoc } from 'firebase/firestore';
+import { useResolvedUrl } from '../utils/useResolvedUrl';
 // END CHANGE
+
+const SafeAvatar = ({ src, alt }) => {
+    const resolved = useResolvedUrl(src);
+    if (!resolved && src?.startsWith('chunked:')) return <div className="w-10 h-10 rounded-full bg-slate-800 animate-pulse border border-slate-600" />;
+    return <img src={resolved || src} alt={alt} className="w-10 h-10 rounded-full object-cover shadow-lg border border-slate-600"/>;
+};
 
 // START CHANGE: Add clearChat to destructured props
 import { useNewCampaign } from '../contexts/NewCampaignProvider';
@@ -211,7 +218,15 @@ const SessionView = ({
             // END CHANGE
 
             if (aiHelper) {
-                const answer = await aiHelper([{ role: 'user', content: prompt }]);
+                let answer = await aiHelper([{ role: 'user', content: prompt }]);
+                if (typeof answer !== 'string') {
+                    let extracted = answer;
+                    if (answer?.message?.content) extracted = answer.message.content;
+                    else if (typeof answer?.response?.text === 'function') extracted = await answer.response.text();
+                    else if (typeof answer?.text === 'function') extracted = await answer.text();
+                    else if (answer?.text) extracted = answer.text;
+                    answer = typeof extracted === 'string' ? extracted : JSON.stringify(extracted);
+                }
                 setGhostMessage(null);
                 
                 if (answer && typeof answer === 'string') {
@@ -274,7 +289,15 @@ const SessionView = ({
         `;
 
         // 3. Ask AI
-        const summary = await aiHelper([{ role: 'user', content: prompt }]);
+        let summary = await aiHelper([{ role: 'user', content: prompt }]);
+        if (typeof summary !== 'string') {
+            let extracted = summary;
+            if (summary?.message?.content) extracted = summary.message.content;
+            else if (typeof summary?.response?.text === 'function') extracted = await summary.response.text();
+            else if (typeof summary?.text === 'function') extracted = await summary.text();
+            else if (summary?.text) extracted = summary.text;
+            summary = typeof extracted === 'string' ? extracted : JSON.stringify(extracted);
+        }
         
         // 4. Create Journal Entry
         const newPageId = Date.now().toString();
@@ -427,7 +450,7 @@ const SessionView = ({
                                                             const character = players?.find(p => String(p.id) === String(charId));
                                         
                                         if (character?.image) return (
-                                            <img src={character.image} alt={msg.senderName} className="w-10 h-10 rounded-full object-cover shadow-lg border border-slate-600"/>
+                                            <SafeAvatar src={character.image} alt={msg.senderName} />
                                         );
 
                                         // 4. Fallback Initials
