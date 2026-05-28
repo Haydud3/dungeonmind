@@ -670,7 +670,7 @@ const SessionView = ({
                                     if (data.dmIds?.includes(uid)) return <option key={uid} value={uid}>Dungeon Master</option>;
                                     const charId = data.assignments?.[uid];
                                     const char = data.players?.find(p => p.id == charId);
-                                    const displayName = char ? `${char.name} (${char.class})` : userName;
+                                    const displayName = char ? `${char.name} (${char.class})` : (userName?.includes('@') ? userName.split('@')[0] : userName);
                                     return <option key={uid} value={uid}>{displayName}</option>;
                                 })}
                             </select>
@@ -701,7 +701,7 @@ const SessionView = ({
                             onChange={e => setInputText(e.target.value)} 
                             onKeyDown={handleKeyDown} 
                             placeholder={
-                                sendMode === 'chat-private' ? `Whispering to ${data.activeUsers?.[targetUser] || 'Player'}...` :
+                                sendMode === 'chat-private' ? `Whispering to ${data.activeUsers?.[targetUser]?.includes('@') ? data.activeUsers[targetUser].split('@')[0] : (data.activeUsers?.[targetUser] || 'Player')}...` :
                                 sendMode.includes('ai') ? "Ask the DungeonMind..." :
                                 possessedNpcId ? `Speaking as ${data.npcs?.find(n=>n.id===possessedNpcId)?.name}...` : 
                                 "Message..."

@@ -2790,14 +2790,10 @@ ${pasteTextContent}`;
                           <Icon name="arrow-left" size={18} />
                       </button>
                   )}
-              <div 
-                  className="h-10 px-3 bg-slate-900/80 backdrop-blur border border-slate-700 rounded-xl shadow-2xl flex items-center gap-2 cursor-pointer hover:border-indigo-500 transition-colors" 
-                  title="Click to toggle Invite Code visibility"
-                  onClick={() => setHideInviteCode && setHideInviteCode(!hideInviteCode)}
-              >
-                      <div className="w-2 h-2 rounded-full shadow-[0_0_10px_rgba(34,197,94,0.5)] bg-green-500"></div>
-                  <span className="text-sm font-bold text-amber-500 fantasy-font tracking-widest truncate max-w-[200px]">{data?.campaign?.genesis?.campaignName || (hideInviteCode ? 'Realm ••••••' : `Realm ${campaignCode}`)}</span>
-                  </div>
+              <div className="h-10 px-3 bg-slate-900/80 backdrop-blur border border-slate-700 rounded-xl shadow-2xl flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full shadow-[0_0_10px_rgba(34,197,94,0.5)] bg-green-500"></div>
+                  <span className="text-sm font-bold text-amber-500 fantasy-font tracking-widest truncate max-w-[200px]">{mapData?.name || 'Loading Map...'}</span>
+              </div>
               </div>
               
               {/* Row 2: View Modes */}

@@ -9,6 +9,7 @@ const MobileNav = ({ view, setView, compact, className = "" }) => {
         { id: 'party', icon: 'users', label: 'Party' },
         { id: 'npcs', icon: 'skull', label: 'Mobs' },
         { id: 'lore', icon: 'library', label: 'Lore' },
+        { id: 'module', icon: 'book-plus', label: 'Hub' },
         { id: 'settings', icon: 'settings', label: 'Cfg' }
     ];
 

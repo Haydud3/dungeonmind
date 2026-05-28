@@ -188,7 +188,7 @@ function DungeonMindApp() {
   // DM Waiting Room Listener
   useEffect(() => {
       if (effectiveRole !== 'dm' || !gameParams?.code) return;
-      const q = query(collection(fb.db, 'campaigns', gameParams.code, 'joinRequests'), where('status', '==', 'pending'));
+      const q = query(collection(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'joinRequests'), where('status', '==', 'pending'));
       const unsub = onSnapshot(q, (snapshot) => {
           const reqs = [];
           snapshot.forEach(d => reqs.push({ id: d.id, ...d.data() }));
@@ -669,13 +669,13 @@ function DungeonMindApp() {
                                            <div className="bg-indigo-900/50 p-2 rounded-full"><Icon name="user" size={16} className="text-indigo-400" /></div>
                                            <div>
                                                <div className="font-bold text-sm text-white">Knock knock!</div>
-                                               <div className="text-xs text-slate-300"><span className="text-indigo-400 font-bold">{req.name}</span> wants to join the realm.</div>
+                                               <div className="text-xs text-slate-300"><span className="text-indigo-400 font-bold">{req.name?.includes('@') ? req.name.split('@')[0] : req.name}</span> wants to join the realm.</div>
                                                {req.characterName && <div className="text-[10px] text-slate-500 mt-0.5">As: {req.characterName}</div>}
                                            </div>
                                        </div>
                                        <div className="flex gap-2">
-                                           <button onClick={() => updateDoc(doc(fb.db, 'campaigns', gameParams.code, 'joinRequests', req.id), { status: 'approved' })} className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold py-1.5 rounded transition-colors">Let In</button>
-                                           <button onClick={() => updateDoc(doc(fb.db, 'campaigns', gameParams.code, 'joinRequests', req.id), { status: 'denied' })} className="flex-1 bg-slate-700 hover:bg-red-900/80 text-slate-300 hover:text-red-400 text-xs font-bold py-1.5 rounded transition-colors">Deny</button>
+                                           <button onClick={() => updateDoc(doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'joinRequests', req.id), { status: 'approved' })} className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold py-1.5 rounded transition-colors">Let In</button>
+                                           <button onClick={() => updateDoc(doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'joinRequests', req.id), { status: 'denied' })} className="flex-1 bg-slate-700 hover:bg-red-900/80 text-slate-300 hover:text-red-400 text-xs font-bold py-1.5 rounded transition-colors">Deny</button>
                                        </div>
                                    </div>
                                ))}

@@ -2,8 +2,8 @@ import React, { useState } from 'react';
 import Icon from './Icon';
 import { useNewCampaign } from '../contexts/NewCampaignProvider';
 import { useVfxStore } from '../stores/useVfxStore';
-import { doc, updateDoc } from 'firebase/firestore';
-import { db } from '../firebase';
+import { doc, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
+import { db, appId } from '../firebase';
 
 const SettingsView = ({ 
     apiKey, setApiKey, 
@@ -23,6 +23,7 @@ const SettingsView = ({
     const [autoJoin, setAutoJoin] = useState(() => localStorage.getItem('dm_auto_join') === 'true');
     const ambientLifeLevel = useVfxStore(state => state.ambientLifeLevel);
     const setAmbientLifeLevel = useVfxStore(state => state.setAmbientLifeLevel);
+    const [inviteEmail, setInviteEmail] = useState('');
 
     
     // START CHANGE: Robust character detection (handles string/number mismatches)
@@ -32,6 +33,20 @@ const SettingsView = ({
 
     // Campaign Bible State (Local edit before save)
     const [bibleData, setBibleData] = useState(data.campaign?.genesis || { tone: '', conflict: '', campaignName: '' });
+
+    // Keep bibleData in sync with remote changes
+    React.useEffect(() => {
+        if (data.campaign?.genesis) {
+            setBibleData(data.campaign.genesis);
+        }
+    }, [data.campaign?.genesis]);
+
+    // Send an initial update so the bible name overwrites the dashboard name if they are out of sync
+    React.useEffect(() => {
+        if (role === 'dm' && data.campaign?.genesis?.campaignName && data.campaignName !== data.campaign.genesis.campaignName) {
+            updateCampaign({ 'campaignName': data.campaign.genesis.campaignName });
+        }
+    }, [role, data.campaignName, data.campaign?.genesis?.campaignName]);
 
     // START CHANGE: Local state for Character Integration to prevent input locking
     const [localCharUrl, setLocalCharUrl] = useState(myChar?.externalSheetUrl || "");
@@ -84,9 +99,43 @@ const SettingsView = ({
         alert("Character Integration Updated!");
     };
     // END CHANGE
+    
+    const handleSendInvite = async () => {
+        if (!inviteEmail.trim() || !inviteEmail.includes('@')) {
+            alert("Please enter a valid email address.");
+            return;
+        }
+        const cleanEmail = inviteEmail.trim().toLowerCase();
+        try {
+            const campaignRef = doc(db, 'artifacts', appId || 'dungeonmind', 'public', 'data', 'campaigns', code);
+            await updateDoc(campaignRef, {
+                pendingEmailInvites: arrayUnion(cleanEmail)
+            });
+            setInviteEmail('');
+            alert(`Invite sent to ${cleanEmail}!`);
+        } catch (err) {
+            console.error("Failed to send invite", err);
+            alert("Failed to send invite. " + err.message);
+        }
+    };
+
+    const handleRevokeInvite = async (email) => {
+        if (!confirm(`Revoke invite for ${email}?`)) return;
+        try {
+            const campaignRef = doc(db, 'artifacts', appId || 'dungeonmind', 'public', 'data', 'campaigns', code);
+            await updateDoc(campaignRef, {
+                pendingEmailInvites: arrayRemove(email)
+            });
+        } catch (err) {
+            console.error("Failed to revoke invite", err);
+        }
+    };
 
     const handleBibleSave = () => {
-        updateCampaign({ 'campaign.genesis': bibleData });
+        updateCampaign({ 
+            'campaign.genesis': bibleData,
+            'campaignName': bibleData.campaignName
+        });
         alert("Campaign Bible Updated!");
     };
 
@@ -160,14 +209,12 @@ const SettingsView = ({
                     {myChar && <button onClick={() => setActiveTab('character')} className={`flex-1 py-2 px-4 rounded-md text-sm font-bold transition-all whitespace-nowrap ${activeTab === 'character' ? 'bg-slate-700 text-indigo-400 shadow' : 'text-slate-400 hover:text-slate-200'}`}>My Character</button>}
                     <button onClick={() => setActiveTab('bible')} className={`flex-1 py-2 px-4 rounded-md text-sm font-bold transition-all whitespace-nowrap ${activeTab === 'bible' ? 'bg-slate-700 text-amber-500 shadow' : 'text-slate-400 hover:text-slate-200'}`}>Campaign Bible</button>
                     <button onClick={() => setActiveTab('ai')} className={`flex-1 py-2 px-4 rounded-md text-sm font-bold transition-all whitespace-nowrap ${activeTab === 'ai' ? 'bg-slate-700 text-purple-400 shadow' : 'text-slate-400 hover:text-slate-200'}`}>AI Config</button>
-                    {role === 'dm' && (
-                        <button onClick={() => setActiveTab('players')} className={`flex-1 py-2 px-4 rounded-md text-sm font-bold transition-all whitespace-nowrap relative ${activeTab === 'players' ? 'bg-slate-700 text-red-400 shadow' : 'text-slate-400 hover:text-slate-200'}`}>
-                            Players
-                            {joinRequests.length > 0 && (
-                                <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-indigo-500 text-[9px] font-bold text-white shadow-lg">{joinRequests.length}</span>
-                            )}
-                        </button>
-                    )}
+                    <button onClick={() => setActiveTab('players')} className={`flex-1 py-2 px-4 rounded-md text-sm font-bold transition-all whitespace-nowrap relative ${activeTab === 'players' ? 'bg-slate-700 text-indigo-400 shadow' : 'text-slate-400 hover:text-slate-200'}`}>
+                        Players
+                        {role === 'dm' && joinRequests.length > 0 && (
+                            <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-indigo-500 text-[9px] font-bold text-white shadow-lg">{joinRequests.length}</span>
+                        )}
+                    </button>
                 </div>
 
                 {/* --- GENERAL SETTINGS --- */}
@@ -593,9 +640,44 @@ const SettingsView = ({
                     </div>
                 )}
 
-                {/* --- PLAYER MANAGEMENT (DM ONLY) --- */}
-                {role === 'dm' && activeTab === 'players' && (
+                {/* --- PLAYERS TAB --- */}
+                {activeTab === 'players' && (
                     <div className="space-y-6 animate-in fade-in">
+                        {/* Invite Players (Visible to all) */}
+                        <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-lg">
+                            <h3 className="text-lg font-bold text-indigo-400 mb-1 flex items-center gap-2"><Icon name="mail" size={20}/> Invite Players</h3>
+                            <p className="text-sm text-slate-400 mb-4">Invites appear automatically on the player's Dashboard when they log in. No emails are actually sent!</p>
+                            <div className="flex gap-2 mb-4">
+                                <input 
+                                    type="email" 
+                                    value={inviteEmail} 
+                                    onChange={e => setInviteEmail(e.target.value)} 
+                                    placeholder="player@example.com"
+                                    className="flex-1 bg-slate-900 border border-slate-600 rounded p-2 text-white focus:border-indigo-500 outline-none"
+                                    onKeyDown={e => e.key === 'Enter' && handleSendInvite()}
+                                />
+                                <button onClick={handleSendInvite} className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded font-bold transition-colors shadow">
+                                    Send Invite
+                                </button>
+                            </div>
+                            {data.pendingEmailInvites?.length > 0 && (
+                                <div className="mt-4 pt-4 border-t border-slate-700">
+                                    <h4 className="text-sm font-bold text-slate-500 uppercase mb-3">Pending Invites</h4>
+                                    <div className="space-y-2">
+                                        {data.pendingEmailInvites.map(email => (
+                                            <div key={email} className="flex justify-between items-center text-sm text-slate-300 bg-slate-900/50 p-2 rounded border border-slate-700/50">
+                                                <span className="flex items-center gap-2"><Icon name="mail" size={14} className="text-slate-500"/> {email}</span>
+                                                {role === 'dm' && (
+                                                    <button onClick={() => handleRevokeInvite(email)} className="text-red-400 hover:text-red-300 hover:underline text-xs font-bold p-1">Revoke</button>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        {role === 'dm' && (
                         <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-lg">
                             <h3 className="text-lg font-bold text-red-400 mb-4 flex items-center gap-2"><Icon name="shield" size={20}/> Player Management</h3>
                             
@@ -611,7 +693,7 @@ const SettingsView = ({
                                                 <div className="flex items-center gap-3">
                                                     <div className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_#22c55e]"></div>
                                                     <div className="flex flex-col">
-                                                        <span className="text-white font-bold text-sm">{name}</span>
+                                                        <span className="text-white font-bold text-sm">{name?.includes('@') ? name.split('@')[0] : name}</span>
                                                         <span className="text-xs text-slate-500 font-mono">{uid.slice(0,6)}...</span>
                                                     </div>
                                                     {isDm && <span className="text-[10px] font-bold bg-amber-600/20 text-amber-500 px-2 py-0.5 rounded border border-amber-600/50 uppercase">Dungeon Master</span>}
@@ -687,13 +769,13 @@ const SettingsView = ({
                                                     </div>
                                                     <div className="flex gap-2 w-full sm:w-auto">
                                                         <button 
-                                                            onClick={() => updateDoc(doc(db, 'campaigns', code, 'joinRequests', req.id), { status: 'approved' })} 
+                                                            onClick={() => updateDoc(doc(db, 'artifacts', appId || 'dungeonmind', 'public', 'data', 'campaigns', code, 'joinRequests', req.id), { status: 'approved' })} 
                                                             className="flex-1 sm:flex-none bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-bold px-6 py-2.5 rounded-lg transition-colors shadow-lg shadow-indigo-900/20"
                                                         >
                                                             Approve
                                                         </button>
                                                         <button 
-                                                            onClick={() => updateDoc(doc(db, 'campaigns', code, 'joinRequests', req.id), { status: 'denied' })} 
+                                                            onClick={() => updateDoc(doc(db, 'artifacts', appId || 'dungeonmind', 'public', 'data', 'campaigns', code, 'joinRequests', req.id), { status: 'denied' })} 
                                                             className="flex-1 sm:flex-none bg-slate-800 hover:bg-red-900/80 text-slate-300 hover:text-white border border-slate-600 hover:border-red-500/50 text-sm font-bold px-6 py-2.5 rounded-lg transition-colors"
                                                         >
                                                             Deny
@@ -706,6 +788,7 @@ const SettingsView = ({
                                 </div>
                             )}
                         </div>
+                        )}
                     </div>
                 )}
 

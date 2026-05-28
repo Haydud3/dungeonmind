@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import Icon from './Icon';
 import { useNewCampaign } from '../contexts/NewCampaignProvider';
 import * as fb from '../firebase';
-import { doc, getDoc, setDoc, collection, getDocs, addDoc, deleteDoc, updateDoc, query, where, onSnapshot, deleteField } from 'firebase/firestore';
+import { doc, getDoc, setDoc, collection, getDocs, addDoc, deleteDoc, updateDoc, query, where, onSnapshot, deleteField, arrayRemove } from 'firebase/firestore';
 import SheetContainer from './character-sheet/SheetContainer';
 import DndBeyondImporter from './character-sheet/DndBeyondImporter';
 
@@ -22,6 +22,7 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
     const [localDisplayName, setLocalDisplayName] = useState(user?.displayName || 'Adventurer');
     const [localPhotoUrl, setLocalPhotoUrl] = useState(user?.photoURL || '');
     const [editProfileData, setEditProfileData] = useState({ displayName: '', photoURL: '' });
+    const [emailInvites, setEmailInvites] = useState([]);
 
     useEffect(() => {
         if (user) {
@@ -67,7 +68,7 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                 window.history.replaceState({}, document.title, window.location.pathname);
             } else if (inviteTokenParam) {
                 try {
-                    const q = query(collection(fb.db, 'campaigns'), where('campaign.inviteToken', '==', inviteTokenParam));
+                    const q = query(collection(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns'), where('campaign.inviteToken', '==', inviteTokenParam));
                     const snapshot = await getDocs(q);
                     if (!snapshot.empty) {
                         const campaignDoc = snapshot.docs[0];
@@ -168,19 +169,52 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                     console.error("Failed to fetch characters", e);
                 }
         }
+            
+            if (user && user.email) {
+                try {
+                    const q = query(
+                        collection(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns'), 
+                        where('pendingEmailInvites', 'array-contains', user.email.toLowerCase())
+                    );
+                    const snapshot = await getDocs(q);
+                    const invites = [];
+                    snapshot.forEach(docSnap => {
+                        const cData = docSnap.data();
+                        invites.push({
+                            code: docSnap.id,
+                            name: cData.campaign?.genesis?.campaignName || cData.campaignName || `Realm ${docSnap.id}`,
+                            coverImage: cData.campaign?.genesis?.coverImage || cData.coverImage || null,
+                            theme: cData.campaign?.genesis?.tone || cData.tone || null
+                        });
+                    });
+                    setEmailInvites(invites);
+                } catch (err) {
+                    console.error("Failed to fetch email invites", err);
+                }
+            } else {
+                setEmailInvites([]);
+            }
         
         if (localRecents.length > 0) {
+            let needsCloudSync = false;
             // Fetch fresh campaign data to ensure names/images are up-to-date for ALL recents
             localRecents = await Promise.all(localRecents.map(async (r) => {
                 try {
-                    const campDoc = await getDoc(doc(fb.db, 'campaigns', r.code));
+                    const campDoc = await getDoc(doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', r.code));
                     if (campDoc.exists()) {
                         const cData = campDoc.data();
+                        const freshName = cData.campaign?.genesis?.campaignName || cData.campaignName || r.name;
+                        const freshCover = cData.campaign?.genesis?.coverImage || cData.coverImage || r.coverImage;
+                        const freshTheme = cData.campaign?.genesis?.tone || cData.tone || r.theme;
+                        
+                        if (r.name !== freshName || r.coverImage !== freshCover || r.theme !== freshTheme) {
+                            needsCloudSync = true;
+                        }
                         return {
                             ...r,
-                            name: cData.campaign?.genesis?.campaignName || cData.campaignName || r.name,
-                            coverImage: cData.campaign?.genesis?.coverImage || cData.coverImage || r.coverImage,
-                            theme: cData.campaign?.genesis?.tone || cData.tone || r.theme
+                            name: freshName,
+                            coverImage: freshCover,
+                            theme: freshTheme
                         };
                     }
                 } catch (e) {
@@ -190,6 +224,13 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
             }));
             setRecents(localRecents);
             localStorage.setItem('dm_recents', JSON.stringify(localRecents));
+            if (needsCloudSync && user?.uid) {
+                try {
+                    await setDoc(doc(fb.db, 'users', user.uid), { recents: localRecents }, { merge: true });
+                } catch (e) {
+                    console.error("Failed to sync updated recents to cloud", e);
+                }
+            }
             } else {
                 setRecents(localRecents);
             }
@@ -333,47 +374,85 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
         setIsJoiningCampaign(false);
         
         const selectedChar = characters.find(c => c.id === selectedCharacterId) || null;
+        let campaignName = null;
+        let coverImage = null;
+        let tone = null;
         
         try {
-            const campDoc = await getDoc(doc(fb.db, 'campaigns', joiningCode));
-            if (campDoc.exists() && campDoc.data().campaign?.requireApproval) {
-                setIsInWaitingRoom(true);
-                const reqRef = doc(fb.db, 'campaigns', joiningCode, 'joinRequests', user.uid);
-                
-                await setDoc(reqRef, {
-                    uid: user.uid,
-                    name: user.displayName || 'Player',
-                    characterId: selectedCharacterId || null,
-                    characterName: selectedChar ? selectedChar.name : null,
-                    status: 'pending',
-                    timestamp: Date.now()
-                });
-                
-                const unsub = onSnapshot(reqRef, (docSnap) => {
-                    if (docSnap.exists()) {
-                        const status = docSnap.data().status;
-                        if (status === 'approved') {
-                            unsub();
-                            setIsInWaitingRoom(false);
-                            addToRecents(joiningCode, 'player');
-                            localStorage.setItem('dm_last_session', JSON.stringify({ code: joiningCode, role: 'player', characterId: selectedCharacterId }));
-                            joinCampaign(joiningCode, 'player', user.uid, false, {}, selectedChar);
-                        } else if (status === 'denied') {
-                            unsub();
-                            setIsInWaitingRoom(false);
-                            alert("Your request to join was denied by the Dungeon Master.");
+            const campDoc = await getDoc(doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', joiningCode));
+            if (campDoc.exists()) {
+                const cData = campDoc.data();
+                campaignName = cData.campaign?.genesis?.campaignName || cData.campaignName;
+                coverImage = cData.campaign?.genesis?.coverImage || cData.coverImage;
+                tone = cData.campaign?.genesis?.tone || cData.tone;
+
+                if (cData.campaign?.requireApproval) {
+                    setIsInWaitingRoom(true);
+                    const reqRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', joiningCode, 'joinRequests', user.uid);
+                    
+                    await setDoc(reqRef, {
+                        uid: user.uid,
+                        name: user.displayName || 'Player',
+                        characterId: selectedCharacterId || null,
+                        characterName: selectedChar ? selectedChar.name : null,
+                        status: 'pending',
+                        timestamp: Date.now()
+                    });
+                    
+                    const unsub = onSnapshot(reqRef, (docSnap) => {
+                        if (docSnap.exists()) {
+                            const status = docSnap.data().status;
+                            if (status === 'approved') {
+                                unsub();
+                                setIsInWaitingRoom(false);
+                                addToRecents(joiningCode, 'player', campaignName, coverImage, tone);
+                                localStorage.setItem('dm_last_session', JSON.stringify({ code: joiningCode, role: 'player', characterId: selectedCharacterId }));
+                                joinCampaign(joiningCode, 'player', user.uid, false, {}, selectedChar);
+                            } else if (status === 'denied') {
+                                unsub();
+                                setIsInWaitingRoom(false);
+                                alert("Your request to join was denied by the Dungeon Master.");
+                            }
                         }
-                    }
-                });
-                return;
+                    });
+                    return;
+                }
             }
         } catch (e) {
             console.error("Failed to check approval setting", e);
         }
 
-        addToRecents(joiningCode, 'player');
+        addToRecents(joiningCode, 'player', campaignName, coverImage, tone);
         localStorage.setItem('dm_last_session', JSON.stringify({ code: joiningCode, role: 'player', characterId: selectedCharacterId }));
         joinCampaign(joiningCode, 'player', user.uid, false, {}, selectedChar);
+    };
+
+    const handleAcceptInvite = async (invite) => {
+        if (!user || !user.email) return;
+        try {
+            const campRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', invite.code);
+            await updateDoc(campRef, { pendingEmailInvites: arrayRemove(user.email.toLowerCase()) });
+            setEmailInvites(prev => prev.filter(i => i.code !== invite.code));
+            addToRecents(invite.code, 'player', invite.name, invite.coverImage, invite.theme);
+            localStorage.setItem('dm_last_session', JSON.stringify({ code: invite.code, role: 'player', characterId: null }));
+            joinCampaign(invite.code, 'player', user.uid, false, {}, null);
+        } catch(err) {
+            console.error("Failed to accept invite", err);
+            alert("Failed to accept invite.");
+        }
+    };
+
+    const handleDeclineInvite = async (e, invite) => {
+        e.stopPropagation();
+        if (!user || !user.email) return;
+        if (!confirm(`Decline invite to ${invite.name}?`)) return;
+        try {
+            const campRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', invite.code);
+            await updateDoc(campRef, { pendingEmailInvites: arrayRemove(user.email.toLowerCase()) });
+            setEmailInvites(prev => prev.filter(i => i.code !== invite.code));
+        } catch(err) {
+            console.error("Failed to decline invite", err);
+        }
     };
 
     const deleteCampaign = async (e, item) => {
@@ -395,9 +474,9 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                     await setDoc(userDocRef, { recents: newRecents }, { merge: true });
                     
                     if (isDm) {
-                        await deleteDoc(doc(fb.db, 'campaigns', item.code));
+                        await deleteDoc(doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', item.code));
                     } else {
-                        const campRef = doc(fb.db, 'campaigns', item.code);
+                        const campRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', item.code);
                         const campDoc = await getDoc(campRef);
                         if (campDoc.exists()) {
                             const updates = {};
@@ -444,33 +523,33 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
             
             {/* Sidebar Navigation */}
             <aside className="w-full md:w-64 bg-slate-900 border-b md:border-b-0 md:border-r border-slate-800 flex flex-col shrink-0 z-20">
-                <div className="p-6 flex items-center gap-3 border-b border-slate-800 shrink-0">
-                    <img src={`${import.meta.env.BASE_URL}logo.png`} className="w-10 h-10 rounded-full shadow-[0_0_15px_rgba(217,119,6,0.3)] object-cover" alt="Logo" />
-                    <span className="text-xl fantasy-font text-amber-500 tracking-wide text-shadow">DungeonMind</span>
+                <div className="p-4 md:p-6 flex items-center justify-center md:justify-start gap-3 border-b border-slate-800 shrink-0">
+                    <img src={`${import.meta.env.BASE_URL}logo.png`} className="w-8 h-8 md:w-10 md:h-10 rounded-full shadow-[0_0_15px_rgba(217,119,6,0.3)] object-cover" alt="Logo" />
+                    <span className="text-lg md:text-xl fantasy-font text-amber-500 tracking-wide text-shadow">DungeonMind</span>
                 </div>
                 
-                <div className="flex-1 overflow-y-auto py-4 px-3 space-y-1 flex md:flex-col custom-scroll md:overflow-x-hidden overflow-x-auto">
+                <div className="overflow-x-auto md:overflow-x-hidden overflow-y-hidden md:overflow-y-auto p-2 md:py-4 md:px-3 flex space-x-2 md:space-x-0 md:space-y-1 md:flex-col custom-scroll shrink-0 md:flex-1">
                     <button 
                         onClick={() => setActiveTab('campaigns')}
-                        className={`flex items-center gap-3 px-4 py-3 rounded-lg font-bold transition-all whitespace-nowrap md:whitespace-normal w-full text-left ${activeTab === 'campaigns' ? 'bg-indigo-600/20 text-indigo-400' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}
+                        className={`flex items-center justify-center md:justify-start gap-2 md:gap-3 px-4 py-2 md:py-3 rounded-lg font-bold transition-all whitespace-nowrap md:whitespace-normal flex-1 md:w-full text-sm md:text-base ${activeTab === 'campaigns' ? 'bg-indigo-600/20 text-indigo-400' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}
                     >
                         <Icon name="map" size={18} /> My Campaigns
                     </button>
                     <button 
                         onClick={() => setActiveTab('characters')}
-                        className={`flex items-center gap-3 px-4 py-3 rounded-lg font-bold transition-all whitespace-nowrap md:whitespace-normal w-full text-left ${activeTab === 'characters' ? 'bg-indigo-600/20 text-indigo-400' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}
+                        className={`flex items-center justify-center md:justify-start gap-2 md:gap-3 px-4 py-2 md:py-3 rounded-lg font-bold transition-all whitespace-nowrap md:whitespace-normal flex-1 md:w-full text-sm md:text-base ${activeTab === 'characters' ? 'bg-indigo-600/20 text-indigo-400' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}
                     >
                         <Icon name="users" size={18} /> My Characters
                     </button>
                     <button 
                         onClick={openProfileEdit}
-                        className={`flex items-center gap-3 px-4 py-3 rounded-lg font-bold transition-all whitespace-nowrap md:whitespace-normal w-full text-left ${activeTab === 'profile' ? 'bg-indigo-600/20 text-indigo-400' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}
+                        className={`flex items-center justify-center md:justify-start gap-2 md:gap-3 px-4 py-2 md:py-3 rounded-lg font-bold transition-all whitespace-nowrap md:whitespace-normal flex-1 md:w-full text-sm md:text-base ${activeTab === 'profile' ? 'bg-indigo-600/20 text-indigo-400' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}
                     >
                         <Icon name="user" size={18} /> My Profile
                     </button>
                 </div>
 
-                <div className="p-4 border-t border-slate-800 shrink-0 bg-slate-900/50">
+                <div className="hidden md:block p-4 border-t border-slate-800 shrink-0 bg-slate-900/50">
                     <div className="flex items-center justify-between mb-4 border-b border-slate-800/50 pb-4">
                         <div className="flex items-center gap-3">
                             <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-xs font-bold text-slate-300 shrink-0 uppercase overflow-hidden border border-slate-600">
@@ -516,6 +595,9 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                     <button onClick={() => fb.signOut(fb.auth)} className="w-full flex items-center justify-center gap-2 py-2 rounded bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-red-400 transition-colors text-sm font-bold">
                         <Icon name="log-out" size={14} /> Sign Out
                     </button>
+                    <div className="mt-4 text-center">
+                        <button onClick={() => joinCampaign('LOCAL', 'dm', 'admin', true)} className="text-[10px] text-slate-600 font-mono hover:text-slate-400 transition-colors">Launch Offline Mode</button>
+                    </div>
                 </div>
             </aside>
 
@@ -523,31 +605,31 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
             <main className="flex-1 overflow-y-auto relative bg-slate-950 custom-scroll">
                 
                 {activeTab === 'campaigns' && (
-                    <div className="p-6 md:p-10 max-w-7xl mx-auto">
+                    <div className="p-4 md:p-10 max-w-7xl mx-auto">
                         
                         {/* Header & Quick Actions */}
                         <div className="flex flex-col xl:flex-row gap-6 mb-12 items-start xl:items-stretch">
-                            <div className="flex-1">
+                            <div className="flex-1 w-full">
                                 <h1 className="text-3xl md:text-4xl font-black text-white mb-2">Welcome Back.</h1>
-                                <p className="text-slate-400 mb-6">Create a new realm or join an existing adventure.</p>
+                                <p className="text-slate-400 mb-6 text-sm md:text-base">Create a new realm or join an existing adventure.</p>
                                 
-                                <div className="flex flex-col sm:flex-row gap-4">
-                                    <button onClick={openCampaignWizard} className="flex-1 bg-amber-600 hover:bg-amber-500 text-white py-4 px-6 rounded-xl font-bold flex items-center justify-center gap-3 shadow-lg shadow-amber-900/20 transition-all border border-amber-500/50">
+                                <div className="flex flex-col sm:flex-row gap-4 w-full">
+                                    <button onClick={openCampaignWizard} className="flex-1 w-full bg-amber-600 hover:bg-amber-500 text-white py-3 md:py-4 px-6 rounded-xl font-bold flex items-center justify-center gap-3 shadow-lg shadow-amber-900/20 transition-all border border-amber-500/50">
                                         <Icon name="plus-circle" size={20} /> Forge New Realm
                                     </button>
                                     
-                                    <div className="flex-1 flex bg-slate-900 p-1 rounded-xl border border-slate-800 focus-within:border-indigo-500/50 focus-within:ring-1 focus-within:ring-indigo-500/50 transition-all">
+                                    <div className="flex-1 w-full flex bg-slate-900 p-1 rounded-xl border border-slate-800 focus-within:border-indigo-500/50 focus-within:ring-1 focus-within:ring-indigo-500/50 transition-all">
                                         <input 
                                             value={joinCode} 
                                             onChange={e => setJoinCode(e.target.value.toUpperCase())} 
                                             placeholder="ENTER INVITE CODE" 
-                                            className="flex-1 bg-transparent px-4 text-center font-mono tracking-widest text-lg outline-none text-white placeholder:text-slate-600 w-full"
+                                            className="flex-1 bg-transparent px-2 md:px-4 text-center font-mono tracking-widest text-base md:text-lg outline-none text-white placeholder:text-slate-600 w-full min-w-0"
                                             onKeyDown={(e) => e.key === 'Enter' && handleJoinClick(joinCode)}
                                         />
                                         <button 
                                             onClick={() => handleJoinClick(joinCode)} 
                                             disabled={!joinCode} 
-                                            className={`px-6 rounded-lg font-bold transition-all ${joinCode ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-md' : 'bg-transparent text-slate-600 cursor-not-allowed'}`}
+                                            className={`px-4 md:px-6 rounded-lg font-bold transition-all ${joinCode ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-md' : 'bg-transparent text-slate-600 cursor-not-allowed'}`}
                                         >
                                             Join
                                         </button>
@@ -557,6 +639,50 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                         </div>
 
                         {/* Recent Campaigns Grid */}
+                        {emailInvites.length > 0 && (
+                            <div className="mb-10">
+                                <div className="flex items-center justify-between mb-4 border-b border-indigo-500/30 pb-2">
+                                    <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                                        <Icon name="mail" size={20} className="text-indigo-400" /> You're Invited!
+                                    </h2>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                                    {emailInvites.map((invite, i) => {
+                                        const seed = invite.code.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+                                        const bgUrl = invite.coverImage || `https://picsum.photos/seed/${seed}/600/300`;
+                                        return (
+                                            <div key={invite.code + i} className="group relative bg-slate-900 rounded-xl overflow-hidden border-2 border-indigo-500/50 shadow-[0_0_15px_rgba(99,102,241,0.2)] flex flex-col">
+                                                <div className="h-32 w-full relative">
+                                                    <div className="absolute inset-0 bg-gradient-to-t from-slate-900 to-transparent z-10"></div>
+                                                    <img src={bgUrl} alt="Campaign Cover" className="w-full h-full object-cover opacity-60" />
+                                                    <div className="absolute top-3 right-3 z-20">
+                                                        <span className="px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider shadow-sm backdrop-blur-md bg-indigo-600/80 text-white border border-indigo-500/50 flex items-center gap-1">
+                                                            <Icon name="mail" size={10} /> Pending Invite
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                                <div className="p-5 flex-1 flex flex-col justify-between relative z-20 bg-slate-900">
+                                                    <div>
+                                                        <h3 className="font-bold text-xl text-white mb-1 tracking-wide truncate">{invite.name}</h3>
+                                                        {invite.theme && <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-400 border border-slate-700">{invite.theme}</span>}
+                                                    </div>
+                                                    <div className="mt-4 pt-4 border-t border-slate-800/50 flex flex-col gap-3">
+                                                        <div className="flex gap-2">
+                                                            <button onClick={() => handleAcceptInvite(invite)} className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white py-2 rounded-lg font-bold text-sm shadow-md transition-colors flex items-center justify-center gap-2">
+                                                                <Icon name="check" size={16} /> Accept & Join
+                                                            </button>
+                                                            <button onClick={(e) => handleDeclineInvite(e, invite)} className="text-slate-400 hover:text-white px-3 rounded-lg border border-slate-700 hover:border-red-500 hover:bg-red-900/50 transition-colors flex items-center justify-center" title="Decline Invite">
+                                                                <Icon name="x" size={16} />
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
                         <div>
                             <div className="flex items-center justify-between mb-6 border-b border-slate-800 pb-2">
                                 <h2 className="text-xl font-bold text-white flex items-center gap-2">
@@ -589,7 +715,8 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                                                         if (newName && newName.trim() && newName.trim() !== r.name) {
                                                             const finalName = newName.trim();
                                                             // 1. Update Firestore Campaign
-                                                            updateDoc(doc(fb.db, 'campaigns', r.code), {
+                                                            updateDoc(doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', r.code), {
+                                                                'campaignName': finalName,
                                                                 'campaign.genesis.campaignName': finalName
                                                             }).catch(err => console.error("Rename failed", err));
                                                             
@@ -628,17 +755,21 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                                                         )}
                                                     </div>
                                                     
-                                                    <div className="mt-4 flex justify-between items-center border-t border-slate-800/50 pt-4">
-                                                        <span className="text-sm font-mono text-amber-500 bg-amber-500/10 px-2 py-1 rounded border border-amber-500/20">
-                                                            {hideInviteCode ? '••••••' : r.code}
-                                                        </span>
-                                                        <button 
-                                                            onClick={(e) => deleteCampaign(e, r)} 
-                                                            className="text-slate-500 hover:text-red-400 p-2 rounded-full hover:bg-slate-800 transition-colors"
-                                                            title={r.role === 'dm' ? "Delete Campaign" : "Leave Campaign"}
-                                                        >
-                                                            {r.role === 'dm' ? <Icon name="trash-2" size={16} /> : <Icon name="log-out" size={16} />}
-                                                        </button>
+                                                    <div className="mt-4 pt-4 border-t border-slate-800/50 flex flex-col gap-3">
+                                                        <div className="flex justify-between items-center">
+                                                            <span className="text-xs text-slate-500 font-bold uppercase tracking-wider">Realm Code</span>
+                                                            <span className="text-sm font-mono text-amber-500 bg-amber-500/10 px-2 py-1 rounded border border-amber-500/20">
+                                                                {hideInviteCode ? '••••••' : r.code}
+                                                            </span>
+                                                        </div>
+                                                        <div className="flex gap-2">
+                                                            <button onClick={(e) => { e.stopPropagation(); handleJoinClick(r.code, r.role); }} className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white py-2 rounded-lg font-bold text-sm shadow-md transition-colors flex items-center justify-center gap-2">
+                                                                <Icon name="swords" size={16} /> Launch VTT
+                                                            </button>
+                                                            <button onClick={(e) => deleteCampaign(e, r)} className="text-slate-400 hover:text-white px-3 rounded-lg border border-slate-700 hover:border-red-500 hover:bg-red-900/50 transition-colors flex items-center justify-center" title={r.role === 'dm' ? "Delete Campaign" : "Leave Campaign"}>
+                                                                {r.role === 'dm' ? <Icon name="trash-2" size={16} /> : <Icon name="log-out" size={16} />}
+                                                            </button>
+                                                        </div>
                                                     </div>
                                                 </div>
                                             </div>
@@ -716,36 +847,86 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                 )}
                 
                 {activeTab === 'profile' && (
-                    <div className="p-6 md:p-10 max-w-4xl mx-auto animate-in fade-in">
-                        <div className="mb-10">
+                    <div className="p-4 md:p-10 max-w-4xl mx-auto animate-in fade-in">
+                        <div className="mb-6 md:mb-10">
                             <h1 className="text-3xl md:text-4xl font-black text-white mb-2">My Profile</h1>
                             <p className="text-slate-400">Manage your global account settings.</p>
                         </div>
                         
-                        <div className="bg-slate-900 p-6 md:p-8 rounded-xl border border-slate-800 shadow-xl space-y-6">
-                            <div className="flex items-center gap-6 pb-6 border-b border-slate-800">
-                                <div className="w-24 h-24 rounded-full bg-slate-800 border-4 border-slate-700 overflow-hidden shrink-0 flex items-center justify-center text-3xl font-bold text-slate-500">
-                                    {localPhotoUrl ? <img src={localPhotoUrl} alt="Profile" className="w-full h-full object-cover" /> : (localDisplayName[0] || '?')}
+                        <div className="space-y-6">
+                            <div className="bg-slate-900 p-6 md:p-8 rounded-xl border border-slate-800 shadow-xl space-y-6">
+                                <div className="flex items-center gap-6 pb-6 border-b border-slate-800">
+                                    <div className="w-20 h-20 md:w-24 md:h-24 rounded-full bg-slate-800 border-4 border-slate-700 overflow-hidden shrink-0 flex items-center justify-center text-3xl font-bold text-slate-500">
+                                        {localPhotoUrl ? <img src={localPhotoUrl} alt="Profile" className="w-full h-full object-cover" /> : (localDisplayName[0] || '?')}
+                                    </div>
+                                    <div className="min-w-0">
+                                        <h3 className="text-xl md:text-2xl font-bold text-white truncate">{localDisplayName}</h3>
+                                        <p className="text-xs md:text-sm text-slate-500 font-mono mt-1 truncate">ID: {user.uid}</p>
+                                    </div>
                                 </div>
-                                <div>
-                                    <h3 className="text-2xl font-bold text-white">{localDisplayName}</h3>
-                                    <p className="text-sm text-slate-500 font-mono mt-1">ID: {user.uid}</p>
+                                
+                                <div className="space-y-4">
+                                    <div>
+                                        <label className="block text-xs uppercase font-bold text-slate-500 mb-2">Display Name</label>
+                                        <input type="text" value={editProfileData.displayName} onChange={(e) => setEditProfileData(prev => ({ ...prev, displayName: e.target.value }))} className="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 text-white focus:border-indigo-500 outline-none" />
+                                        <p className="text-[10px] text-slate-500 mt-1">This name will be used as your default sender name in chat across all campaigns.</p>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs uppercase font-bold text-slate-500 mb-2">Profile Avatar URL</label>
+                                        <input type="text" value={editProfileData.photoURL} onChange={(e) => setEditProfileData(prev => ({ ...prev, photoURL: e.target.value }))} placeholder="https://..." className="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 text-white focus:border-indigo-500 outline-none font-mono text-sm" />
+                                    </div>
+                                </div>
+                                <div className="pt-4 flex justify-end">
+                                    <button onClick={handleSaveProfile} className="w-full md:w-auto px-8 py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-bold shadow-lg shadow-indigo-900/20 transition-all flex justify-center items-center gap-2"><Icon name="save" size={18} /> Save Profile</button>
                                 </div>
                             </div>
-                            
-                            <div className="space-y-4">
-                                <div>
-                                    <label className="block text-xs uppercase font-bold text-slate-500 mb-2">Display Name</label>
-                                    <input type="text" value={editProfileData.displayName} onChange={(e) => setEditProfileData(prev => ({ ...prev, displayName: e.target.value }))} className="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 text-white focus:border-indigo-500 outline-none" />
-                                    <p className="text-[10px] text-slate-500 mt-1">This name will be used as your default sender name in chat across all campaigns.</p>
+
+                            <div className="bg-slate-900 p-6 md:p-8 rounded-xl border border-slate-800 shadow-xl space-y-6">
+                                <h3 className="text-xl font-bold text-white mb-4">App Preferences</h3>
+                                
+                                <button 
+                                    onClick={() => {
+                                        const newValue = !hideInviteCode;
+                                        setHideInviteCode(newValue);
+                                    }} 
+                                    className={`w-full flex items-center justify-between px-4 py-3 rounded-lg transition-colors text-sm font-bold border ${hideInviteCode ? 'bg-red-900/20 text-red-400 border-red-900/50' : 'bg-slate-950 text-slate-400 border-slate-800 hover:bg-slate-800 hover:text-white'}`}
+                                >
+                                    <div className="flex items-center gap-3">
+                                        <Icon name={hideInviteCode ? "eye-off" : "eye"} size={18} /> 
+                                        <div className="text-left">
+                                            <div>Streamer Mode</div>
+                                            <div className="text-[10px] font-normal opacity-70 mt-0.5">Masks invite codes globally.</div>
+                                        </div>
+                                    </div>
+                                    <span className={`text-[10px] uppercase tracking-widest px-2 py-1 rounded ${hideInviteCode ? 'bg-red-900/50 text-red-300' : 'bg-slate-800'}`}>{hideInviteCode ? 'ON' : 'OFF'}</span>
+                                </button>
+
+                                <button 
+                                    onClick={() => {
+                                        const newValue = !autoJoin;
+                                        setAutoJoin(newValue);
+                                        localStorage.setItem('dm_auto_join', String(newValue));
+                                    }} 
+                                    className={`w-full flex items-center justify-between px-4 py-3 rounded-lg transition-colors text-sm font-bold border ${autoJoin ? 'bg-indigo-900/20 text-indigo-400 border-indigo-900/50' : 'bg-slate-950 text-slate-400 border-slate-800 hover:bg-slate-800 hover:text-white'}`}
+                                >
+                                    <div className="flex items-center gap-3">
+                                        <Icon name="fast-forward" size={18} /> 
+                                        <div className="text-left">
+                                            <div>Auto-Join Session</div>
+                                            <div className="text-[10px] font-normal opacity-70 mt-0.5">Skips the dashboard when opening DungeonMind.</div>
+                                        </div>
+                                    </div>
+                                    <span className={`text-[10px] uppercase tracking-widest px-2 py-1 rounded ${autoJoin ? 'bg-indigo-900/50 text-indigo-300' : 'bg-slate-800'}`}>{autoJoin ? 'ON' : 'OFF'}</span>
+                                </button>
+
+                                <div className="pt-6 mt-6 border-t border-slate-800">
+                                    <button onClick={() => fb.signOut(fb.auth)} className="w-full flex items-center justify-center gap-2 py-3 rounded-lg bg-red-900/20 border border-red-900/50 hover:bg-red-900/40 text-red-400 transition-colors text-sm font-bold">
+                                        <Icon name="log-out" size={18} /> Sign Out
+                                    </button>
+                                <div className="mt-4 text-center md:hidden">
+                                    <button onClick={() => joinCampaign('LOCAL', 'dm', 'admin', true)} className="text-[10px] text-slate-600 font-mono hover:text-slate-400 transition-colors">Launch Offline Mode</button>
                                 </div>
-                                <div>
-                                    <label className="block text-xs uppercase font-bold text-slate-500 mb-2">Profile Avatar URL</label>
-                                    <input type="text" value={editProfileData.photoURL} onChange={(e) => setEditProfileData(prev => ({ ...prev, photoURL: e.target.value }))} placeholder="https://..." className="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 text-white focus:border-indigo-500 outline-none font-mono text-sm" />
                                 </div>
-                            </div>
-                            <div className="pt-4 flex justify-end">
-                                <button onClick={handleSaveProfile} className="px-8 py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-bold shadow-lg shadow-indigo-900/20 transition-all flex items-center gap-2"><Icon name="save" size={18} /> Save Profile</button>
                             </div>
                         </div>
                     </div>
@@ -772,10 +953,6 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                     </div>
                 )}
 
-                <div className="absolute bottom-4 right-6 text-xs text-slate-600 font-mono">
-                    <button onClick={() => joinCampaign('LOCAL', 'dm', 'admin', true)} className="hover:text-slate-400 transition-colors">Launch Offline Mode</button>
-                </div>
-                
                 {/* Campaign Creation Modal */}
                 {isCreatingCampaign && (
                     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setIsCreatingCampaign(false)}>
@@ -932,7 +1109,7 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                             </div>
                             
                             <button 
-                                onClick={() => { setIsInWaitingRoom(false); updateDoc(doc(fb.db, 'campaigns', joiningCode, 'joinRequests', user.uid), { status: 'canceled' }).catch(()=>{}); }}
+                                onClick={() => { setIsInWaitingRoom(false); updateDoc(doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', joiningCode, 'joinRequests', user.uid), { status: 'canceled' }).catch(()=>{}); }}
                                 className="px-6 py-2 rounded-lg font-bold text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
                             >
                                 Cancel & Leave
