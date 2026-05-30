@@ -202,7 +202,7 @@ export const CombatTrackerSidebar = ({ combat, updateCampaign, tokens, role, cam
                 onTouchStart={handleResizeMouseDown}
             />
             <div className="p-3 bg-slate-800 border-b border-slate-700 flex justify-between items-center shrink-0">
-                <h3 className="font-bold text-amber-500 flex items-center gap-2"><Icon name="sword" size={16}/> Initiative</h3>
+                <h3 className="text-xl fantasy-font text-amber-500 flex items-center gap-2"><Icon name="sword" size={16}/> Initiative</h3>
                 {role === 'dm' && (
                     <div className="flex gap-1">
                         <button onClick={() => setShowAddModal(true)} className="p-1.5 hover:bg-slate-600 rounded text-slate-400 hover:text-white" title="Add Combatant">
@@ -330,8 +330,8 @@ export const CombatTrackerSidebar = ({ combat, updateCampaign, tokens, role, cam
 
             {/* Add Combatant Modal */}
             {showAddModal && createPortal(
-                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-                    <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-full max-w-md flex flex-col max-h-[80vh]">
+                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in zoom-in-95">
+                    <div className="bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl w-full max-w-md flex flex-col max-h-[80vh]">
                         <div className="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-800 rounded-t-xl shrink-0">
                             <h3 className="font-bold text-white flex items-center gap-2">
                                 <Icon name="users" size={18} className="text-amber-500"/> Add to Combat

@@ -187,8 +187,8 @@ const SettingsView = ({
     // [DELETED handleRetroactiveFix FUNCTION]
 
     return (
-        <div className="h-full bg-slate-900 p-4 md:p-8 overflow-y-auto custom-scroll">
-            <div className="max-w-3xl mx-auto space-y-8">
+        <div className="h-full bg-slate-950 overflow-y-auto custom-scroll">
+            <div className="max-w-7xl mx-auto space-y-8 p-6 md:p-10">
                 
                 {/* Header */}
                 <div className="flex flex-col md:flex-row justify-between items-center border-b border-slate-700 pb-6 gap-4">

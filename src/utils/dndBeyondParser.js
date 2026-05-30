@@ -36,6 +36,17 @@ const SKILL_ABILITY_MAP = {
     'sleight-of-hand': 'dex', 'stealth': 'dex', 'survival': 'wis'
 };
 
+const getActivationType = (activation) => {
+    if (!activation || !activation.activationType) return 'Passive';
+    switch (activation.activationType) {
+        case 1: return 'Action';
+        case 3: return 'Bonus Action';
+        case 4: return 'Reaction';
+        case 8: return 'Special';
+        default: return 'Other';
+    }
+};
+
 const getAbilityModifier = (score = 10) => Math.floor((score - 10) / 2);
 const getProficiencyBonus = (level = 1) => Math.ceil(1 + level / 4);
 
@@ -54,7 +65,7 @@ export const parseDndBeyondJson = (json) => {
     // Initialize ALL arrays and objects the sheet expects to prevent crashes (bulletproof version)
     const characterSheet = {
         stats: {}, modifiers: {}, skills: {}, savingThrows: {}, proficiencies: {}, 
-        bio: {}, customActions: [], inventory: [], spells: [], spellSlots: {},
+        bio: {}, customActions: [], inventory: [], spells: [], spellSlots: {}, actions: [],
         conditions: [], features: []
     };
 
@@ -233,23 +244,65 @@ export const parseDndBeyondJson = (json) => {
             description: def.description || '',
             equipped: item.equipped || false,
             weight: def.weight || 0,
-            combat: combat // Maps straight to ActionsTab
+            combat: combat, // Maps straight to ActionsTab
+            limitedUse: item.limitedUse ? {
+                maxUses: item.limitedUse.maxUses || 0,
+                numberUsed: item.limitedUse.numberUsed || 0,
+                resetTypeDescription: item.limitedUse.resetTypeDescription || ''
+            } : null
         };
     });
     
     characterSheet.currency = data.currencies || { cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 }; // bulletproof version
 
-    // Features and Traits
-    const mapFeature = (f, sourceName) => {
-        if (!f?.definition) return { name: `Unknown ${sourceName} Feature`, description: '', source: sourceName };
-        return { name: f.definition.name, description: f.definition.snippet || f.definition.description || '', source: sourceName };
-    };
+    // Actions from Class, Race, Feats
+    const actionGroups = ['race', 'class', 'feat', 'item'];
+    actionGroups.forEach(group => {
+        if (data.actions?.[group]) {
+            data.actions[group].forEach(action => {
+                // displayAsAttack is for items that are already handled in inventory parsing.
+                // We also want to skip passives.
+                const activationType = getActivationType(action.activation);
+                if (action.displayAsAttack || activationType === 'Passive') return;
 
-    characterSheet.features = [
-        ...(data.race?.racialTraits || []).map(t => mapFeature(t, 'Race')),
-        ...(data.classes || []).flatMap(c => (c.classFeatures || []).map(f => mapFeature(f, 'Class'))),
-        ...(data.feats || []).map(f => mapFeature(f, 'Feat'))
-    ];
+                characterSheet.actions.push({
+                    name: action.name,
+                    description: action.snippet || action.description || '',
+                    type: activationType,
+                    limitedUse: action.limitedUse ? {
+                        maxUses: action.limitedUse.maxUses || 0,
+                        numberUsed: action.limitedUse.numberUsed || 0,
+                        resetTypeDescription: action.limitedUse.resetTypeDescription || ''
+                    } : null
+                });
+            });
+        }
+    });
+
+    // Features and Traits
+    const features = [];
+    // Race
+    (data.race?.racialTraits || []).forEach(trait => {
+        if (trait.definition && !trait.definition.hideInSheet) {
+            features.push({ name: trait.definition.name, description: trait.definition.snippet || trait.definition.description || '', source: 'Race' });
+        }
+    });
+    // Classes
+    (data.classes || []).forEach(cls => {
+        const classLevel = cls.level;
+        (cls.definition?.classFeatures || []).forEach(feature => {
+            if (feature && !feature.hideInSheet && feature.requiredLevel <= classLevel) {
+                features.push({ name: feature.name, description: feature.snippet || feature.description || '', source: cls.definition.name });
+            }
+        });
+    });
+    // Feats
+    (data.feats || []).forEach(feat => {
+        if (feat.definition && !feat.definition.hideInSheet) {
+            features.push({ name: feat.definition.name, description: feat.definition.snippet || feat.definition.description || '', source: 'Feat' });
+        }
+    });
+    characterSheet.features = features;
 
     // Bio
     characterSheet.bio = {

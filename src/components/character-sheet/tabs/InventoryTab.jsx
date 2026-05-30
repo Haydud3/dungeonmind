@@ -7,7 +7,7 @@ import Icon from '../../Icon';
 
 const InventoryTab = ({ onDiceRoll, onLogAction, isOwner }) => {
     // START CHANGE: Add toggleEquip and loadCharacter to destructuring
-    const { character, updateCurrency, addItem, removeItem, toggleEquip, toggleAttune, loadCharacter } = useCharacterStore();
+    const { character, updateCurrency, addItem, removeItem, toggleEquip, toggleAttune, loadCharacter, useItemCharge, resetItemCharges } = useCharacterStore();
     // END CHANGE
     const [newItemName, setNewItemName] = useState("");
     
@@ -159,15 +159,54 @@ const InventoryTab = ({ onDiceRoll, onLogAction, isOwner }) => {
                 ) : (
                     character.inventory.map((item, i) => (
                         <div key={i} className={`border p-3 rounded flex justify-between items-center transition-colors ${item.equipped ? 'bg-indigo-900/20 border-indigo-500/50' : 'bg-slate-800 border-slate-700'}`}>
-                            <div className="flex items-center gap-3 overflow-hidden">
+                            <div className="flex items-center gap-3 overflow-hidden flex-1">
                                 {/* START CHANGE: Use store's toggleEquip and verify owner */}
                                 <div onClick={() => isOwner && toggleEquip(i)} className={`w-8 h-8 shrink-0 rounded flex items-center justify-center transition-all ${item.equipped ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/50' : 'bg-slate-900 text-slate-600'} ${isOwner ? 'cursor-pointer hover:text-indigo-400' : 'opacity-50 cursor-default'}`}>
                                     <Icon name={item.combat ? "sword" : "backpack"} size={16}/>
                                 </div>
                                 {/* END CHANGE */}
-                                <div className="flex flex-col min-w-0">
+                                <div className="flex flex-col min-w-0 flex-1">
                                     <span className={`font-bold text-sm truncate ${item.equipped ? 'text-indigo-300' : 'text-slate-200'}`}>{typeof item === 'string' ? item : item.name}</span>
                                     {(item.weight || item.qty > 1) && <span className="text-xs text-slate-500">x{item.qty || 1} {item.weight ? `• ${item.weight}lb` : ''}</span>}
+                                    
+                                    {/* Item Charges UI */}
+                                    {item.limitedUse && item.limitedUse.maxUses > 0 && (
+                                        <div className="flex flex-col mt-2 gap-1 bg-slate-900/50 p-2 rounded border border-slate-700/50">
+                                            <div className="flex justify-between items-center text-[10px] uppercase font-bold text-slate-400">
+                                                <span>Charges ({item.limitedUse.maxUses - (item.limitedUse.numberUsed || 0)} / {item.limitedUse.maxUses})</span>
+                                                {isOwner && (
+                                                    <button onClick={() => resetItemCharges(i)} className="text-amber-500 hover:text-amber-400 px-1 rounded flex items-center gap-1">
+                                                        <Icon name="rotate-ccw" size={10} /> Reset
+                                                    </button>
+                                                )}
+                                            </div>
+                                            <div className="flex flex-wrap gap-1">
+                                                {Array.from({ length: item.limitedUse.maxUses }).map((_, chargeIdx) => {
+                                                    const isUsed = chargeIdx < (item.limitedUse.numberUsed || 0);
+                                                    return (
+                                                        <div 
+                                                            key={chargeIdx} 
+                                                            onClick={() => {
+                                                                if (!isOwner) return;
+                                                                if (isUsed) {
+                                                                    // Decrease used count to this index
+                                                                    useItemCharge(i, chargeIdx - (item.limitedUse.numberUsed || 0));
+                                                                } else {
+                                                                    // Increase used count to include this index
+                                                                    useItemCharge(i, (chargeIdx + 1) - (item.limitedUse.numberUsed || 0));
+                                                                }
+                                                            }}
+                                                            className={`w-3 h-3 rounded-full border transition-all ${isOwner ? 'cursor-pointer' : 'cursor-default'} ${isUsed ? 'bg-slate-700 border-slate-600 shadow-inner' : 'bg-amber-500 border-amber-400 shadow-[0_0_5px_rgba(245,158,11,0.5)]'}`}
+                                                            title={isUsed ? "Used Charge" : "Available Charge"}
+                                                        />
+                                                    );
+                                                })}
+                                            </div>
+                                            {item.limitedUse.resetTypeDescription && (
+                                                <div className="text-[10px] text-slate-500 italic mt-1" dangerouslySetInnerHTML={{ __html: item.limitedUse.resetTypeDescription.replace(/<\/?p>/g, '') }} />
+                                            )}
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                             <div className="flex items-center gap-1 shrink-0">

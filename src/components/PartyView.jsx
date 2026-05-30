@@ -1,12 +1,12 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import Icon from './Icon';
-import CharacterCreator from './ai-wizard/CharacterCreator';
 import SheetContainer from './character-sheet/SheetContainer'; 
 import { useCharacterStore } from '../stores/useCharacterStore';
 // START CHANGE: Import D&D Beyond Importer
 import { parsePdf } from '../utils/dndBeyondParser.js'; // This seems to be a misnamed file in the original code, should be pdfParser.js
 import DndBeyondImporter from './character-sheet/DndBeyondImporter';
 import { parseDndBeyondJson } from './character-sheet/dndBeyondParser.js';
+import CharacterBuilder from '../utils/CharacterBuilder';
 // END CHANGE
 import { enrichCharacter } from '../utils/srdEnricher.js';
 import { searchGithubModels } from '../utils/miniManifest';
@@ -22,10 +22,13 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
     // FIX: Add a safety check. If data is missing, use an empty array.
     const playersList = data?.players || []; 
 
-    const [showCreationMenu, setShowCreationMenu] = useState(false);
-    const [viewMode, setViewMode] = useState('grid');
+    const [viewMode, setViewMode] = useState(() => localStorage.getItem('dm_party_view_mode') || 'grid');
+    useEffect(() => {
+        localStorage.setItem('dm_party_view_mode', viewMode);
+    }, [viewMode]);
     // START CHANGE: Add state for D&D Beyond Importer
     const [showDndBeyondImport, setShowDndBeyondImport] = useState(false);
+    const [showBuilder, setShowBuilder] = useState(false);
     const [refreshCharacter, setRefreshCharacter] = useState(null);
     // END CHANGE
     // END CHANGE
@@ -194,7 +197,6 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
         updateCampaign({ players: newPlayers });
         // END CHANGE
 
-        setShowCreationMenu(false);
     };
 
     // START CHANGE: Anti-Meta Privacy Lock Handler
@@ -240,7 +242,6 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
         }
         setIsImporting(false);
         e.target.value = null;
-        setShowCreationMenu(false);
     };
     // END CHANGE
 
@@ -491,11 +492,14 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
                     </div>
                     
                     <div className="flex flex-wrap gap-2 justify-center items-center">
+                        <button onClick={() => setShowDndBeyondImport(true)} className="bg-slate-800 hover:bg-slate-700 text-white py-2 px-4 rounded-lg font-bold flex items-center gap-2 shadow-lg transition-all border border-slate-700 hover:border-indigo-500/50">
+                            <Icon name="download" size={18} /> <span className="hidden md:inline">Import D&D Beyond</span>
+                        </button>
                         <button 
-                            onClick={() => setShowCreationMenu(true)} 
-                            className="bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white px-6 py-2 rounded-lg font-bold shadow-lg flex items-center gap-2 transform transition-all hover:scale-105"
+                            onClick={() => setShowBuilder(true)} 
+                            className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg font-bold shadow-lg flex items-center gap-2 transition-all border border-indigo-500/50"
                         >
-                            <Icon name="plus-circle" size={20}/> <span>Create New Hero</span>
+                            <Icon name="user-plus" size={18}/> <span className="hidden md:inline">Create Character</span>
                         </button>
                         <div className="flex bg-slate-800 rounded p-1 border border-slate-700 ml-2">
                             <button onClick={() => setViewMode('grid')} className={`p-1.5 rounded ${viewMode === 'grid' ? 'bg-slate-700 text-indigo-400' : 'text-slate-500 hover:text-slate-300'}`}><Icon name="layout-grid" size={16}/></button>
@@ -562,40 +566,6 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
                 </div>
             </div>
 
-            {/* CREATION HUB MODAL */}
-            {showCreationMenu && (
-                <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
-                    <div className="max-w-4xl w-full bg-slate-900 rounded-xl overflow-hidden shadow-2xl relative border border-slate-700">
-                        <button onClick={() => setShowCreationMenu(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white"><Icon name="x" size={24}/></button>
-                        
-                        <div className="p-8 text-center">
-                            <h2 className="text-3xl fantasy-font text-amber-500 mb-2">Summon a Hero</h2>
-                            
-                            {isImporting ? (
-                                <div className="py-10">
-                                    <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-                                    <p className="text-indigo-400 font-bold animate-pulse">{importStatus}</p>
-                                    <p className="text-xs text-slate-500">Cross-referencing spells with SRD Database.</p>
-                                </div>
-                            ) : (
-                                <>
-                                    <p className="text-slate-300 mb-6 text-sm max-w-md mx-auto leading-relaxed">
-                                        To ensure accurate stats, spells, and rules integration, please create your character on D&D Beyond first, set the sheet to Public, and import the URL here.
-                                    </p>
-                                    <div className="flex justify-center max-w-sm mx-auto">
-                                        <button onClick={() => { setShowCreationMenu(false); setShowDndBeyondImport(true); }} className="w-full bg-slate-800 border-2 border-slate-700 hover:border-red-500 rounded-xl p-8 cursor-pointer group transition-all hover:-translate-y-1 block text-left">
-                                            <div className="w-20 h-20 bg-red-900/30 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform"><Icon name="link" size={40}/></div>
-                                            <h3 className="font-bold text-2xl text-white mb-2 text-center">Import Character</h3>
-                                            <p className="text-sm text-slate-400 text-center">via D&D Beyond URL</p>
-                                        </button>
-                                    </div>
-                                </>
-                            )}
-                        </div>
-                    </div>
-                </div>
-            )}
-
             {/* Refresh Character Modal */}
             {refreshCharacter && (
                 <div className="fixed inset-0 z-[70] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
@@ -640,6 +610,17 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
                 </div>
             )}
             {/* END CHANGE */}
+            
+            {/* Native Builder Modal */}
+            {showBuilder && (
+                <CharacterBuilder 
+                    onClose={() => setShowBuilder(false)}
+                    onComplete={(finalSheet) => {
+                        handleNewCharacter(finalSheet);
+                        setShowBuilder(false);
+                    }}
+                />
+            )}
 
         </div>
     );

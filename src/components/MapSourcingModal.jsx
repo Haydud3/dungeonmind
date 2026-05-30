@@ -222,8 +222,8 @@ const MapSourcingModal = ({ sourcingMap, onClose, campaignCode, skeleton, update
     if (!sourcingMap) return null;
 
     return (
-        <div className="fixed inset-0 z-[100] bg-black/90 flex flex-col items-center justify-center p-6 backdrop-blur-sm">
-            <div className="max-w-4xl w-full bg-slate-900 border border-slate-700 rounded-xl overflow-hidden shadow-2xl flex flex-col max-h-full relative">
+        <div className="fixed inset-0 z-[100] bg-black/80 flex flex-col items-center justify-center p-6 backdrop-blur-sm animate-in zoom-in-95">
+            <div className="max-w-4xl w-full bg-slate-900 border border-slate-700 rounded-2xl overflow-hidden shadow-2xl flex flex-col max-h-full relative">
                 
                 {/* Header */}
                 <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-800/50 shrink-0">

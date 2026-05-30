@@ -89,18 +89,17 @@ const FeaturesTab = ({ onDiceRoll, onLogAction, isOwner }) => {
                                     <div className="font-bold text-white text-lg flex items-center gap-2">
                                         {feat.name}
                                         {feat.uses && (
-                                            <div className="flex gap-1 items-center" onClick={(e) => e.stopPropagation()}>
-                                                {Array.from({ length: Math.min(5, feat.uses.max) }).map((_, ui) => (
-                                                    <div 
-                                                        key={ui} 
+                                            <div className="flex flex-wrap max-w-[120px] gap-1 items-center" onClick={(e) => e.stopPropagation()}>
+                                                {Array.from({ length: feat.uses.max }).map((_, ui) => (
+                                                    <div
+                                                        key={ui}
                                                         onClick={() => toggleUse(i)}
-                                                        className={`w-2.5 h-2.5 rounded-full border transition-colors ${ui < feat.uses.current ? 'bg-amber-500 border-amber-600' : 'bg-slate-900 border-slate-600'} ${isOwner ? 'cursor-pointer' : 'cursor-default opacity-80'}`} 
+                                                        className={`w-2.5 h-2.5 rounded-full border transition-colors ${ui < feat.uses.current ? 'bg-amber-500 border-amber-600' : 'bg-slate-900 border-slate-600'} ${isOwner ? 'cursor-pointer' : 'cursor-default opacity-80'}`}
                                                     />
                                                 ))}
-                                                {feat.uses.recovery && <span className="text-[9px] text-slate-500 uppercase tracking-widest ml-1 bg-slate-900 px-1 rounded border border-slate-700">{feat.uses.recovery}</span>}
+                                                {feat.uses.recovery && <span className="text-[9px] text-slate-500 uppercase tracking-widest ml-1 bg-slate-900 px-1 rounded border border-slate-700 w-full mt-1">{feat.uses.recovery}</span>}
                                             </div>
-                                        )}
-                                    </div>
+                                        )}                                    </div>
                                     <div className="text-[10px] text-amber-500 uppercase font-bold tracking-wider mb-2">{feat.source}</div>
                                 </div>
                                 <div className="flex gap-2">

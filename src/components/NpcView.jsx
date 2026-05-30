@@ -42,7 +42,10 @@ const NpcView = ({ data, setData, role, setChatInput, setView, onPossess, aiHelp
 // END CHANGE
     const [showCreationMenu, setShowCreationMenu] = useState(false);
     const [showAiCreator, setShowAiCreator] = useState(false);
-    const [viewMode, setViewMode] = useState('grid');
+    const [viewMode, setViewMode] = useState(() => localStorage.getItem('dm_npc_view_mode') || 'grid');
+    useEffect(() => {
+        localStorage.setItem('dm_npc_view_mode', viewMode);
+    }, [viewMode]);
     // START CHANGE: Add Forge State
     const [showForge, setShowForge] = useState(false);
     const [forgeTab, setForgeTab] = useState('generate');

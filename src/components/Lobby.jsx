@@ -5,6 +5,7 @@ import * as fb from '../firebase';
 import { doc, getDoc, setDoc, collection, getDocs, addDoc, deleteDoc, updateDoc, query, where, onSnapshot, deleteField, arrayRemove } from 'firebase/firestore';
 import SheetContainer from './character-sheet/SheetContainer';
 import DndBeyondImporter from './character-sheet/DndBeyondImporter';
+import CharacterBuilder from '../utils/CharacterBuilder';
 
 const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
     const { joinCampaign } = useNewCampaign();
@@ -18,6 +19,7 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
     const [newCampaignData, setNewCampaignData] = useState({ name: '', theme: 'Heroic Fantasy', coverImage: '' });
     const [isGeneratingImage, setIsGeneratingImage] = useState(false);
     const [showDndBeyondImport, setShowDndBeyondImport] = useState(false);
+    const [showBuilder, setShowBuilder] = useState(false);
     const [autoJoin, setAutoJoin] = useState(() => localStorage.getItem('dm_auto_join') === 'true');
     const [localDisplayName, setLocalDisplayName] = useState(user?.displayName || 'Adventurer');
     const [localPhotoUrl, setLocalPhotoUrl] = useState(user?.photoURL || '');
@@ -254,23 +256,21 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
 
     const handleCreateCharacter = async () => {
         if (!user) return;
-        const newChar = {
-            name: "New Adventurer",
-            class: "Fighter",
-            level: 1,
-            hp: { max: 10, current: 10, temp: 0 },
-            stats: { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 },
-            modifiers: { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 },
-            dateCreated: Date.now()
-        };
+        // Launch the Native Character Builder wizard
+        setShowBuilder(true);
+    };
+
+    const handleBuilderComplete = async (charData) => {
+        if (!user || !charData) return;
         try {
             const charRef = collection(fb.db, 'users', user.uid, 'characters');
+            const newChar = { ...charData, dateCreated: Date.now() };
             const docRef = await addDoc(charRef, newChar);
             const savedChar = { id: docRef.id, ...newChar };
             setCharacters(prev => [...prev, savedChar]);
-            setEditingCharacter(savedChar);
+            setShowBuilder(false);
         } catch(e) {
-            console.error("Failed to create character", e);
+            console.error("Failed to save built character", e);
         }
     };
 
@@ -1129,6 +1129,14 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                             />
                         </div>
                     </div>
+                )}
+
+                {/* Native Builder Modal */}
+                {showBuilder && (
+                    <CharacterBuilder 
+                        onClose={() => setShowBuilder(false)}
+                        onComplete={handleBuilderComplete}
+                    />
                 )}
 
             </main>

@@ -481,7 +481,7 @@ const SessionView = ({
                                             {/* END CHANGE */}
                                             {msg.type === 'chat-private' && <span className="text-[10px] text-purple-400 bg-purple-900/30 px-1 rounded border border-purple-500/30 flex items-center gap-1"><Icon name="lock" size={8}/> WHISPER</span>}
                                             {msg.type === 'ai-private' && <span className="text-[10px] text-cyan-400 bg-cyan-900/30 px-1 rounded border border-cyan-500/30 flex items-center gap-1"><Icon name="eye-off" size={8}/> SECRET</span>}
-                                            <span className="text-[10px] text-slate-500">{formatTime(msg.timestamp)}</span>
+                                            <span className="font-mono text-[10px] uppercase tracking-widest text-slate-500">{formatTime(msg.timestamp)}</span>
                                         </div>
                                     )}
                                     {/* END CHANGE */}

@@ -471,8 +471,8 @@ CRITICAL INSTRUCTION: Do NOT use placeholders like "Unknown". If there are no sp
     }
 
     return (
-        <div className="h-full bg-slate-900 flex flex-col p-6 overflow-hidden">
-            <div className="max-w-5xl w-full mx-auto flex flex-col h-full gap-6">
+        <div className="h-full bg-slate-950 flex flex-col p-0 overflow-hidden">
+            <div className="max-w-7xl w-full mx-auto flex flex-col h-full gap-6 p-6 md:p-10">
                 
                 {/* HEADER */}
                 <div className="shrink-0 flex justify-between items-center border-b border-slate-700 pb-4">
@@ -509,7 +509,7 @@ CRITICAL INSTRUCTION: Do NOT use placeholders like "Unknown". If there are no sp
                     {skeleton.chapters?.map((chapter, cIdx) => {
                         return (
                         <div key={chapter.id} 
-                             className={`bg-slate-800 border border-slate-700 rounded-xl overflow-hidden shadow-lg transition-colors ${draggedChapterIdx === cIdx ? 'opacity-50 border-amber-500/50' : ''}`}
+                             className={`bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-lg hover:shadow-xl hover:shadow-amber-900/10 transition-all ${draggedChapterIdx === cIdx ? 'opacity-50 border-amber-500/50' : 'hover:border-amber-500/50'}`}
                              draggable={draggedMapData === null}
                              onDragStart={(e) => handleChapterDragStart(e, cIdx)}
                              onDragOver={handleChapterDragOver}
@@ -545,7 +545,7 @@ CRITICAL INSTRUCTION: Do NOT use placeholders like "Unknown". If there are no sp
                                     const lore = map.lore || [];
                                     return (
                                         <div key={map.id} 
-                                             className={`bg-slate-900/40 border border-slate-700/50 rounded-lg overflow-hidden ${draggedMapData?.mapIdx === mIdx && draggedMapData?.chapterId === chapter.id ? 'opacity-50 border-amber-500/50' : ''}`}
+                                             className={`bg-slate-950/40 border border-slate-800 rounded-lg overflow-hidden shadow-sm hover:border-slate-700 transition-colors ${draggedMapData?.mapIdx === mIdx && draggedMapData?.chapterId === chapter.id ? 'opacity-50 border-amber-500/50' : ''}`}
                                              draggable
                                              onDragStart={(e) => handleMapDragStart(e, chapter.id, mIdx)}
                                              onDragOver={handleMapDragOver}
@@ -710,8 +710,8 @@ CRITICAL INSTRUCTION: Do NOT use placeholders like "Unknown". If there are no sp
             
             {/* MANUAL ADD/EDIT MODAL */}
             {addingToItem && (
-                <div className="fixed inset-0 z-[110] bg-black/80 flex items-center justify-center p-6 backdrop-blur-sm">
-                    <div className="bg-slate-900 border border-slate-700 rounded-xl p-6 shadow-2xl max-w-sm w-full">
+                <div className="fixed inset-0 z-[110] bg-black/80 flex items-center justify-center p-6 backdrop-blur-sm animate-in zoom-in-95">
+                    <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 shadow-2xl max-w-sm w-full">
                         <h3 className="text-lg font-bold text-amber-500 mb-4 flex items-center gap-2">
                             <Icon name={editingItemId ? 'edit-2' : 'plus-circle'} size={20} />
                             {editingItemId ? 'Edit' : 'Add'} {addingToItem.type.replace(/s$/, '')}

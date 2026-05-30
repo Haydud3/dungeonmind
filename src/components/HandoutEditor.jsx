@@ -222,7 +222,7 @@ const HandoutEditor = ({ onCancel, onLocalReveal }) => {
 
     return (
         <div className="fixed inset-0 z-[100] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-in zoom-in-95">
-            <div className="bg-slate-900 border border-slate-700 w-full max-w-5xl rounded-xl shadow-2xl flex flex-col h-[90vh] overflow-hidden">
+            <div className="bg-slate-900 border border-slate-700 w-full max-w-5xl rounded-2xl shadow-2xl flex flex-col h-[90vh] overflow-hidden">
                 
                 {/* HEADER */}
                 <div className="p-4 border-b border-slate-700 bg-slate-800 flex justify-between items-center">

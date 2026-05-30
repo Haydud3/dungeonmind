@@ -149,7 +149,7 @@ function DungeonMindApp() {
       
       // Only push if different (prevents loop)
       if (window.location.pathname !== url) {
-          window.history.pushState({ view: currentView }, '', url);
+          window.history.pushState({ view: currentView }, '', url + window.location.search);
       }
   }, [currentView, gameParams]);
 
@@ -361,10 +361,10 @@ function DungeonMindApp() {
                             <span class="text-xs text-slate-500 font-normal self-end">${options.actionType || 'Roll'}</span>
                         </div>
                         <div class="flex flex-wrap items-center gap-2 text-sm text-slate-300 mt-1 w-full">
-                            <span class="bg-slate-800 px-2 py-1 rounded text-xs font-mono break-all">${strFormula}</span>
-                            <span>➜</span>
-                            <span class="font-mono text-xs ${naturalClass} break-words">[${rollsStr}]${mod !== 0 ? (mod > 0 ? '+' : '') + mod : ''}</span>
-                            <span>=</span>
+                            <span class="bg-slate-800 px-2 py-1 rounded font-mono text-[10px] uppercase tracking-widest text-slate-400 break-all">${strFormula}</span>
+                            <span class="text-slate-500">➜</span>
+                            <span class="font-mono text-[10px] uppercase tracking-widest ${naturalClass} break-words">[${rollsStr}]${mod !== 0 ? (mod > 0 ? '+' : '') + mod : ''}</span>
+                            <span class="text-slate-500">=</span>
                             <span class="text-xl font-bold ${naturalClass.includes('green') ? 'text-green-400 glow' : naturalClass.includes('red') ? 'text-red-500' : 'text-white'}">${safeResult}</span>
                         </div>
                     </div>
@@ -657,8 +657,8 @@ function DungeonMindApp() {
        {!isCastMode && currentView !== 'map' && <Sidebar view={currentView} setView={setCurrentView} onExit={leaveCampaign} />}
        <main className="flex-1 flex flex-col overflow-hidden relative w-full h-full">
            {currentView !== 'map' && !isCastMode && (
-               <div className="shrink-0 bg-slate-900/95 backdrop-blur border-b border-slate-800 pt-safe z-50">
-                   <div className="h-14 flex items-center justify-between px-4">
+               <div className="shrink-0 bg-slate-950/80 backdrop-blur-md shadow-md pt-safe z-50">
+                   <div className="h-16 flex items-center justify-between px-6">
                        
                        {/* DM Join Requests Toasts */}
                        {joinRequests.length > 0 && effectiveRole === 'dm' && (
@@ -682,9 +682,12 @@ function DungeonMindApp() {
                            </div>
                        )}
 
-                       <div className="flex gap-2 items-center">
-                           <div className={`w-2 h-2 rounded-full shadow-[0_0_10px_rgba(34,197,94,0.5)] ${gameParams?.isOffline || !isConnected ? 'bg-slate-500' : 'bg-green-500'}`}></div>
-                           <span className="text-sm font-bold text-amber-500 truncate fantasy-font tracking-wide">{hideInviteCode ? '••••••' : gameParams?.code} • {possessedNpcId ? "POSSESSING NPC" : data?.campaign?.location}</span>
+                       <div className="flex gap-3 items-center">
+                           <div className="bg-slate-900 border border-slate-700 rounded-full px-3 py-1 flex items-center gap-2 shadow-inner">
+                               <div className={`w-2 h-2 rounded-full shadow-[0_0_10px_rgba(34,197,94,0.5)] ${gameParams?.isOffline || !isConnected ? 'bg-slate-500' : 'bg-green-500'}`}></div>
+                               <span className="text-xs font-bold text-slate-300 font-mono tracking-widest">{hideInviteCode ? '••••••' : gameParams?.code}</span>
+                           </div>
+                           <span className="text-lg text-amber-500 truncate fantasy-font tracking-wider">{possessedNpcId ? "POSSESSING NPC" : data?.campaign?.location}</span>
                        </div>
                        <div className="flex gap-2">
                            <button onClick={() => setShowHandoutCreator(true)} className="text-xs bg-amber-900/50 hover:bg-amber-800 px-3 py-1 rounded border border-amber-800 text-amber-200 flex items-center gap-2"><Icon name="scroll" size={14}/> <span>Handouts</span></button>

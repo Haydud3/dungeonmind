@@ -322,7 +322,10 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
   const [fitTrigger, setFitTrigger] = useState(0);
 
   // Added States for List View and 5e API
-  const [actorViewMode, setActorViewMode] = useState('grid');
+  const [actorViewMode, setActorViewMode] = useState(() => localStorage.getItem('dm_actor_view_mode') || 'grid');
+  useEffect(() => {
+      localStorage.setItem('dm_actor_view_mode', actorViewMode);
+  }, [actorViewMode]);
   const [showCompendium, setShowCompendium] = useState(false);
   const [compendiumSearch, setCompendiumSearch] = useState("");
   const [compendiumResults, setCompendiumResults] = useState([]);
@@ -2860,10 +2863,15 @@ ${pasteTextContent}`;
                                   if (onOpenCast) onOpenCast();
                                   else {
                                       const url = new URL(window.location.href);
-                                      if (url.hash) {
+                                      url.searchParams.set('cast', 'true');
+                                      if (campaignCode) {
+                                          url.searchParams.set('join', campaignCode);
+                                      }
+                                      
+                                      // If using hash routing, also append there just in case,
+                                      // though Lobby strictly checks window.location.search for 'join'.
+                                      if (url.hash && !url.hash.includes('cast=true')) {
                                           url.hash += url.hash.includes('?') ? '&cast=true' : '?cast=true';
-                                      } else {
-                                          url.searchParams.set('cast', 'true');
                                       }
                                       window.open(url.toString(), 'DungeonMindCast');
                                   }

@@ -322,6 +322,33 @@ export const useCharacterStore = create((set, get) => ({
         const tempChar = { ...state.character, inventory: newInv };
         return { character: tempChar, isDirty: true };
     }),
+
+    useItemCharge: (index, amount = 1) => set((state) => {
+        if (!state.character || !state.character.inventory[index]) return {};
+        const newInv = [...state.character.inventory];
+        const item = newInv[index];
+        
+        if (item.limitedUse) {
+            // Ensure numberUsed doesn't exceed maxUses
+            item.limitedUse.numberUsed = Math.min(item.limitedUse.maxUses, (item.limitedUse.numberUsed || 0) + amount);
+        }
+        
+        const tempChar = { ...state.character, inventory: newInv };
+        return { character: tempChar, isDirty: true };
+    }),
+    
+    resetItemCharges: (index) => set((state) => {
+        if (!state.character || !state.character.inventory[index]) return {};
+        const newInv = [...state.character.inventory];
+        const item = newInv[index];
+        
+        if (item.limitedUse) {
+            item.limitedUse.numberUsed = 0;
+        }
+        
+        const tempChar = { ...state.character, inventory: newInv };
+        return { character: tempChar, isDirty: true };
+    }),
     // END CHANGE
 
     markSaved: () => set({ isDirty: false }),

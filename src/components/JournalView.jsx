@@ -73,8 +73,8 @@ const JournalView = ({ role, userId, aiHelper, onClose }) => {
 
     // --- CHANGES: Simplified List View ---
     return (
-        <div className="h-full bg-slate-900 p-4 overflow-y-auto custom-scroll pb-32">
-            <div className="w-full max-w-5xl mx-auto space-y-4">
+        <div className="h-full bg-slate-950 overflow-y-auto custom-scroll pb-32">
+            <div className="w-full max-w-7xl mx-auto p-6 md:p-10 space-y-4">
                 <div className="flex justify-between items-center mb-6">
                     <h2 className="text-2xl text-amber-500 fantasy-font">Journal</h2>
                     <div className="flex items-center gap-2">
@@ -92,7 +92,7 @@ const JournalView = ({ role, userId, aiHelper, onClose }) => {
                         <div 
                             key={p.id} 
                             onClick={() => setActivePageId(p.id)} 
-                            className="bg-slate-800 border border-slate-700 p-4 rounded-lg cursor-pointer hover:border-amber-500/50 hover:bg-slate-700 transition-all shadow-sm group"
+                            className="bg-slate-900 border border-slate-800 p-4 rounded-xl cursor-pointer hover:border-amber-500/50 hover:shadow-xl hover:shadow-amber-900/10 transition-all hover:-translate-y-1 shadow-lg group"
                         >
                             <h3 className="font-bold text-slate-200 text-lg group-hover:text-amber-400">
                                 {p.title || "Untitled Entry"}

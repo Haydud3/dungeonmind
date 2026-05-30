@@ -17,7 +17,7 @@ const CORE_COMBAT_ACTIONS = [
 
 // UPDATE: Added isOwner
 const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
-    const { character, updateInfo, toggleCondition } = useCharacterStore();
+    const { character, updateInfo, toggleCondition, useItemCharge } = useCharacterStore();
     const [showAdd, setShowAdd] = useState(false);
     const [newAction, setNewAction] = useState({ name: "", hit: "", dmg: "", type: "Action", category: "Attack", notes: "" });
     
@@ -29,12 +29,19 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
     
     // A. Inventory (Smart Sync: Only Equipped & Combat-Ready Items)
     const inventoryActions = (character?.inventory || [])
-        .filter(item => item.combat && item.equipped) // Added item.equipped requirement
-        .map(item => ({
+        .map((item, index) => ({ item, index }))
+        .filter(({ item }) => item.combat && item.equipped) // Added item.equipped requirement
+        .map(({ item, index }) => ({
             ...item.combat,
             name: item.name,
             id: `item-${item.name}-${Date.now()}`, // Unique ID generation
             source: "item",
+            itemIndex: index, // To map back to the store
+            uses: item.limitedUse && item.limitedUse.maxUses > 0 ? {
+                max: item.limitedUse.maxUses,
+                current: item.limitedUse.maxUses - (item.limitedUse.numberUsed || 0),
+                recovery: item.limitedUse.resetTypeDescription
+            } : null,
             notes: item.combat.notes || item.description
         }));
 
@@ -91,14 +98,29 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
 
     // --- 4. HANDLERS ---
     const toggleUse = (actionId) => {
-        // Only works for custom actions
-        const newActions = [...(character?.customActions || [])];
-        const idx = newActions.findIndex(a => `custom-${a.name}` === actionId);
-        if (idx > -1 && newActions[idx].uses) {
-            const uses = newActions[idx].uses;
-            if (uses.current > 0) uses.current--;
-            else uses.current = uses.max;
-            updateInfo('customActions', newActions);
+        const action = allActions.find(a => a.id === actionId);
+        if (!action) return;
+
+        if (action.source === 'custom') {
+            const newActions = [...(character?.customActions || [])];
+            const idx = newActions.findIndex(a => `custom-${a.name}` === actionId);
+            if (idx > -1 && newActions[idx].uses) {
+                const uses = newActions[idx].uses;
+                if (uses.current > 0) uses.current--;
+                else uses.current = uses.max;
+                updateInfo('customActions', newActions);
+            }
+        } else if (action.source === 'item' && action.itemIndex !== undefined) {
+            if (action.uses && action.uses.current > 0) {
+                useItemCharge(action.itemIndex, 1);
+            } else {
+                // If it's at 0, don't reset it here, it might be confusing. 
+                // Wait, if they click the last empty bubble, should it reset? 
+                // Let's implement reset in the inventory tab, or just loop back
+                // To keep it simple, if current is 0, we'll reset it to max.
+                const resetItemCharges = useCharacterStore.getState().resetItemCharges;
+                if (resetItemCharges) resetItemCharges(action.itemIndex);
+            }
         }
     };
 
@@ -244,8 +266,8 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
                                 Actually, we should allow viewing uses but prevent clicking.
                             */}
                             {action.uses && (
-                                <div className="flex gap-1 mr-1" onClick={(e) => e.stopPropagation()}>
-                                    {Array.from({ length: Math.min(5, action.uses.max) }).map((_, i) => (
+                                <div className="flex flex-wrap justify-end max-w-[80px] gap-1 mr-1" onClick={(e) => e.stopPropagation()}>
+                                    {Array.from({ length: action.uses.max }).map((_, i) => (
                                         <div 
                                             key={i} 
                                             // UPDATE: Prevent toggle if not owner

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useCharacterStore } from '../../../stores/useCharacterStore';
 import Icon from '../../Icon';
+import SpellSlotTracker from '../SpellSlotTracker';
 
 // UPDATE: Added isOwner to destructuring
 const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate, isOwner, onUse }) => {
@@ -68,12 +69,12 @@ const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate, isOwner, onUse })
 
         if (type === 'hit') {
             if (String(spell.hit).includes('DC')) {
-                onLogAction && onLogAction(`
-                    <div class="bg-slate-800 p-2 rounded border-l-4 border-cyan-600">
-                        <div class="font-bold text-cyan-400">${character?.name || 'Character'} forces a Saving Throw!</div>
-                        <div class="text-sm text-slate-300 mt-1">${spell.name} requires a <span class="font-bold text-white">${spell.hit}</span> save.</div>
-                    </div>
-                `);
+                onDiceRoll('1d0', { 
+                    alias: spell.name, 
+                    description: `Requires a ${spell.hit} save.`,
+                    actionType: 'use',
+                    characterName: character.name
+                });
                 return;
             }
 
@@ -111,6 +112,17 @@ const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate, isOwner, onUse })
                 });
             }
         }
+    };
+
+    const handleUpdateSlots = (level, newCurrent) => {
+        const updatedSpellSlots = {
+            ...character.spellSlots,
+            [level]: {
+                ...character.spellSlots[level],
+                current: newCurrent
+            }
+        };
+        updateInfo('spellSlots', updatedSpellSlots);
     };
 
     // --- EDITING ---
@@ -344,6 +356,9 @@ const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate, isOwner, onUse })
                     <button onClick={() => setShowSrd(true)} className="shrink-0 w-10 h-10 rounded-full flex items-center justify-center bg-slate-700 hover:bg-green-600 text-white border border-slate-600 ml-2 shadow-lg"><Icon name="plus" size={18}/></button>
                 )}
             </div>
+
+            {/* Spell Slots Tracker */}
+            {isOwner && <SpellSlotTracker spellSlots={character.spellSlots} onUpdateSlots={handleUpdateSlots} />}
 
             {/* Spell List */}
             <div className="space-y-2">

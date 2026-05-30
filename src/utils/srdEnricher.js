@@ -163,7 +163,13 @@ const fetchApiData = async (category, name) => {
             const searchRes = await fetch(`${API_BASE}/api/${category}?name=${encodeURIComponent(name)}`);
             const searchData = await searchRes.json();
             if (searchData.count > 0) {
-                res = await fetch(`${API_BASE}${searchData.results[0].url}`);
+                // Prevent API full-text search hallucinations by requiring exact name match
+                const exactMatch = searchData.results.find(r => r.name.toLowerCase() === name.toLowerCase());
+                if (exactMatch) {
+                    res = await fetch(`${API_BASE}${exactMatch.url}`);
+                } else {
+                    return null;
+                }
             } else {
                 return null;
             }
@@ -286,9 +292,11 @@ export const enrichCharacter = async (charData) => {
             if (manualData) {
                 // If it's an attack roll based spell, calc hit
                 let hitBonus = manualData.hit;
-                if (hitBonus === "+Spell" || hitBonus === "") {
-                    // If the manual data implies a hit but no specific number, calc it
-                    if(manualData.desc.toLowerCase().includes("spell attack")) hitBonus = `+${spellAttack}`;
+                if (hitBonus === "+Spell") {
+                    hitBonus = `+${spellAttack}`;
+                } else if (hitBonus === "") {
+                    if (manualData.desc.toLowerCase().includes("spell attack")) hitBonus = `+${spellAttack}`;
+                    else hitBonus = spell.hit || "";
                 }
 
                 const actionType = manualData.type || detectActionType(spell.name, manualData.desc, manualData.time);
@@ -302,14 +310,14 @@ export const enrichCharacter = async (charData) => {
                             category: "Spell",
                             type: actionType,
                             hit: hitBonus,
-                            dmg: manualData.dmg,
+                            dmg: manualData.dmg || spell.dmg || "",
                             range: manualData.range,
                             notes: manualData.desc
                         });
                     }
                 }
 
-                return { ...spell, ...manualData, hit: hitBonus };
+                return { ...spell, ...manualData, hit: hitBonus, dmg: manualData.dmg || spell.dmg || "" };
             }
 
             // FALLBACK TO API
@@ -336,7 +344,11 @@ export const enrichCharacter = async (charData) => {
                     }
                 }
 
-                if (apiData.attack_type) finalHit = `+${spellAttack}`;
+                if (apiData.attack_type) {
+                    finalHit = `+${spellAttack}`;
+                } else if (apiData.dc && !finalHit) {
+                    finalHit = `DC ${newChar.spellSaveDc || (8 + spellAttack)} ${apiData.dc.dc_type?.name?.toUpperCase()}`;
+                }
                 if (apiData.casting_time) finalTime = apiData.casting_time;
                 if (apiData.desc) finalDesc = apiData.desc.join('\n\n');
                 if (apiData.range) finalRange = apiData.range;

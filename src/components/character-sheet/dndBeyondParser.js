@@ -304,7 +304,12 @@ export const parseDndBeyondJson = (json) => {
             description: parseDndBeyondSnippets(def.description || def.snippet || '', characterSheet, def),
             equipped: item.equipped || false,
             weight: def.weight || 0,
-            combat: combat // Maps straight to ActionsTab
+            combat: combat, // Maps straight to ActionsTab
+            limitedUse: item.limitedUse ? {
+                maxUses: item.limitedUse.maxUses || 0,
+                numberUsed: item.limitedUse.numberUsed || 0,
+                resetTypeDescription: item.limitedUse.resetTypeDescription || ''
+            } : null
         };
     });
     
@@ -410,7 +415,11 @@ export const parseDndBeyondJson = (json) => {
             }
         }
 
-        let hitString = def.requiresAttackRoll ? characterSheet.spellAttackBonus : "";
+        let hitString = "";
+        if (def.requiresAttackRoll) {
+            const sab = characterSheet.spellAttackBonus || 0;
+            hitString = sab >= 0 ? `+${sab}` : `${sab}`;
+        }
         if (def.requiresSavingThrow && def.saveDcAbilityId) hitString = `DC ${characterSheet.spellSaveDc} ${ABILITY_ID_MAP[def.saveDcAbilityId]?.toUpperCase()}`;
 
         const rangeStr = typeof def.range === 'object' ? (def.range?.rangeValue ? `${def.range.rangeValue} ft` : (def.range?.origin || 'Self')) : (def.range || 'Self');
