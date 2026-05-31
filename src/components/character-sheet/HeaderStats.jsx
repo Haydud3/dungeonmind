@@ -53,7 +53,7 @@ const HeaderStats = ({ character: propCharacter, onDiceRoll, onLogAction, onBack
                     <div className="flex items-center gap-2">
                         <input type="file" accept="image/*" className="hidden" ref={fileInputRef} onChange={handleAvatarUpload} />
                         <button onClick={() => fileInputRef.current?.click()} className="w-8 h-8 rounded-full bg-slate-700 overflow-hidden flex-shrink-0 relative"> {/* Avatar button */}
-                            <img src={character.image} className="w-full h-full object-cover" alt="Character" />
+                            <img src={character.image} className="w-full h-full object-cover" alt="Character" referrerPolicy="no-referrer" />
                         </button>
                         {/* HP Input */}
                         <div className="flex flex-col items-center">
@@ -98,8 +98,8 @@ const HeaderStats = ({ character: propCharacter, onDiceRoll, onLogAction, onBack
                     </div>
                     <div className="flex flex-col items-center bg-slate-800 px-2 py-1 rounded">
                         <span className="text-[9px] text-slate-500 font-bold">INIT</span>
-                        <div className="text-sm font-bold text-amber-500">{init >= 0 ? `+${init}` : init}</div>
-                        <button onClick={() => onDiceRoll(`1d20+${init}`, { alias: 'Initiative', characterName: character.name })} className="text-[8px] text-slate-500 hover:text-white mt-0.5">
+                        <div className="text-sm font-bold text-amber-500 cursor-pointer hover:text-amber-400 hover:underline" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDiceRoll && onDiceRoll(`1d20${init >= 0 ? '+' : ''}${init}`, { alias: 'Initiative', characterName: character.name }); }} title="Roll Initiative">{init >= 0 ? `+${init}` : init}</div>
+                        <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDiceRoll && onDiceRoll(`1d20${init >= 0 ? '+' : ''}${init}`, { alias: 'Initiative', characterName: character.name }); }} className="text-[8px] text-slate-500 hover:text-white mt-0.5">
                             Roll
                         </button>
                     </div>
@@ -128,7 +128,8 @@ const HeaderStats = ({ character: propCharacter, onDiceRoll, onLogAction, onBack
                         <button 
                             onClick={async () => {
                                 if (!onDiceRoll) return;
-                                const roll = await onDiceRoll(20, { alias: 'Death Save', characterName: character.name });
+                                const r = await onDiceRoll(20, { alias: 'Death Save', characterName: character.name });
+                                const roll = (r && typeof r === 'object') ? (r.natural ?? r.naturalRoll ?? r.total ?? r.result) : r;
                                 if (roll === 1) updateDeathSaves('crit_fail');
                                 else if (roll === 20) updateDeathSaves('success'); // Usually 2 successes, but let's just trigger standard success or let user handle healing manually. Wait, rules say 20 is regain 1 HP, we handled this in store optionally or manually.
                                 else if (roll >= 10) updateDeathSaves('success');
@@ -183,7 +184,7 @@ const HeaderStats = ({ character: propCharacter, onDiceRoll, onLogAction, onBack
                             return (
                                 <div key={s} className="bg-slate-800 p-1.5 rounded text-center flex flex-col items-center relative">
                                     <button
-                                        onClick={() => onDiceRoll && onDiceRoll(`1d20${mod >= 0 ? '+' : ''}${mod}`, { alias: `${s.toUpperCase()} Check`, characterName: character.name })}
+                                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDiceRoll && onDiceRoll(`1d20${mod >= 0 ? '+' : ''}${mod}`, { alias: `${s.toUpperCase()} Check`, characterName: character.name }); }}
                                         className="text-[9px] uppercase font-bold text-amber-500 hover:text-amber-400 cursor-pointer hover:underline"
                                         title={`Roll ${s.toUpperCase()} Check`}
                                     >
@@ -195,7 +196,13 @@ const HeaderStats = ({ character: propCharacter, onDiceRoll, onLogAction, onBack
                                         onChange={e => updateStat(s, parseInt(e.target.value) || 0)}
                                         type="number"
                                     />
-                                    <div className="text-[10px] font-bold text-slate-400 mt-0.5">{mod >= 0 ? '+' : ''}{mod}</div>
+                                    <button
+                                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDiceRoll && onDiceRoll(`1d20${mod >= 0 ? '+' : ''}${mod}`, { alias: `${s.toUpperCase()} Check`, characterName: character.name }); }}
+                                        className="text-[10px] font-bold text-slate-400 mt-0.5 hover:text-amber-400 cursor-pointer hover:underline"
+                                        title={`Roll ${s.toUpperCase()} Check`}
+                                    >
+                                        {mod >= 0 ? '+' : ''}{mod}
+                                    </button>
                                 </div>
                             );
                         })}

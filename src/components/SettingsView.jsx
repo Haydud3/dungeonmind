@@ -174,7 +174,6 @@ const SettingsView = ({
     const handleSafeExit = () => {
         if (window.confirm("Disconnect from session?")) {
             localStorage.removeItem('dm_last_session'); // Prevent auto-join loop
-            sessionStorage.removeItem('dm_auto_join_attempted');
             if (onExit) onExit(); // Now exit the view
         }
     };

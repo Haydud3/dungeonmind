@@ -4,6 +4,7 @@ import Icon from './Icon';
 const DiceTray = ({ diceLog = [], handleDiceRoll, onClose }) => {
     const [pool, setPool] = useState({ 4: 0, 6: 0, 8: 0, 10: 0, 12: 0, 20: 0, 100: 0 });
     const [modifier, setModifier] = useState(0);
+    const [advMode, setAdvMode] = useState('normal'); // 'normal', 'adv', 'dis'
 
     const addDie = (sides) => {
         setPool(prev => ({ ...prev, [sides]: prev[sides] + 1 }));
@@ -16,15 +17,22 @@ const DiceTray = ({ diceLog = [], handleDiceRoll, onClose }) => {
     const clearPool = () => {
         setPool({ 4: 0, 6: 0, 8: 0, 10: 0, 12: 0, 20: 0, 100: 0 });
         setModifier(0);
+        setAdvMode('normal');
     };
 
     const handleRollClick = () => {
         let formulaParts = [];
+        let hasD20 = false;
+        
         Object.entries(pool).forEach(([sides, count]) => {
-            if (count > 0) formulaParts.push(`${count}d${sides}`);
+            if (count > 0) {
+                if (sides === '20') hasD20 = true;
+                formulaParts.push(`${count}d${sides}`);
+            }
         });
 
         if (formulaParts.length === 0) {
+            hasD20 = true;
             formulaParts.push('1d20');
         }
 
@@ -33,7 +41,27 @@ const DiceTray = ({ diceLog = [], handleDiceRoll, onClose }) => {
             formula += modifier > 0 ? ` + ${modifier}` : ` - ${Math.abs(modifier)}`;
         }
 
-        handleDiceRoll(formula, { alias: 'Custom Roll' });
+        // Phase 1: Standardizing the Dice Formula for Adv/Dis
+        let rollAlias = 'Custom Roll';
+        let hasAnyDice = formulaParts.some(part => part.includes('d'));
+
+        if (hasAnyDice && advMode !== 'normal') {
+            if (advMode === 'adv') {
+                formula = formula.replace(/(\d*)d(\d+)/g, (match, p1, p2) => {
+                    const count = parseInt(p1) || 1;
+                    return `${Math.max(2, count + 1)}d${p2}kh${count}`;
+                });
+                rollAlias = 'Advantage Roll';
+            } else if (advMode === 'dis') {
+                formula = formula.replace(/(\d*)d(\d+)/g, (match, p1, p2) => {
+                    const count = parseInt(p1) || 1;
+                    return `${Math.max(2, count + 1)}d${p2}kl${count}`;
+                });
+                rollAlias = 'Disadvantage Roll';
+            }
+        }
+
+        handleDiceRoll(formula, { alias: rollAlias, advMode: advMode !== 'normal' ? advMode : undefined });
         clearPool();
     };
 
@@ -71,6 +99,28 @@ const DiceTray = ({ diceLog = [], handleDiceRoll, onClose }) => {
                 </div>
 
                 {/* Modifier & Controls */}
+                
+                <div className="flex bg-slate-900 border border-slate-700/50 rounded-lg overflow-hidden mb-3 shadow-inner">
+                    <button 
+                        onClick={() => setAdvMode('dis')} 
+                        className={`flex-1 py-1.5 text-[10px] uppercase font-bold tracking-widest transition-colors ${advMode === 'dis' ? 'bg-red-900/50 text-red-400' : 'text-slate-500 hover:bg-slate-800'}`}
+                    >
+                        Disadvantage
+                    </button>
+                    <button 
+                        onClick={() => setAdvMode('normal')} 
+                        className={`flex-1 py-1.5 text-[10px] uppercase font-bold tracking-widest transition-colors border-x border-slate-700/50 ${advMode === 'normal' ? 'bg-slate-700 text-white shadow-md' : 'text-slate-500 hover:bg-slate-800'}`}
+                    >
+                        Normal
+                    </button>
+                    <button 
+                        onClick={() => setAdvMode('adv')} 
+                        className={`flex-1 py-1.5 text-[10px] uppercase font-bold tracking-widest transition-colors ${advMode === 'adv' ? 'bg-green-900/50 text-green-400' : 'text-slate-500 hover:bg-slate-800'}`}
+                    >
+                        Advantage
+                    </button>
+                </div>
+
                 <div className="mb-4 space-y-3">
                     <div className="flex items-center justify-between bg-slate-900/50 p-3 rounded-lg border border-slate-700/50">
                         <span className="text-xs font-bold text-slate-500 tracking-wider">MODIFIER</span>
@@ -110,19 +160,99 @@ const DiceTray = ({ diceLog = [], handleDiceRoll, onClose }) => {
                                 </div>
                             ) : (
                                 <>
-                                    <div className="flex justify-between items-baseline mb-1">
-                                        <span className="font-bold text-slate-300">{log.die}</span>
-                                        <span className="text-[10px] text-slate-500 truncate ml-2">{log.formulaDisplay}</span>
-                                    </div>
-                                    <div className="flex justify-between items-center">
-                                        <div className="flex items-center gap-1 text-slate-400 text-xs flex-wrap">
-                                            <span className={Number.isFinite(log.natural) && log.natural == 20 && log.die.includes('d20') && log.die.startsWith('1d20') ? "text-green-400 font-bold" : Number.isFinite(log.natural) && log.natural == 1 && log.die.includes('d20') && log.die.startsWith('1d20') ? "text-red-400 font-bold" : "break-all"}>
-                                                [{log.rolls ? log.rolls.join(' + ') : (Number.isFinite(log.natural) ? log.natural : 0)}]
-                                            </span>
-                                            {log.mod !== undefined && log.mod !== 0 && <span>{log.mod >= 0 ? '+' : ''}{log.mod}</span>}
-                                        </div>
-                                        <span className="text-lg font-bold text-amber-500 whitespace-nowrap ml-2">= {Number.isFinite(log.result) ? log.result : 0}</span>
-                                    </div>
+                                    {(() => {
+                                        const getRollVal = (r) => {
+                                            if (r === null || r === undefined) return 0;
+                                            if (typeof r === 'object') return Number(r.value ?? r.total ?? r.result ?? 0);
+                                            return Number(r);
+                                        };
+                                        const activeNatural = log.natural ?? log.naturalRoll ?? 0;
+                                        const activeTotal = log.result ?? log.total ?? 0;
+                                        let rollsNode = log.rolls ? log.rolls.map(r => getRollVal(r)).join(' + ') : activeNatural;
+                                        let finalNatural = activeNatural;
+                                        let finalTotal = activeTotal;
+
+                                        let inferredAdvMode = log.advMode;
+                                        if ((!inferredAdvMode || inferredAdvMode === 'normal') && log.alias && typeof log.alias === 'string') {
+                                            const lowerAlias = log.alias.toLowerCase();
+                                            if (lowerAlias.includes('advantage') && !lowerAlias.includes('disadvantage')) inferredAdvMode = 'adv';
+                                            else if (lowerAlias.includes('disadvantage')) inferredAdvMode = 'dis';
+                                        }
+
+                                        const formulaStr = String(log.formulaDisplay || '') + ' ' + String(log.formula || '') + ' ' + String(log.die || '');
+                                        const lowerFormula = formulaStr.toLowerCase();
+                                        if (lowerFormula.includes('kh1')) inferredAdvMode = 'adv';
+                                        if (lowerFormula.includes('kl1')) inferredAdvMode = 'dis';
+
+                                        if (inferredAdvMode && inferredAdvMode !== 'normal' && log.rolls && log.rolls.length >= 2) {
+                                            const r1 = getRollVal(log.rolls[0]);
+                                            const r2 = getRollVal(log.rolls[1]);
+                                            let keptIdx = (inferredAdvMode === 'adv') ? (r1 >= r2 ? 0 : 1) : (r1 <= r2 ? 0 : 1);
+                                            const droppedIdx = keptIdx === 0 ? 1 : 0;
+                                            
+                                            rollsNode = (
+                                                <>
+                                                    {log.rolls.map((rObj, i) => {
+                                                        const r = getRollVal(rObj);
+                                                        return (
+                                                        <React.Fragment key={i}>
+                                                            {i === droppedIdx ? (
+                                                                <span className="opacity-40 line-through decoration-red-500">{r}</span>
+                                                            ) : i === keptIdx ? (
+                                                                <span className="text-amber-400 font-bold">{r}</span>
+                                                            ) : (
+                                                                <span>{r}</span>
+                                                            )}
+                                                            {i < log.rolls.length - 1 && <span className="text-slate-500 mx-1">, </span>}
+                                                        </React.Fragment>
+                                                        );
+                                                    })}
+                                                </>
+                                            );
+                                            
+                                            finalTotal = activeTotal - getRollVal(log.rolls[droppedIdx]);
+                                            finalNatural = getRollVal(log.rolls[keptIdx]);
+                                        }
+
+                                        const isCrit = finalNatural === 20 && log.die?.includes('d20');
+                                        const isFumble = finalNatural === 1 && log.die?.includes('d20');
+                                        
+                                        return (
+                                            <>
+                                                <div className="flex justify-between items-baseline mb-1">
+                                                    <span className="font-bold text-slate-300">{log.die}</span>
+                                                    <span className="text-[10px] text-slate-500 truncate ml-2">{log.formulaDisplay}</span>
+                                                </div>
+                                                <div className="flex justify-between items-center">
+                                                    <div className="flex items-center gap-1 text-slate-400 text-xs flex-wrap">
+                                                        <span className={isCrit ? "text-green-400 font-bold" : isFumble ? "text-red-400 font-bold" : "break-all"}>
+                                                            [{rollsNode}]
+                                                        </span>
+                                                        {(log.mod ?? log.modifier ?? 0) !== 0 && <span>{(log.mod ?? log.modifier ?? 0) >= 0 ? '+' : ''}{(log.mod ?? log.modifier ?? 0)}</span>}
+                                                    </div>
+                                                    <span className="text-lg font-bold text-amber-500 whitespace-nowrap ml-2">= {Number.isFinite(finalTotal) ? finalTotal : 0}</span>
+                                                </div>
+                                                {(() => {
+                                                    let isParsedSave = false;
+                                                    let parsedSaveDc = undefined;
+                                                    if (log.alias && typeof log.alias === 'string' && log.alias.toLowerCase().includes('save vs dc')) {
+                                                        isParsedSave = true;
+                                                        const match = log.alias.match(/DC\s*(\d+)/i);
+                                                        if (match) parsedSaveDc = parseInt(match[1], 10);
+                                                    }
+                                                    const actualSaveDc = log.saveDc !== undefined ? log.saveDc : parsedSaveDc;
+                                                    if ((log.actionType === 'save' || log.isSave || isParsedSave) && actualSaveDc !== undefined) {
+                                                        return (
+                                                            <div className={`mt-2 font-bold text-center w-full py-1 text-[10px] rounded ${finalTotal >= actualSaveDc ? 'bg-green-900/40 text-green-400 border border-green-500/30' : 'bg-red-900/40 text-red-400 border border-red-500/30'}`}>
+                                                                {finalTotal >= actualSaveDc ? '✅ (Success)' : '❌ (Fail)'}
+                                                            </div>
+                                                        );
+                                                    }
+                                                    return null;
+                                                })()}
+                                            </>
+                                        );
+                                    })()}
                                 </>
                             )}
                         </div>

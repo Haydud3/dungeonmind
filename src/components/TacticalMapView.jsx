@@ -3120,7 +3120,7 @@ ${pasteTextContent}`;
                                   className="aspect-square bg-slate-800 rounded-lg border border-slate-700 overflow-hidden cursor-grab active:cursor-grabbing hover:border-green-500 transition-colors relative group shadow-lg"
                               >
                                   {p.image ? (
-                                    <img src={getProxiedImageUrl(p.image)} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" alt={p.name} draggable={false} />
+                                    <img src={getProxiedImageUrl(p.image)} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" alt={p.name} draggable={false} referrerPolicy="no-referrer" />
                                   ) : (
                                     <div className="w-full h-full flex items-center justify-center font-bold text-3xl text-slate-600 bg-slate-700 opacity-80 group-hover:opacity-100 transition-opacity">{p.name?.[0] || '?'}</div>
                                   )}
@@ -3137,7 +3137,7 @@ ${pasteTextContent}`;
                                   className="flex items-center gap-3 bg-slate-800 rounded-lg border border-slate-700 p-2 cursor-grab active:cursor-grabbing hover:border-green-500 transition-colors group shadow-lg"
                               >
                                   <div className="w-10 h-10 rounded bg-slate-700 shrink-0 overflow-hidden relative">
-                                      {p.image ? <img src={getProxiedImageUrl(p.image)} className="w-full h-full object-cover" draggable={false} /> : <div className="w-full h-full flex items-center justify-center font-bold text-slate-500">{p.name?.[0] || '?'}</div>}
+                                      {p.image ? <img src={getProxiedImageUrl(p.image)} className="w-full h-full object-cover" draggable={false} referrerPolicy="no-referrer" /> : <div className="w-full h-full flex items-center justify-center font-bold text-slate-500">{p.name?.[0] || '?'}</div>}
                                   </div>
                                   <div className="flex-1 min-w-0 font-bold text-sm text-slate-200 truncate">{p.name}</div>
                                   {/* <button onClick={(e) => { e.stopPropagation(); handleAddActorToCombat(p, false); }} className="opacity-0 group-hover:opacity-100 p-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded shadow-lg transition-all" title="Add to Initiative Tracker"><Icon name="plus" size={14}/></button> */}
@@ -3167,7 +3167,7 @@ ${pasteTextContent}`;
                                   className="aspect-square bg-slate-800 rounded-lg border border-slate-700 overflow-hidden cursor-grab active:cursor-grabbing hover:border-red-500 transition-colors relative group shadow-lg"
                               >
                                   {n.image ? (
-                                    <img src={getProxiedImageUrl(n.image)} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" alt={n.name} draggable={false} />
+                                    <img src={getProxiedImageUrl(n.image)} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" alt={n.name} draggable={false} referrerPolicy="no-referrer" />
                                   ) : (
                                     <div className="w-full h-full flex items-center justify-center font-bold text-3xl text-slate-600 bg-slate-700 opacity-80 group-hover:opacity-100 transition-opacity">{n.name?.[0] || '?'}</div>
                                   )}
@@ -3184,7 +3184,7 @@ ${pasteTextContent}`;
                                   className="flex items-center gap-3 bg-slate-800 rounded-lg border border-slate-700 p-2 cursor-grab active:cursor-grabbing hover:border-red-500 transition-colors group shadow-lg"
                               >
                                   <div className="w-10 h-10 rounded bg-slate-700 shrink-0 overflow-hidden relative">
-                                      {n.image ? <img src={getProxiedImageUrl(n.image)} className="w-full h-full object-cover" draggable={false} /> : <div className="w-full h-full flex items-center justify-center font-bold text-slate-500">{n.name?.[0] || '?'}</div>}
+                                      {n.image ? <img src={getProxiedImageUrl(n.image)} className="w-full h-full object-cover" draggable={false} referrerPolicy="no-referrer" /> : <div className="w-full h-full flex items-center justify-center font-bold text-slate-500">{n.name?.[0] || '?'}</div>}
                                   </div>
                                   <div className="flex-1 min-w-0 font-bold text-sm text-slate-200 truncate">{n.name}</div>
                                   {/* <button onClick={(e) => { e.stopPropagation(); handleAddActorToCombat(n, true); }} className="opacity-0 group-hover:opacity-100 p-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded shadow-lg transition-all" title="Add to Initiative Tracker"><Icon name="plus" size={14}/></button> */}

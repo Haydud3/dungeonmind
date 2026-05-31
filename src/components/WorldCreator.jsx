@@ -37,7 +37,7 @@ const ResolvedMapImage = ({ url, name, className }) => {
         return <div className={`flex items-center justify-center bg-slate-800 absolute inset-0 w-full h-full`}><Icon name="loader" className="animate-spin text-slate-600" size={32} /></div>;
     }
     if (resolvedUrl || url) {
-        return <img src={resolvedUrl || url} className={className} alt={name} />;
+        return <img src={resolvedUrl || url} className={className} alt={name} referrerPolicy="no-referrer" />;
     }
     return <div className={`flex items-center justify-center bg-slate-800 text-slate-600 absolute inset-0 w-full h-full`}><Icon name="map" size={48} /></div>;
 };
@@ -474,7 +474,7 @@ Constraints: All 4 quadrants must be exactly the same size and perfectly aligned
                             {/* EXISTING LOCATION CARD */}
                             {loc ? (
                                 <>
-                                    <img src={loc.image} className="absolute inset-0 w-full h-full object-cover rounded-2xl opacity-60 group-hover:opacity-100 transition-opacity" alt={loc.name} />
+                                    <img src={loc.image} className="absolute inset-0 w-full h-full object-cover rounded-2xl opacity-60 group-hover:opacity-100 transition-opacity" alt={loc.name} referrerPolicy="no-referrer" />
                                     <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent rounded-2xl flex flex-col justify-end p-4">
                                         <h3 className="text-xl font-bold text-white leading-none shadow-black drop-shadow-md">{loc.name}</h3>
                                         <span className="text-xs text-amber-400 font-mono uppercase tracking-widest mb-2">{loc.type}</span>

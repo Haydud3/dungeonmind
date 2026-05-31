@@ -39,7 +39,10 @@ const Sidebar = ({ view, setView }) => {
             </nav>
 
             <div className="p-4 flex flex-col gap-4 items-center">
-                <button onClick={leaveCampaign} className="w-10 h-10 rounded-full bg-red-900/20 text-red-500 hover:bg-red-900/50 flex items-center justify-center transition-colors">
+                <button onClick={() => {
+                    localStorage.removeItem('dm_last_session');
+                    leaveCampaign();
+                }} className="w-10 h-10 rounded-full bg-red-900/20 text-red-500 hover:bg-red-900/50 flex items-center justify-center transition-colors">
                     <Icon name="log-out" size={20}/>
                 </button>
             </div>

@@ -47,6 +47,7 @@ const ResolvedImage = ({ id, className, alt }) => {
             src={url} 
             className={className || "max-w-full h-auto block mx-auto my-6 rounded-lg shadow-lg border border-black/10"} 
             alt={alt || "Handout Asset"}
+            referrerPolicy="no-referrer"
         />
     );
 };

@@ -1,6 +1,7 @@
 import React from 'react';
 import { useCharacterStore } from '../../../stores/useCharacterStore';
 import Icon from '../../Icon';
+import RollButton from '../widgets/RollButton';
 
 const SKILL_LIST = [
     { name: 'Acrobatics', stat: 'dex' },
@@ -24,15 +25,12 @@ const SKILL_LIST = [
 ];
 
 const SkillsTab = ({ onDiceRoll, onLogAction }) => {
-    // FIX: Removed getModifier/toggleSkill from destructuring
     const { character, updateInfo } = useCharacterStore();
     const charSkills = character.skills || {};
     const profBonus = character.profBonus || 2;
 
-    // FIX: Defined getModifier locally
     const getModifier = (stat) => Math.floor(((character.stats?.[stat] || 10) - 10) / 2);
 
-    // FIX: Defined toggleSkill locally using updateInfo
     const toggleSkill = (skillName) => {
         const newSkills = { ...charSkills };
         if (newSkills[skillName]) {
@@ -43,7 +41,12 @@ const SkillsTab = ({ onDiceRoll, onLogAction }) => {
         updateInfo('skills', newSkills);
     };
 
-    // Helper to calculate bonus locally so we can show the math
+    const toggleSave = (stat) => {
+        const newSaves = { ...(character.savingThrows || {}) };
+        newSaves[stat] = !newSaves[stat];
+        updateInfo('savingThrows', newSaves);
+    };
+
     const calculateSkill = (skill) => {
         const isProf = charSkills[skill.name];
         const abilityMod = getModifier(skill.stat);
@@ -53,8 +56,7 @@ const SkillsTab = ({ onDiceRoll, onLogAction }) => {
 
     const handleRoll = async (skill) => {
         if (!onDiceRoll) return;
-        const { abilityMod, isProf, total } = calculateSkill(skill);
-
+        const { isProf, total } = calculateSkill(skill);
         const formula = `1d20${total >= 0 ? '+' : ''}${total}`;
         await onDiceRoll(formula, { 
             alias: `${skill.name} Check`,
@@ -65,7 +67,7 @@ const SkillsTab = ({ onDiceRoll, onLogAction }) => {
 
     return (
         <div className="space-y-4 pb-24">
-            {/* START CHANGE: Added Clickable Saving Throws Section */}
+            {/* Saving Throws Section */}
             <div className="bg-slate-800/30 rounded-xl p-3 border border-slate-700">
                 <h4 className="text-[10px] uppercase font-bold text-amber-500 mb-3 tracking-widest">Saving Throws</h4>
                 <div className="grid grid-cols-3 gap-3">
@@ -76,24 +78,35 @@ const SkillsTab = ({ onDiceRoll, onLogAction }) => {
                         return (
                             <div 
                                 key={stat} 
-                                onClick={() => {
-                                    if (!onDiceRoll) return;
-                                    const formula = `1d20${total >= 0 ? '+' : ''}${total}`;
-                                    onDiceRoll(formula, { alias: `${stat.toUpperCase()} Save`, characterName: character.name });
-                                }}
-                                className="bg-slate-900/50 p-2 rounded border border-slate-700 flex flex-col items-center cursor-pointer hover:border-amber-500 hover:bg-slate-800 transition-all active:scale-95"
+                                className="bg-slate-900/50 p-2 rounded border border-slate-700 flex flex-col items-center gap-1 group"
                             >
-                                <span className="text-[9px] text-slate-500 uppercase font-bold">{stat}</span>
-                                <span className={`text-sm font-bold ${isProf ? 'text-green-400' : 'text-white'}`}>
+                                <div className="flex items-center justify-between w-full px-1">
+                                    <div 
+                                        className="cursor-pointer p-1 -ml-1" 
+                                        onClick={() => toggleSave(stat)}
+                                        title="Toggle Proficiency"
+                                    >
+                                        <div className={`w-2.5 h-2.5 rounded-full border transition-colors ${isProf ? 'bg-amber-500 border-amber-500' : 'border-slate-600 hover:border-amber-500/50'}`}></div>
+                                    </div>
+                                    <span className="text-[9px] text-slate-500 uppercase font-bold">{stat}</span>
+                                    <div className="w-2.5 h-2.5"></div> {/* Spacer */}
+                                </div>
+                                <RollButton 
+                                    onClick={() => {
+                                        if (!onDiceRoll) return;
+                                        const formula = `1d20${total >= 0 ? '+' : ''}${total}`;
+                                        onDiceRoll(formula, { alias: `${stat.toUpperCase()} Save`, characterName: character.name });
+                                    }}
+                                    type="save"
+                                    className="w-full"
+                                >
                                     {total >= 0 ? '+' : ''}{total}
-                                </span>
-                                {isProf && <div className="w-1.5 h-1.5 bg-green-500 rounded-full mt-1 shadow-[0_0_5px_#22c55e]"></div>}
+                                </RollButton>
                             </div>
                         );
                     })}
                 </div>
             </div>
-            {/* END CHANGE */}
 
             {/* Passive Senses */}
             <div className="bg-slate-800/30 rounded-xl p-3 border border-slate-700 flex justify-between text-center gap-2">
@@ -113,12 +126,12 @@ const SkillsTab = ({ onDiceRoll, onLogAction }) => {
             </div>
 
             {/* Header */}
-            <div className="grid grid-cols-4 md:grid-cols-12 gap-2 text-[10px] uppercase font-bold text-slate-500 px-2 mt-2">
-                <div className="col-span-1">Prof</div>
-                <div className="col-span-2 md:col-span-4">Skill</div>
+            <div className="grid grid-cols-12 gap-2 text-[10px] uppercase font-bold text-slate-500 px-2 mt-2">
+                <div className="col-span-1"></div>
+                <div className="col-span-5 md:col-span-4">Skill</div>
                 <div className="hidden md:block col-span-2 text-center">Stat</div>
-                <div className="hidden md:block col-span-3 text-center">Math</div>
-                <div className="col-span-1 md:col-span-2 text-right">Total</div>
+                <div className="col-span-3 md:col-span-3 text-center">Math</div>
+                <div className="col-span-3 md:col-span-2 flex justify-end">Roll</div>
             </div>
 
             {/* Skill List */}
@@ -129,18 +142,16 @@ const SkillsTab = ({ onDiceRoll, onLogAction }) => {
                     return (
                         <div 
                             key={skill.name} 
-                            onClick={() => handleRoll(skill)}
-                            className="grid grid-cols-4 md:grid-cols-12 gap-2 items-center bg-slate-800/50 border border-slate-700/50 rounded-lg p-2 hover:bg-slate-800 hover:border-amber-500/50 cursor-pointer transition-all group"
+                            className="grid grid-cols-12 gap-2 items-center bg-slate-800/50 border border-slate-700/50 rounded-lg p-2 hover:bg-slate-800 transition-colors"
                         >
                             {/* Proficiency Dot */}
-                            <div className="col-span-1 flex justify-start md:justify-center" onClick={(e) => { e.stopPropagation(); toggleSkill(skill.name); }}>
-                                <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center transition-colors ${isProf ? 'bg-amber-500 border-amber-500' : 'border-slate-600 group-hover:border-slate-400'}`}>
-                                    {isProf && <Icon name="check" size={10} className="text-black stroke-[3]"/>}
+                            <div className="col-span-1 flex justify-start md:justify-center cursor-pointer" onClick={() => toggleSkill(skill.name)}>
+                                <div className={`w-3.5 h-3.5 rounded-full border-2 flex items-center justify-center transition-colors ${isProf ? 'bg-amber-500 border-amber-500' : 'border-slate-600 hover:border-amber-500/50'}`}>
                                 </div>
                             </div>
 
                             {/* Skill Name */}
-                            <div className="col-span-2 md:col-span-4 font-bold text-slate-200 text-sm truncate group-hover:text-white">
+                            <div className="col-span-5 md:col-span-4 font-bold text-slate-200 text-sm truncate">
                                 {skill.name}
                             </div>
 
@@ -149,15 +160,17 @@ const SkillsTab = ({ onDiceRoll, onLogAction }) => {
                                 {skill.stat.substring(0,3)}
                             </div>
 
-                            {/* The Math Breakdown (Hidden on Mobile) */}
-                            <div className="hidden md:flex col-span-3 text-center text-[10px] text-slate-400 font-mono justify-center gap-1">
+                            {/* The Math Breakdown */}
+                            <div className="col-span-3 md:col-span-3 flex text-center text-[10px] text-slate-400 font-mono justify-center gap-1">
                                 <span>{abilityMod >= 0 ? '+' : ''}{abilityMod}</span>
-                                {isProf && <span className="text-green-400">+{profBonus}</span>}
+                                {isProf && <span className="text-amber-500">+{profBonus}</span>}
                             </div>
 
-                            {/* Total Bonus */}
-                            <div className="col-span-1 md:col-span-2 text-right font-bold text-amber-500 text-sm">
-                                {total >= 0 ? '+' : ''}{total}
+                            {/* Action Button */}
+                            <div className="col-span-3 md:col-span-2 flex justify-end">
+                                <RollButton onClick={() => handleRoll(skill)} type="skill" className="w-12">
+                                    {total >= 0 ? '+' : ''}{total}
+                                </RollButton>
                             </div>
                         </div>
                     );

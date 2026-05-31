@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useCharacterStore } from '../../../stores/useCharacterStore';
 import Icon from '../../Icon';
 import SpellSlotTracker from '../SpellSlotTracker';
+import RollButton from '../widgets/RollButton';
 
 // UPDATE: Added isOwner to destructuring
 const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate, isOwner, onUse }) => {
@@ -13,6 +14,7 @@ const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate, isOwner, onUse })
     // Edit State
     const [editingIndex, setEditingIndex] = useState(-1);
     const [editForm, setEditForm] = useState({});
+    const [lastCritIndex, setLastCritIndex] = useState(null);
 
     // SRD State
     const [showSrd, setShowSrd] = useState(false);
@@ -44,13 +46,28 @@ const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate, isOwner, onUse })
     const handleCast = (spell, e) => {
         if(e) e.stopPropagation();
         
+        let dcData = null;
+        if (spell.hit && String(spell.hit).toUpperCase().includes('DC')) {
+            const match = String(spell.hit).match(/DC\s*(\d+)(?:\s*([a-zA-Z]+))?/i);
+            if (match) {
+                dcData = { value: parseInt(match[1], 10), stat: (match[2] || 'dex').toLowerCase().substring(0,3) };
+            }
+        }
+        if (!dcData && spell.desc) {
+            const match = String(spell.desc).match(/DC\s*(\d+)\s*([a-zA-Z]+)/i);
+            if (match) {
+                dcData = { value: parseInt(match[1], 10), stat: (match[2] || 'dex').toLowerCase().substring(0,3) };
+            }
+        }
+
         // Log the spell to Chat/Toast
         if (onDiceRoll) {
             onDiceRoll('1d0', {
                 alias: spell.name,
                 description: spell.desc || "",
                 actionType: 'use',
-                characterName: character.name
+                characterName: character.name,
+                dc: dcData
             });
         } else if (onLogAction) {
             onLogAction(`
@@ -63,28 +80,41 @@ const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate, isOwner, onUse })
         if (spell.level > 0 && castSpell) castSpell(spell.level);
     };
 
-    const handleRoll = (spell, type, e) => {
+    const handleRoll = async (spell, index, type, e) => {
         if(e) e.stopPropagation();
         if (!onDiceRoll) return;
 
         if (type === 'hit') {
-            if (String(spell.hit).includes('DC')) {
+            if (String(spell.hit).toUpperCase().includes('DC')) {
+                const match = String(spell.hit).match(/DC\s*(\d+)(?:\s*([a-zA-Z]+))?/i);
+                let dcData = null;
+                if (match) {
+                    dcData = { value: parseInt(match[1], 10), stat: (match[2] || 'dex').toLowerCase().substring(0,3) };
+                }
+
                 onDiceRoll('1d0', { 
                     alias: spell.name, 
                     description: `Requires a ${spell.hit} save.`,
                     actionType: 'use',
-                    characterName: character.name
+                    characterName: character.name,
+                    dc: dcData
                 });
                 return;
             }
 
             const mod = parseInt(spell.hit) || 0;
             const formula = `1d20${mod >= 0 ? '+' : ''}${mod}`;
-            onDiceRoll(formula, {
+            const rollObj = await onDiceRoll(formula, {
                 weaponName: spell.name,
                 alias: 'Spell Attack',
                 characterName: character.name
             });
+            
+            if (rollObj?.isCrit) {
+                setLastCritIndex(index);
+            } else if (rollObj) {
+                setLastCritIndex(null);
+            }
         } 
         else if (type === 'dmg') {
             if (!spell.dmg) return;
@@ -92,16 +122,26 @@ const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate, isOwner, onUse })
             const match = spell.dmg.match(regex);
             
             if (match) {
-                const [fullStr] = match;
+                let [fullStr] = match;
                 const typeLabel = spell.dmg.replace(fullStr, '').trim();
+                
+                let alias = 'Spell Damage';
+                if (lastCritIndex === index) {
+                    fullStr = String(fullStr).replace(/(\d*)d(\d+)/g, (m, countStr, faces) => {
+                        const count = countStr ? parseInt(countStr) : 1;
+                        return `${count * 2}d${faces}`;
+                    });
+                    alias = 'CRITICAL DAMAGE!';
+                }
                 
                 onDiceRoll(fullStr, {
                     actionType: 'damage',
                     weaponName: spell.name,
-                    alias: 'Spell Damage',
+                    alias: alias,
                     characterName: character.name,
                     damageType: typeLabel
                 });
+                setLastCritIndex(null);
             } else {
                 onDiceRoll('1d0', {
                     actionType: 'damage',
@@ -110,6 +150,7 @@ const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate, isOwner, onUse })
                     characterName: character.name,
                     damageType: spell.dmg
                 });
+                setLastCritIndex(null);
             }
         }
     };
@@ -238,49 +279,64 @@ const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate, isOwner, onUse })
 
                         {/* Right: Buttons */}
                         <div className="flex items-center gap-2 shrink-0">
-                            <button 
+                            <RollButton 
                                 onClick={(e) => handleCast(spell, e)} 
-                                className="px-4 py-1 bg-slate-800 hover:bg-indigo-600 text-slate-300 hover:text-white rounded text-xs font-bold transition-colors"
+                                type="action"
+                                className="px-4 py-1"
                             >
                                 Cast
-                            </button>
+                            </RollButton>
                         </div>
                         </div>
 
                         {/* Secondary Row: Roll Buttons */}
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 mt-2">
                              {/* UPDATE: Hide Hit Button if not owner */}
                              {isOwner && spell.hit && (
-                                 <button 
-                                     onClick={(e) => handleRoll(spell, 'hit', e)}
-                                     className="bg-slate-700 hover:bg-cyan-900/50 text-cyan-400 border border-slate-600 hover:border-cyan-500/50 px-2 py-1 rounded text-[10px] font-bold font-mono transition-colors uppercase"
+                                 <RollButton 
+                                     onClick={(e) => handleRoll(spell, index, 'hit', e)}
+                                     type="hit"
                                  >
-                                     {String(spell.hit).includes('DC') ? spell.hit : (String(spell.hit).includes('+') ? spell.hit : `+${spell.hit}`)}
-                                 </button>
+                                     {String(spell.hit).toUpperCase().includes('DC') ? spell.hit : (String(spell.hit).includes('+') || String(spell.hit).includes('-') ? spell.hit : `+${spell.hit}`)}
+                                 </RollButton>
                              )}
 
                              {/* UPDATE: Hide Damage Button if not owner */}
-                             {isOwner && spell.dmg && (
-                                 <button 
-                                     onClick={(e) => handleRoll(spell, 'dmg', e)}
-                                     className="bg-slate-700 hover:bg-indigo-900/50 text-indigo-300 border border-slate-600 hover:border-indigo-500/50 px-2 py-1 rounded text-[10px] font-bold font-mono transition-colors max-w-[100px] truncate"
-                                 >
-                                     {spell.dmg}
-                                 </button>
-                             )}
+                             {isOwner && spell.dmg && (() => {
+                                 const isCritTarget = lastCritIndex === index;
+                                 let displayDmg = String(spell.dmg).trim();
+                                 if (isCritTarget) {
+                                     displayDmg = displayDmg.replace(/(\d*)d(\d+)/g, (match, countStr, faces) => {
+                                         const count = countStr ? parseInt(countStr) : 1;
+                                         return `${count * 2}d${faces}`;
+                                     });
+                                 }
+                                 
+                                 return (
+                                     <RollButton 
+                                         onClick={(e) => handleRoll(spell, index, 'dmg', e)}
+                                         type={isCritTarget ? "action" : "dmg"}
+                                         className={isCritTarget ? "bg-amber-400 hover:bg-amber-300 text-slate-900 border-amber-300 shadow-[0_0_15px_rgba(251,191,36,1)] animate-pulse font-extrabold" : "max-w-[100px]"}
+                                         title={isCritTarget ? "CRITICAL DAMAGE" : "Roll Damage"}
+                                     >
+                                         {displayDmg}
+                                     </RollButton>
+                                 );
+                             })()}
 
                              {/* Template Button */}
                              {isAoE && onPlaceTemplate && isOwner && (
-                                 <button 
+                                 <RollButton 
                                      onClick={(e) => {
                                          e.stopPropagation(); 
                                          onPlaceTemplate(spell);
                                      }} 
-                                     className="bg-orange-600 hover:bg-orange-500 text-white border border-orange-500 px-2 py-1 rounded text-[10px] font-bold shadow-lg flex items-center justify-center" 
+                                     type="action"
+                                     className="bg-orange-600 hover:bg-orange-500 border-orange-500 text-white !px-2" 
                                      title="Place Template on Map"
                                  >
                                      <Icon name="crosshair" size={14}/>
-                                 </button>
+                                 </RollButton>
                              )}
 
                              <div className="flex-1"></div>

@@ -1,7 +1,10 @@
-import React, { useRef, useMemo, Suspense } from 'react';
+import React, { useRef, useMemo, Suspense, useState, useEffect } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Text, ContactShadows, Edges } from '@react-three/drei';
 import * as THREE from 'three';
+import { useNewCampaign } from '../contexts/NewCampaignProvider';
+import { rtdb } from '../firebase';
+import { ref, onValue, set, remove } from 'firebase/database';
 
 // --- CONFIGURATION ---
 const ANIM_DURATION = 3.0;
@@ -130,17 +133,17 @@ const calculateFaces = (type) => {
 
 // --- CONFIGURATION ---
 const CONFIG = {
-    4:  { scale: 2.5, offset: 1.05,  color: "#be123c", geo: () => new THREE.TetrahedronGeometry(1) },
-    6:  { scale: 1.5, offset: 1.05, color: "#4338ca", geo: () => new THREE.BoxGeometry(1, 1, 1) },
-    8:  { scale: 1.5, offset: 1.05, color: "#047857", geo: () => new THREE.OctahedronGeometry(1) },
-    10: { scale: 1.4, offset: 1.02, color: "#7e22ce", geo: () => createD10Geometry() },
-    12: { scale: 1.7, offset: 1.01, color: "#c2410c", geo: () => new THREE.DodecahedronGeometry(1) },
-    20: { scale: 1.7, offset: 1.02, color: "#b91c1c", geo: () => new THREE.IcosahedronGeometry(1) },
-    100:{ scale: 1.4, offset: 1.02, color: "#1e293b", geo: () => createD10Geometry() }
+    4:  { scale: 1.5, offset: 1.05,  color: "#be123c", geo: () => new THREE.TetrahedronGeometry(1) },
+    6:  { scale: 0.9, offset: 1.05, color: "#4338ca", geo: () => new THREE.BoxGeometry(1, 1, 1) },
+    8:  { scale: 0.9, offset: 1.05, color: "#047857", geo: () => new THREE.OctahedronGeometry(1) },
+    10: { scale: 0.84, offset: 1.02, color: "#7e22ce", geo: () => createD10Geometry() },
+    12: { scale: 1.02, offset: 1.01, color: "#c2410c", geo: () => new THREE.DodecahedronGeometry(1) },
+    20: { scale: 1.02, offset: 1.02, color: "#b91c1c", geo: () => new THREE.IcosahedronGeometry(1) },
+    100:{ scale: 0.84, offset: 1.02, color: "#1e293b", geo: () => createD10Geometry() }
 };
 
 // --- DIE MESH ---
-const DieMesh = ({ dieType, result, index = 0, total = 1 }) => {
+const DieMesh = ({ dieType, result, actionType, index = 0, total = 1, isRemote = false, physicsParams = null }) => {
     const meshRef = useRef();
     console.log("[DEBUG] DieMesh input:", { dieType, result });
     
@@ -149,12 +152,15 @@ const DieMesh = ({ dieType, result, index = 0, total = 1 }) => {
     const strType = String(dieType).toLowerCase();
     if (strType.includes('d')) {
         const parts = strType.split('d');
-        // Find the last numeric part (handles "d1d4" -> 4, "1d20" -> 20)
+        // Find the last numeric part (handles "d1d4" -> 4, "1d20" -> 20, "2d20kh1" -> 20)
         for (let i = parts.length - 1; i >= 0; i--) {
-            const val = parseInt(parts[i]);
-            if (!isNaN(val) && val > 0) {
-                type = val;
-                break;
+            const match = parts[i].match(/^(\d+)/);
+            if (match) {
+                const val = parseInt(match[1]);
+                if (!isNaN(val) && val > 0) {
+                    type = val;
+                    break;
+                }
             }
         }
     } else {
@@ -163,6 +169,9 @@ const DieMesh = ({ dieType, result, index = 0, total = 1 }) => {
     const safeType = CONFIG[type] ? type : 6;
     const cfg = CONFIG[safeType];
     // END CHANGE
+    
+    const baseColor = actionType === 'save' ? '#f59e0b' : cfg.color;
+    const dieColor = isRemote ? '#06b6d4' : baseColor; // Holographic Cyan for remote dice
     
     // START CHANGE: Sanitize result to prevent NaN
     const safeResult = useMemo(() => {
@@ -253,28 +262,107 @@ const DieMesh = ({ dieType, result, index = 0, total = 1 }) => {
         return { faceData: textItems, targetQuat: targetQ, d4GroupRot: groupRot };
     }, [safeType, safeResult]);
 
+    const physicsRef = useRef(null);
+    if (!physicsRef.current) {
+        let spawnX, spawnZ, vx, vz;
+        let rx, ry, rz;
+        
+        if (physicsParams) {
+            ({ spawnX, spawnZ, vx, vz, rx, ry, rz } = physicsParams);
+        } else {
+            const edge = Math.floor(Math.random() * 4);
+            
+            if (edge === 0) { // Left
+                spawnX = -12;
+                spawnZ = (Math.random() - 0.5) * 8;
+                vx = 15 + Math.random() * 10;
+                vz = (Math.random() - 0.5) * 10;
+            } else if (edge === 1) { // Right
+                spawnX = 12;
+                spawnZ = (Math.random() - 0.5) * 8;
+                vx = -(15 + Math.random() * 10);
+                vz = (Math.random() - 0.5) * 10;
+            } else if (edge === 2) { // Top
+                spawnX = (Math.random() - 0.5) * 12;
+                spawnZ = -8;
+                vx = (Math.random() - 0.5) * 10;
+                vz = 10 + Math.random() * 10;
+            } else { // Bottom
+                spawnX = (Math.random() - 0.5) * 12;
+                spawnZ = 8;
+                vx = (Math.random() - 0.5) * 10;
+                vz = -(10 + Math.random() * 10);
+            }
+
+            rx = (Math.random() - 0.5) * 60;
+            ry = (Math.random() - 0.5) * 60;
+            rz = (Math.random() - 0.5) * 60;
+        }
+
+        physicsRef.current = {
+            pos: new THREE.Vector3(spawnX, 8 + (index * 2), spawnZ + (index * 1.5)),
+            vel: new THREE.Vector3(vx, -5 - (index * 2), vz),
+            rotVel: new THREE.Vector3(rx, ry, rz),
+            time: 0,
+            yOffset: safeType === 4 ? 0.0 : cfg.scale * 0.7
+        };
+    }
+
     useFrame((state, delta) => {
         if (!meshRef.current) return;
-        if (!meshRef.current.userData.time) meshRef.current.userData.time = 0;
-        meshRef.current.userData.time += Math.min(delta, 0.1);
-        const t = Math.min(meshRef.current.userData.time / ANIM_DURATION, 1);
+        const phys = physicsRef.current;
+        const dt = Math.min(delta, 0.1);
+        phys.time += dt;
 
-        const ease = 1 - Math.pow(1 - t, 3);
-        const yPos = Math.abs(Math.sin(t * 12)) * (1 - t) * 3;
-        
-        const yOffset = safeType === 4 ? 0.0 : 1.5;
+        if (phys.time < ANIM_DURATION * 0.7) {
+            phys.vel.y -= 50 * dt; // Gravity
+            
+            // Air friction (lowered to maintain horizontal throwing momentum)
+            phys.vel.x *= Math.pow(0.98, dt * 60);
+            phys.vel.z *= Math.pow(0.98, dt * 60);
+            phys.pos.addScaledVector(phys.vel, dt);
 
-        meshRef.current.position.y = yPos + yOffset; 
-        
-        const spacing = total > 5 ? 12 / total : 2.5;
-        const xOffset = total > 1 ? (index - (total - 1) / 2) * spacing : 0;
-        meshRef.current.position.x = -8 + ((8 + xOffset) * ease);
+            if (phys.pos.y < phys.yOffset) {
+                phys.pos.y = phys.yOffset;
+                
+                // Ground friction
+                if (phys.vel.y < -2) {
+                    // Significant bounce
+                    phys.vel.x *= 0.85;
+                    phys.vel.z *= 0.85;
+                    phys.rotVel.multiplyScalar(0.85);
+                } else {
+                    // Rolling on the ground
+                    phys.vel.x *= Math.pow(0.90, dt * 60);
+                    phys.vel.z *= Math.pow(0.90, dt * 60);
+                    phys.rotVel.multiplyScalar(Math.pow(0.97, dt * 60));
+                }
+                
+                phys.vel.y *= -0.55; // Bounce height
+            }
 
-        if (t < 0.7) {
-            meshRef.current.rotation.x += delta * 15;
-            meshRef.current.rotation.y += delta * 10;
+            // Dynamically calculate the visible screen boundaries based on the camera's view
+            const vFov = state.camera.fov * Math.PI / 180;
+            const visibleZ = 2 * Math.tan(vFov / 2) * Math.abs(state.camera.position.y);
+            const visibleX = visibleZ * state.camera.aspect;
+            
+            const padding = cfg.scale * 1.2; // Padding ensures the full 3D mesh stays inside
+            const extentX = Math.max(1, (visibleX / 2) - padding);
+            const extentZ = Math.max(1, (visibleZ / 2) - padding);
+
+            // Only bounce if heading OUT of bounds, allows them to fly IN from off-screen
+            if (phys.pos.x > extentX && phys.vel.x > 0) { phys.pos.x = extentX; phys.vel.x *= -0.7; }
+            if (phys.pos.x < -extentX && phys.vel.x < 0) { phys.pos.x = -extentX; phys.vel.x *= -0.7; }
+            if (phys.pos.z > extentZ && phys.vel.z > 0) { phys.pos.z = extentZ; phys.vel.z *= -0.7; }
+            if (phys.pos.z < -extentZ && phys.vel.z < 0) { phys.pos.z = -extentZ; phys.vel.z *= -0.7; }
+
+            meshRef.current.rotation.x += phys.rotVel.x * dt;
+            meshRef.current.rotation.y += phys.rotVel.y * dt;
+            meshRef.current.rotation.z += phys.rotVel.z * dt;
+            meshRef.current.position.copy(phys.pos);
         } else {
-            meshRef.current.quaternion.slerp(targetQuat, delta * 6);
+            meshRef.current.quaternion.slerp(targetQuat, dt * 8);
+            meshRef.current.position.y += (phys.yOffset - meshRef.current.position.y) * (dt * 10);
         }
     });
 
@@ -282,8 +370,16 @@ const DieMesh = ({ dieType, result, index = 0, total = 1 }) => {
         <group rotation={d4GroupRot}>
             <group ref={meshRef}>
                 <mesh geometry={geometry} scale={[cfg.scale, cfg.scale, cfg.scale]}>
-                    <meshStandardMaterial color={cfg.color} roughness={0.1} metalness={0.1} />
-                    <Edges threshold={15} color="#fbbf24" />
+                    <meshStandardMaterial 
+                        color={dieColor} 
+                        roughness={isRemote ? 0.2 : 0.1} 
+                        metalness={isRemote ? 0.8 : 0.1} 
+                        transparent={isRemote}
+                        opacity={isRemote ? 0.8 : 1}
+                        emissive={isRemote ? dieColor : "#000000"}
+                        emissiveIntensity={isRemote ? 0.5 : 0}
+                    />
+                    <Edges threshold={15} color={isRemote ? "#67e8f9" : "#fbbf24"} />
                 </mesh>
                 {faceData.map((f, i) => (
                     f.visible && (
@@ -291,7 +387,7 @@ const DieMesh = ({ dieType, result, index = 0, total = 1 }) => {
                             key={i}
                             position={f.pos}
                             rotation={f.rot}
-                            fontSize={safeType === 100 || safeType === 20 ? 0.4 : 0.6}
+                            fontSize={safeType === 100 || safeType === 20 ? 0.35 : 0.5}
                             color={f.isResult ? "#ffffff" : "#fbbf24"}
                             anchorX="center"
                             anchorY="middle"
@@ -307,31 +403,274 @@ const DieMesh = ({ dieType, result, index = 0, total = 1 }) => {
     );
 };
 
-const DiceOverlay = ({ roll }) => {
-    console.log("[DEBUG] DiceOverlay roll data:", roll);
-    const rolls = Array.isArray(roll) ? roll : [roll];
+const RollHUD = ({ roll, isStacked }) => {
+    const [show, setShow] = useState(false);
+    useEffect(() => {
+        const timer = setTimeout(() => setShow(true), 2000);
+        return () => clearTimeout(timer);
+    }, []);
+
+    const { rollsNode, finalTotal } = useMemo(() => {
+        const getRollVal = (r) => {
+            if (r === null || r === undefined) return 0;
+            if (typeof r === 'object') return Number(r.value ?? r.total ?? r.result ?? 0);
+            return Number(r);
+        };
+        const activeNatural = roll.natural ?? roll.naturalRoll ?? roll.rolls?.[0] ?? roll.total ?? roll.result ?? roll.value;
+        const activeTotal = roll.total ?? roll.result ?? roll.value ?? 0;
+        const modifier = roll.modifier ?? roll.mod ?? 0;
+        
+        let rollsNode = roll.rolls ? roll.rolls.map(r => getRollVal(r)).join(' + ') : activeNatural;
+        let finalTotal = activeTotal;
+
+        let inferredAdvMode = roll.advMode;
+        if ((!inferredAdvMode || inferredAdvMode === 'normal') && roll.alias && typeof roll.alias === 'string') {
+            const lowerAlias = roll.alias.toLowerCase();
+            if (lowerAlias.includes('advantage') && !lowerAlias.includes('disadvantage')) inferredAdvMode = 'adv';
+            else if (lowerAlias.includes('disadvantage')) inferredAdvMode = 'dis';
+        }
+
+        // NEW: Detect from formula directly
+        const formulaStr = String(roll.formulaDisplay || '') + ' ' + String(roll.formula || '') + ' ' + String(roll.die || '');
+        const lowerFormula = formulaStr.toLowerCase();
+        if (lowerFormula.includes('kh1')) inferredAdvMode = 'adv';
+        if (lowerFormula.includes('kl1')) inferredAdvMode = 'dis';
+
+        if (inferredAdvMode && inferredAdvMode !== 'normal' && roll.rolls && roll.rolls.length >= 2) {
+            const r1 = getRollVal(roll.rolls[0]);
+            const r2 = getRollVal(roll.rolls[1]);
+            let keptIdx = (inferredAdvMode === 'adv') ? (r1 >= r2 ? 0 : 1) : (r1 <= r2 ? 0 : 1);
+            const droppedIdx = keptIdx === 0 ? 1 : 0;
+            
+            rollsNode = (
+                <>
+                    {roll.rolls.map((rObj, i) => {
+                        const r = getRollVal(rObj);
+                        return (
+                        <React.Fragment key={i}>
+                            {i === droppedIdx ? (
+                                <span className="opacity-40 line-through decoration-red-500">{r}</span>
+                            ) : i === keptIdx ? (
+                                <span className="text-amber-400 font-bold">{r}</span>
+                            ) : (
+                                <span>{r}</span>
+                            )}
+                            {i < roll.rolls.length - 1 && <span className="text-slate-500 mx-1">, </span>}
+                        </React.Fragment>
+                        );
+                    })}
+                </>
+            );
+            
+            finalTotal = activeTotal - getRollVal(roll.rolls[droppedIdx]);
+        }
+        
+        return { rollsNode, finalTotal };
+    }, [roll]);
+
+    if (!show) return null;
 
     return (
-        <div className={`fixed inset-0 z-[9999] pointer-events-none flex items-center justify-center w-screen h-screen transition-opacity duration-500 ${roll ? 'opacity-100' : 'opacity-0'}`}>
-            {roll && (
-                <div className="absolute inset-0 bg-black/60 backdrop-blur-[2px] animate-in fade-in duration-300"></div>
+        <div className="bg-slate-900/90 backdrop-blur-sm border border-slate-700 p-3 rounded-xl shadow-2xl flex items-center gap-4 animate-in slide-in-from-right-10 fade-in duration-500 pointer-events-none mb-2">
+            <div className="flex flex-col text-right">
+                <div className="text-slate-400 font-bold uppercase tracking-widest text-[10px]">
+                    {roll.alias || roll.characterName ? `${roll.characterName ? roll.characterName + ' ' : ''}${roll.alias || ''}` : 'Dice Result'}
+                </div>
+                <div className="flex items-baseline justify-end gap-2">
+                    {((roll.modifier ?? roll.mod) !== undefined && (roll.modifier ?? roll.mod) !== 0) && (
+                        <span className="text-sm text-slate-500 font-bold">
+                            ([{rollsNode}] {(roll.modifier ?? roll.mod) >= 0 ? '+' : ''}{(roll.modifier ?? roll.mod)})
+                        </span>
+                    )}
+                    <span className="text-3xl font-black text-amber-500 drop-shadow-md">{finalTotal}</span>
+                </div>
+            </div>
+            {roll.saveDc !== undefined && (
+                <div className={`px-4 py-2 rounded-lg font-black tracking-widest shadow-md flex items-center ${finalTotal >= roll.saveDc ? 'bg-green-500/20 text-green-400 border border-green-500/50 shadow-green-900/20' : 'bg-red-500/20 text-red-400 border border-red-500/50 shadow-red-900/20'}`}>
+                    {finalTotal >= roll.saveDc ? 'SUCCESS' : 'FAILED'}
+                </div>
             )}
-            <div className="w-full h-full relative z-10">
-                <Canvas dpr={[1, 1.5]} camera={{ position: [0, 10, 0], fov: 40 }} gl={{ antialias: false, powerPreference: "high-performance" }}>
+        </div>
+    );
+};
+
+const DiceOverlay = ({ roll }) => {
+    console.log("[DEBUG] DiceOverlay roll data:", roll);
+    const [activeRolls, setActiveRolls] = useState([]);
+    const [activeDice, setActiveDice] = useState([]);
+    const lastProcessedRoll = useRef(null);
+
+    // --- NEW MULTIPLAYER SYNC ---
+    const context = useNewCampaign();
+    const chatLog = context?.chatLog || [];
+    const user = context?.user;
+    const isDm = context?.campaign?.dmIds?.includes(user?.uid);
+    const campaignCode = context?.gameParams?.code || context?.campaign?.id;
+    
+    const clientId = useMemo(() => Math.random().toString(36).substring(2, 10), []);
+    const seenRollsRef = useRef(new Set());
+
+    useEffect(() => {
+        if (!campaignCode) return;
+        const liveRollsRef = ref(rtdb, `live_drags/rolls_${campaignCode}`);
+        
+        console.log(`[DiceOverlay] Mounted and listening to RTDB path: live_drags/rolls_${campaignCode}`);
+        
+        const unsub = onValue(liveRollsRef, (snapshot) => {
+            const data = snapshot.val();
+            console.log(`[DiceOverlay] Raw Firebase Data Received:`, data);
+            if (!data) return;
+
+            const incomingRolls = [];
+            const now = Date.now();
+
+            Object.values(data).forEach(r => {
+                if (r.clientId === clientId) return; // Skip own broadcast
+                
+                console.log(`[DiceOverlay] Evaluating remote roll: now=${now}, timestamp=${r.timestamp}, age=${now - r.timestamp}ms`);
+                if (now - r.timestamp > 60000) {
+                    console.log(`[DiceOverlay] ❌ Filtered out (too old)`);
+                    return; 
+                }
+                
+                // Respect DM privacy
+                if (r.type === 'roll-private' && !isDm) {
+                    console.log(`[DiceOverlay] ❌ Filtered out (DM private roll blocked from player)`);
+                    return;
+                }
+
+                if (!seenRollsRef.current.has(r._rtId)) {
+                    seenRollsRef.current.add(r._rtId);
+                    incomingRolls.push(r);
+                }
+            });
+
+            if (incomingRolls.length > 0) {
+                const newActiveDice = [];
+                incomingRolls.forEach(r => {
+                    if (r.rolls && r.rolls.length > 0) {
+                        r.rolls.forEach((subRoll, index) => {
+                            const val = typeof subRoll === 'object' ? (subRoll.value ?? subRoll.total ?? subRoll.result) : subRoll;
+                            newActiveDice.push({ ...r, _dieId: r._rtId + '-' + index, _subResult: val, isRemote: true, physicsParams: r.physics });
+                        });
+                    } else {
+                        const val = r.natural ?? r.naturalRoll ?? r.rolls?.[0] ?? r.total ?? r.result ?? r.value;
+                        newActiveDice.push({ ...r, _dieId: r._rtId + '-0', _subResult: val, isRemote: true, physicsParams: r.physics });
+                    }
+                });
+
+                setActiveRolls(prev => [...prev, ...incomingRolls]);
+                setActiveDice(prev => [...prev, ...newActiveDice]);
+                
+                setTimeout(() => {
+                    setActiveRolls(prev => prev.filter(p => !incomingRolls.some(n => n._rtId === p._rtId)));
+                    setActiveDice(prev => prev.filter(p => !newActiveDice.some(n => n._dieId === p._dieId)));
+                }, 6000);
+            }
+        });
+
+        return () => unsub();
+    }, [campaignCode, clientId, isDm]);
+    // --- END MULTIPLAYER SYNC ---
+
+    useEffect(() => {
+        if (roll && roll !== lastProcessedRoll.current) {
+            lastProcessedRoll.current = roll;
+            const rollsToAdd = Array.isArray(roll) ? roll : [roll];
+            
+            const newActiveRolls = [];
+            
+            rollsToAdd.forEach(r => {
+                const rx = (Math.random() - 0.5) * 60;
+                const ry = (Math.random() - 0.5) * 60;
+                const rz = (Math.random() - 0.5) * 60;
+
+                const edge = Math.floor(Math.random() * 4);
+                let spawnX, spawnZ, vx, vz;
+                if (edge === 0) { spawnX = -12; spawnZ = (Math.random() - 0.5) * 8; vx = 15 + Math.random() * 10; vz = (Math.random() - 0.5) * 10; } 
+                else if (edge === 1) { spawnX = 12; spawnZ = (Math.random() - 0.5) * 8; vx = -(15 + Math.random() * 10); vz = (Math.random() - 0.5) * 10; } 
+                else if (edge === 2) { spawnX = (Math.random() - 0.5) * 12; spawnZ = -8; vx = (Math.random() - 0.5) * 10; vz = 10 + Math.random() * 10; } 
+                else { spawnX = (Math.random() - 0.5) * 12; spawnZ = 8; vx = (Math.random() - 0.5) * 10; vz = -(10 + Math.random() * 10); }
+
+                const rtId = Date.now() + Math.random().toString(36).substring(2,9);
+                
+                let rollPayload = { 
+                    ...r, 
+                    _rtId: rtId,
+                    clientId,
+                    timestamp: Date.now(),
+                    physics: { spawnX, spawnZ, vx, vz, rx, ry, rz }
+                };
+                
+                // Deep cleanse to remove undefined properties before Firebase transmission
+                try { rollPayload = JSON.parse(JSON.stringify(rollPayload)); } catch(e) {}
+                
+                newActiveRolls.push(rollPayload);
+                seenRollsRef.current.add(rtId);
+                
+                if (campaignCode) {
+                    const rollRef = ref(rtdb, `live_drags/rolls_${campaignCode}/${rtId}`);
+                    console.log(`[DiceOverlay] Attempting to broadcast roll to live_drags/rolls_${campaignCode}/${rtId}`, rollPayload);
+                    
+                    set(rollRef, rollPayload)
+                        .then(() => console.log("[DiceOverlay] ✅ Broadcast success! Data sent to Firebase."))
+                        .catch(e => console.error("[DiceOverlay] ❌ Roll broadcast failed", e));
+                    
+                    setTimeout(() => {
+                        remove(rollRef).catch(() => {});
+                    }, 6000);
+                }
+            });
+            
+            const newActiveDice = [];
+            newActiveRolls.forEach(r => {
+                if (r.rolls && r.rolls.length > 0) {
+                    r.rolls.forEach((subRoll, index) => {
+                        const val = typeof subRoll === 'object' ? (subRoll.value ?? subRoll.total ?? subRoll.result) : subRoll;
+                        newActiveDice.push({ ...r, _dieId: r._rtId + '-' + index, _subResult: val, isRemote: false, physicsParams: r.physics });
+                    });
+                } else {
+                    const val = r.natural ?? r.naturalRoll ?? r.rolls?.[0] ?? r.total ?? r.result ?? r.value;
+                    newActiveDice.push({ ...r, _dieId: r._rtId + '-0', _subResult: val, isRemote: false, physicsParams: r.physics });
+                }
+            });
+            
+            setActiveRolls(prev => [...prev, ...newActiveRolls]);
+            setActiveDice(prev => [...prev, ...newActiveDice]);
+            
+            setTimeout(() => {
+                setActiveRolls(prev => prev.filter(p => !newActiveRolls.some(n => n._rtId === p._rtId)));
+                setActiveDice(prev => prev.filter(p => !newActiveDice.some(n => n._dieId === p._dieId)));
+            }, 6000); 
+        }
+    }, [roll, campaignCode, clientId]);
+
+    return (
+        <div className={`fixed inset-0 z-[99999] pointer-events-none flex items-center justify-center w-screen h-screen transition-opacity duration-500 ${activeRolls.length > 0 ? 'opacity-100' : 'opacity-0'}`}>
+            <div className="w-full h-full relative z-10 pointer-events-none">
+                <Canvas style={{ pointerEvents: 'none' }} dpr={[1, 1.5]} camera={{ position: [0, 10, 0], fov: 40 }} gl={{ antialias: false, powerPreference: "high-performance" }}>
                     <ambientLight intensity={3} />
                     <pointLight position={[10, 10, 10]} intensity={2} />
                     <pointLight position={[-10, 10, -10]} intensity={1} color="orange" />
                     
-                    {roll && (
+                    {activeDice.length > 0 && (
                         <Suspense fallback={null}>
-                            {rolls.map((r, i) => (
-                                <DieMesh key={i} dieType={r.die || r.sides || r.formula} result={r.total ?? r.result ?? r.value} index={i} total={rolls.length} />
+                            {activeDice.map((r, i) => (
+                                <DieMesh key={r._dieId} dieType={r.die || r.sides || r.formula} result={r._subResult} actionType={r.isSave ? 'save' : r.actionType} index={i} total={activeDice.length} isRemote={r.isRemote} physicsParams={r.physicsParams} />
                             ))}
                         </Suspense>
                     )}
                     
-                    <ContactShadows position={[0, 0, 0]} opacity={0.5} scale={40} blur={2} far={10} color="#000" />
+                    <ContactShadows position={[0, 0, 0]} opacity={0.3} scale={50} blur={2.5} far={10} color="#000" />
                 </Canvas>
+                
+                {activeRolls.length > 0 && (
+                    <div className="absolute bottom-6 right-6 flex flex-col items-end pointer-events-none z-50">
+                            {activeRolls.map(r => (
+                                <RollHUD key={r._rtId} roll={r} isStacked={activeRolls.length > 1} />
+                            ))}
+                    </div>
+                )}
             </div>
         </div>
     );

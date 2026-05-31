@@ -69,7 +69,7 @@ const AssetThumbnail = ({ asset }) => {
     const resolvedUrl = useResolvedUrl(imgUrl);
 
     if (resolvedUrl || (imgUrl && typeof imgUrl === 'string' && !imgUrl.startsWith('chunked:'))) {
-        return <img src={resolvedUrl || imgUrl} className="w-full h-full object-cover" alt={asset.name} draggable={false} />;
+        return <img src={resolvedUrl || imgUrl} className="w-full h-full object-cover" alt={asset.name} draggable={false} referrerPolicy="no-referrer" />;
     }
     return <div className="w-full h-full flex items-center justify-center bg-slate-900 border border-slate-700"><Icon name={asset.is3D ? "box" : "image"} size={32} className="text-slate-600 animate-pulse"/></div>;
 };
@@ -82,7 +82,7 @@ const CharacterThumbnail = ({ char }) => {
     const resolvedUrl = useResolvedUrl(imgUrl);
 
     if (resolvedUrl || (imgUrl && typeof imgUrl === 'string' && !imgUrl.startsWith('chunked:'))) {
-        return <img src={resolvedUrl || imgUrl} className="w-full h-full object-cover" alt={char.name} draggable={false} />;
+        return <img src={resolvedUrl || imgUrl} className="w-full h-full object-cover" alt={char.name} draggable={false} referrerPolicy="no-referrer" />;
     }
     return <div className="w-full h-full flex items-center justify-center bg-slate-900 border border-slate-700 text-slate-500"><Icon name="user" size={32} className="animate-pulse"/></div>;
 };
@@ -93,7 +93,7 @@ const ResolvedMapImage = ({ url, name, className }) => {
         return <div className="w-full h-full flex items-center justify-center bg-slate-800"><Icon name="loader" className="animate-spin text-slate-600" size={24} /></div>;
     }
     if (resolvedUrl || url) {
-        return <img src={resolvedUrl || url} className={className} alt={name} />;
+        return <img src={resolvedUrl || url} className={className} alt={name} referrerPolicy="no-referrer" />;
     }
     return <div className="w-full h-full flex items-center justify-center text-slate-600 bg-slate-800"><Icon name="map" size={24} /></div>;
 };

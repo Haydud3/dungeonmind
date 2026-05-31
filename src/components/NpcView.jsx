@@ -17,7 +17,7 @@ const SafeImage = ({ src, className, alt }) => {
     if (src.startsWith('chunked:')) {
         return <ResolvedImage id={src} className={className} alt={alt} />;
     }
-    return <img src={src} className={className} alt={alt} draggable={false} />;
+    return <img src={src} className={className} alt={alt} draggable={false} referrerPolicy="no-referrer" />;
 };
 
 // START CHANGE: Add generateNpc to props
@@ -663,14 +663,7 @@ ${pasteTextContent}`;
                         onBack={() => setViewingNpcId(null)} 
                         onDiceRoll={async (formula, options) => {
                             if (onDiceRoll) {
-                                const r = await onDiceRoll(formula, { ...options, chat: true, isPrivate: role === 'dm' });
-                                if (typeof r === 'number') return r;
-                                if (r && typeof r === 'object') {
-                                    if (typeof r.total === 'number') return r.total;
-                                    if (typeof r.result === 'number') return r.result;
-                                }
-                                const parsed = parseInt(r);
-                                return isNaN(parsed) ? 0 : parsed;
+                                return await onDiceRoll(formula, { ...options, chat: true, isPrivate: role === 'dm' });
                             }
                         }} 
                         diceLog={diceLog}

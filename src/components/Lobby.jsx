@@ -82,13 +82,18 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                     console.error("Failed to resolve invite link", e);
                 }
                 window.history.replaceState({}, document.title, window.location.pathname);
-            } else if (localStorage.getItem('dm_auto_join') === 'true' && !sessionStorage.getItem('dm_auto_join_attempted') && user) {
-                sessionStorage.setItem('dm_auto_join_attempted', 'true'); // Prevent infinite loop if they explicitly click "Leave Campaign"
+            } else if (localStorage.getItem('dm_auto_join') === 'true' && user) {
                 try {
                     const lastSessionStr = localStorage.getItem('dm_last_session');
                     if (lastSessionStr) {
                         const lastSession = JSON.parse(lastSessionStr);
                         if (lastSession && lastSession.code) {
+                            const campDoc = await getDoc(doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', lastSession.code));
+                            if (!campDoc.exists() || campDoc.data()?.bannedUsers?.includes(user.uid)) {
+                                localStorage.removeItem('dm_last_session');
+                                return;
+                            }
+
                             if (lastSession.role === 'dm') {
                                 addToRecents(lastSession.code, 'dm');
                                 joinCampaign(lastSession.code, 'dm', user.uid);
@@ -108,6 +113,7 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                     }
                 } catch(e) {
                     console.error("Auto-join failed", e);
+                    localStorage.removeItem('dm_last_session');
                 }
             }
         };
@@ -294,13 +300,20 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
     };
 
     const addToRecents = async (code, role, campaignName = null, coverImage = null, theme = null) => {
-        const existing = recents.find(r => r.code === code);
+        // Read fresh recents from local storage to prevent stale state overwrites
+        let currentRecents = [];
+        try {
+            const saved = localStorage.getItem('dm_recents');
+            if (saved) currentRecents = JSON.parse(saved);
+        } catch(e) {}
+        
+        const existing = currentRecents.find(r => r.code === code);
         const finalName = campaignName || existing?.name || null;
         const finalCover = coverImage || existing?.coverImage || null;
         const finalTheme = theme || existing?.theme || null;
         
         const newItem = { code, role, date: Date.now(), name: finalName, coverImage: finalCover, theme: finalTheme };
-        const newRecents = [newItem, ...recents.filter(r => r.code !== code)];
+        const newRecents = [newItem, ...currentRecents.filter(r => r.code !== code)];
         setRecents(newRecents);
         localStorage.setItem('dm_recents', JSON.stringify(newRecents));
         
@@ -399,12 +412,32 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                         timestamp: Date.now()
                     });
                     
-                    const unsub = onSnapshot(reqRef, (docSnap) => {
+                    const unsub = onSnapshot(reqRef, async (docSnap) => {
                         if (docSnap.exists()) {
                             const status = docSnap.data().status;
                             if (status === 'approved') {
                                 unsub();
                                 setIsInWaitingRoom(false);
+                                
+                                if (selectedChar) {
+                                    try {
+                                        const freshCampDoc = await getDoc(doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', joiningCode));
+                                        if (freshCampDoc.exists()) {
+                                            const freshData = freshCampDoc.data();
+                                            const freshPlayers = freshData.players || [];
+                                            const existingIdx = freshPlayers.findIndex(p => String(p.id) === String(selectedChar.id));
+                                            const newPlayers = [...freshPlayers];
+                                            if (existingIdx > -1) newPlayers[existingIdx] = selectedChar;
+                                            else newPlayers.push(selectedChar);
+                                            
+                                            await updateDoc(doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', joiningCode), {
+                                                players: newPlayers,
+                                                [`assignments.${user.uid}`]: selectedChar.id
+                                            });
+                                        }
+                                    } catch (err) { console.error("Auto-assign failed", err); }
+                                }
+                                
                                 addToRecents(joiningCode, 'player', campaignName, coverImage, tone);
                                 localStorage.setItem('dm_last_session', JSON.stringify({ code: joiningCode, role: 'player', characterId: selectedCharacterId }));
                                 joinCampaign(joiningCode, 'player', user.uid, false, {}, selectedChar);
@@ -418,6 +451,22 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                     return;
                 }
             }
+            
+            if (selectedChar) {
+                try {
+                    const freshPlayers = campDoc.data().players || [];
+                    const existingIdx = freshPlayers.findIndex(p => String(p.id) === String(selectedChar.id));
+                    const newPlayers = [...freshPlayers];
+                    if (existingIdx > -1) newPlayers[existingIdx] = selectedChar;
+                    else newPlayers.push(selectedChar);
+                    
+                    await updateDoc(doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', joiningCode), {
+                        players: newPlayers,
+                        [`assignments.${user.uid}`]: selectedChar.id
+                    });
+                } catch (err) { console.error("Auto-assign failed", err); }
+            }
+
         } catch (e) {
             console.error("Failed to check approval setting", e);
         }
@@ -553,7 +602,7 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                     <div className="flex items-center justify-between mb-4 border-b border-slate-800/50 pb-4">
                         <div className="flex items-center gap-3">
                             <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-xs font-bold text-slate-300 shrink-0 uppercase overflow-hidden border border-slate-600">
-                                {localPhotoUrl ? <img src={localPhotoUrl} alt="Profile" className="w-full h-full object-cover" /> : (localDisplayName[0] || '?')}
+                                {localPhotoUrl ? <img src={localPhotoUrl} alt="Profile" className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : (localDisplayName[0] || '?')}
                             </div>
                             <div className="flex flex-col min-w-0">
                                 <span className="text-sm font-bold text-slate-200 truncate">{localDisplayName}</span>
@@ -654,7 +703,7 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                                             <div key={invite.code + i} className="group relative bg-slate-900 rounded-xl overflow-hidden border-2 border-indigo-500/50 shadow-[0_0_15px_rgba(99,102,241,0.2)] flex flex-col">
                                                 <div className="h-32 w-full relative">
                                                     <div className="absolute inset-0 bg-gradient-to-t from-slate-900 to-transparent z-10"></div>
-                                                    <img src={bgUrl} alt="Campaign Cover" className="w-full h-full object-cover opacity-60" />
+                                                    <img src={bgUrl} alt="Campaign Cover" className="w-full h-full object-cover opacity-60" referrerPolicy="no-referrer" />
                                                     <div className="absolute top-3 right-3 z-20">
                                                         <span className="px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider shadow-sm backdrop-blur-md bg-indigo-600/80 text-white border border-indigo-500/50 flex items-center gap-1">
                                                             <Icon name="mail" size={10} /> Pending Invite
@@ -733,7 +782,7 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                                                 {/* Card Header/Banner */}
                                                 <div className="h-32 w-full relative">
                                                     <div className="absolute inset-0 bg-gradient-to-t from-slate-900 to-transparent z-10"></div>
-                                                    <img src={bgUrl} alt="Campaign Cover" className="w-full h-full object-cover opacity-60 group-hover:opacity-80 transition-opacity duration-500" />
+                                                    <img src={bgUrl} alt="Campaign Cover" className="w-full h-full object-cover opacity-60 group-hover:opacity-80 transition-opacity duration-500" referrerPolicy="no-referrer" />
                                                     <div className="absolute top-3 right-3 z-20">
                                                         <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider shadow-sm backdrop-blur-md ${r.role === 'dm' ? 'bg-amber-600/80 text-white border border-amber-500/50' : 'bg-indigo-600/80 text-white border border-indigo-500/50'}`}>
                                                             {r.role === 'dm' ? 'Dungeon Master' : 'Player'}
@@ -817,7 +866,7 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                                     <div key={char.id} className="bg-slate-900 rounded-xl overflow-hidden border border-slate-800 hover:border-indigo-500/50 transition-all cursor-pointer shadow-lg hover:-translate-y-1 flex flex-col">
                                         <div className="p-5 flex items-center gap-4">
                                             <div className="w-16 h-16 rounded-full bg-slate-800 border-2 border-slate-700 overflow-hidden shrink-0 flex items-center justify-center text-slate-500">
-                                                {char.avatarUrl ? <img src={char.avatarUrl} className="w-full h-full object-cover" alt="Avatar"/> : <Icon name="user" size={24} />}
+                                                {char.avatarUrl ? <img src={char.avatarUrl} className="w-full h-full object-cover" alt="Avatar" referrerPolicy="no-referrer" /> : <Icon name="user" size={24} />}
                                             </div>
                                             <div className="flex-1 min-w-0">
                                                 <h3 className="font-bold text-xl text-white truncate">{char.name || "Unnamed"}</h3>
@@ -857,7 +906,7 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                             <div className="bg-slate-900 p-6 md:p-8 rounded-xl border border-slate-800 shadow-xl space-y-6">
                                 <div className="flex items-center gap-6 pb-6 border-b border-slate-800">
                                     <div className="w-20 h-20 md:w-24 md:h-24 rounded-full bg-slate-800 border-4 border-slate-700 overflow-hidden shrink-0 flex items-center justify-center text-3xl font-bold text-slate-500">
-                                        {localPhotoUrl ? <img src={localPhotoUrl} alt="Profile" className="w-full h-full object-cover" /> : (localDisplayName[0] || '?')}
+                                        {localPhotoUrl ? <img src={localPhotoUrl} alt="Profile" className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : (localDisplayName[0] || '?')}
                                     </div>
                                     <div className="min-w-0">
                                         <h3 className="text-xl md:text-2xl font-bold text-white truncate">{localDisplayName}</h3>
@@ -1014,7 +1063,7 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                                             </div>
                                         )}
                                         {newCampaignData.coverImage ? (
-                                            <img src={newCampaignData.coverImage} className="w-full h-full object-cover" alt="Cover" />
+                                            <img src={newCampaignData.coverImage} className="w-full h-full object-cover" alt="Cover" referrerPolicy="no-referrer" />
                                         ) : (
                                             <div className="text-slate-500 flex flex-col items-center gap-2">
                                                 <Icon name="image" size={24} />
@@ -1069,7 +1118,7 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                                                 className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${selectedCharacterId === char.id ? 'bg-indigo-600/20 border-indigo-500' : 'bg-slate-900 border-slate-700 hover:border-slate-500'}`}
                                             >
                                                 <div className="w-12 h-12 rounded-full bg-slate-800 overflow-hidden shrink-0 flex items-center justify-center">
-                                                    {char.avatarUrl ? <img src={char.avatarUrl} className="w-full h-full object-cover" alt="Avatar"/> : <Icon name="user" size={16} className="text-slate-500" />}
+                                                    {char.avatarUrl ? <img src={char.avatarUrl} className="w-full h-full object-cover" alt="Avatar" referrerPolicy="no-referrer" /> : <Icon name="user" size={16} className="text-slate-500" />}
                                                 </div>
                                                 <div className="flex-1 min-w-0">
                                                     <div className="font-bold text-white truncate">{char.name}</div>

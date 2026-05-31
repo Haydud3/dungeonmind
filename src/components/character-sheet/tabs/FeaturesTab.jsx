@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { useCharacterStore } from '../../../stores/useCharacterStore';
 import Icon from '../../Icon';
+import RollButton from '../widgets/RollButton';
+import TrackerPips from '../widgets/TrackerPips';
 
 const FeaturesTab = ({ onDiceRoll, onLogAction, isOwner }) => {
     const { character, updateInfo, toggleCondition } = useCharacterStore();
@@ -89,43 +91,49 @@ const FeaturesTab = ({ onDiceRoll, onLogAction, isOwner }) => {
                                     <div className="font-bold text-white text-lg flex items-center gap-2">
                                         {feat.name}
                                         {feat.uses && (
-                                            <div className="flex flex-wrap max-w-[120px] gap-1 items-center" onClick={(e) => e.stopPropagation()}>
-                                                {Array.from({ length: feat.uses.max }).map((_, ui) => (
-                                                    <div
-                                                        key={ui}
-                                                        onClick={() => toggleUse(i)}
-                                                        className={`w-2.5 h-2.5 rounded-full border transition-colors ${ui < feat.uses.current ? 'bg-amber-500 border-amber-600' : 'bg-slate-900 border-slate-600'} ${isOwner ? 'cursor-pointer' : 'cursor-default opacity-80'}`}
-                                                    />
-                                                ))}
-                                                {feat.uses.recovery && <span className="text-[9px] text-slate-500 uppercase tracking-widest ml-1 bg-slate-900 px-1 rounded border border-slate-700 w-full mt-1">{feat.uses.recovery}</span>}
+                                            <div className="flex flex-col gap-1 items-start ml-2" onClick={(e) => e.stopPropagation()}>
+                                                <TrackerPips 
+                                                    max={feat.uses.max} 
+                                                    current={feat.uses.current} 
+                                                    onChange={() => isOwner && toggleUse(i)} 
+                                                    readOnly={!isOwner}
+                                                />
+                                                {feat.uses.recovery && <span className="text-[9px] text-slate-500 uppercase tracking-widest bg-slate-900 px-1 rounded border border-slate-700 w-full mt-1">{feat.uses.recovery}</span>}
                                             </div>
                                         )}                                    </div>
                                     <div className="text-[10px] text-amber-500 uppercase font-bold tracking-wider mb-2">{feat.source}</div>
                                 </div>
-                                <div className="flex gap-2">
+                                <div className="flex gap-2 items-center">
                                     {feat.name.toLowerCase().includes('rage') && character.conditions?.includes('Raging') ? (
-                                        <button onClick={() => toggleCondition('Raging')} className="px-3 py-1 bg-red-900 hover:bg-red-800 text-red-200 hover:text-white rounded text-[10px] font-bold transition-colors">
+                                        <RollButton 
+                                            onClick={() => toggleCondition('Raging')} 
+                                            type="action"
+                                            className="bg-red-900 hover:bg-red-800 border-red-800 text-red-200"
+                                        >
                                             End Rage
-                                        </button>
+                                        </RollButton>
                                     ) : (
-                                        <button onClick={() => {
-                                            if (onDiceRoll) {
-                                                onDiceRoll('1d0', {
-                                                    alias: feat.name,
-                                                    description: feat.description || feat.desc || "",
-                                                    actionType: 'use',
-                                                    characterName: character.name
-                                                });
-                                            } else if (onLogAction) {
-                                                onLogAction(`
-                                                    <div class="font-bold text-indigo-300">${feat.name}</div>
-                                                    <div class="text-xs text-slate-400 mt-1">${feat.description || feat.desc || ""}</div>
-                                                `);
-                                            }
-                                            if (feat.name.toLowerCase().includes('rage')) toggleCondition('Raging');
-                                        }} className="px-3 py-1 bg-slate-700 hover:bg-indigo-600 text-slate-300 hover:text-white rounded text-[10px] font-bold transition-colors">
+                                        <RollButton 
+                                            onClick={() => {
+                                                if (onDiceRoll) {
+                                                    onDiceRoll('1d0', {
+                                                        alias: feat.name,
+                                                        description: feat.description || feat.desc || "",
+                                                        actionType: 'use',
+                                                        characterName: character.name
+                                                    });
+                                                } else if (onLogAction) {
+                                                    onLogAction(`
+                                                        <div class="font-bold text-indigo-300">${feat.name}</div>
+                                                        <div class="text-xs text-slate-400 mt-1">${feat.description || feat.desc || ""}</div>
+                                                    `);
+                                                }
+                                                if (feat.name.toLowerCase().includes('rage')) toggleCondition('Raging');
+                                            }} 
+                                            type="use"
+                                        >
                                             Use
-                                        </button>
+                                        </RollButton>
                                     )}
                                     <button onClick={() => handleDelete(i)} className="text-slate-600 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity p-1"><Icon name="trash-2" size={16}/></button>
                                 </div>

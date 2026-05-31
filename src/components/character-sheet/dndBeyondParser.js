@@ -275,20 +275,30 @@ export const parseDndBeyondJson = (json) => {
             const dmgDice = wb.damage?.diceString;
             
             if (dmgDice) {
-                const isFinesse = wb.properties?.some(p => p.name?.toLowerCase() === 'finesse');
+                const isFinesse = def.properties?.some(p => p.name?.toLowerCase() === 'finesse') || wb.properties?.some(p => p.name?.toLowerCase() === 'finesse');
+                const versatileProp = def.properties?.find(p => p.name?.toLowerCase() === 'versatile') || wb.properties?.find(p => p.name?.toLowerCase() === 'versatile');
                 const isRanged = wb.attackType === 2;
                 
                 const strMod = characterSheet.modifiers.str || 0;
                 const dexMod = characterSheet.modifiers.dex || 0;
                 const statMod = (isRanged || (isFinesse && dexMod > strMod)) ? dexMod : strMod;
-                const magicBonus = wb.grantedModifiers?.find(m => m.type === 'bonus' && m.subType === 'magic')?.value || 0;
+                const magicBonus = def.grantedModifiers?.find(m => m.type === 'bonus' && m.subType === 'magic')?.value || wb.grantedModifiers?.find(m => m.type === 'bonus' && m.subType === 'magic')?.value || 0;
                 
                 const totalHit = characterSheet.profBonus + statMod + magicBonus;
                 const totalDmgMod = statMod + magicBonus;
                 
+                let dmgString = `${dmgDice}${totalDmgMod !== 0 ? (totalDmgMod > 0 ? '+' : '') + totalDmgMod : ''}`;
+                
+                if (versatileProp && versatileProp.notes) {
+                    const versatileDice = versatileProp.notes.match(/\d+d\d+/);
+                    if (versatileDice) {
+                         dmgString += ` / ${versatileDice[0]}${totalDmgMod !== 0 ? (totalDmgMod > 0 ? '+' : '') + totalDmgMod : ''}`;
+                    }
+                }
+                
                 combat = {
                     hit: totalHit,
-                    dmg: `${dmgDice}${totalDmgMod !== 0 ? (totalDmgMod > 0 ? '+' : '') + totalDmgMod : ''}`,
+                    dmg: dmgString,
                     type: 'Action',
                     category: 'Attack',
                     range: wb.range ? `${wb.range} ft` : '5 ft',

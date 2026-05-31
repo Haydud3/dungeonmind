@@ -383,14 +383,7 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
                         onSave={handleSheetSave} 
                         onDiceRoll={async (formula, options) => {
                             if (onDiceRoll) {
-                                const r = await onDiceRoll(formula, { ...options, chat: true, isPrivate: role === 'dm' });
-                                if (typeof r === 'number') return r;
-                                if (r && typeof r === 'object') {
-                                    if (typeof r.total === 'number') return r.total;
-                                    if (typeof r.result === 'number') return r.result;
-                                }
-                                const parsed = parseInt(r);
-                                return isNaN(parsed) ? 0 : parsed;
+                                return await onDiceRoll(formula, { ...options, chat: true, isPrivate: role === 'dm' });
                             }
                         }}
                         diceLog={diceLog}
@@ -517,14 +510,14 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
                             // END CHANGE
                             className="group relative bg-slate-800 rounded-xl overflow-hidden border border-slate-700 hover:border-amber-500/50 shadow-lg cursor-pointer transition-all hover:-translate-y-1">
                             <div className="h-32 bg-slate-700 relative overflow-hidden">
-                                {p.image ? <img src={p.image} className="w-full h-full object-cover opacity-60 group-hover:opacity-80 transition-opacity" alt={p.name} /> : <div className="w-full h-full flex items-center justify-center bg-slate-700 opacity-20"><Icon name="user" size={64}/></div>}
+                                {p.image ? <img src={p.image} className="w-full h-full object-cover opacity-60 group-hover:opacity-80 transition-opacity" alt={p.name} referrerPolicy="no-referrer" /> : <div className="w-full h-full flex items-center justify-center bg-slate-700 opacity-20"><Icon name="user" size={64}/></div>}
                                 <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-transparent to-transparent"></div>
                                 <div className="absolute top-3 right-3 bg-amber-600 text-white text-xs font-bold px-2 py-1 rounded shadow-md border border-amber-400">LVL {p.level || 1}</div>
                             </div>
                             <div className="p-4 relative -mt-8">
                                 <div className="flex justify-between items-end">
                                     <div className="w-16 h-16 rounded-xl bg-slate-800 border-2 border-amber-500 shadow-2xl flex items-center justify-center overflow-hidden">
-                                        {p.image ? <img src={p.image} className="w-full h-full object-cover" /> : <span className="text-2xl font-bold text-slate-500">{p.name?.[0]}</span>}
+                                        {p.image ? <img src={p.image} className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : <span className="text-2xl font-bold text-slate-500">{p.name?.[0]}</span>}
                                     </div>
                                     <div className="flex-1 ml-3 mb-1">
                                         <h3 className="text-xl font-bold text-slate-100 leading-tight group-hover:text-amber-400 truncate">{p.name}</h3>
@@ -544,7 +537,7 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
                         ) : (
                             <div key={p.id} onClick={() => handleCharacterClick(p)} className="group bg-slate-800 border border-slate-700 hover:border-indigo-500/50 rounded-xl p-3 flex items-center gap-4 cursor-pointer shadow-lg transition-all hover:-translate-y-0.5">
                                 <div className="w-12 h-12 rounded-lg bg-slate-700 border border-slate-600 overflow-hidden shrink-0 relative">
-                                    {p.image ? <img src={p.image} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center font-bold text-slate-500 text-xl">{p.name?.[0]}</div>}
+                                    {p.image ? <img src={p.image} className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : <div className="w-full h-full flex items-center justify-center font-bold text-slate-500 text-xl">{p.name?.[0]}</div>}
                                 </div>
                                 <div className="flex-1 min-w-0">
                                     <h3 className="font-bold text-slate-100 group-hover:text-amber-400 truncate">{p.name}</h3>

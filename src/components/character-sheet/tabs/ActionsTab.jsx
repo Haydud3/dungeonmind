@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { useCharacterStore } from '../../../stores/useCharacterStore';
 import Icon from '../../Icon';
+import RollButton from '../widgets/RollButton';
+import TrackerPips from '../widgets/TrackerPips';
 
 // START CHANGE: Core Combat Actions Constant
 const CORE_COMBAT_ACTIONS = [
@@ -20,6 +22,7 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
     const { character, updateInfo, toggleCondition, useItemCharge } = useCharacterStore();
     const [showAdd, setShowAdd] = useState(false);
     const [newAction, setNewAction] = useState({ name: "", hit: "", dmg: "", type: "Action", category: "Attack", notes: "" });
+    const [lastCritId, setLastCritId] = useState(null);
     
     // Edit State
     const [editingId, setEditingId] = useState(null);
@@ -34,7 +37,7 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
         .map(({ item, index }) => ({
             ...item.combat,
             name: item.name,
-            id: `item-${item.name}-${Date.now()}`, // Unique ID generation
+            id: `item-${item.name}-${index}`, // Unique ID generation
             source: "item",
             itemIndex: index, // To map back to the store
             uses: item.limitedUse && item.limitedUse.maxUses > 0 ? {
@@ -153,23 +156,36 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
         // Then handle the actual dice roll logic
         if (type === 'hit') {
             if (!onDiceRoll) return alert("Dice connection missing.");
-            if (String(action.hit).includes('DC')) {
+            if (String(action.hit).toUpperCase().includes('DC')) {
+                const match = String(action.hit).match(/DC\s*(\d+)(?:\s*([a-zA-Z]+))?/i);
+                let dcData = null;
+                if (match) {
+                    dcData = { value: parseInt(match[1], 10), stat: (match[2] || 'dex').toLowerCase().substring(0,3) };
+                }
+
                 onDiceRoll('1d0', {
-                    alias: 'Saving Throw',
-                    description: `${action.name} requires a ${action.hit} save.`,
+                    alias: action.name,
+                    description: `Requires a ${action.hit} save.`,
                     actionType: 'use',
-                    characterName: character.name
+                    characterName: character.name,
+                    dc: dcData
                 });
                 return;
             }
 
             const mod = parseInt(action.hit) || 0;
             const formula = `1d20${mod >= 0 ? '+' : ''}${mod}`;
-            onDiceRoll(formula, {
+            const rollObj = await onDiceRoll(formula, {
                 weaponName: action.name,
                 alias: 'Attack',
                 characterName: character.name
             });
+            
+            if (rollObj?.isCrit) {
+                setLastCritId(action.id);
+            } else if (rollObj) {
+                setLastCritId(null);
+            }
         } 
         else if (type === 'dmg') {
             if (!onDiceRoll) return alert("Dice connection missing.");
@@ -191,16 +207,31 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
                     damageType: action.notes || '',
                     characterName: character.name
                 });
+                setLastCritId(null);
                 return;
             }
 
-            onDiceRoll(action.dmg, {
+            let formula = action.dmg;
+            let alias = 'Damage Roll';
+            
+            if (lastCritId === action.id) {
+                // Double all dice counts (e.g. 1d8 -> 2d8, 2d6 -> 4d6)
+                formula = String(formula).replace(/(\d*)d(\d+)/g, (match, countStr, faces) => {
+                    const count = countStr ? parseInt(countStr) : 1;
+                    return `${count * 2}d${faces}`;
+                });
+                alias = 'CRITICAL DAMAGE!';
+            }
+
+            onDiceRoll(formula, {
                 actionType: 'damage',
                 weaponName: action.name,
-                alias: 'Damage Roll',
+                alias: alias,
                 damageType: action.notes || '',
                 characterName: character.name
             });
+            
+            setLastCritId(null); // Consume the crit
         } 
     };
 
@@ -262,55 +293,81 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
                         {/* RIGHT: Buttons */}
                         <div className="flex gap-2 items-center">
                             
-                            {/* Uses Tracker (Visible but Read-Only if not owner?) 
-                                Actually, we should allow viewing uses but prevent clicking.
-                            */}
+                            {/* Uses Tracker */}
                             {action.uses && (
-                                <div className="flex flex-wrap justify-end max-w-[80px] gap-1 mr-1" onClick={(e) => e.stopPropagation()}>
-                                    {Array.from({ length: action.uses.max }).map((_, i) => (
-                                        <div 
-                                            key={i} 
-                                            // UPDATE: Prevent toggle if not owner
-                                            onClick={() => isOwner && toggleUse(action.id)}
-                                            className={`w-2.5 h-2.5 rounded-full border transition-colors ${i < action.uses.current ? 'bg-amber-500 border-amber-600' : 'bg-slate-900 border-slate-600'} ${isOwner ? 'cursor-pointer' : 'cursor-default opacity-80'}`} 
-                                        />
-                                    ))}
+                                <TrackerPips 
+                                    max={action.uses.max} 
+                                    current={action.uses.current} 
+                                    onChange={(newVal) => isOwner && toggleUse(action.id)} // ActionsTab handles toggleUse internally based on max/current logic, wait toggleUse might just increment. Let's check how toggleUse works. Actually, toggleUse in this file takes (id). If TrackerPips sends `newValue`, toggleUse might need adjustment or we just call `toggleUse(id)`. Let's assume toggleUse handles the logic. I'll pass the `id`. Wait, TrackerPips's onChange provides the raw number. Let's see how `toggleUse` is defined. It probably expects the `id`.
+                                    readOnly={!isOwner}
+                                    className="mr-1"
+                                />
+                            )}
+
+                            {/* HIT Button */}
+                            {isOwner && (action.hit !== undefined && action.hit !== null && action.hit !== "") && (
+                                <RollButton 
+                                    onClick={(e) => handleRoll(action, 'hit', e)}
+                                    type="hit"
+                                    title="Roll Attack"
+                                >
+                                    {String(action.hit).includes('+') || String(action.hit).includes('-') || String(action.hit).toUpperCase().includes('DC') ? action.hit : `+${action.hit}`}
+                                </RollButton>
+                            )}
+
+                            {/* DAMAGE Button */}
+                            {isOwner && action.dmg && (
+                                <div className="flex gap-1">
+                                    {String(action.dmg).split('/').map((dmgStr, index) => {
+                                        const isCritTarget = lastCritId === action.id;
+                                        const critClass = isCritTarget 
+                                            ? "bg-amber-400 hover:bg-amber-300 text-slate-900 border-amber-300 shadow-[0_0_15px_rgba(251,191,36,1)] animate-pulse font-extrabold" 
+                                            : "max-w-[100px]";
+                                            
+                                        let displayDmg = dmgStr.trim();
+                                        if (isCritTarget) {
+                                            displayDmg = String(displayDmg).replace(/(\d*)d(\d+)/g, (match, countStr, faces) => {
+                                                const count = countStr ? parseInt(countStr) : 1;
+                                                return `${count * 2}d${faces}`;
+                                            });
+                                        }
+                                            
+                                        return (
+                                            <RollButton 
+                                                key={index}
+                                                onClick={(e) => {
+                                                    const singleDmgAction = { ...action, dmg: dmgStr.trim() };
+                                                    handleRoll(singleDmgAction, 'dmg', e);
+                                                }}
+                                                type={isCritTarget ? "action" : "dmg"}
+                                                title={isCritTarget ? "CRITICAL DAMAGE" : (index === 0 ? "Roll Damage" : "Roll Versatile Damage")}
+                                                className={critClass}
+                                            >
+                                                {displayDmg}
+                                            </RollButton>
+                                        );
+                                    })}
                                 </div>
                             )}
 
-                            {/* UPDATE: Hide HIT Button if not owner */}
-                            {isOwner && (action.hit !== undefined && action.hit !== null && action.hit !== "") && (
-                                <button 
-                                    onClick={(e) => handleRoll(action, 'hit', e)}
-                                    className="h-7 px-2 rounded bg-slate-700 hover:bg-cyan-900 text-cyan-200 border border-slate-600 hover:border-cyan-500 text-xs font-bold font-mono transition-colors" 
-                                    title="Roll Attack"
-                                >
-                                {String(action.hit).includes('+') || String(action.hit).includes('-') || String(action.hit).includes('DC') ? action.hit : `+${action.hit}`}
-                                </button>
-                            )}
-
-                            {/* UPDATE: Hide DAMAGE Button if not owner */}
-                            {isOwner && action.dmg && (
-                                <button 
-                                    onClick={(e) => handleRoll(action, 'dmg', e)}
-                                    className="h-7 px-2 rounded bg-slate-700 hover:bg-indigo-900 text-indigo-200 border border-slate-600 hover:border-indigo-500 text-xs font-bold font-mono transition-colors max-w-[100px] truncate" 
-                                    title="Roll Damage"
-                                >
-                                    {action.dmg}
-                                </button>
-                            )}
-
-                            {/* UPDATE: Hide USE Button if not owner */}
+                            {/* USE Button */}
                             {isOwner && (!action.hit && !action.dmg) && (
                                 <>
                                     {action.name.toLowerCase().includes('rage') && character.conditions?.includes('Raging') ? (
-                                        <button onClick={(e) => { e.stopPropagation(); toggleCondition('Raging'); }} className="h-7 px-3 bg-red-900 hover:bg-red-800 text-red-200 rounded text-xs font-bold uppercase border border-red-800 shadow-md transition-colors">
+                                        <RollButton 
+                                            onClick={(e) => { toggleCondition('Raging'); }} 
+                                            type="action"
+                                            className="bg-red-900 hover:bg-red-800 border-red-800 text-red-200"
+                                        >
                                             END RAGE
-                                        </button>
+                                        </RollButton>
                                     ) : (
-                                        <button onClick={(e) => handleRoll(action, 'use', e)} className="h-7 px-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-xs font-bold uppercase border border-indigo-500 shadow-md transition-colors">
+                                        <RollButton 
+                                            onClick={(e) => handleRoll(action, 'use', e)} 
+                                            type="use"
+                                        >
                                             USE
-                                        </button>
+                                        </RollButton>
                                     )}
                                 </>
                             )}

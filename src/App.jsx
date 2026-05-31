@@ -294,19 +294,54 @@ function DungeonMindApp() {
               return 0;
           }
 
+          let droppedRollsDetails = [];
+
           parts.forEach(part => {
               const sign = part.startsWith('-') ? -1 : 1;
               const cleanPart = part.replace(/^[+-]/, '');
               
               if (cleanPart.includes('d')) {
-                  const [c, s] = cleanPart.split('d');
-                  const count = parseInt(c) || 1;
-                  const sides = parseInt(s) || 1;
-                  
-                  for(let i=0; i<count; i++) {
-                      const r = Math.floor(Math.random() * sides) + 1;
-                      rollsDetails.push({ side: sides, result: r, sign });
-                      totalNatural += r * sign;
+                  const match = cleanPart.match(/^(\d*)d(\d+)(k[hl]\d+)?$/i);
+                  if (match) {
+                      const count = parseInt(match[1]) || 1;
+                      const sides = parseInt(match[2]) || 1;
+                      const keepMod = match[3];
+
+                      let localRolls = [];
+                      for(let i=0; i<count; i++) {
+                          const r = Math.floor(Math.random() * sides) + 1;
+                          localRolls.push({ side: sides, result: r, sign });
+                      }
+
+                      if (keepMod) {
+                          const keepType = keepMod.substring(0, 2).toLowerCase();
+                          const keepCount = parseInt(keepMod.substring(2)) || 1;
+                          
+                          let sorted = [...localRolls].sort((a, b) => 
+                              keepType === 'kh' ? b.result - a.result : a.result - b.result
+                          );
+                          
+                          const kept = sorted.slice(0, keepCount);
+                          const dropped = sorted.slice(keepCount);
+                          
+                          localRolls = kept;
+                          droppedRollsDetails.push(...dropped);
+                      }
+
+                      localRolls.forEach(rollObj => {
+                          rollsDetails.push(rollObj);
+                          totalNatural += rollObj.result * rollObj.sign;
+                      });
+                  } else {
+                      const [c, s] = cleanPart.split('d');
+                      const count = parseInt(c) || 1;
+                      const sides = parseInt(s) || 1;
+                      
+                      for(let i=0; i<count; i++) {
+                          const r = Math.floor(Math.random() * sides) + 1;
+                          rollsDetails.push({ side: sides, result: r, sign });
+                          totalNatural += r * sign;
+                      }
                   }
               } else if (cleanPart) {
                   mod += (parseInt(cleanPart) || 0) * sign;
@@ -344,16 +379,26 @@ function DungeonMindApp() {
           
           const isUseAction = options.actionType === 'use' || rollsDetails.some(r => r.side === 0) || strFormula === '1d0';
 
+          // Determine if we have a critical hit or fumble based ONLY on kept dice (which is what rollsDetails contains)
+          const keptD20s = rollsDetails.filter(r => r.side === 20);
+          const isCrit = !isUseAction && keptD20s.some(r => r.result === 20);
+          const isFumble = !isUseAction && keptD20s.some(r => r.result === 1) && !isCrit;
+          
           if (!isUseAction) {
-              const newAnimations = rollsDetails.map(r => ({ die: r.side, result: r.result }));
+              const newAnimations = [...rollsDetails, ...droppedRollsDetails].map(r => ({ die: r.side, result: r.result }));
               if (rollTimeoutRef.current) clearTimeout(rollTimeoutRef.current);
               setRollingDice(newAnimations);
               rollTimeoutRef.current = setTimeout(() => setRollingDice(null), 4000);
 
-              const isCrit = rollsDetails.length === 1 && rollsDetails[0].side === 20 && rollsDetails[0].result === 20;
-              const isFumble = rollsDetails.length === 1 && rollsDetails[0].side === 20 && rollsDetails[0].result === 1;
               const naturalClass = isCrit ? "text-green-400" : isFumble ? "text-red-400" : "text-slate-300";
               const rollsStr = rolls.length > 1 ? rolls.join(' + ').replace(/\+ -/g, '- ') : rolls[0];
+              
+              let droppedHtml = '';
+              if (droppedRollsDetails.length > 0) {
+                  const droppedStr = droppedRollsDetails.map(r => r.result).join(', ');
+                  droppedHtml = `<span class="text-slate-500 line-through text-[10px] ml-1">(${droppedStr})</span>`;
+              }
+
               const toastHtml = `
                     <div class="space-y-1 text-left w-full">
                         <div class="font-bold text-amber-500 border-b border-amber-900/50 pb-1 flex justify-between">
@@ -363,7 +408,7 @@ function DungeonMindApp() {
                         <div class="flex flex-wrap items-center gap-2 text-sm text-slate-300 mt-1 w-full">
                             <span class="bg-slate-800 px-2 py-1 rounded font-mono text-[10px] uppercase tracking-widest text-slate-400 break-all">${strFormula}</span>
                             <span class="text-slate-500">➜</span>
-                            <span class="font-mono text-[10px] uppercase tracking-widest ${naturalClass} break-words">[${rollsStr}]${mod !== 0 ? (mod > 0 ? '+' : '') + mod : ''}</span>
+                            <span class="font-mono text-[10px] uppercase tracking-widest ${naturalClass} break-words">[${rollsStr}]${droppedHtml}${mod !== 0 ? (mod > 0 ? '+' : '') + mod : ''}</span>
                             <span class="text-slate-500">=</span>
                             <span class="text-xl font-bold ${naturalClass.includes('green') ? 'text-green-400 glow' : naturalClass.includes('red') ? 'text-red-500' : 'text-white'}">${safeResult}</span>
                         </div>
@@ -407,7 +452,15 @@ function DungeonMindApp() {
               timestamp: Date.now()
           });
           
-          return safeResult;
+          // Return an object but implement valueOf so it can be used as a number in existing math
+          const resultObj = {
+              total: safeResult,
+              isCrit: isCrit,
+              isFumble: isFumble,
+              natural: safeTotalNatural,
+              valueOf: () => safeResult
+          };
+          return resultObj;
       } catch (err) {
           console.error("Dice error", err);
           return 0;

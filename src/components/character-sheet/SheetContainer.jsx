@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import Icon from '../Icon';
 
@@ -19,6 +19,7 @@ function SheetContainer({ character, onSave, onDiceRoll, diceLog, onLogAction, o
   const storeCharacter = useCharacterStore((state) => state.character);
   const markSaved = useCharacterStore((state) => state.markSaved);
   const [activeTab, setActiveTab] = useState(initialTab || 'actions');
+  const [advMode, setAdvMode] = useState('normal'); // 'normal', 'adv', 'dis'
 
   useEffect(() => {
       if (initialTab) {
@@ -53,6 +54,42 @@ function SheetContainer({ character, onSave, onDiceRoll, diceLog, onLogAction, o
       (!isNpc && (character.ownerId === data.user.uid || data.campaign?.assignments?.[data.user.uid] === character.id))
     )));
 
+  // Wrapped Dice Roll to handle Global Advantage/Disadvantage
+  const handleWrappedDiceRoll = useCallback(async (formula, options = {}) => {
+      if (!onDiceRoll) return;
+      
+      let finalFormula = String(formula);
+      let finalAlias = options.alias || 'Roll';
+      let hasDice = false;
+      
+      if (finalFormula.includes('d') && options.actionType !== 'damage') {
+          hasDice = true;
+      }
+
+      if (hasDice && advMode !== 'normal') {
+          if (advMode === 'adv') {
+              finalFormula = finalFormula.replace(/(\d*)d(\d+)/g, (match, p1, p2) => {
+                  const count = parseInt(p1) || 1;
+                  // If it's a single die, roll 2 and keep 1. If it's N dice, roll N+1 and keep N.
+                  return `${Math.max(2, count + 1)}d${p2}kh${count}`;
+              });
+              finalAlias = `${finalAlias} (Advantage)`;
+          } else if (advMode === 'dis') {
+              finalFormula = finalFormula.replace(/(\d*)d(\d+)/g, (match, p1, p2) => {
+                  const count = parseInt(p1) || 1;
+                  return `${Math.max(2, count + 1)}d${p2}kl${count}`;
+              });
+              finalAlias = `${finalAlias} (Disadvantage)`;
+          }
+      }
+
+      const result = await onDiceRoll(finalFormula, { ...options, alias: finalAlias, advMode: advMode !== 'normal' ? advMode : undefined });
+      
+      if (hasDice) setAdvMode('normal'); // Reset after roll
+      
+      return result;
+  }, [onDiceRoll, advMode]);
+
   if (!character || !character.name) {
     return (
       <div className="p-4 text-white text-center">
@@ -65,7 +102,7 @@ function SheetContainer({ character, onSave, onDiceRoll, diceLog, onLogAction, o
     <div className="flex flex-col h-full bg-slate-900 relative">
       <HeaderStats 
         character={character}
-        onDiceRoll={onDiceRoll} 
+        onDiceRoll={handleWrappedDiceRoll} 
         onLogAction={onLogAction} 
         onBack={onBack} 
         role={role}
@@ -75,6 +112,30 @@ function SheetContainer({ character, onSave, onDiceRoll, diceLog, onLogAction, o
 
       {/* Make sure RollToast is imported and placed here, or in App.jsx */}
       <RollToast />
+
+      {/* Global Roll Mode Toggle */}
+      <div className="flex bg-slate-900 border-y border-slate-800 p-2 shrink-0 z-10 relative shadow-md">
+          <div className="flex w-full max-w-md mx-auto bg-slate-950 border border-slate-700/50 rounded-lg overflow-hidden shadow-inner">
+              <button 
+                  onClick={() => setAdvMode('dis')} 
+                  className={`flex-1 py-1.5 text-[10px] uppercase font-bold tracking-widest transition-colors ${advMode === 'dis' ? 'bg-red-900/50 text-red-400' : 'text-slate-500 hover:bg-slate-800'}`}
+              >
+                  Disadvantage
+              </button>
+              <button 
+                  onClick={() => setAdvMode('normal')} 
+                  className={`flex-1 py-1.5 text-[10px] uppercase font-bold tracking-widest transition-colors border-x border-slate-700/50 ${advMode === 'normal' ? 'bg-slate-700 text-white shadow-md' : 'text-slate-500 hover:bg-slate-800'}`}
+              >
+                  Normal
+              </button>
+              <button 
+                  onClick={() => setAdvMode('adv')} 
+                  className={`flex-1 py-1.5 text-[10px] uppercase font-bold tracking-widest transition-colors ${advMode === 'adv' ? 'bg-green-900/50 text-green-400' : 'text-slate-500 hover:bg-slate-800'}`}
+              >
+                  Advantage
+              </button>
+          </div>
+      </div>
 
       {/* Tabs Navigation */}
       <div className="flex-none bg-slate-900 border-t border-b border-slate-800 shadow-inner z-20">
@@ -91,11 +152,11 @@ function SheetContainer({ character, onSave, onDiceRoll, diceLog, onLogAction, o
 
       {/* Tab Content */}
       <div className="flex-1 overflow-y-auto custom-scroll p-4">
-        {activeTab === 'actions' && <ActionsTab onDiceRoll={onDiceRoll} onLogAction={onLogAction} isOwner={isOwner} />}
-        {activeTab === 'spells' && <SpellsTab onDiceRoll={onDiceRoll} onLogAction={onLogAction} isOwner={isOwner} />}
-        {activeTab === 'skills' && <SkillsTab onDiceRoll={onDiceRoll} onLogAction={onLogAction} />}
-        {activeTab === 'inventory' && <InventoryTab onDiceRoll={onDiceRoll} onLogAction={onLogAction} isOwner={isOwner} />}
-        {activeTab === 'features' && <FeaturesTab onDiceRoll={onDiceRoll} onLogAction={onLogAction} isOwner={isOwner} />}
+        {activeTab === 'actions' && <ActionsTab onDiceRoll={handleWrappedDiceRoll} onLogAction={onLogAction} isOwner={isOwner} />}
+        {activeTab === 'spells' && <SpellsTab onDiceRoll={handleWrappedDiceRoll} onLogAction={onLogAction} isOwner={isOwner} />}
+        {activeTab === 'skills' && <SkillsTab onDiceRoll={handleWrappedDiceRoll} onLogAction={onLogAction} />}
+        {activeTab === 'inventory' && <InventoryTab onDiceRoll={handleWrappedDiceRoll} onLogAction={onLogAction} isOwner={isOwner} />}
+        {activeTab === 'features' && <FeaturesTab onDiceRoll={handleWrappedDiceRoll} onLogAction={onLogAction} isOwner={isOwner} />}
         {activeTab === 'bio' && <BioTab onOpenModelPicker={onOpenModelPicker} />}
         {activeTab === 'dmNotes' && role === 'dm' && <DmNotesTab />}
       </div>

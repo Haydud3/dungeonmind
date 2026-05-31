@@ -14,11 +14,75 @@ import { useResolvedUrl } from '../utils/useResolvedUrl';
 const SafeAvatar = ({ src, alt }) => {
     const resolved = useResolvedUrl(src);
     if (!resolved && src?.startsWith('chunked:')) return <div className="w-10 h-10 rounded-full bg-slate-800 animate-pulse border border-slate-600" />;
-    return <img src={resolved || src} alt={alt} className="w-10 h-10 rounded-full object-cover shadow-lg border border-slate-600"/>;
+    return <img src={resolved || src} alt={alt} className="w-10 h-10 rounded-full object-cover shadow-lg border border-slate-600" referrerPolicy="no-referrer" />;
 };
 
 // START CHANGE: Add clearChat to destructured props
 import { useNewCampaign } from '../contexts/NewCampaignProvider';
+
+const ChatSaveCard = ({ rollData, previewTargets, role, handleRollSave }) => {
+    const [advMode, setAdvMode] = useState('normal'); // 'normal', 'adv', 'dis'
+    
+    let dcInfo = rollData.dc;
+    if (!dcInfo) {
+        const textToSearch = `${rollData.description || ''} ${rollData.alias || ''}`;
+        const match = String(textToSearch).match(/DC\s*(\d+)(?:\s*([a-zA-Z]+))?/i);
+        if (match) {
+            dcInfo = { value: parseInt(match[1], 10), stat: (match[2] || 'dex').toLowerCase().substring(0,3) };
+        }
+    }
+    
+    if (!dcInfo || !dcInfo.value || !dcInfo.stat) return null;
+
+    const stat = dcInfo.stat.toLowerCase();
+    const targetBadges = previewTargets.map(char => {
+        const score = char.stats?.[stat] || 10;
+        let mod = Math.floor((score - 10) / 2);
+        if (char.savingThrows?.[stat]) mod += (char.profBonus || 2);
+        const modDisplay = `${mod >= 0 ? '+' : ''}${mod}`;
+        const isNegative = mod < 0;
+        return (
+            <span key={char.id} className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold ${isNegative ? 'bg-red-900/50 text-red-300 border border-red-800/50' : 'bg-slate-800 text-slate-300 border border-slate-600'}`}>
+                {char.name} ({modDisplay})
+            </span>
+        );
+    });
+
+    return (
+        <div className="mt-2 w-full pt-2 border-t border-slate-700/50 flex flex-col gap-2">
+            <div className="flex flex-wrap items-center gap-1">
+                <span className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mr-1">Targets:</span>
+                {targetBadges.length > 0 ? targetBadges : (
+                    <span className="text-[10px] text-slate-500 italic">{role === 'dm' ? 'Select tokens on the map' : 'No character assigned'}</span>
+                )}
+            </div>
+            <div className="flex bg-slate-900 border border-slate-700/50 rounded overflow-hidden shadow-inner w-full mt-1">
+                <button 
+                    onClick={(e) => { e.stopPropagation(); setAdvMode('dis'); }} 
+                    className={`flex-1 py-1.5 text-[9px] uppercase font-bold tracking-widest transition-colors ${advMode === 'dis' ? 'bg-red-900/50 text-red-400' : 'text-slate-500 hover:bg-slate-800'}`}
+                >
+                    Disadvantage
+                </button>
+                <button 
+                    onClick={(e) => { e.stopPropagation(); setAdvMode('normal'); }} 
+                    className={`flex-1 py-1.5 text-[9px] uppercase font-bold tracking-widest transition-colors border-x border-slate-700/50 ${advMode === 'normal' ? 'bg-slate-700 text-white shadow-md' : 'text-slate-500 hover:bg-slate-800'}`}
+                >
+                    Normal
+                </button>
+                <button 
+                    onClick={(e) => { e.stopPropagation(); setAdvMode('adv'); }} 
+                    className={`flex-1 py-1.5 text-[9px] uppercase font-bold tracking-widest transition-colors ${advMode === 'adv' ? 'bg-green-900/50 text-green-400' : 'text-slate-500 hover:bg-slate-800'}`}
+                >
+                    Advantage
+                </button>
+            </div>
+            <button 
+                onClick={(e) => { e.stopPropagation(); handleRollSave(dcInfo, previewTargets, advMode); setAdvMode('normal'); }}
+                className="w-full bg-amber-600 hover:bg-amber-500 text-white text-[11px] font-bold py-1.5 rounded shadow-lg transition-colors flex items-center justify-center gap-1 mt-1"
+            ><Icon name="dices" size={12}/> Roll DC {dcInfo.value} {dcInfo.stat.toUpperCase()} Save</button>
+        </div>
+    );
+};
 
 const SessionView = ({ 
     inputText, setInputText, 
@@ -35,6 +99,48 @@ const SessionView = ({
     const players = campaign?.players || [];
     const castList = buildCastList(campaign || {}); // Guard against null campaign
     const myCharId = campaign?.assignments?.[user?.uid];
+
+    // START CHANGE: Target Preview State
+    const selectedTokenIds = useCharacterStore(state => state.selectedTokenIds) || [];
+    const [previewTargets, setPreviewTargets] = useState([]);
+
+    useEffect(() => {
+        const resolveTargets = async () => {
+            const activeMapId = data?.activeMapId;
+            const code = gameParams?.code;
+            let targetCharacters = [];
+            
+            if (selectedTokenIds.length > 0 && activeMapId && code) {
+                try {
+                    const mapRef = getMapRef(code, activeMapId);
+                    const mapSnap = await getDoc(mapRef);
+                    if (mapSnap.exists()) {
+                        const mapData = mapSnap.data();
+                        selectedTokenIds.forEach(id => {
+                            const token = mapData.tokens?.[id];
+                            if (token) {
+                                const char = [...(data?.players || []), ...(data?.npcs || [])].find(c => String(c.id) === String(token.characterId));
+                                if (char && (role === 'dm' || String(char.ownerId) === String(user?.uid) || String(char.id) === String(myCharId) || token.isSharedControl)) {
+                                    targetCharacters.push(char);
+                                }
+                            }
+                        });
+                    }
+                } catch (e) {
+                    console.error("Failed to fetch map for preview targets", e);
+                }
+            }
+            
+            if (targetCharacters.length === 0 && role !== 'dm' && myCharId) {
+                const myChar = data?.players?.find(p => String(p.id) === String(myCharId));
+                if (myChar) targetCharacters.push(myChar);
+            }
+            
+            setPreviewTargets(targetCharacters);
+        };
+        resolveTargets();
+    }, [selectedTokenIds, data?.activeMapId, gameParams?.code, role, user?.uid, myCharId, data?.players, data?.npcs]);
+    // END CHANGE
 
     const saveMessageToJournal = useCallback((content) => {
         const newPageId = Date.now().toString();
@@ -162,6 +268,48 @@ const SessionView = ({
             alert("No active map found.");
         }
     }, [data, gameParams, context]);
+    // END CHANGE
+
+    // START CHANGE: Interactive Save Handler
+    const handleRollSave = useCallback((dcData, targetsToRoll, advMode = 'normal') => {
+        if (!targetsToRoll || targetsToRoll.length === 0) {
+            if (role === 'dm') return alert("Select tokens on the map to roll their saves.");
+            return alert("No character selected or assigned to roll the save.");
+        }
+        
+        targetsToRoll.forEach((char, idx) => {
+            const stat = dcData.stat?.toLowerCase() || 'dex';
+            const score = char.stats?.[stat] || 10;
+            let mod = Math.floor((score - 10) / 2);
+            if (char.savingThrows?.[stat]) mod += (char.profBonus || 2);
+            
+            let formula = '1d20';
+            let rollAlias = `${dcData.stat.toUpperCase()} Save vs DC ${dcData.value}`;
+
+            if (advMode === 'adv') {
+                formula = '2d20kh1';
+                rollAlias += ' (Advantage)';
+            } else if (advMode === 'dis') {
+                formula = '2d20kl1';
+                rollAlias += ' (Disadvantage)';
+            }
+
+            if (mod !== 0) {
+                formula += mod > 0 ? ` + ${mod}` : ` - ${Math.abs(mod)}`;
+            }
+
+            // Stagger by 50ms to prevent React state batching from overwriting simultaneous rolls
+            setTimeout(() => {
+                handleDiceRoll(formula, {
+                    alias: rollAlias,
+                    characterName: char.name,
+                    isSave: true,
+                    saveDc: dcData.value,
+                    advMode: advMode !== 'normal' ? advMode : undefined
+                });
+            }, idx * 50); 
+        });
+    }, [handleDiceRoll, role]);
     // END CHANGE
 
     // START CHANGE: Enhanced Formatter with Table Support
@@ -409,6 +557,13 @@ const SessionView = ({
                         const charId = data.assignments?.[msg.senderId];
                         const canEdit = role === 'dm' || msg.senderId === user?.uid || (msg.role === 'ai' && msg.replyTo === user?.uid);
                         // END CHANGE
+                        
+                        const assignedCharacter = players?.find(p => String(p.id) === String(charId));
+                        const resolvedSenderName = (() => {
+                            if (msg.role === 'ai') return 'Dungeon Master (AI)';
+                            if (data.dmIds?.includes(msg.senderId) || msg.senderName === 'Dungeon Master') return 'Dungeon Master';
+                            return assignedCharacter ? assignedCharacter.name : msg.senderName;
+                        })();
 
                         if (isSystem) {
                             return (
@@ -446,17 +601,14 @@ const SessionView = ({
                                         );
 
                                         // 3. Is it a Player Character?
-                                                            // Find the character assigned to this senderId
-                                                            const character = players?.find(p => String(p.id) === String(charId));
-                                        
-                                        if (character?.image) return (
-                                            <SafeAvatar src={character.image} alt={msg.senderName} />
+                                        if (assignedCharacter?.image) return (
+                                            <SafeAvatar src={assignedCharacter.image} alt={resolvedSenderName} />
                                         );
 
                                         // 4. Fallback Initials
                                         return (
                                             <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold text-white shadow-lg bg-slate-700">
-                                                {(msg.senderName?.[0] || '?').toUpperCase()}
+                                                {(resolvedSenderName?.[0] || '?').toUpperCase()}
                                             </div>
                                         );
                                     })()}
@@ -467,16 +619,7 @@ const SessionView = ({
                                         <div className="flex items-center gap-2">
                                             {/* START CHANGE: Dynamic Name Resolution with String Fix */}
                                             <span className={`font-bold text-sm ${msg.role === 'ai' ? 'text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-purple-400' : 'text-slate-200'}`}>
-                                                {(() => {
-                                            if (msg.role === 'ai') return 'Dungeon Master (AI)';
-                                            if (data.dmIds?.includes(msg.senderId) || msg.senderName === 'Dungeon Master') return 'Dungeon Master';
-                                            
-                                            const charId = data.assignments?.[msg.senderId];
-                                            // START CHANGE: Ensure String comparison for Name resolution
-                                            const character = players?.find(p => String(p.id) === String(charId));
-                                            
-                                            return character ? character.name : msg.senderName;
-                                        })()}
+                                                {resolvedSenderName}
                                             </span>
                                             {/* END CHANGE */}
                                             {msg.type === 'chat-private' && <span className="text-[10px] text-purple-400 bg-purple-900/30 px-1 rounded border border-purple-500/30 flex items-center gap-1"><Icon name="lock" size={8}/> WHISPER</span>}
@@ -507,8 +650,66 @@ const SessionView = ({
                                                     if (isRoll) {
                                                         try {
                                                             const rollData = JSON.parse(msg.content);
-                                                            const isCrit = rollData.formula.includes('d20') && rollData.naturalRoll === 20;
-                                                            const isFumble = rollData.formula.includes('d20') && rollData.naturalRoll === 1;
+                                                            const { rollsNode, finalNatural, finalTotal } = (() => {
+                                                                const activeNatural = rollData.natural ?? rollData.naturalRoll ?? 0;
+                                                                const activeTotal = rollData.total ?? rollData.result ?? 0;
+                                                                const getRollVal = (r) => {
+                                                                    if (r === null || r === undefined) return 0;
+                                                                    if (typeof r === 'object') return Number(r.value ?? r.total ?? r.result ?? 0);
+                                                                    return Number(r);
+                                                                };
+                                                                
+                                                                let inferredAdvMode = rollData.advMode;
+                                                                if ((!inferredAdvMode || inferredAdvMode === 'normal') && rollData.alias && typeof rollData.alias === 'string') {
+                                                                    const lowerAlias = rollData.alias.toLowerCase();
+                                                                    if (lowerAlias.includes('advantage') && !lowerAlias.includes('disadvantage')) inferredAdvMode = 'adv';
+                                                                    else if (lowerAlias.includes('disadvantage')) inferredAdvMode = 'dis';
+                                                                }
+
+                                                                const formulaStr = String(rollData.formulaDisplay || '') + ' ' + String(rollData.formula || '') + ' ' + String(rollData.die || '');
+                                                                const lowerFormula = formulaStr.toLowerCase();
+                                                                if (lowerFormula.includes('kh1')) inferredAdvMode = 'adv';
+                                                                if (lowerFormula.includes('kl1')) inferredAdvMode = 'dis';
+
+                                                                if (!inferredAdvMode || inferredAdvMode === 'normal' || !rollData.rolls || rollData.rolls.length < 2) {
+                                                                    return {
+                                                                        rollsNode: rollData.rolls ? rollData.rolls.map(r => getRollVal(r)).join(' + ') : activeNatural,
+                                                                        finalNatural: activeNatural,
+                                                                        finalTotal: activeTotal
+                                                                    };
+                                                                }
+                                                                const r1 = getRollVal(rollData.rolls[0]);
+                                                                const r2 = getRollVal(rollData.rolls[1]);
+                                                                let keptIdx = (inferredAdvMode === 'adv') ? (r1 >= r2 ? 0 : 1) : (r1 <= r2 ? 0 : 1);
+                                                                const droppedIdx = keptIdx === 0 ? 1 : 0;
+                                                                const rollsNode = (
+                                                                    <>
+                                                                        {rollData.rolls.map((rObj, i) => {
+                                                                            const r = getRollVal(rObj);
+                                                                            return (
+                                                                            <React.Fragment key={i}>
+                                                                                {i === droppedIdx ? (
+                                                                                    <span className="opacity-40 line-through decoration-red-500">{r}</span>
+                                                                                ) : i === keptIdx ? (
+                                                                                    <span className="text-amber-400 font-bold">{r}</span>
+                                                                                ) : (
+                                                                                    <span>{r}</span>
+                                                                                )}
+                                                                                {i < rollData.rolls.length - 1 && <span className="text-slate-500 mx-1">, </span>}
+                                                                            </React.Fragment>
+                                                                            );
+                                                                        })}
+                                                                    </>
+                                                                );
+                                                                let calculatedTotal = activeTotal - getRollVal(rollData.rolls[droppedIdx]);
+                                                                return { rollsNode, finalNatural: getRollVal(rollData.rolls[keptIdx]), finalTotal: calculatedTotal };
+                                                            })();
+
+                                                            const actualMod = rollData.modifier ?? rollData.mod ?? 0;
+                                                            const isCrit = rollData.formula.includes('d20') && finalNatural === 20;
+                                                            const isFumble = rollData.formula.includes('d20') && finalNatural === 1;
+                                                            
+                                                            const displayCharName = (!rollData.characterName || rollData.characterName === msg.senderName || rollData.characterName === 'Dungeon Master') ? resolvedSenderName : rollData.characterName;
                                                             const naturalClass = isCrit ? "text-green-400 font-bold" : isFumble ? "text-red-400 font-bold" : "text-slate-300";
                                                             
                                                             const hasDetails = rollData.weaponName || rollData.damageType || rollData.actionType || rollData.alias;
@@ -518,11 +719,11 @@ const SessionView = ({
                                                                 if (role === 'dm' && isDamageRoll) {
                                                                     return (
                                                                         <button 
-                                                                            onClick={() => handleApplyDamage(rollData.total)}
+                                                                            onClick={() => handleApplyDamage(finalTotal)}
                                                                             className="mt-2 inline-flex items-center gap-1 bg-red-900/50 hover:bg-red-700 border border-red-500/30 text-[10px] text-red-200 px-2 py-1 rounded cursor-pointer transition-colors whitespace-nowrap"
-                                                                            title={`Apply ${rollData.total} damage to target`}
+                                                                            title={`Apply ${finalTotal} damage to target`}
                                                                         >
-                                                                            <Icon name="sword" size={10}/> -{rollData.total} HP
+                                                                            <Icon name="sword" size={10}/> -{finalTotal} HP
                                                                         </button>
                                                                     );
                                                                 }
@@ -541,9 +742,45 @@ const SessionView = ({
                                                                                 <Icon name="eye-off" size={14} />
                                                                             </button>
                                                                         )}
-                                                                        <div className="font-bold text-amber-500 text-sm">{rollData.characterName}</div>
+                                                                    <div className="font-bold text-amber-500 text-sm">{displayCharName}</div>
                                                                         <div className="font-bold text-indigo-300 text-base">{rollData.alias || rollData.weaponName || 'Used Feature'}</div>
                                                                         {rollData.description && <div className="text-slate-400 text-xs mt-1 whitespace-pre-wrap">{rollData.description}</div>}
+                                                                        <ChatSaveCard rollData={rollData} previewTargets={previewTargets} role={role} handleRollSave={handleRollSave} />
+                                                                    </div>
+                                                                );
+                                                            }
+
+                                                        let isParsedSave = false;
+                                                        let parsedSaveDc = undefined;
+                                                        if (rollData.alias && typeof rollData.alias === 'string' && rollData.alias.toLowerCase().includes('save vs dc')) {
+                                                            isParsedSave = true;
+                                                            const match = rollData.alias.match(/DC\s*(\d+)/i);
+                                                            if (match) parsedSaveDc = parseInt(match[1], 10);
+                                                        }
+
+                                                        if (rollData.isSave || rollData.saveDc !== undefined || isParsedSave) {
+                                                            const actualSaveDc = rollData.saveDc !== undefined ? rollData.saveDc : parsedSaveDc;
+                                                            const isSuccess = finalTotal >= actualSaveDc;
+                                                                return (
+                                                                    <div className="bg-slate-800 border border-slate-700 rounded-lg p-3 w-full max-w-sm shadow-xl flex flex-col items-start text-left relative overflow-hidden">
+                                                                        {msg.type === 'roll-private' && (
+                                                                            <button 
+                                                                                onClick={() => role === 'dm' && onEditMessage(msg.id, msg.content, 'roll-public')}
+                                                                                className={`absolute top-2 right-2 ${role === 'dm' ? 'text-amber-500 hover:text-amber-400 cursor-pointer' : 'text-slate-500 cursor-default'}`} 
+                                                                                title={role === 'dm' ? "Click to reveal roll to players" : "Private DM Roll"}
+                                                                            >
+                                                                                <Icon name="eye-off" size={14} />
+                                                                            </button>
+                                                                        )}
+                                                                    <div className="font-bold text-amber-500 mb-2 text-sm">{rollData.alias || `DC ${actualSaveDc} Save Results:`}</div>
+                                                                        <div className={`w-full flex flex-col bg-slate-900/50 p-2 rounded border ${isSuccess ? 'border-green-900/30' : 'border-red-900/30'}`}>
+                                                                        <span className="font-bold text-slate-200 text-xs">{displayCharName}</span>
+                                                                            <div className="flex items-center gap-2 text-[11px] mt-1">
+                                                                                <span className="text-slate-500">[<span className={naturalClass}>{rollsNode}</span>] {actualMod >= 0 ? '+'+actualMod : actualMod} =</span>
+                                                                                <span className={`font-bold ${isSuccess ? 'text-green-400' : 'text-red-400'}`}>{finalTotal} {isSuccess ? '✅ (Success)' : '❌ (Fail)'}</span>
+                                                                            </div>
+                                                                        </div>
+                                                                        {renderApplyDamage()}
                                                                     </div>
                                                                 );
                                                             }
@@ -560,7 +797,7 @@ const SessionView = ({
                                                                                 <Icon name="eye-off" size={14} />
                                                                             </button>
                                                                         )}
-                                                                        <div className="font-bold text-amber-500 text-sm">{rollData.characterName}</div>
+                                                                    <div className="font-bold text-amber-500 text-sm">{displayCharName}</div>
                                                                         {rollData.weaponName && <div className="font-bold text-slate-200 text-base">{rollData.weaponName}</div>}
                                                                         {rollData.damageType && <div className="text-slate-400 text-xs mb-1">{rollData.damageType}</div>}
                                                                         {rollData.alias && <div className="text-slate-300 text-xs mb-1">{rollData.alias}</div>}
@@ -568,13 +805,14 @@ const SessionView = ({
                                                                             <span className="text-slate-400 text-sm break-all">{rollData.formula}{rollData.modifier !== 0 ? (rollData.modifier > 0 ? `+${rollData.modifier}` : rollData.modifier) : ''}</span>
                                                                             <span className="text-slate-400 text-sm">➜</span>
                                                                             <div className="flex items-baseline gap-1 flex-wrap">
-                                                                                <span className={`${naturalClass} text-lg font-bold break-words`}>[{rollData.rolls ? rollData.rolls.join(' + ') : rollData.naturalRoll}]</span>
-                                                                                {rollData.modifier !== 0 && <span className="text-slate-400 text-sm">{rollData.modifier > 0 ? '+' : ''}{rollData.modifier}</span>}
+                                                                                <span className={`${naturalClass} text-lg font-bold break-words`}>[{rollsNode}]</span>
+                                                                                {actualMod !== 0 && <span className="text-slate-400 text-sm">{actualMod > 0 ? '+' : ''}{actualMod}</span>}
                                                                             </div>
                                                                             <span className="text-slate-500 text-sm font-bold">=</span>
-                                                                            <span className="text-xl font-bold text-amber-500 drop-shadow-md">{rollData.total}</span>
+                                                                            <span className="text-xl font-bold text-amber-500 drop-shadow-md">{finalTotal}</span>
                                                                         </div>
                                                                         {renderApplyDamage()}
+                                                                        <ChatSaveCard rollData={rollData} previewTargets={previewTargets} role={role} handleRollSave={handleRollSave} />
                                                                     </div>
                                                                 );
                                                             }
@@ -590,14 +828,15 @@ const SessionView = ({
                                                                             <Icon name="eye-off" size={12} />
                                                                         </button>
                                                                     )}
-                                                                    <div className="text-slate-400 text-xs break-all">{rollData.characterName} rolled {rollData.formula}</div>
+                                                                    <div className="text-slate-400 text-xs break-all">{displayCharName} rolled {rollData.formula}</div>
                                                                     <div className="flex items-baseline gap-2 mt-1 flex-wrap">
-                                                                        <span className={`${naturalClass} text-lg font-bold break-words`}>[{rollData.rolls ? rollData.rolls.join(' + ') : rollData.naturalRoll}]</span>
-                                                                        {rollData.modifier !== 0 && <span className="text-slate-400 text-sm">{rollData.modifier > 0 ? '+' : ''}{rollData.modifier}</span>}
+                                                                        <span className={`${naturalClass} text-lg font-bold break-words`}>[{rollsNode}]</span>
+                                                                        {actualMod !== 0 && <span className="text-slate-400 text-sm">{actualMod > 0 ? '+' : ''}{actualMod}</span>}
                                                                         <span className="text-slate-500 font-bold">=</span>
-                                                                        <span className="text-xl font-bold text-amber-500">{rollData.total}</span>
+                                                                        <span className="text-xl font-bold text-amber-500">{finalTotal}</span>
                                                                     </div>
                                                                     {renderApplyDamage()}
+                                                                    <ChatSaveCard rollData={rollData} previewTargets={previewTargets} role={role} handleRollSave={handleRollSave} />
                                                                 </div>
                                                             );
 
