@@ -53,6 +53,90 @@ import { DropZone } from './ui/DropZone';
 const DisplacedGrid = lazy(() => import('./3d/DisplacedGrid').then(m => ({ default: m.DisplacedGrid })));
 import { ToolButton } from './ui/ToolButton';
 
+const LivePingNode = React.memo(({ x, z, color, getTerrainHeight }) => {
+    const ringRef = useRef();
+    const y = getTerrainHeight ? getTerrainHeight(x, z) : 0;
+    
+    useFrame((state, delta) => {
+        if (ringRef.current) {
+            ringRef.current.scale.x += delta * 4;
+            ringRef.current.scale.y += delta * 4;
+            const progress = ringRef.current.scale.x / 4;
+            ringRef.current.material.opacity = Math.max(0, 1 - progress);
+            if (ringRef.current.scale.x > 4) {
+                ringRef.current.scale.set(0.1, 0.1, 0.1);
+                ringRef.current.material.opacity = 1;
+            }
+        }
+    });
+
+    return (
+        <group position={[x, y + 0.05, z]}>
+            <mesh rotation={[-Math.PI / 2, 0, 0]} ref={ringRef}>
+                <ringGeometry args={[0.8, 1.0, 32]} />
+                <meshBasicMaterial color={color} transparent opacity={0.8} depthWrite={false} blending={THREE.AdditiveBlending} side={THREE.DoubleSide} />
+            </mesh>
+            <mesh position={[0, 2.5, 0]}>
+                <cylinderGeometry args={[0.05, 0.05, 5, 8]} />
+                <meshBasicMaterial color={color} transparent opacity={0.3} depthWrite={false} blending={THREE.AdditiveBlending} />
+            </mesh>
+            <mesh position={[0, 0, 0]}>
+                <sphereGeometry args={[0.2, 16, 16]} />
+                <meshBasicMaterial color={color} transparent opacity={0.8} depthWrite={false} blending={THREE.AdditiveBlending} />
+            </mesh>
+        </group>
+    );
+});
+
+const LivePingsRenderer = React.memo(({ livePings, getTerrainHeight }) => {
+    const now = Date.now();
+    return (
+        <>
+            {Object.entries(livePings).map(([uid, ping]) => {
+                // Visual fallback: ignore extremely stale pings
+                if (now - ping.timestamp > 10000) return null;
+                return <LivePingNode key={uid} x={ping.x} z={ping.z} color={ping.color} getTerrainHeight={getTerrainHeight} />;
+            })}
+        </>
+    );
+});
+
+const LivePingController = React.memo(({ isEnabled, broadcastPing, clearPing }) => {
+    const { controls } = useThree();
+    const [isPinging, setIsPinging] = useState(false);
+
+    useEffect(() => {
+        if (controls) {
+            if (isEnabled) {
+                controls.mouseButtons.LEFT = 0; // Disable left-click pan so raycaster works
+            } else {
+                controls.mouseButtons.LEFT = 2; // Restore pan
+                clearPing();
+            }
+        }
+        return () => {
+            if (controls) controls.mouseButtons.LEFT = 2;
+        };
+    }, [isEnabled, controls, clearPing]);
+
+    if (!isEnabled) return null;
+
+    return (
+        <mesh
+            rotation={[-Math.PI / 2, 0, 0]}
+            onPointerDown={(e) => { if (e.button !== 0) return; e.stopPropagation(); setIsPinging(true); broadcastPing(e.point.x, e.point.z); }}
+            onPointerMove={(e) => { if (!isPinging) return; e.stopPropagation(); broadcastPing(e.point.x, e.point.z); }}
+            onPointerUp={(e) => { e.stopPropagation(); setIsPinging(false); clearPing(); }}
+            onPointerOut={(e) => { e.stopPropagation(); setIsPinging(false); clearPing(); }}
+            onDoubleClick={(e) => { if (e.button !== 0) return; e.stopPropagation(); broadcastPing(e.point.x, e.point.z, true); }}
+            renderOrder={999}
+        >
+            <planeGeometry args={[1000, 1000]} />
+            <meshBasicMaterial transparent opacity={0} colorWrite={false} depthWrite={false} />
+        </mesh>
+    );
+});
+
 // Helper: UI images to avoid CORS issues natively
 const getProxiedImageUrl = (url) => {
     if (!url) return '';
@@ -202,6 +286,8 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
   
   const [tokenManagerWidth, setTokenManagerWidth] = useState(320);
   const [sideSheetWidth, setSideSheetWidth] = useState(0);
+
+  const [isDraggingToken, setIsDraggingToken] = useState(false);
 
   useEffect(() => {
       const handleSideSheetResize = (e) => setSideSheetWidth(e.detail);
@@ -740,6 +826,51 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       });
       return () => unsubscribe();
   }, [campaignCode, activeMapId]);
+
+  // PHASE 1: Live Ping Setup
+  const [livePings, setLivePings] = useState({});
+  
+  useEffect(() => {
+      if (!campaignCode || !activeMapId) return;
+      const pingsRef = ref(rtdb, `live_pings/${campaignCode}_${activeMapId}`);
+      const unsubscribe = onValue(pingsRef, (snapshot) => {
+          setLivePings(snapshot.val() || {});
+      });
+      return () => {
+          unsubscribe();
+          if (user?.uid) {
+              remove(ref(rtdb, `live_pings/${campaignCode}_${activeMapId}/${user.uid}`)).catch(() => {});
+          }
+      };
+  }, [campaignCode, activeMapId, user?.uid]);
+
+  const lastPingBroadcast = useRef(0);
+  const isLingeringRef = useRef(false);
+  const lingerTimerRef = useRef(null);
+
+  const clearPing = useCallback((force = false) => {
+      if (!campaignCode || !activeMapId || !user?.uid) return;
+      if (!force && isLingeringRef.current) return;
+      
+      isLingeringRef.current = false;
+      remove(ref(rtdb, `live_pings/${campaignCode}_${activeMapId}/${user.uid}`)).catch(() => {});
+  }, [campaignCode, activeMapId, user?.uid]);
+
+  const broadcastPing = useCallback((x, z, isLingering = false) => {
+      if (!campaignCode || !activeMapId || !user?.uid) return;
+      const now = performance.now();
+      if (now - lastPingBroadcast.current > 50 || isLingering) { // Throttled to ~20fps
+          lastPingBroadcast.current = now;
+          if (isLingering) isLingeringRef.current = true;
+          const userColor = role === 'dm' ? "#ef4444" : "#3b82f6";
+          set(ref(rtdb, `live_pings/${campaignCode}_${activeMapId}/${user.uid}`), { x, z, color: userColor, timestamp: Date.now(), isLingering }).catch(() => {});
+          
+          if (isLingering) {
+              if (lingerTimerRef.current) clearTimeout(lingerTimerRef.current);
+              lingerTimerRef.current = setTimeout(() => { clearPing(true); }, 5000);
+          }
+      }
+  }, [campaignCode, activeMapId, user?.uid, role, clearPing]);
 
   const lastBroadcasts = useRef({});
   const broadcastDrag = useCallback((tokenId, x, z, rotationY) => {
@@ -2312,6 +2443,7 @@ ${pasteTextContent}`;
                       alwaysVisible={(role === 'dm' && !isCastMode) || (isCastMode && type === 'pc') || (canControl && !isCastMode)}
                       hideBaseIf3D={mapData?.hide3DTokenBases !== false}
                       isGlobalHovered={topHoveredTokenId === token.id}
+                      setIsDraggingToken={setIsDraggingToken}
                   />
               </ErrorBoundary>
           );
@@ -2321,7 +2453,7 @@ ${pasteTextContent}`;
       handleUpdateTokenPosition, gridSize, mapData?.gridOffsetX, mapData?.gridOffsetY, selectedTokenIds,
       handleSelectToken, handleContextMenu, getTerrainHeight, isSnapToGrid, draggedTokenId, viewMode, showNameplates,
       activeCombatantId, mapData?.tokenElevationOffset, groupDragData, handleGroupDragEnd, shiftHeldRef,
-          mapData?.orientation, isCastMode, activeTool, isDrawingFreehand, topHoveredTokenId
+          mapData?.orientation, isCastMode, activeTool, isDrawingFreehand, topHoveredTokenId, setIsDraggingToken
   ]);
 
 
@@ -2333,7 +2465,7 @@ ${pasteTextContent}`;
     <div 
       ref={containerRef}
       className="w-full h-full relative bg-slate-950 select-none [-webkit-touch-callout:none]" 
-      style={{ display: 'block' }}
+      style={{ display: 'block', touchAction: 'none' }}
       onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; }}
       onDrop={(e) => e.preventDefault()}
       onMouseMove={handleMouseMove}
@@ -2342,7 +2474,7 @@ ${pasteTextContent}`;
       <Canvas 
         frameloop="always"
         camera={{ position: [0, 8, 8], fov: 50 }} 
-        style={{ width: '100%', height: '100%' }}
+        style={{ width: '100%', height: '100%', touchAction: 'none' }}
         shadows={!isLowPerformance}
         dpr={dpr}
         onCreated={({ gl }) => {
@@ -2616,6 +2748,17 @@ ${pasteTextContent}`;
                 onLorePinClick={handleLorePinClick}
             />
         </Suspense>
+        <Suspense fallback={null}>
+            <LivePingController 
+                isEnabled={activeTool === 'ping'}
+                broadcastPing={broadcastPing}
+                clearPing={clearPing}
+            />
+            <LivePingsRenderer 
+                livePings={livePings} 
+                getTerrainHeight={getTerrainHeight} 
+            />
+        </Suspense>
         {role === 'dm' && (
             <Suspense fallback={null}>
                 <WallDrawingController
@@ -2736,6 +2879,7 @@ ${pasteTextContent}`;
           maxDistance={500} // Limit max zoom out so large maps can still "Fit to Screen"
           enableDamping={true} // Smooth camera movements
           enableRotate={false}
+          enabled={!isDraggingToken}
           mouseButtons={{
             LEFT: THREE.MOUSE.PAN,
             MIDDLE: THREE.MOUSE.DOLLY,
@@ -2895,7 +3039,7 @@ ${pasteTextContent}`;
                   <ToolButton 
                       name="Measure" 
                       icon="ruler" 
-                      isActive={['freehand', 'freehand-linger', 'ruler', 'ruler-linger', 'cone', 'cone-linger', 'circle', 'circle-linger', 'box', 'box-linger'].includes(activeTool) || isDrawingFreehand || !!activeStampingAsset} 
+                      isActive={['ping', 'freehand', 'freehand-linger', 'ruler', 'ruler-linger', 'cone', 'cone-linger', 'circle', 'circle-linger', 'box', 'box-linger'].includes(activeTool) || isDrawingFreehand || !!activeStampingAsset} 
                       onClick={() => {
                           if (isToolbarOpen !== 'measure') resetAllTools();
                           setIsToolbarOpen(p => p === 'measure' ? null : 'measure');
@@ -2931,7 +3075,7 @@ ${pasteTextContent}`;
                                   isActive={activeTool && activeTool.includes('-linger')} 
                                   onClick={() => {
                                       setActiveTool(prev => {
-                                          if (!prev) return null;
+                                          if (!prev || prev === 'ping') return prev;
                                           return prev.includes('-linger') ? prev.replace('-linger', '') : `${prev}-linger`;
                                       });
                                   }} 
@@ -2940,6 +3084,7 @@ ${pasteTextContent}`;
 
                               <div className="w-px h-6 bg-slate-700 self-center mx-1"></div>
 
+                              <ToolButton name="Live Ping" icon="radio" isActive={activeTool === 'ping'} onClick={() => { if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => p === 'ping' ? null : 'ping'); }} title="Live Ping" />
                               <ToolButton name="freehand" icon="pen-tool" isActive={activeTool === 'freehand' || activeTool === 'freehand-linger'} onClick={() => { if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => (p === 'freehand' || p === 'freehand-linger') ? null : (p?.includes('-linger') ? 'freehand-linger' : 'freehand')); }} title="Measure Freehand" />
                               <ToolButton name="ruler" icon="ruler" isActive={activeTool === 'ruler' || activeTool === 'ruler-linger'} onClick={() => { if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => (p === 'ruler' || p === 'ruler-linger') ? null : (p?.includes('-linger') ? 'ruler-linger' : 'ruler')); }} />
                               <ToolButton name="cone" icon="triangle" isActive={activeTool === 'cone' || activeTool === 'cone-linger'} onClick={() => { if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => (p === 'cone' || p === 'cone-linger') ? null : (p?.includes('-linger') ? 'cone-linger' : 'cone')); }} />

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import Icon from './Icon';
 
-const DiceTray = ({ diceLog = [], handleDiceRoll, onClose }) => {
+const DiceTray = ({ diceLog = [], handleDiceRoll, onClose, role, rollMode, setRollMode }) => {
     const [pool, setPool] = useState({ 4: 0, 6: 0, 8: 0, 10: 0, 12: 0, 20: 0, 100: 0 });
     const [modifier, setModifier] = useState(0);
     const [advMode, setAdvMode] = useState('normal'); // 'normal', 'adv', 'dis'
@@ -77,6 +77,24 @@ const DiceTray = ({ diceLog = [], handleDiceRoll, onClose }) => {
             </div>
             
             <div className="flex-1 overflow-y-auto p-4 flex flex-col custom-scroll">
+                <div className="flex items-center justify-between bg-slate-900 border border-slate-700/50 rounded-lg p-2 mb-3 shadow-inner">
+                    <span className="text-[10px] font-bold text-slate-500 tracking-wider">ROLL MODE</span>
+                    <div className="flex gap-1">
+                        <button 
+                            onClick={() => setRollMode && setRollMode('public')}
+                            className={`px-3 py-1 rounded text-[10px] uppercase font-bold transition-colors ${rollMode === 'public' ? 'bg-amber-600 text-white shadow-md' : 'bg-slate-800 text-slate-500 hover:text-white'}`}
+                        >
+                            Public
+                        </button>
+                        <button 
+                            onClick={() => setRollMode && setRollMode('private')}
+                            className={`px-3 py-1 rounded text-[10px] uppercase font-bold transition-colors ${rollMode === 'private' ? 'bg-red-900/80 text-red-400 shadow-md' : 'bg-slate-800 text-slate-500 hover:text-white'}`}
+                        >
+                            Private
+                        </button>
+                    </div>
+                </div>
+
                 {/* Dice Buttons */}
                 <div className="grid grid-cols-4 gap-2 mb-4">
                     {[4, 6, 8, 10, 12, 20, 100].map(d => (

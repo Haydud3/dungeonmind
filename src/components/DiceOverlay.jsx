@@ -142,8 +142,20 @@ const CONFIG = {
     100:{ scale: 0.84, offset: 1.02, color: "#1e293b", geo: () => createD10Geometry() }
 };
 
+// Global geometry cache prevents WebGL Context Loss by reusing GPU buffers instead of leaking them
+const SHARED_GEOMETRIES = {};
+const getGeometry = (type) => {
+    if (!SHARED_GEOMETRIES[type]) {
+        SHARED_GEOMETRIES[type] = CONFIG[type].geo();
+    }
+    return SHARED_GEOMETRIES[type];
+};
+
+// Global registry to allow dice to detect and collide with each other
+const DICE_PHYSICS_REGISTRY = {};
+
 // --- DIE MESH ---
-const DieMesh = ({ dieType, result, actionType, index = 0, total = 1, isRemote = false, physicsParams = null }) => {
+const DieMesh = ({ id, dieType, result, actionType, index = 0, total = 1, isRemote = false, physicsParams = null }) => {
     const meshRef = useRef();
     console.log("[DEBUG] DieMesh input:", { dieType, result });
     
@@ -188,7 +200,7 @@ const DieMesh = ({ dieType, result, actionType, index = 0, total = 1, isRemote =
     }, [result]);
     // END CHANGE
 
-    const geometry = useMemo(() => cfg.geo(), [safeType]);
+    const geometry = useMemo(() => getGeometry(safeType), [safeType]);
 
     const { faceData, targetQuat, d4GroupRot } = useMemo(() => {
         let rawFaces = calculateFaces(safeType);
@@ -300,6 +312,8 @@ const DieMesh = ({ dieType, result, actionType, index = 0, total = 1, isRemote =
         }
 
         physicsRef.current = {
+            id,
+            radius: cfg.scale * 0.8, // Approximate sphere radius for collisions
             pos: new THREE.Vector3(spawnX, 8 + (index * 2), spawnZ + (index * 1.5)),
             vel: new THREE.Vector3(vx, -5 - (index * 2), vz),
             rotVel: new THREE.Vector3(rx, ry, rz),
@@ -307,6 +321,13 @@ const DieMesh = ({ dieType, result, actionType, index = 0, total = 1, isRemote =
             yOffset: safeType === 4 ? 0.0 : cfg.scale * 0.7
         };
     }
+
+    useEffect(() => {
+        DICE_PHYSICS_REGISTRY[id] = physicsRef.current;
+        return () => {
+            delete DICE_PHYSICS_REGISTRY[id];
+        };
+    }, [id]);
 
     useFrame((state, delta) => {
         if (!meshRef.current) return;
@@ -321,6 +342,40 @@ const DieMesh = ({ dieType, result, actionType, index = 0, total = 1, isRemote =
             phys.vel.x *= Math.pow(0.98, dt * 60);
             phys.vel.z *= Math.pow(0.98, dt * 60);
             phys.pos.addScaledVector(phys.vel, dt);
+
+            // --- DIE-TO-DIE COLLISION ---
+            Object.values(DICE_PHYSICS_REGISTRY).forEach(other => {
+                // Only check each pair once by comparing IDs
+                if (other.id > phys.id) {
+                    const distSq = phys.pos.distanceToSquared(other.pos);
+                    const minDist = phys.radius + other.radius;
+                    if (distSq < minDist * minDist && distSq > 0.0001) {
+                        const dist = Math.sqrt(distSq);
+                        const normal = new THREE.Vector3().subVectors(phys.pos, other.pos).normalize();
+                        
+                        // Instantly resolve overlap (push apart)
+                        const overlap = minDist - dist;
+                        phys.pos.addScaledVector(normal, overlap * 0.5);
+                        other.pos.addScaledVector(normal, -overlap * 0.5);
+
+                        // Exchange velocity (Elastic bounce)
+                        const relVel = new THREE.Vector3().subVectors(phys.vel, other.vel);
+                        const speed = relVel.dot(normal);
+                        if (speed < 0) { // Only bounce if moving towards each other
+                            const restitution = 0.6; // Bounciness factor
+                            const impulse = -(1 + restitution) * speed * 0.5;
+                            phys.vel.addScaledVector(normal, impulse);
+                            other.vel.addScaledVector(normal, -impulse);
+                            
+                            // Add a little spin to both dice on impact
+                            phys.rotVel.x += (Math.random() - 0.5) * impulse * 2;
+                            phys.rotVel.z += (Math.random() - 0.5) * impulse * 2;
+                            other.rotVel.x -= (Math.random() - 0.5) * impulse * 2;
+                            other.rotVel.z -= (Math.random() - 0.5) * impulse * 2;
+                        }
+                    }
+                }
+            });
 
             if (phys.pos.y < phys.yOffset) {
                 phys.pos.y = phys.yOffset;
@@ -420,7 +475,8 @@ const RollHUD = ({ roll, isStacked }) => {
         const activeTotal = roll.total ?? roll.result ?? roll.value ?? 0;
         const modifier = roll.modifier ?? roll.mod ?? 0;
         
-        let rollsNode = roll.rolls ? roll.rolls.map(r => getRollVal(r)).join(' + ') : activeNatural;
+        const activeRollsList = roll.diceAnimations || roll.rolls;
+        let rollsNode = activeRollsList ? activeRollsList.map(r => getRollVal(r)).join(' + ') : activeNatural;
         let finalTotal = activeTotal;
 
         let inferredAdvMode = roll.advMode;
@@ -436,15 +492,15 @@ const RollHUD = ({ roll, isStacked }) => {
         if (lowerFormula.includes('kh1')) inferredAdvMode = 'adv';
         if (lowerFormula.includes('kl1')) inferredAdvMode = 'dis';
 
-        if (inferredAdvMode && inferredAdvMode !== 'normal' && roll.rolls && roll.rolls.length >= 2) {
-            const r1 = getRollVal(roll.rolls[0]);
-            const r2 = getRollVal(roll.rolls[1]);
+        if (inferredAdvMode && inferredAdvMode !== 'normal' && activeRollsList && activeRollsList.length >= 2) {
+            const r1 = getRollVal(activeRollsList[0]);
+            const r2 = getRollVal(activeRollsList[1]);
             let keptIdx = (inferredAdvMode === 'adv') ? (r1 >= r2 ? 0 : 1) : (r1 <= r2 ? 0 : 1);
             const droppedIdx = keptIdx === 0 ? 1 : 0;
             
             rollsNode = (
                 <>
-                    {roll.rolls.map((rObj, i) => {
+                    {activeRollsList.map((rObj, i) => {
                         const r = getRollVal(rObj);
                         return (
                         <React.Fragment key={i}>
@@ -455,14 +511,14 @@ const RollHUD = ({ roll, isStacked }) => {
                             ) : (
                                 <span>{r}</span>
                             )}
-                            {i < roll.rolls.length - 1 && <span className="text-slate-500 mx-1">, </span>}
+                            {i < activeRollsList.length - 1 && <span className="text-slate-500 mx-1">, </span>}
                         </React.Fragment>
                         );
                     })}
                 </>
             );
             
-            finalTotal = activeTotal - getRollVal(roll.rolls[droppedIdx]);
+            finalTotal = activeTotal - getRollVal(activeRollsList[droppedIdx]);
         }
         
         return { rollsNode, finalTotal };
@@ -505,7 +561,7 @@ const DiceOverlay = ({ roll }) => {
     const chatLog = context?.chatLog || [];
     const user = context?.user;
     const isDm = context?.campaign?.dmIds?.includes(user?.uid);
-    const campaignCode = context?.gameParams?.code || context?.campaign?.id;
+    const campaignCode = context?.gameParams?.code || context?.campaign?.id || (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('join') : null);
     
     const clientId = useMemo(() => Math.random().toString(36).substring(2, 10), []);
     const seenRollsRef = useRef(new Set());
@@ -528,11 +584,14 @@ const DiceOverlay = ({ roll }) => {
                 if (r.clientId === clientId) return; // Skip own broadcast
                 
                 console.log(`[DiceOverlay] Evaluating remote roll: now=${now}, timestamp=${r.timestamp}, age=${now - r.timestamp}ms`);
-                if (now - r.timestamp > 60000) {
-                    console.log(`[DiceOverlay] ❌ Filtered out (too old)`);
-                    return; 
-                }
                 
+                // Tolerate massive clock skew (up to 1 hour) between devices.
+                // If a player's PC clock is out of sync, a 60-second limit will silently drop their rolls.
+                // Tokens work because they don't check timestamps!
+                if (Math.abs(now - r.timestamp) > 3600000) {
+                    return;
+                }
+
                 // Respect DM privacy
                 if (r.type === 'roll-private' && !isDm) {
                     console.log(`[DiceOverlay] ❌ Filtered out (DM private roll blocked from player)`);
@@ -548,14 +607,23 @@ const DiceOverlay = ({ roll }) => {
             if (incomingRolls.length > 0) {
                 const newActiveDice = [];
                 incomingRolls.forEach(r => {
-                    if (r.rolls && r.rolls.length > 0) {
-                        r.rolls.forEach((subRoll, index) => {
-                            const val = typeof subRoll === 'object' ? (subRoll.value ?? subRoll.total ?? subRoll.result) : subRoll;
-                            newActiveDice.push({ ...r, _dieId: r._rtId + '-' + index, _subResult: val, isRemote: true, physicsParams: r.physics });
+                    const animations = r.diceAnimations || r.rolls || [];
+                    if (animations.length > 0) {
+                        animations.forEach((anim, index) => {
+                            const val = typeof anim === 'object' ? (anim.result ?? anim.value ?? anim.total ?? 1) : anim;
+                            const die = typeof anim === 'object' ? (anim.die ?? anim.side ?? r.die ?? 20) : (r.die ?? 20);
+                            newActiveDice.push({ 
+                                ...r, 
+                                _dieId: r._rtId + '-' + index, 
+                                _subResult: val, 
+                                die, 
+                                isRemote: true, 
+                                physicsParams: (typeof anim === 'object' ? anim.physicsParams : undefined) || r.physics 
+                            });
                         });
                     } else {
-                        const val = r.natural ?? r.naturalRoll ?? r.rolls?.[0] ?? r.total ?? r.result ?? r.value;
-                        newActiveDice.push({ ...r, _dieId: r._rtId + '-0', _subResult: val, isRemote: true, physicsParams: r.physics });
+                        const val = r.natural ?? r.naturalRoll ?? r.total ?? r.result ?? r.value ?? 1;
+                        newActiveDice.push({ ...r, _dieId: r._rtId + '-0', _subResult: val, die: r.die ?? 20, isRemote: true, physicsParams: r.physics });
                     }
                 });
 
@@ -567,7 +635,9 @@ const DiceOverlay = ({ roll }) => {
                     setActiveDice(prev => prev.filter(p => !newActiveDice.some(n => n._dieId === p._dieId)));
                 }, 6000);
             }
-        });
+    }, (error) => {
+        console.error("[DiceOverlay] ❌ Listener permission denied! Check Firebase RTDB rules.", error);
+    });
 
         return () => unsub();
     }, [campaignCode, clientId, isDm]);
@@ -576,11 +646,11 @@ const DiceOverlay = ({ roll }) => {
     useEffect(() => {
         if (roll && roll !== lastProcessedRoll.current) {
             lastProcessedRoll.current = roll;
-            const rollsToAdd = Array.isArray(roll) ? roll : [roll];
+            const rtId = Date.now() + Math.random().toString(36).substring(2,9);
             
-            const newActiveRolls = [];
+            let animations = roll.diceAnimations || (Array.isArray(roll) ? roll : [roll]);
             
-            rollsToAdd.forEach(r => {
+            const processedAnimations = animations.map(anim => {
                 const rx = (Math.random() - 0.5) * 60;
                 const ry = (Math.random() - 0.5) * 60;
                 const rz = (Math.random() - 0.5) * 60;
@@ -591,55 +661,66 @@ const DiceOverlay = ({ roll }) => {
                 else if (edge === 1) { spawnX = 12; spawnZ = (Math.random() - 0.5) * 8; vx = -(15 + Math.random() * 10); vz = (Math.random() - 0.5) * 10; } 
                 else if (edge === 2) { spawnX = (Math.random() - 0.5) * 12; spawnZ = -8; vx = (Math.random() - 0.5) * 10; vz = 10 + Math.random() * 10; } 
                 else { spawnX = (Math.random() - 0.5) * 12; spawnZ = 8; vx = (Math.random() - 0.5) * 10; vz = -(10 + Math.random() * 10); }
-
-                const rtId = Date.now() + Math.random().toString(36).substring(2,9);
                 
-                let rollPayload = { 
-                    ...r, 
-                    _rtId: rtId,
-                    clientId,
-                    timestamp: Date.now(),
-                    physics: { spawnX, spawnZ, vx, vz, rx, ry, rz }
+                return {
+                    ...anim,
+                    physicsParams: { spawnX, spawnZ, vx, vz, rx, ry, rz }
                 };
+            });
                 
-                // Deep cleanse to remove undefined properties before Firebase transmission
-                try { rollPayload = JSON.parse(JSON.stringify(rollPayload)); } catch(e) {}
-                
-                newActiveRolls.push(rollPayload);
-                seenRollsRef.current.add(rtId);
-                
-                if (campaignCode) {
-                    const rollRef = ref(rtdb, `live_drags/rolls_${campaignCode}/${rtId}`);
-                    console.log(`[DiceOverlay] Attempting to broadcast roll to live_drags/rolls_${campaignCode}/${rtId}`, rollPayload);
-                    
-                    set(rollRef, rollPayload)
-                        .then(() => console.log("[DiceOverlay] ✅ Broadcast success! Data sent to Firebase."))
-                        .catch(e => console.error("[DiceOverlay] ❌ Roll broadcast failed", e));
-                    
-                    setTimeout(() => {
-                        remove(rollRef).catch(() => {});
-                    }, 6000);
-                }
+            let rollPayload = { 
+                _rtId: rtId,
+                clientId,
+                timestamp: Date.now(),
+                formula: roll.formula,
+                formulaDisplay: roll.formulaDisplay || roll.alias,
+                total: roll.total,
+                result: roll.total,
+                value: roll.total,
+                natural: roll.naturalRoll || roll.natural,
+                naturalRoll: roll.naturalRoll || roll.natural,
+                isSave: roll.isSave || roll.actionType === 'save',
+                actionType: roll.actionType,
+                alias: roll.alias,
+                characterName: roll.characterName,
+                advMode: roll.advMode,
+                modifier: roll.modifier || roll.mod,
+                mod: roll.modifier || roll.mod,
+                saveDc: roll.saveDc,
+                type: roll.type,
+                diceAnimations: processedAnimations
+            };
+
+            // Remove undefined keys to prevent Firebase errors
+            Object.keys(rollPayload).forEach(key => {
+                if (rollPayload[key] === undefined) delete rollPayload[key];
             });
             
-            const newActiveDice = [];
-            newActiveRolls.forEach(r => {
-                if (r.rolls && r.rolls.length > 0) {
-                    r.rolls.forEach((subRoll, index) => {
-                        const val = typeof subRoll === 'object' ? (subRoll.value ?? subRoll.total ?? subRoll.result) : subRoll;
-                        newActiveDice.push({ ...r, _dieId: r._rtId + '-' + index, _subResult: val, isRemote: false, physicsParams: r.physics });
-                    });
-                } else {
-                    const val = r.natural ?? r.naturalRoll ?? r.rolls?.[0] ?? r.total ?? r.result ?? r.value;
-                    newActiveDice.push({ ...r, _dieId: r._rtId + '-0', _subResult: val, isRemote: false, physicsParams: r.physics });
-                }
-            });
+            setActiveRolls(prev => [...prev, rollPayload]);
+            seenRollsRef.current.add(rtId);
             
-            setActiveRolls(prev => [...prev, ...newActiveRolls]);
+            const newActiveDice = processedAnimations.map((anim, index) => ({
+                ...rollPayload,
+                _dieId: rtId + '-' + index,
+                _subResult: anim.result || anim.value || anim.total || 1,
+                die: anim.die || anim.side || roll.die || 20,
+                isRemote: false,
+                physicsParams: anim.physicsParams
+            }));
+            
             setActiveDice(prev => [...prev, ...newActiveDice]);
             
+            if (campaignCode) {
+                const rollRef = ref(rtdb, `live_drags/rolls_${campaignCode}/${rtId}`);
+                console.log(`[DiceOverlay] Attempting to broadcast roll`, rollPayload);
+                set(rollRef, rollPayload)
+                    .then(() => console.log("[DiceOverlay] ✅ Broadcast success! Data sent to Firebase."))
+                    .catch(e => console.error("[DiceOverlay] ❌ Roll broadcast failed", e));
+                setTimeout(() => remove(rollRef).catch(() => {}), 6000);
+            }
+            
             setTimeout(() => {
-                setActiveRolls(prev => prev.filter(p => !newActiveRolls.some(n => n._rtId === p._rtId)));
+                setActiveRolls(prev => prev.filter(p => p._rtId !== rtId));
                 setActiveDice(prev => prev.filter(p => !newActiveDice.some(n => n._dieId === p._dieId)));
             }, 6000); 
         }
@@ -656,7 +737,7 @@ const DiceOverlay = ({ roll }) => {
                     {activeDice.length > 0 && (
                         <Suspense fallback={null}>
                             {activeDice.map((r, i) => (
-                                <DieMesh key={r._dieId} dieType={r.die || r.sides || r.formula} result={r._subResult} actionType={r.isSave ? 'save' : r.actionType} index={i} total={activeDice.length} isRemote={r.isRemote} physicsParams={r.physicsParams} />
+                                <DieMesh key={r._dieId} id={r._dieId} dieType={r.die || r.sides || r.formula} result={r._subResult} actionType={r.isSave ? 'save' : r.actionType} index={i} total={activeDice.length} isRemote={r.isRemote} physicsParams={r.physicsParams} />
                             ))}
                         </Suspense>
                     )}

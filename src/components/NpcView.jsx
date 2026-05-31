@@ -663,7 +663,7 @@ ${pasteTextContent}`;
                         onBack={() => setViewingNpcId(null)} 
                         onDiceRoll={async (formula, options) => {
                             if (onDiceRoll) {
-                                return await onDiceRoll(formula, { ...options, chat: true, isPrivate: role === 'dm' });
+                                return await onDiceRoll(formula, { ...options, chat: true });
                             }
                         }} 
                         diceLog={diceLog}

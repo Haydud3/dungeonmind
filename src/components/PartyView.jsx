@@ -383,7 +383,7 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
                         onSave={handleSheetSave} 
                         onDiceRoll={async (formula, options) => {
                             if (onDiceRoll) {
-                                return await onDiceRoll(formula, { ...options, chat: true, isPrivate: role === 'dm' });
+                                return await onDiceRoll(formula, { ...options, chat: true });
                             }
                         }}
                         diceLog={diceLog}

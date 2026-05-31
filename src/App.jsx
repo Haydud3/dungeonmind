@@ -173,6 +173,7 @@ function DungeonMindApp() {
   const [rollingDice, setRollingDice] = useState(null);
   const [isFullscreenImage, setIsFullscreenImage] = useState(false);
   const [activeTemplate, setActiveTemplate] = useState(null); // NEW: Track active spell template
+  const [rollMode, setRollMode] = useState(() => localStorage.getItem('roll_mode'));
   const addLogEntry = useCharacterStore((state) => state.addLogEntry);
   const rollTimeoutRef = useRef(null);
 
@@ -352,6 +353,14 @@ function DungeonMindApp() {
           const safeTotalNatural = Number.isFinite(totalNatural) ? totalNatural : 0;
           const safeResult = Number.isFinite(totalNatural + mod) ? (totalNatural + mod) : 0;
 
+          let isRollPrivate = false;
+          const currentRollMode = rollMode || (effectiveRole === 'dm' ? 'private' : 'public');
+          if (options.isPrivate !== undefined) {
+              isRollPrivate = options.isPrivate;
+          } else {
+              isRollPrivate = currentRollMode === 'private';
+          }
+
 
           // Debugging: Log the calculated values to console
           console.log("DEBUG: handleDiceRoll calculated values - totalNatural:", safeTotalNatural, "result:", safeResult);
@@ -384,10 +393,30 @@ function DungeonMindApp() {
           const isCrit = !isUseAction && keptD20s.some(r => r.result === 20);
           const isFumble = !isUseAction && keptD20s.some(r => r.result === 1) && !isCrit;
           
+          const payload = {
+              formula: strFormula,
+              naturalRoll: safeTotalNatural,
+              rolls: rolls,
+              modifier: mod,
+              total: safeResult,
+              characterName: derivedCharacterName,
+              isDmRoll: isDm,
+              actionType: options.actionType || null,
+              weaponName: options.weaponName || null,
+              damageType: options.damageType || null,
+              alias: options.alias || null,
+              description: options.description || null,
+              type: isRollPrivate ? 'roll-private' : 'roll-public'
+          };
+
           if (!isUseAction) {
-              const newAnimations = [...rollsDetails, ...droppedRollsDetails].map(r => ({ die: r.side, result: r.result }));
+              const overlayPayload = {
+                  ...payload,
+                  diceAnimations: [...rollsDetails, ...droppedRollsDetails].map(r => ({ die: r.side, result: r.result }))
+              };
+
               if (rollTimeoutRef.current) clearTimeout(rollTimeoutRef.current);
-              setRollingDice(newAnimations);
+              setRollingDice(overlayPayload);
               rollTimeoutRef.current = setTimeout(() => setRollingDice(null), 4000);
 
               const naturalClass = isCrit ? "text-green-400" : isFumble ? "text-red-400" : "text-slate-300";
@@ -428,24 +457,9 @@ function DungeonMindApp() {
               addLogEntry({ message: useHtml, id: Date.now() });
           }
 
-          const payload = {
-              formula: strFormula,
-              naturalRoll: safeTotalNatural,
-              rolls: rolls,
-              modifier: mod,
-              total: safeResult,
-              characterName: derivedCharacterName,
-              isDmRoll: isDm,
-              actionType: options.actionType || null,
-              weaponName: options.weaponName || null,
-              damageType: options.damageType || null,
-              alias: options.alias || null,
-              description: options.description || null
-          };
-
           sendMessage({
               content: JSON.stringify(payload),
-              type: isDm ? 'roll-private' : 'roll-public',
+              type: payload.type,
               senderId: user?.uid || 'anon',
               senderName: derivedCharacterName,
               targetId: null,
@@ -1038,12 +1052,22 @@ function DungeonMindApp() {
                )}
            </div>
        )}
-       <div className="fixed inset-0 pointer-events-none z-[99999]">{rollingDice && <DiceOverlay roll={rollingDice} />}</div>
+       <div className="fixed inset-0 pointer-events-none z-[99999]"><DiceOverlay roll={rollingDice} /></div>
        
        {/* Global Dice Tray Sidebar */}
        {!isCastMode && showTools && (
            <div className="fixed top-0 right-0 bottom-0 w-80 max-w-full bg-slate-900 border-l border-slate-700 shadow-2xl z-[100] flex flex-col animate-in slide-in-from-right duration-300">
-               <DiceTray diceLog={diceLog} handleDiceRoll={handleDiceRoll} onClose={() => setShowTools(false)} />
+               <DiceTray 
+                   diceLog={diceLog} 
+                   handleDiceRoll={handleDiceRoll} 
+                   onClose={() => setShowTools(false)} 
+                   role={effectiveRole}
+                   rollMode={rollMode || (effectiveRole === 'dm' ? 'private' : 'public')}
+                   setRollMode={(mode) => {
+                       setRollMode(mode);
+                       localStorage.setItem('roll_mode', mode);
+                   }}
+               />
            </div>
        )}
 
