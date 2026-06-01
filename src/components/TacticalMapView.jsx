@@ -403,6 +403,8 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
   const [materialBrushShape, setMaterialBrushShape] = useState('circle');
   const [materialBrushSoftness, setMaterialBrushSoftness] = useState(0);
   const [materialLimitToGround, setMaterialLimitToGround] = useState(false);
+  
+  const [fowTexture, setFowTexture] = useState(null);
 
   const shiftHeldRef = useRef(false);
   const [fitTrigger, setFitTrigger] = useState(0);
@@ -707,12 +709,9 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                 const wx = Math.floor(wrap(cx, terrainData.width));
                 const wy = Math.floor(wrap(cy, terrainData.height));
                 
-                // Raw byte from canvas is sRGB (gamma encoded)
+                // Raw byte from canvas corresponds exactly to WebGL NoColorSpace linear sampling
                 let val = terrainData.data[(wy * terrainData.width + wx) * 4] / 255.0;
                 
-                // Decode sRGB to Linear to perfectly match the GPU's hardware decode
-                val = val <= 0.04045 ? val / 12.92 : Math.pow((val + 0.055) / 1.055, 2.4);
-
                 return val * mapHeightScale;
             };
 
@@ -2599,9 +2598,25 @@ ${pasteTextContent}`;
                         gridSize={gridSize}
                         animatedEnvironment={mapData?.animatedEnvironment !== false}
                         isPaintingMaterial={activeTool === 'paintMaterial'}
+                        fowTexture={fowTexture}
+                        fowEnabled={mapData?.fowEnabled !== false}
+                        isDm={role === 'dm' && !isCastMode}
                     />
                 ) : (
-                    showPlane && <MapPlane backgroundUrl={mapData.backgroundUrl} materialMaskUrl={mapData.materialMaskUrl} dynamicMaterialMask={materialData?.texture} scale={mapData.scale || 20} tokensList={tokensList} rtdbDragsRef={rtdbDragsRef} gridSize={gridSize} animatedEnvironment={mapData?.animatedEnvironment !== false} isPaintingMaterial={activeTool === 'paintMaterial'} />
+                    showPlane && <MapPlane 
+                        backgroundUrl={mapData.backgroundUrl} 
+                        materialMaskUrl={mapData.materialMaskUrl} 
+                        dynamicMaterialMask={materialData?.texture} 
+                        scale={mapData.scale || 20} 
+                        tokensList={tokensList} 
+                        rtdbDragsRef={rtdbDragsRef} 
+                        gridSize={gridSize} 
+                        animatedEnvironment={mapData?.animatedEnvironment !== false} 
+                        isPaintingMaterial={activeTool === 'paintMaterial'} 
+                        fowTexture={fowTexture}
+                        fowEnabled={mapData?.fowEnabled !== false}
+                        isDm={role === 'dm' && !isCastMode}
+                    />
                 )}
             </ErrorBoundary>
         </Suspense>
@@ -2721,6 +2736,7 @@ ${pasteTextContent}`;
                 groupDragData={groupDragData}
                 selectedTokenIds={selectedTokenIds}
                 rtdbDragsRef={rtdbDragsRef}
+                onTextureReady={setFowTexture}
             />}
         </Suspense>
         <Suspense fallback={null}>

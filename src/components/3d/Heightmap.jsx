@@ -3,8 +3,16 @@ import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { useResolvedUrl } from '../../utils/useResolvedUrl';
 
-export const InstancedGrassHeightmap = ({ scale = 20, aspect = 1, uniforms: parentUniforms, animatedEnvironment = true }) => {
+const defaultFowTexture = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
+defaultFowTexture.minFilter = THREE.NearestFilter;
+defaultFowTexture.magFilter = THREE.NearestFilter;
+defaultFowTexture.colorSpace = THREE.NoColorSpace;
+defaultFowTexture.needsUpdate = true;
+
+export const InstancedGrassHeightmap = ({ scale = 20, aspect = 1, uniforms: parentUniforms, animatedEnvironment = true, fowTexture }) => {
     const meshRef = useRef();
+    const materialRef = useRef();
+    const shaderRef = useRef();
     const isLowPerf = typeof window !== 'undefined' && localStorage.getItem('vtt_low_performance') === 'true';
     const grassDensity = isLowPerf ? 70 : 120;
 
@@ -111,7 +119,22 @@ export const InstancedGrassHeightmap = ({ scale = 20, aspect = 1, uniforms: pare
         meshRef.current.instanceMatrix.needsUpdate = true;
     }, [scale, aspect, grassDensity]);
 
+    useEffect(() => {
+        if (materialRef.current) materialRef.current.needsUpdate = true;
+    }, [fowTexture]);
+
+    useFrame(() => {
+        if (shaderRef.current && parentUniforms) {
+            for (const key in parentUniforms) {
+                if (shaderRef.current.uniforms[key]) {
+                    shaderRef.current.uniforms[key].value = parentUniforms[key].value;
+                }
+            }
+        }
+    });
+
     const onBeforeCompile = (shader) => {
+        shaderRef.current = shader;
         shader.uniforms.uMaterialMask = parentUniforms.uMaterialMask;
         shader.uniforms.uBackground = parentUniforms.uBackground;
         shader.uniforms.uHeightmap = parentUniforms.uHeightmap;
@@ -121,11 +144,17 @@ export const InstancedGrassHeightmap = ({ scale = 20, aspect = 1, uniforms: pare
         shader.uniforms.uTime = parentUniforms.uTime;
         shader.uniforms.uTokens = parentUniforms.uTokens;
         shader.uniforms.uTokenCount = parentUniforms.uTokenCount;
+        shader.uniforms.uFowTexture = parentUniforms.uFowTexture;
+        shader.uniforms.uFowEnabled = parentUniforms.uFowEnabled;
+        shader.uniforms.uIsDm = parentUniforms.uIsDm;
 
         shader.vertexShader = `
             uniform sampler2D uMaterialMask;
             uniform sampler2D uBackground;
             uniform sampler2D uHeightmap;
+            uniform sampler2D uFowTexture;
+            uniform float uFowEnabled;
+            uniform float uIsDm;
             uniform float uHeightScale;
             uniform float uScale;
             uniform float uAspect;
@@ -193,7 +222,12 @@ export const InstancedGrassHeightmap = ({ scale = 20, aspect = 1, uniforms: pare
                 float camDist = distance(cameraPosition, instanceWorldPos);
                 float lodFade = 1.0 - smoothstep(30.0, 60.0, camDist);
                 
-                vVisibility = minVisibility * step(0.01, lodFade);
+                vec4 fowColor = texture2D(uFowTexture, instanceUv);
+                float isPlayerFow = step(0.5, uFowEnabled) * (1.0 - step(0.5, uIsDm));
+                float rawFowVisibility = 1.0 - smoothstep(0.01, 0.1, fowColor.r);
+                float fowVisibility = mix(1.0, rawFowVisibility, isPlayerFow);
+                
+                vVisibility = minVisibility * step(0.01, lodFade) * step(0.01, fowVisibility);
 
                 if (vVisibility > 0.5) {
                     // Phase 3: Apply physical crushing to the geometry
@@ -246,12 +280,12 @@ export const InstancedGrassHeightmap = ({ scale = 20, aspect = 1, uniforms: pare
 
     return (
         <instancedMesh key={count} ref={meshRef} args={[geometry, null, count]} castShadow receiveShadow position={[0, 0, 0]} frustumCulled={false}>
-            <meshLambertMaterial alphaMap={grassAlphaMap} alphaTest={0.5} side={THREE.DoubleSide} onBeforeCompile={onBeforeCompile} customProgramCacheKey={() => "grass_heightmap_" + animatedEnvironment} />
+            <meshLambertMaterial key={fowTexture ? "mat_fow" : "mat_def"} ref={materialRef} alphaMap={grassAlphaMap} alphaTest={0.5} side={THREE.DoubleSide} onBeforeCompile={onBeforeCompile} customProgramCacheKey={() => "grass_heightmap_" + animatedEnvironment + (fowTexture ? "_fow" : "_def")} />
         </instancedMesh>
     );
 };
 
-export const HeightmapContent = ({ resolvedHeightmapUrl, resolvedBackgroundUrl, resolvedNormalMapUrl, resolvedMaterialMaskUrl, dynamicMaterialMask, heightScale, scale, aspect = 1, dynamicDisplacementMap, tokensList = [], rtdbDragsRef, gridSize = 1, animatedEnvironment = true, isPaintingMaterial = false }) => {
+export const HeightmapContent = ({ resolvedHeightmapUrl, resolvedBackgroundUrl, resolvedNormalMapUrl, resolvedMaterialMaskUrl, dynamicMaterialMask, heightScale, scale, aspect = 1, dynamicDisplacementMap, tokensList = [], rtdbDragsRef, gridSize = 1, animatedEnvironment = true, isPaintingMaterial = false, fowTexture, fowEnabled, isDm }) => {
     const isLowPerf = localStorage.getItem('vtt_low_performance') === 'true';
     const subdivisions = isLowPerf ? 128 : 256;
 
@@ -308,7 +342,10 @@ export const HeightmapContent = ({ resolvedHeightmapUrl, resolvedBackgroundUrl, 
             uAspect: { value: aspect },
             uTokens: { value: tokenVecs },
             uTokenCount: { value: 0 },
-            uIsPainting: { value: 0 }
+            uIsPainting: { value: 0 },
+            uFowTexture: { value: defaultFowTexture },
+            uFowEnabled: { value: 0 },
+            uIsDm: { value: 0 }
         };
     }, []);
 
@@ -327,6 +364,12 @@ export const HeightmapContent = ({ resolvedHeightmapUrl, resolvedBackgroundUrl, 
     useMemo(() => {
         uniforms.uIsPainting.value = isPaintingMaterial ? 1.0 : 0.0;
     }, [isPaintingMaterial, uniforms]);
+
+    useMemo(() => {
+        if (fowTexture) uniforms.uFowTexture.value = fowTexture;
+        uniforms.uFowEnabled.value = fowEnabled ? 1.0 : 0.0;
+        uniforms.uIsDm.value = isDm ? 1.0 : 0.0;
+    }, [fowTexture, fowEnabled, isDm, uniforms]);
 
     useFrame((state) => {
         uniforms.uTime.value = state.clock.elapsedTime;
@@ -488,13 +531,14 @@ export const HeightmapContent = ({ resolvedHeightmapUrl, resolvedBackgroundUrl, 
                     aspect={aspect} 
                     uniforms={uniforms} 
                     animatedEnvironment={animatedEnvironment}
+                    fowTexture={fowTexture}
                 />
             )}
         </group>
     );
 };
 
-export const Heightmap = ({ heightmapUrl, backgroundUrl, normalMapUrl, materialMaskUrl, dynamicMaterialMask, heightScale, scale = 20, aspect = 1, dynamicDisplacementMap, tokensList = [], rtdbDragsRef, gridSize = 1, animatedEnvironment = true, isPaintingMaterial = false }) => {
+export const Heightmap = ({ heightmapUrl, backgroundUrl, normalMapUrl, materialMaskUrl, dynamicMaterialMask, heightScale, scale = 20, aspect = 1, dynamicDisplacementMap, tokensList = [], rtdbDragsRef, gridSize = 1, animatedEnvironment = true, isPaintingMaterial = false, fowTexture, fowEnabled, isDm }) => {
     const resolvedHeightmapUrl = useResolvedUrl(heightmapUrl);
     const resolvedBackgroundUrl = useResolvedUrl(backgroundUrl);
     const resolvedNormalMapUrl = useResolvedUrl(normalMapUrl);
@@ -519,5 +563,8 @@ export const Heightmap = ({ heightmapUrl, backgroundUrl, normalMapUrl, materialM
         gridSize={gridSize}
         animatedEnvironment={animatedEnvironment}
         isPaintingMaterial={isPaintingMaterial}
+        fowTexture={fowTexture}
+        fowEnabled={fowEnabled}
+        isDm={isDm}
     />
 };

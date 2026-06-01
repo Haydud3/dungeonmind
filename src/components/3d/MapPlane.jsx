@@ -3,8 +3,16 @@ import * as THREE from 'three';
 import { useResolvedUrl } from '../../utils/useResolvedUrl';
 import { useFrame } from '@react-three/fiber';
 
-export const InstancedGrass = ({ scale = 20, aspect = 1, uniforms: parentUniforms, animatedEnvironment = true }) => {
+const defaultFowTexture = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
+defaultFowTexture.minFilter = THREE.NearestFilter;
+defaultFowTexture.magFilter = THREE.NearestFilter;
+defaultFowTexture.colorSpace = THREE.NoColorSpace;
+defaultFowTexture.needsUpdate = true;
+
+export const InstancedGrass = ({ scale = 20, aspect = 1, uniforms: parentUniforms, animatedEnvironment = true, fowTexture }) => {
     const meshRef = useRef();
+    const materialRef = useRef();
+    const shaderRef = useRef();
     const isLowPerf = typeof window !== 'undefined' && localStorage.getItem('vtt_low_performance') === 'true';
     const grassDensity = isLowPerf ? 70 : 120;
 
@@ -112,7 +120,22 @@ export const InstancedGrass = ({ scale = 20, aspect = 1, uniforms: parentUniform
         meshRef.current.instanceMatrix.needsUpdate = true;
     }, [scale, aspect, grassDensity]);
 
+    useEffect(() => {
+        if (materialRef.current) materialRef.current.needsUpdate = true;
+    }, [fowTexture]);
+
+    useFrame(() => {
+        if (shaderRef.current && parentUniforms) {
+            for (const key in parentUniforms) {
+                if (shaderRef.current.uniforms[key]) {
+                    shaderRef.current.uniforms[key].value = parentUniforms[key].value;
+                }
+            }
+        }
+    });
+
     const onBeforeCompile = (shader) => {
+        shaderRef.current = shader;
         shader.uniforms.uMaterialMask = parentUniforms.uMaterialMask;
         shader.uniforms.uBackground = parentUniforms.uBackground;
         shader.uniforms.uScale = parentUniforms.uScale;
@@ -120,10 +143,16 @@ export const InstancedGrass = ({ scale = 20, aspect = 1, uniforms: parentUniform
         shader.uniforms.uTime = parentUniforms.uTime;
         shader.uniforms.uTokens = parentUniforms.uTokens;
         shader.uniforms.uTokenCount = parentUniforms.uTokenCount;
+        shader.uniforms.uFowTexture = parentUniforms.uFowTexture;
+        shader.uniforms.uFowEnabled = parentUniforms.uFowEnabled;
+        shader.uniforms.uIsDm = parentUniforms.uIsDm;
 
         shader.vertexShader = `
             uniform sampler2D uMaterialMask;
             uniform sampler2D uBackground;
+            uniform sampler2D uFowTexture;
+            uniform float uFowEnabled;
+            uniform float uIsDm;
             uniform float uScale;
             uniform float uAspect;
             uniform float uTime;
@@ -190,7 +219,12 @@ export const InstancedGrass = ({ scale = 20, aspect = 1, uniforms: parentUniform
                 float camDist = distance(cameraPosition, instanceWorldPos);
                 float lodFade = 1.0 - smoothstep(30.0, 60.0, camDist);
                 
-                vVisibility = minVisibility * step(0.01, lodFade);
+                vec4 fowColor = texture2D(uFowTexture, instanceUv);
+                float isPlayerFow = step(0.5, uFowEnabled) * (1.0 - step(0.5, uIsDm));
+                float rawFowVisibility = 1.0 - smoothstep(0.01, 0.1, fowColor.r);
+                float fowVisibility = mix(1.0, rawFowVisibility, isPlayerFow);
+                
+                vVisibility = minVisibility * step(0.01, lodFade) * step(0.01, fowVisibility);
 
                 if (vVisibility > 0.5) {
                     // Phase 3: Apply physical crushing to the geometry
@@ -240,12 +274,12 @@ export const InstancedGrass = ({ scale = 20, aspect = 1, uniforms: parentUniform
 
     return (
         <instancedMesh key={count} ref={meshRef} args={[geometry, null, count]} castShadow receiveShadow position={[0, -0.01, 0]} frustumCulled={false}>
-            <meshLambertMaterial alphaMap={grassAlphaMap} alphaTest={0.5} side={THREE.DoubleSide} onBeforeCompile={onBeforeCompile} customProgramCacheKey={() => "grass_plane_" + animatedEnvironment} />
+            <meshLambertMaterial key={fowTexture ? "mat_fow" : "mat_def"} ref={materialRef} alphaMap={grassAlphaMap} alphaTest={0.5} side={THREE.DoubleSide} onBeforeCompile={onBeforeCompile} customProgramCacheKey={() => "grass_plane_" + animatedEnvironment + (fowTexture ? "_fow" : "_def")} />
         </instancedMesh>
     );
 };
 
-export const MapPlaneContent = ({ backgroundUrl, materialMaskUrl, dynamicMaterialMask, scale = 20, tokensList = [], rtdbDragsRef, gridSize = 1, animatedEnvironment = true, isPaintingMaterial = false }) => {
+export const MapPlaneContent = ({ backgroundUrl, materialMaskUrl, dynamicMaterialMask, scale = 20, tokensList = [], rtdbDragsRef, gridSize = 1, animatedEnvironment = true, isPaintingMaterial = false, fowTexture, fowEnabled, isDm }) => {
   const [aspect, setAspect] = useState(1);
   const texture = useMemo(() => {
       if (!backgroundUrl) return null;
@@ -279,7 +313,10 @@ export const MapPlaneContent = ({ backgroundUrl, materialMaskUrl, dynamicMateria
           uAspect: { value: aspect },
           uTokens: { value: tokenVecs },
           uTokenCount: { value: 0 },
-          uIsPainting: { value: 0 }
+          uIsPainting: { value: 0 },
+          uFowTexture: { value: defaultFowTexture },
+          uFowEnabled: { value: 0 },
+          uIsDm: { value: 0 }
       };
   }, []);
 
@@ -296,6 +333,12 @@ export const MapPlaneContent = ({ backgroundUrl, materialMaskUrl, dynamicMateria
   useMemo(() => {
       uniforms.uIsPainting.value = isPaintingMaterial ? 1.0 : 0.0;
   }, [isPaintingMaterial, uniforms]);
+
+  useMemo(() => {
+      if (fowTexture) uniforms.uFowTexture.value = fowTexture;
+      uniforms.uFowEnabled.value = fowEnabled ? 1.0 : 0.0;
+      uniforms.uIsDm.value = isDm ? 1.0 : 0.0;
+  }, [fowTexture, fowEnabled, isDm, uniforms]);
 
   useFrame((state) => {
       uniforms.uTime.value = state.clock.elapsedTime;
@@ -452,15 +495,15 @@ export const MapPlaneContent = ({ backgroundUrl, materialMaskUrl, dynamicMateria
               customProgramCacheKey={() => (activeMaskTexture ? "masked" : "default") + "_" + animatedEnvironment}
           />
         </mesh>
-        {activeMaskTexture && <InstancedGrass scale={scale} aspect={aspect} uniforms={uniforms} animatedEnvironment={animatedEnvironment} />}
+        {activeMaskTexture && <InstancedGrass scale={scale} aspect={aspect} uniforms={uniforms} animatedEnvironment={animatedEnvironment} fowTexture={fowTexture} />}
     </group>
   );
 };
 
-export const MapPlane = ({ backgroundUrl, materialMaskUrl, dynamicMaterialMask, scale = 20, tokensList = [], rtdbDragsRef, gridSize = 1, animatedEnvironment = true, isPaintingMaterial = false }) => {
+export const MapPlane = ({ backgroundUrl, materialMaskUrl, dynamicMaterialMask, scale = 20, tokensList = [], rtdbDragsRef, gridSize = 1, animatedEnvironment = true, isPaintingMaterial = false, fowTexture, fowEnabled, isDm }) => {
   const resolvedUrl = useResolvedUrl(backgroundUrl);
   const resolvedMaterialMaskUrl = useResolvedUrl(materialMaskUrl);
 
   if (!resolvedUrl) return null;
-  return <MapPlaneContent backgroundUrl={resolvedUrl} materialMaskUrl={resolvedMaterialMaskUrl} dynamicMaterialMask={dynamicMaterialMask} scale={scale} tokensList={tokensList} rtdbDragsRef={rtdbDragsRef} gridSize={gridSize} animatedEnvironment={animatedEnvironment} isPaintingMaterial={isPaintingMaterial} />;
+  return <MapPlaneContent backgroundUrl={resolvedUrl} materialMaskUrl={resolvedMaterialMaskUrl} dynamicMaterialMask={dynamicMaterialMask} scale={scale} tokensList={tokensList} rtdbDragsRef={rtdbDragsRef} gridSize={gridSize} animatedEnvironment={animatedEnvironment} isPaintingMaterial={isPaintingMaterial} fowTexture={fowTexture} fowEnabled={fowEnabled} isDm={isDm} />;
 };

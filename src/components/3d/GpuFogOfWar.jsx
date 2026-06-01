@@ -7,7 +7,7 @@ import { checkLineOfSight } from '../../utils/losUtils';
 const MAX_SHADOW_VERTICES = 10000 * 6; // up to 10k wall segments
 const shadowVertexBuffer = new Float32Array(MAX_SHADOW_VERTICES * 3);
 
-export const GpuFogOfWar = ({ enabled, walls, lights, gridSize, mapData, aspect, resolvedHeightmapUrl, playerVisionSources, role, fowWallsEnabled, rtdbDragsRef }) => {
+export const GpuFogOfWar = ({ enabled, walls, lights, gridSize, mapData, aspect, resolvedHeightmapUrl, playerVisionSources, role, fowWallsEnabled, rtdbDragsRef, onTextureReady }) => {
     const { gl } = useThree();
     const scale = mapData?.scale || 20;
     const width = scale * aspect;
@@ -32,18 +32,19 @@ export const GpuFogOfWar = ({ enabled, walls, lights, gridSize, mapData, aspect,
     const fowTarget = useMemo(() => {
         const rt = new THREE.WebGLRenderTarget(1024, 1024, { stencilBuffer: true });
         rt.texture.generateMipmaps = false;
-        rt.texture.minFilter = THREE.LinearFilter;
-        rt.texture.magFilter = THREE.LinearFilter;
+        rt.texture.minFilter = THREE.NearestFilter;
+        rt.texture.magFilter = THREE.NearestFilter;
         return rt;
     }, []);
     const exploredTarget = useMemo(() => {
         const rt = new THREE.WebGLRenderTarget(1024, 1024);
         rt.texture.generateMipmaps = false;
-        rt.texture.minFilter = THREE.LinearFilter;
-        rt.texture.magFilter = THREE.LinearFilter;
+        rt.texture.minFilter = THREE.NearestFilter;
+        rt.texture.magFilter = THREE.NearestFilter;
         return rt;
     }, []);
     const hasClearedExplored = useRef(false);
+    const hasNotifiedTexture = useRef(false);
 
     // Reset exploration memory if the map changes or FOW is toggled off/on
     useEffect(() => {
@@ -217,6 +218,13 @@ export const GpuFogOfWar = ({ enabled, walls, lights, gridSize, mapData, aspect,
 
         gl.setRenderTarget(null);
         gl.setClearColor(oldColor, oldAlpha); // Restore map background color
+        
+        // Pass the texture to the grass shader ONLY AFTER it has been fully rendered to once.
+        // This prevents WebGL from caching an empty/invalid texture state during compilation.
+        if (!hasNotifiedTexture.current && onTextureReady) {
+            hasNotifiedTexture.current = true;
+            onTextureReady(exploredTarget.texture);
+        }
     });
 
     if (!width || !height || isNaN(width) || isNaN(height)) {
