@@ -69,6 +69,8 @@ const DragLine = React.forwardRef((props, ref) => {
   );
 });
 
+const isTouchDevice = typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+
 // Interactive 3D Token
 const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gridOffsetY = 0, isSelected, onSelect, onContextMenu, role, getTerrainHeight, isSnapToGrid, isTerrainReady, activeTool, draggedTokenId, setDraggedTokenId, viewMode, showNameplates, selectedTokenIds, groupDragData, onGroupDragEnd, isActiveTurn, canControl, shiftHeldRef, tokenBaseOffset = -0.12, isInteractive = true, orientation = 0, rtdbDragsRef, broadcastDrag, clearBroadcast, myUid, myClientId, baseVisibility, playerVisionSources, wallsArray, combinedLights, fowEnabled, alwaysVisible, hideBaseIf3D, isGlobalHovered }) => {
   const meshRef = useRef();
@@ -483,7 +485,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
 
   const handlePointerDown = (e) => {
     if (!isTerrainReady) return;
-    if (e.pointerType === 'touch') {
+    if (e.pointerType === 'touch' || e.pointerType === 'pen') {
       touchStartPos.current = { x: e.clientX, y: e.clientY };
       
       const startWorldPos = new THREE.Vector3();
@@ -492,15 +494,16 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
       longPressTimer.current = setTimeout(() => {
         longPressTimer.current = null;
         
-        if (isLeftDragging.current) {
+        let moved = false;
+        if (isLeftDragging.current || hasDragged.current) {
             const currentWorldPos = new THREE.Vector3();
             if (meshRef.current) meshRef.current.getWorldPosition(currentWorldPos);
             if (currentWorldPos.distanceToSquared(startWorldPos) > 0.01) {
-                return; // Token was moved, so cancel the long press
+                moved = true; // Token was moved, so cancel the long press
             }
         }
 
-        if (canControl && !hasDragged.current) {
+        if (canControl && !moved) {
           if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate(50);
           const mockEvent = { clientX: touchStartPos.current.x, clientY: touchStartPos.current.y, preventDefault: () => {}, stopPropagation: () => {} };
           if (onContextMenu) onContextMenu(mockEvent, token);
@@ -578,7 +581,15 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
       scale={[scale, scale, scale]}
       userData={{ tokenId: token.id }}
       onPointerDown={(!isInteractive || activeTool) ? undefined : (e) => {
-        if (!isGlobalHovered) {
+        let isFrontMost = isGlobalHovered;
+        if (e.pointerType === 'touch' || e.pointerType === 'pen') {
+            const frontMostHit = e.intersections.find(hit => hit.eventObject?.userData?.tokenId);
+            if (frontMostHit && frontMostHit.eventObject === e.eventObject) {
+                isFrontMost = true;
+            }
+        }
+        
+        if (!isFrontMost) {
             e.stopPropagation();
             return;
         }
@@ -593,7 +604,14 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
         e.stopPropagation(); 
         if (e.button === 2) return; 
         if (isTerrainReady) {
-            if (isGlobalHovered) onSelect(e, token.id, e.shiftKey);
+            let isFrontMost = isGlobalHovered;
+            if (e.pointerType === 'touch' || e.pointerType === 'pen') {
+                const frontMostHit = e.intersections.find(hit => hit.eventObject?.userData?.tokenId);
+                if (frontMostHit && frontMostHit.eventObject === e.eventObject) {
+                    isFrontMost = true;
+                }
+            }
+            if (isFrontMost) onSelect(e, token.id, e.shiftKey);
         }
       }}
       onContextMenu={(!isInteractive || activeTool) ? undefined : (e) => {
@@ -818,7 +836,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
         <DragControls
           ref={dragControlsRef}
           axisLock="y"
-          enabled={isTerrainReady && !activeTool && (draggedTokenId === token.id || (draggedTokenId === null && isGlobalHovered))}
+          enabled={isTerrainReady && !activeTool && (draggedTokenId === token.id || (draggedTokenId === null && (isGlobalHovered || isTouchDevice)))}
           onDragStart={(e) => {
             if (controls) {
                 controls.mouseButtons.LEFT = undefined;
