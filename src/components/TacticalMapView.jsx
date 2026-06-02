@@ -774,19 +774,47 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
 
     return finalHeight;
   }, [terrainData, mapHeightmapUrl, mapScale, mapHeightScale, aspect, isCastMode, mapData?.gridSize]);
+
+  const currentMapIdRef = useRef(activeMapId);
   // Subscribe to real-time map updates from Firebase
   useEffect(() => {
-    setMapData(null); // Immediately clear last map's data
+    if (currentMapIdRef.current !== activeMapId) {
+      setMapData(null); // Immediately clear last map's data when switching maps
+      currentMapIdRef.current = activeMapId;
+    }
     if (!campaignCode || !activeMapId) return;
-    const unsubscribe = subscribeToMap(campaignCode, activeMapId, (data) => {
-      if (data) {
-        setMapData(data);
+    const unsubscribe = subscribeToMap(campaignCode, activeMapId, (fetchedData) => {
+      if (fetchedData) {
+        setMapData(fetchedData);
       } else {
         setMapData(null);
+        if (role === 'dm') {
+            // Map doesn't exist, automatically create a new blank map
+            const createBlank = async () => {
+                const newMapId = doc(collection(db, 'a')).id;
+                const newMapData = {
+                    name: "New Blank Map",
+                    walls: {},
+                    gridSize: 1,
+                    scale: 20,
+                    environment: 'day',
+                    ambientLifeLevel: 'high',
+                    biomeType: 'forest',
+                    tokens: {},
+                    lights: {},
+                    fowEnabled: false,
+                    fowWallsEnabled: true,
+                    hide3DTokenBases: true
+                };
+                await createMap(campaignCode, newMapId, newMapData);
+                await updateCampaign({ activeMapId: newMapId });
+            };
+            createBlank();
+        }
       }
     });
     return () => unsubscribe();
-  }, [campaignCode, activeMapId]);
+  }, [campaignCode, activeMapId, role, updateCampaign]);
 
   const gridSize = mapData?.gridSize || 1;
   const showPlane = mapData?.backgroundUrl && mapData.backgroundUrl.trim() !== '';
@@ -2243,6 +2271,8 @@ ${pasteTextContent}`;
           gridSize: 1,
           scale: 20,
           environment: 'day',
+          ambientLifeLevel: 'high',
+          biomeType: 'forest',
           tokens: {},
           lights: {},
           fowEnabled: false,
@@ -2304,6 +2334,8 @@ ${pasteTextContent}`;
             gridSize: 1,
             scale: 20,
             environment: 'day',
+            ambientLifeLevel: 'high',
+            biomeType: 'forest',
             tokens: {},
             fowEnabled: false,
             fowWallsEnabled: true,
@@ -2547,8 +2579,8 @@ ${pasteTextContent}`;
             />
             {/* NEW SYSTEM: Ambient Life */}
             <AmbientEcosystem 
-                environment={mapData?.biomeType || 'generic'} 
-                ambientLifeLevel={mapData?.ambientLifeLevel || 'off'}
+                environment={mapData?.biomeType || 'forest'} 
+                ambientLifeLevel={mapData?.ambientLifeLevel || 'high'}
                 mapScale={mapData?.scale || 20}
                 particleDensity={mapData?.particleDensity ?? 1.0}
             />

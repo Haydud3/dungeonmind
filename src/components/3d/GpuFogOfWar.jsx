@@ -234,7 +234,7 @@ export const GpuFogOfWar = ({ enabled, walls, lights, gridSize, mapData, aspect,
     return (
         <group>
             {/* Shroud: Permanent Memory of Explored Areas (Pitch Black) */}
-            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.014, 0]} renderOrder={99}>
+            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.014, 0]} renderOrder={99} raycast={() => null}>
                 <planeGeometry args={[width, height, resolvedHeightmapUrl ? subdivisions : 1, resolvedHeightmapUrl ? subdivisions : 1]} />
                 {resolvedHeightmapUrl ? (
                     <meshStandardMaterial
@@ -260,7 +260,7 @@ export const GpuFogOfWar = ({ enabled, walls, lights, gridSize, mapData, aspect,
             </mesh>
 
             {/* Current Vision: Shadows for unseen areas (Grayed Out) */}
-            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.015, 0]} renderOrder={100}>
+            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.015, 0]} renderOrder={100} raycast={() => null}>
                 <planeGeometry args={[width, height, resolvedHeightmapUrl ? subdivisions : 1, resolvedHeightmapUrl ? subdivisions : 1]} />
                 {resolvedHeightmapUrl ? (
                     <meshStandardMaterial

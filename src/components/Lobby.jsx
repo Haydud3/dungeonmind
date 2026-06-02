@@ -16,7 +16,70 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
     const [characters, setCharacters] = useState([]);
     const [editingCharacter, setEditingCharacter] = useState(null);
     const [isCreatingCampaign, setIsCreatingCampaign] = useState(false);
+    const [editingRealm, setEditingRealm] = useState(null);
+    const [isGeneratingEditImage, setIsGeneratingEditImage] = useState(false);
     const [newCampaignData, setNewCampaignData] = useState({ name: '', theme: 'Heroic Fantasy', coverImage: '' });
+
+    const openEditRealm = (realm) => {
+        setEditingRealm({
+            code: realm.code,
+            name: realm.name || '',
+            theme: realm.theme || 'Heroic Fantasy',
+            coverImage: realm.coverImage || ''
+        });
+    };
+
+    const saveEditedRealm = async () => {
+        if (!editingRealm) return;
+        const finalName = editingRealm.name.trim() || `Realm ${editingRealm.code}`;
+        const finalCover = editingRealm.coverImage;
+        const finalTheme = editingRealm.theme;
+
+        try {
+            await updateDoc(doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', editingRealm.code), {
+                'campaignName': finalName,
+                'coverImage': finalCover,
+                'tone': finalTheme,
+                'campaign.genesis.campaignName': finalName,
+                'campaign.genesis.coverImage': finalCover,
+                'campaign.genesis.tone': finalTheme
+            });
+
+            const newRecents = recents.map(item => item.code === editingRealm.code ? { ...item, name: finalName, coverImage: finalCover, theme: finalTheme } : item);
+            setRecents(newRecents);
+            localStorage.setItem('dm_recents', JSON.stringify(newRecents));
+            
+            if (user?.uid) {
+                await setDoc(doc(fb.db, 'users', user.uid), { recents: newRecents }, { merge: true });
+            }
+        } catch (err) {
+            console.error("Failed to update realm", err);
+            alert("Failed to update realm details.");
+        }
+        setEditingRealm(null);
+    };
+
+    const generateEditCoverImage = async () => {
+        if (!editingRealm?.name) return;
+        setIsGeneratingEditImage(true);
+        try {
+            const prompt = `Fantasy roleplaying game campaign cover art for "${editingRealm.name}". Theme: ${editingRealm.theme}. Epic, high quality digital illustration, cinematic lighting, no text, no words.`;
+            const seed = Math.floor(Math.random() * 100000);
+            const imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=800&height=400&nologo=true&seed=${seed}`;
+            
+            const img = new Image();
+            img.onload = () => {
+                setEditingRealm(prev => ({ ...prev, coverImage: imageUrl }));
+                setIsGeneratingEditImage(false);
+            };
+            img.onerror = () => {
+                setIsGeneratingEditImage(false);
+            };
+            img.src = imageUrl;
+        } catch (e) {
+            setIsGeneratingEditImage(false);
+        }
+    };
     const [isGeneratingImage, setIsGeneratingImage] = useState(false);
     const [showDndBeyondImport, setShowDndBeyondImport] = useState(false);
     const [showBuilder, setShowBuilder] = useState(false);
@@ -25,6 +88,7 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
     const [localPhotoUrl, setLocalPhotoUrl] = useState(user?.photoURL || '');
     const [editProfileData, setEditProfileData] = useState({ displayName: '', photoURL: '' });
     const [emailInvites, setEmailInvites] = useState([]);
+    const [isRecovering, setIsRecovering] = useState(false);
 
     useEffect(() => {
         if (user) {
@@ -67,7 +131,9 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
             
             if (joinCodeParam) {
                 handleJoinClick(joinCodeParam);
-                window.history.replaceState({}, document.title, window.location.pathname);
+                urlParams.delete('join');
+                const newSearch = urlParams.toString() ? '?' + urlParams.toString() : '';
+                window.history.replaceState({}, document.title, window.location.pathname + newSearch + window.location.hash);
             } else if (inviteTokenParam) {
                 try {
                     const q = query(collection(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns'), where('campaign.inviteToken', '==', inviteTokenParam));
@@ -81,7 +147,9 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                 } catch (e) {
                     console.error("Failed to resolve invite link", e);
                 }
-                window.history.replaceState({}, document.title, window.location.pathname);
+                urlParams.delete('invite');
+                const newSearch = urlParams.toString() ? '?' + urlParams.toString() : '';
+                window.history.replaceState({}, document.title, window.location.pathname + newSearch + window.location.hash);
             } else if (localStorage.getItem('dm_auto_join') === 'true' && user) {
                 try {
                     const lastSessionStr = localStorage.getItem('dm_last_session');
@@ -291,6 +359,59 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
         }
     };
 
+    const handleRecoverRealms = async () => {
+        if (!user || !user.uid) return;
+        setIsRecovering(true);
+        try {
+            const campaignsRef = collection(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns');
+            const snapshot = await getDocs(campaignsRef);
+            
+            let recoveredCount = 0;
+            
+            // Collect all current recents to avoid duplicate work if possible
+            let currentCodes = recents.map(r => r.code);
+
+            for (const docSnap of snapshot.docs) {
+                const cData = docSnap.data();
+                const code = docSnap.id;
+                
+                if (currentCodes.includes(code)) continue; // Already have this one
+
+                let role = null;
+                // Check if user is DM
+                if (cData.dmIds && cData.dmIds.includes(user.uid)) {
+                    role = 'dm';
+                } 
+                // Check if user is Player
+                else if (
+                    (cData.assignments && cData.assignments[user.uid]) || 
+                    (cData.players && cData.players.some(p => p.ownerId === user.uid)) ||
+                    (cData.activeUsers && cData.activeUsers[user.uid])
+                ) {
+                    role = 'player';
+                }
+
+                if (role) {
+                    const freshName = cData.campaign?.genesis?.campaignName || cData.campaignName || `Realm ${code}`;
+                    const freshCover = cData.campaign?.genesis?.coverImage || cData.coverImage || null;
+                    const freshTheme = cData.campaign?.genesis?.tone || cData.tone || null;
+                    
+                    await addToRecents(code, role, freshName, freshCover, freshTheme);
+                    currentCodes.push(code);
+                    recoveredCount++;
+                }
+            }
+            
+            alert(recoveredCount > 0 ? `Successfully recovered ${recoveredCount} missing realm(s)!` : "No missing realms found to recover.");
+            
+        } catch (err) {
+            console.error("Failed to recover realms", err);
+            alert("An error occurred while scanning for lost realms.");
+        } finally {
+            setIsRecovering(false);
+        }
+    };
+
     const handleLogin = async () => {
         if(!fb) return;
         setIsLoggingIn(true);
@@ -300,12 +421,28 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
     };
 
     const addToRecents = async (code, role, campaignName = null, coverImage = null, theme = null) => {
-        // Read fresh recents from local storage to prevent stale state overwrites
         let currentRecents = [];
-        try {
-            const saved = localStorage.getItem('dm_recents');
-            if (saved) currentRecents = JSON.parse(saved);
-        } catch(e) {}
+        
+        // 1. Always prioritize fetching the most up-to-date recents from the cloud first
+        if (user && user.uid) {
+            try {
+                const userDocRef = doc(fb.db, 'users', user.uid);
+                const userDoc = await getDoc(userDocRef);
+                if (userDoc.exists() && userDoc.data().recents) {
+                    currentRecents = userDoc.data().recents;
+                }
+            } catch(e) {
+                console.error("Failed to fetch current cloud recents", e);
+            }
+        }
+        
+        // 2. Fallback or merge with local storage if cloud was empty
+        if (currentRecents.length === 0) {
+            try {
+                const saved = localStorage.getItem('dm_recents');
+                if (saved) currentRecents = JSON.parse(saved);
+            } catch(e) {}
+        }
         
         const existing = currentRecents.find(r => r.code === code);
         const finalName = campaignName || existing?.name || null;
@@ -610,7 +747,7 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                             </div>
                         </div>
                         <button onClick={openProfileEdit} className="text-slate-500 hover:text-white p-2 rounded-full hover:bg-slate-800 transition-colors" title="Edit Profile">
-                            <Icon name="edit-2" size={14} />
+                            <Icon name="pencil" size={14} />
                         </button>
                     </div>
                     
@@ -760,24 +897,11 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                                                     if (r.role === 'dm') {
                                                         e.preventDefault();
                                                         e.stopPropagation();
-                                                        const newName = window.prompt("Rename Campaign:", r.name || `Realm ${r.code}`);
-                                                        if (newName && newName.trim() && newName.trim() !== r.name) {
-                                                            const finalName = newName.trim();
-                                                            // 1. Update Firestore Campaign
-                                                            updateDoc(doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', r.code), {
-                                                                'campaignName': finalName,
-                                                                'campaign.genesis.campaignName': finalName
-                                                            }).catch(err => console.error("Rename failed", err));
-                                                            
-                                                            // 2. Update Local State and User Doc
-                                                            const newRecents = recents.map(item => item.code === r.code ? { ...item, name: finalName } : item);
-                                                            setRecents(newRecents);
-                                                            setDoc(doc(fb.db, 'users', user.uid), { recents: newRecents }, { merge: true });
-                                                        }
+                                                        openEditRealm(r);
                                                     }
                                                 }}
                                                 className="group relative bg-slate-900 rounded-xl overflow-hidden border border-slate-800 hover:border-amber-500/50 transition-all cursor-pointer shadow-lg hover:shadow-xl hover:shadow-amber-900/10 hover:-translate-y-1 flex flex-col"
-                                                title={r.role === 'dm' ? "Left-click to join. Right-click to rename." : "Click to join"}
+                                                title={r.role === 'dm' ? "Left-click to join. Right-click to edit." : "Click to join"}
                                             >
                                                 {/* Card Header/Banner */}
                                                 <div className="h-32 w-full relative">
@@ -815,6 +939,11 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                                                             <button onClick={(e) => { e.stopPropagation(); handleJoinClick(r.code, r.role); }} className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white py-2 rounded-lg font-bold text-sm shadow-md transition-colors flex items-center justify-center gap-2">
                                                                 <Icon name="swords" size={16} /> Launch VTT
                                                             </button>
+                                                            {r.role === 'dm' && (
+                                                                <button onClick={(e) => { e.stopPropagation(); openEditRealm(r); }} className="text-slate-400 hover:text-white px-3 rounded-lg border border-slate-700 hover:border-amber-500 hover:bg-amber-900/50 transition-colors flex items-center justify-center" title="Edit Realm">
+                                                                    <Icon name="pencil" size={16} />
+                                                                </button>
+                                                            )}
                                                             <button onClick={(e) => deleteCampaign(e, r)} className="text-slate-400 hover:text-white px-3 rounded-lg border border-slate-700 hover:border-red-500 hover:bg-red-900/50 transition-colors flex items-center justify-center" title={r.role === 'dm' ? "Delete Campaign" : "Leave Campaign"}>
                                                                 {r.role === 'dm' ? <Icon name="trash-2" size={16} /> : <Icon name="log-out" size={16} />}
                                                             </button>
@@ -875,7 +1004,7 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                                         </div>
                                         <div className="p-3 bg-slate-900/50 border-t border-slate-800 flex justify-between">
                                             <button onClick={() => setEditingCharacter(char)} className="text-indigo-400 hover:text-indigo-300 text-sm font-bold flex items-center gap-1">
-                                                <Icon name="edit" size={14} /> Edit
+                                                <Icon name="pencil" size={14} /> Edit
                                             </button>
                                             <button onClick={(e) => {
                                                 e.stopPropagation();
@@ -969,6 +1098,21 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                                 </button>
 
                                 <div className="pt-6 mt-6 border-t border-slate-800">
+                                    <h4 className="text-sm font-bold text-slate-300 mb-3">Troubleshooting</h4>
+                                    <button 
+                                        onClick={handleRecoverRealms} 
+                                        disabled={isRecovering}
+                                        className="w-full flex items-center justify-between px-4 py-3 rounded-lg transition-colors text-sm font-bold border bg-slate-950 text-amber-400 border-slate-800 hover:bg-slate-800 hover:text-amber-300 disabled:opacity-50 disabled:cursor-not-allowed mb-4"
+                                    >
+                                        <div className="flex items-center gap-3">
+                                            <Icon name={isRecovering ? "loader-2" : "search"} size={18} className={isRecovering ? "animate-spin" : ""} /> 
+                                            <div className="text-left">
+                                                <div>Recover Missing Realms</div>
+                                                <div className="text-[10px] font-normal opacity-70 mt-0.5 text-slate-400">Scans the cloud for realms you belong to that are missing from your dashboard.</div>
+                                            </div>
+                                        </div>
+                                    </button>
+                                    
                                     <button onClick={() => fb.signOut(fb.auth)} className="w-full flex items-center justify-center gap-2 py-3 rounded-lg bg-red-900/20 border border-red-900/50 hover:bg-red-900/40 text-red-400 transition-colors text-sm font-bold">
                                         <Icon name="log-out" size={18} /> Sign Out
                                     </button>
@@ -1080,6 +1224,96 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                                 </button>
                                 <button onClick={finalizeCampaignCreation} className="px-8 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg font-bold shadow-lg shadow-amber-900/20 transition-all flex items-center gap-2">
                                     <Icon name="swords" size={18} /> Launch VTT
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* Realm Edit Modal */}
+                {editingRealm && (
+                    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setEditingRealm(null)}>
+                        <div className="bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+                            <div className="p-6 border-b border-slate-800 bg-slate-950 flex justify-between items-center">
+                                <div>
+                                    <h2 className="text-2xl font-black text-amber-500 fantasy-font tracking-wider">Edit Realm</h2>
+                                    <p className="text-sm text-slate-400">Update your campaign's appearance and details.</p>
+                                </div>
+                                <button onClick={() => setEditingRealm(null)} className="text-slate-500 hover:text-white p-2 rounded-full hover:bg-slate-800 transition-colors">
+                                    <Icon name="x" size={24} />
+                                </button>
+                            </div>
+                            
+                            <div className="p-6 space-y-6">
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-300 mb-2">Realm Name</label>
+                                    <input 
+                                        type="text" 
+                                        value={editingRealm.name}
+                                        onChange={(e) => setEditingRealm(prev => ({...prev, name: e.target.value}))}
+                                        placeholder="e.g., Curse of the Crimson Crown"
+                                        className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 transition-colors"
+                                    />
+                                </div>
+                                
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-300 mb-2">Campaign Theme</label>
+                                    <div className="grid grid-cols-2 gap-3">
+                                        {['Heroic Fantasy', 'Dark Fantasy', 'Sci-Fi / Cyberpunk', 'Gothic Horror'].map(theme => (
+                                            <button
+                                                key={theme}
+                                                onClick={() => setEditingRealm(prev => ({...prev, theme}))}
+                                                className={`px-3 py-2 rounded-lg text-sm font-bold border transition-all ${editingRealm.theme === theme ? 'bg-amber-600/20 border-amber-500 text-amber-400' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700 hover:border-slate-600'}`}
+                                            >
+                                                {theme}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <div className="flex justify-between items-center mb-2">
+                                        <label className="block text-sm font-bold text-slate-300">Cover Image</label>
+                                        <button 
+                                            onClick={generateEditCoverImage}
+                                            disabled={isGeneratingEditImage || !editingRealm.name}
+                                            className="text-xs bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 hover:bg-indigo-600/40 px-3 py-1 rounded flex items-center gap-1 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                        >
+                                            <Icon name="wand-2" size={12} /> {isGeneratingEditImage ? "Scrying..." : "AI Generate"}
+                                        </button>
+                                    </div>
+                                    <div className="w-full h-32 bg-slate-800 border-2 border-dashed border-slate-700 rounded-lg overflow-hidden relative flex items-center justify-center">
+                                        {isGeneratingEditImage && (
+                                            <div className="absolute inset-0 bg-slate-900/80 backdrop-blur-sm flex flex-col items-center justify-center z-10">
+                                                <Icon name="loader-2" size={24} className="text-indigo-400 animate-spin mb-2" />
+                                                <span className="text-xs text-indigo-300 font-bold animate-pulse">Consulting the arcane...</span>
+                                            </div>
+                                        )}
+                                        {editingRealm.coverImage ? (
+                                            <img src={editingRealm.coverImage} className="w-full h-full object-cover" alt="Cover" referrerPolicy="no-referrer" />
+                                        ) : (
+                                            <div className="text-slate-500 flex flex-col items-center gap-2">
+                                                <Icon name="image" size={24} />
+                                                <span className="text-xs">Click AI Generate to conjure artwork</span>
+                                            </div>
+                                        )}
+                                    </div>
+                                    <input 
+                                        type="text" 
+                                        value={editingRealm.coverImage}
+                                        onChange={(e) => setEditingRealm(prev => ({...prev, coverImage: e.target.value}))}
+                                        placeholder="Or paste an image URL..."
+                                        className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 mt-3 text-xs text-white focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 transition-colors font-mono"
+                                    />
+                                </div>
+                            </div>
+                            
+                            <div className="p-6 border-t border-slate-800 bg-slate-950 flex justify-end gap-3">
+                                <button onClick={() => setEditingRealm(null)} className="px-6 py-2 rounded-lg font-bold text-slate-400 hover:text-white hover:bg-slate-800 transition-colors">
+                                    Cancel
+                                </button>
+                                <button onClick={saveEditedRealm} className="px-8 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg font-bold shadow-lg shadow-amber-900/20 transition-all flex items-center gap-2">
+                                    <Icon name="save" size={18} /> Save Changes
                                 </button>
                             </div>
                         </div>

@@ -58,26 +58,30 @@ const ChatSaveCard = ({ rollData, previewTargets, role, handleRollSave }) => {
             </div>
             <div className="flex bg-slate-900 border border-slate-700/50 rounded overflow-hidden shadow-inner w-full mt-1">
                 <button 
-                    onClick={(e) => { e.stopPropagation(); setAdvMode('dis'); }} 
+                    type="button"
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); setAdvMode('dis'); }} 
                     className={`flex-1 py-1.5 text-[9px] uppercase font-bold tracking-widest transition-colors ${advMode === 'dis' ? 'bg-red-900/50 text-red-400' : 'text-slate-500 hover:bg-slate-800'}`}
                 >
                     Disadvantage
                 </button>
                 <button 
-                    onClick={(e) => { e.stopPropagation(); setAdvMode('normal'); }} 
+                    type="button"
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); setAdvMode('normal'); }} 
                     className={`flex-1 py-1.5 text-[9px] uppercase font-bold tracking-widest transition-colors border-x border-slate-700/50 ${advMode === 'normal' ? 'bg-slate-700 text-white shadow-md' : 'text-slate-500 hover:bg-slate-800'}`}
                 >
                     Normal
                 </button>
                 <button 
-                    onClick={(e) => { e.stopPropagation(); setAdvMode('adv'); }} 
+                    type="button"
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); setAdvMode('adv'); }} 
                     className={`flex-1 py-1.5 text-[9px] uppercase font-bold tracking-widest transition-colors ${advMode === 'adv' ? 'bg-green-900/50 text-green-400' : 'text-slate-500 hover:bg-slate-800'}`}
                 >
                     Advantage
                 </button>
             </div>
             <button 
-                onClick={(e) => { e.stopPropagation(); handleRollSave(dcInfo, previewTargets, advMode); setAdvMode('normal'); }}
+                type="button"
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleRollSave(dcInfo, previewTargets, advMode); setAdvMode('normal'); }}
                 className="w-full bg-amber-600 hover:bg-amber-500 text-white text-[11px] font-bold py-1.5 rounded shadow-lg transition-colors flex items-center justify-center gap-1 mt-1"
             ><Icon name="dices" size={12}/> Roll DC {dcInfo.value} {dcInfo.stat.toUpperCase()} Save</button>
         </div>
@@ -519,6 +523,30 @@ const SessionView = ({
 
     const formatTime = (ts) => new Date(ts).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
 
+    const getSenderInfo = useCallback((msg) => {
+        let parsedRollData = null;
+        if (msg.type?.startsWith('roll-')) {
+            try { parsedRollData = JSON.parse(msg.content); } catch (e) {}
+        }
+        
+        let charName = null;
+        if (parsedRollData?.characterName && parsedRollData.characterName !== 'Dungeon Master') {
+            charName = parsedRollData.characterName;
+        }
+
+        if (charName) {
+            const char = [...(data.players || []), ...(data.npcs || [])].find(c => c.name === charName);
+            return { name: charName, character: char, isDm: false, isAi: false };
+        }
+
+        if (msg.role === 'ai') return { name: 'Dungeon Master (AI)', character: null, isDm: true, isAi: true };
+        if (data.dmIds?.includes(msg.senderId) || msg.senderName === 'Dungeon Master') return { name: 'Dungeon Master', character: null, isDm: true, isAi: false };
+        
+        const charId = data.assignments?.[msg.senderId];
+        const assignedCharacter = data.players?.find(p => String(p.id) === String(charId));
+        return { name: assignedCharacter ? assignedCharacter.name : msg.senderName, character: assignedCharacter, isDm: false, isAi: false };
+    }, [data.dmIds, data.assignments, data.players, data.npcs]);
+
     return (
         <div className="flex h-full relative flex-col bg-slate-900">
             {role === 'dm' && !compact && (
@@ -551,19 +579,19 @@ const SessionView = ({
                     
                     {visibleMessages.map((msg, i) => {
                         const isSystem = msg.role === 'system';
-                        const showHeader = i === 0 || visibleMessages[i-1].senderId !== msg.senderId || (msg.timestamp - visibleMessages[i-1].timestamp > 60000);
+                        const senderInfo = getSenderInfo(msg);
+                        const resolvedSenderName = senderInfo.name;
+                        const assignedCharacter = senderInfo.character;
                         
-                        // START CHANGE: Define charId and canEdit before the return block
-                        const charId = data.assignments?.[msg.senderId];
+                        const prevMsg = i > 0 ? visibleMessages[i-1] : null;
+                        const prevSenderInfo = prevMsg ? getSenderInfo(prevMsg) : null;
+                        
+                        const showHeader = i === 0 || 
+                                           prevMsg.senderId !== msg.senderId || 
+                                           (prevSenderInfo && prevSenderInfo.name !== resolvedSenderName) ||
+                                           (msg.timestamp - prevMsg.timestamp > 60000);
+                        
                         const canEdit = role === 'dm' || msg.senderId === user?.uid || (msg.role === 'ai' && msg.replyTo === user?.uid);
-                        // END CHANGE
-                        
-                        const assignedCharacter = players?.find(p => String(p.id) === String(charId));
-                        const resolvedSenderName = (() => {
-                            if (msg.role === 'ai') return 'Dungeon Master (AI)';
-                            if (data.dmIds?.includes(msg.senderId) || msg.senderName === 'Dungeon Master') return 'Dungeon Master';
-                            return assignedCharacter ? assignedCharacter.name : msg.senderName;
-                        })();
 
                         if (isSystem) {
                             return (
@@ -585,27 +613,22 @@ const SessionView = ({
                                 <div className="w-10 flex-shrink-0">
                                     {/* START CHANGE: Dynamic Avatar (DM Icon vs Character Image) */}
                                     {showHeader && (() => {
-                                        // 1. Is it AI?
-                                        if (msg.role === 'ai') return (
+                                        if (senderInfo.isAi) return (
                                             <div className="w-10 h-10 rounded-full flex items-center justify-center text-white shadow-lg bg-gradient-to-br from-amber-600 to-purple-700 shadow-amber-500/20">
                                                 <Icon name="sparkles" size={20}/>
                                             </div>
                                         );
 
-                                        // 2. Is it the DM? (Check ID or Name)
-                                        const isDm = data.dmIds?.includes(msg.senderId) || msg.senderName === 'Dungeon Master';
-                                        if (isDm) return (
+                                        if (assignedCharacter?.image) return (
+                                            <SafeAvatar src={assignedCharacter.image} alt={resolvedSenderName} />
+                                        );
+
+                                        if (senderInfo.isDm) return (
                                             <div className="w-10 h-10 rounded-full flex items-center justify-center text-white shadow-lg bg-slate-700 border border-amber-500/30">
                                                 <Icon name="crown" size={20} className="text-amber-500"/>
                                             </div>
                                         );
 
-                                        // 3. Is it a Player Character?
-                                        if (assignedCharacter?.image) return (
-                                            <SafeAvatar src={assignedCharacter.image} alt={resolvedSenderName} />
-                                        );
-
-                                        // 4. Fallback Initials
                                         return (
                                             <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold text-white shadow-lg bg-slate-700">
                                                 {(resolvedSenderName?.[0] || '?').toUpperCase()}
@@ -709,7 +732,7 @@ const SessionView = ({
                                                             const isCrit = rollData.formula.includes('d20') && finalNatural === 20;
                                                             const isFumble = rollData.formula.includes('d20') && finalNatural === 1;
                                                             
-                                                            const displayCharName = (!rollData.characterName || rollData.characterName === msg.senderName || rollData.characterName === 'Dungeon Master') ? resolvedSenderName : rollData.characterName;
+                                                            const displayCharName = resolvedSenderName;
                                                             const naturalClass = isCrit ? "text-green-400 font-bold" : isFumble ? "text-red-400 font-bold" : "text-slate-300";
                                                             
                                                             const hasDetails = rollData.weaponName || rollData.damageType || rollData.actionType || rollData.alias;

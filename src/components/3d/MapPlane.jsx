@@ -273,7 +273,7 @@ export const InstancedGrass = ({ scale = 20, aspect = 1, uniforms: parentUniform
     };
 
     return (
-        <instancedMesh key={count} ref={meshRef} args={[geometry, null, count]} castShadow receiveShadow position={[0, -0.01, 0]} frustumCulled={false}>
+        <instancedMesh key={count} ref={meshRef} args={[geometry, null, count]} castShadow receiveShadow position={[0, -0.01, 0]} frustumCulled={false} raycast={() => null}>
             <meshLambertMaterial key={fowTexture ? "mat_fow" : "mat_def"} ref={materialRef} alphaMap={grassAlphaMap} alphaTest={0.5} side={THREE.DoubleSide} onBeforeCompile={onBeforeCompile} customProgramCacheKey={() => "grass_plane_" + animatedEnvironment + (fowTexture ? "_fow" : "_def")} />
         </instancedMesh>
     );

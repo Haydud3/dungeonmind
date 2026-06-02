@@ -35,7 +35,8 @@ const RollButton = ({
     }
 
     return (
-        <button 
+        <button
+            type="button"
             onClick={(e) => {
                 if (!disabled && onClick) {
                     e.stopPropagation(); // Always prevent row expansion when clicking a button
@@ -48,7 +49,6 @@ const RollButton = ({
         >
             {children}
         </button>
-    );
-};
+    );};
 
 export default RollButton;

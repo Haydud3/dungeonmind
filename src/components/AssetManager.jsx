@@ -1122,9 +1122,15 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
                                 <p>No suitable maps found.</p>
                                 <button 
                                      onClick={() => setActiveTab('ai')}
-                                     className="mt-4 px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded font-bold transition-colors shadow-lg flex items-center justify-center gap-2 mx-auto"
+                                     className="mt-4 w-64 px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded font-bold transition-colors shadow-lg flex items-center justify-center gap-2 mx-auto"
                                 >
                                      <Icon name="sparkles" size={16} /> Generate with AI Instead
+                                </button>
+                                <button 
+                                     onClick={() => window.open(`https://www.google.com/search?tbm=isch&q=${encodeURIComponent(redditQuery + ' dnd battlemap')}`, '_blank')}
+                                     className="mt-4 w-64 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded font-bold transition-colors shadow-lg flex items-center justify-center gap-2 mx-auto"
+                                >
+                                     <Icon name="external-link" size={16} /> Search Google Images
                                 </button>
                             </div>
                         )}
@@ -1626,7 +1632,7 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
 
                         <label className="block text-xs uppercase font-bold text-slate-500 mb-2 mt-4 tracking-wider">Ambient Life Effects</label>
                         <select 
-                            value={mapData?.ambientLifeLevel || 'off'} 
+                            value={mapData?.ambientLifeLevel || 'high'} 
                             onChange={(e) => updateMap(campaignCode, activeMapId, { ambientLifeLevel: e.target.value })}
                             className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-xs outline-none focus:border-amber-500 mb-4"
                         >
@@ -1637,7 +1643,7 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
 
                         <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Ambient Ecosystem Biome</label>
                         <select 
-                            value={mapData?.biomeType || 'generic'} 
+                            value={mapData?.biomeType || 'forest'} 
                             onChange={(e) => updateMap(campaignCode, activeMapId, { biomeType: e.target.value })}
                             className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-xs outline-none focus:border-amber-500 mb-4"
                         >

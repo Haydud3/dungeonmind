@@ -132,14 +132,15 @@ const calculateFaces = (type) => {
 
 
 // --- CONFIGURATION ---
+const DICE_SCALE = 0.6; // Scale down dice to fit more on screen
 const CONFIG = {
-    4:  { scale: 1.5, offset: 1.05,  color: "#be123c", geo: () => new THREE.TetrahedronGeometry(1) },
-    6:  { scale: 0.9, offset: 1.05, color: "#4338ca", geo: () => new THREE.BoxGeometry(1, 1, 1) },
-    8:  { scale: 0.9, offset: 1.05, color: "#047857", geo: () => new THREE.OctahedronGeometry(1) },
-    10: { scale: 0.84, offset: 1.02, color: "#7e22ce", geo: () => createD10Geometry() },
-    12: { scale: 1.02, offset: 1.01, color: "#c2410c", geo: () => new THREE.DodecahedronGeometry(1) },
-    20: { scale: 1.02, offset: 1.02, color: "#b91c1c", geo: () => new THREE.IcosahedronGeometry(1) },
-    100:{ scale: 0.84, offset: 1.02, color: "#1e293b", geo: () => createD10Geometry() }
+    4:  { scale: 1.5 * DICE_SCALE, offset: 1.05,  color: "#be123c", geo: () => new THREE.TetrahedronGeometry(1) },
+    6:  { scale: 0.9 * DICE_SCALE, offset: 1.05, color: "#4338ca", geo: () => new THREE.BoxGeometry(1, 1, 1) },
+    8:  { scale: 0.9 * DICE_SCALE, offset: 1.05, color: "#047857", geo: () => new THREE.OctahedronGeometry(1) },
+    10: { scale: 0.84 * DICE_SCALE, offset: 1.02, color: "#7e22ce", geo: () => createD10Geometry() },
+    12: { scale: 1.02 * DICE_SCALE, offset: 1.01, color: "#c2410c", geo: () => new THREE.DodecahedronGeometry(1) },
+    20: { scale: 1.02 * DICE_SCALE, offset: 1.02, color: "#b91c1c", geo: () => new THREE.IcosahedronGeometry(1) },
+    100:{ scale: 0.84 * DICE_SCALE, offset: 1.02, color: "#1e293b", geo: () => createD10Geometry() }
 };
 
 // Global geometry cache prevents WebGL Context Loss by reusing GPU buffers instead of leaking them
@@ -405,11 +406,17 @@ const DieMesh = ({ id, dieType, result, actionType, index = 0, total = 1, isRemo
             const extentX = Math.max(1, (visibleX / 2) - padding);
             const extentZ = Math.max(1, (visibleZ / 2) - padding);
 
-            // Only bounce if heading OUT of bounds, allows them to fly IN from off-screen
+            // Bounce if heading OUT of bounds, allows them to fly IN from off-screen
             if (phys.pos.x > extentX && phys.vel.x > 0) { phys.pos.x = extentX; phys.vel.x *= -0.7; }
             if (phys.pos.x < -extentX && phys.vel.x < 0) { phys.pos.x = -extentX; phys.vel.x *= -0.7; }
             if (phys.pos.z > extentZ && phys.vel.z > 0) { phys.pos.z = extentZ; phys.vel.z *= -0.7; }
             if (phys.pos.z < -extentZ && phys.vel.z < 0) { phys.pos.z = -extentZ; phys.vel.z *= -0.7; }
+
+            // If still out of bounds (e.g., pushed out by a collision and stopped), gently pull them back in
+            if (phys.pos.x > extentX) phys.pos.x -= 10 * dt;
+            if (phys.pos.x < -extentX) phys.pos.x += 10 * dt;
+            if (phys.pos.z > extentZ) phys.pos.z -= 10 * dt;
+            if (phys.pos.z < -extentZ) phys.pos.z += 10 * dt;
 
             meshRef.current.rotation.x += phys.rotVel.x * dt;
             meshRef.current.rotation.y += phys.rotVel.y * dt;
@@ -442,11 +449,11 @@ const DieMesh = ({ id, dieType, result, actionType, index = 0, total = 1, isRemo
                             key={i}
                             position={f.pos}
                             rotation={f.rot}
-                            fontSize={safeType === 100 || safeType === 20 ? 0.35 : 0.5}
+                            fontSize={(safeType === 100 || safeType === 20 ? 0.35 : 0.5) * DICE_SCALE}
                             color={f.isResult ? "#ffffff" : "#fbbf24"}
                             anchorX="center"
                             anchorY="middle"
-                            outlineWidth={0.05}
+                            outlineWidth={0.05 * DICE_SCALE}
                             outlineColor="#000000"
                         >
                             {(f.val === 6 || f.val === 9) ? `${f.val}.` : f.val}

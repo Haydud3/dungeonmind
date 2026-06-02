@@ -286,7 +286,13 @@ const MapSourcingModal = ({ sourcingMap, onClose, campaignCode, skeleton, update
                         <div className="flex-1 flex flex-col items-center justify-center text-center text-slate-500 p-6">
                             <Icon name="search-x" size={48} className="mx-auto mb-4 opacity-50" />
                             <p>No suitable maps found.</p>
-                            <p className="text-xs mt-2">Try a manual upload below.</p>
+                            <button 
+                                 onClick={() => window.open(`https://www.google.com/search?tbm=isch&q=${encodeURIComponent(searchQuery + ' dnd battlemap')}`, '_blank')}
+                                 className="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded font-bold transition-colors shadow-lg flex items-center justify-center gap-2 mx-auto"
+                            >
+                                 <Icon name="external-link" size={16} /> Search Google Images
+                            </button>
+                            <p className="text-xs mt-4">Or try a manual upload below.</p>
                         </div>
                     )}
                 </div>
