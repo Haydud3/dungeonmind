@@ -978,9 +978,9 @@ function DungeonMindApp() {
             </div>
        </main>
        
-       {showHandoutCreator && <HandoutEditor role={effectiveRole} campaignCode={gameParams?.code} savedHandouts={data.handouts || []} onSave={handleHandoutSave} onDelete={handleHandoutDelete} onCancel={() => setShowHandoutCreator(false)} onLocalReveal={(h) => { setLocalHandout(h); setShowHandoutCreator(false); }} />}
+       {showHandoutCreator && <HandoutEditor role={effectiveRole} campaignCode={gameParams?.code} savedHandouts={data.handouts || []} onSave={handleHandoutSave} onDelete={handleHandoutDelete} onCancel={() => setShowHandoutCreator(false)} onLocalReveal={(h) => { setLocalHandout(h); }} />}
        {showHandout && (localHandout || data?.activeHandout) && (
-           <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm overflow-hidden" onClick={() => { setShowHandout(false); setLocalHandout(null); }}>
+           <div className="fixed inset-0 z-[110] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm overflow-hidden" onClick={() => { setShowHandout(false); setLocalHandout(null); }}>
                <div 
                    className={`max-w-4xl w-full rounded-xl shadow-2xl relative flex flex-col max-h-[90vh] overflow-hidden ${
                        (localHandout || data?.activeHandout).theme === 'parchment' ? 'bg-[#f5e6c8] text-amber-900 border-4 border-amber-800' :

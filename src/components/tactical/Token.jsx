@@ -127,6 +127,17 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
   const isLeftDragging = useRef(false);
   const isRightDragging = useRef(false); // Add this line to define isRightDragging
   const hasDragged = useRef(false);
+  const handleDragEndRef = useRef();
+
+  useEffect(() => {
+      const handleGlobalPointerUp = (e) => {
+          if (e.buttons === 0 && isLeftDragging.current && handleDragEndRef.current) {
+              handleDragEndRef.current();
+          }
+      };
+      window.addEventListener('pointerup', handleGlobalPointerUp);
+      return () => window.removeEventListener('pointerup', handleGlobalPointerUp);
+  }, []);
   const dragStartPos = useRef(new THREE.Vector3());
   const velocity = useRef(new THREE.Vector3());
   const previousPos = useRef(new THREE.Vector3(token.x || 0, token.y || 0.001, token.z || 0));
@@ -581,6 +592,11 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
       scale={[scale, scale, scale]}
       userData={{ tokenId: token.id }}
       onPointerDown={(!isInteractive || activeTool) ? undefined : (e) => {
+        if (e.button === 1 || e.button === 2) {
+            e.stopPropagation();
+            return;
+        }
+
         let isFrontMost = isGlobalHovered;
         if (e.pointerType === 'touch' || e.pointerType === 'pen') {
             const frontMostHit = e.intersections.find(hit => hit.eventObject?.userData?.tokenId);
@@ -800,6 +816,87 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
     </group>
   );
 
+  handleDragEndRef.current = () => {
+    console.log("[Token3D] handleDragEndRef triggered for", token.id);
+    if (controls) {
+        controls.mouseButtons.LEFT = 2;
+        controls.mouseButtons.RIGHT = 0;
+    }
+    hasDragged.current = false;
+    isLeftDragging.current = false;
+
+    if (rulerRef.current && rulerRef.current.hide) rulerRef.current.hide();
+    if (rulerLabelRef.current) rulerLabelRef.current.visible = false;
+    if (rulerTextRef.current) rulerTextRef.current.style.display = 'none';
+    setWaypoints([]);
+    totalWaypointDistRef.current = 0;
+    
+    if (meshRef.current && dragControlsRef.current) {
+      const worldPos = new THREE.Vector3();
+      meshRef.current.getWorldPosition(worldPos);
+      
+      dragControlsRef.current.position.set(0, 0, 0);
+      dragControlsRef.current.matrix.identity();
+      dragControlsRef.current.updateMatrixWorld();
+      
+      const tokenSize = token.size || 1;
+      const isEvenSize = Math.round(tokenSize) % 2 === 0;
+      const snapX = isSnapToGrid ? (isEvenSize ? Math.round((worldPos.x - gridOffsetX) / gridSize) * gridSize + gridOffsetX : Math.floor((worldPos.x - gridOffsetX) / gridSize) * gridSize + gridSize / 2 + gridOffsetX) : worldPos.x;
+      const snapZ = isSnapToGrid ? (isEvenSize ? Math.round((worldPos.z - gridOffsetY) / gridSize) * gridSize + gridOffsetY : Math.floor((worldPos.z - gridOffsetY) / gridSize) * gridSize + gridSize / 2 + gridOffsetY) : worldPos.z;
+      
+      if (groupDragData?.current?.activeTokenId === token.id) {
+          const snappedDelta = new THREE.Vector3(snapX - dragStartPos.current.x, 0, snapZ - dragStartPos.current.z);
+          if (onGroupDragEnd) onGroupDragEnd(token.id, snappedDelta);
+          groupDragData.current.activeTokenId = null;
+          groupDragData.current.delta.set(0, 0, 0);
+      }
+
+      const terrainY = getTerrainHeight ? getTerrainHeight(snapX, snapZ, safeSize / 2) : 0;
+      const targetY = terrainY + (token.elevationOffset || 0) + tokenBaseOffset;
+      
+      meshRef.current.position.set(snapX, targetY, snapZ);
+      syncTarget.current.set(snapX, targetY, snapZ);
+      isWaitingForSync.current = true;
+      
+      setSaveStatus('saving');
+      const updates = { 
+        x: snapX, 
+        y: targetY, 
+        z: snapZ,
+        elevationOffset: token.elevationOffset || 0,
+        rotationY: targetRotationY.current
+      };
+      console.log("[Token3D] Requesting position update with:", updates);
+      updateTokenPosition(token.id, updates).then(() => {
+          console.log("[Token3D] Position update successful!");
+          setSaveStatus('saved');
+          setTimeout(() => setSaveStatus(null), 2000);
+          
+          setTimeout(() => {
+              if (isLeftDragging.current) return; // Prevent clearing if they already started dragging again
+              if (clearBroadcast) {
+                  clearBroadcast(token.id);
+                  const isGroupDrag = selectedTokenIds && selectedTokenIds.includes(token.id) && selectedTokenIds.length > 1;
+                  if (isGroupDrag && selectedTokenIds) {
+                      selectedTokenIds.forEach(id => clearBroadcast(id));
+                  }
+              }
+              if (rtdbDragsRef && rtdbDragsRef.current) {
+                  delete rtdbDragsRef.current[token.id];
+                  const isGroupDrag = selectedTokenIds && selectedTokenIds.includes(token.id) && selectedTokenIds.length > 1;
+                  if (isGroupDrag && selectedTokenIds) {
+                      selectedTokenIds.forEach(id => delete rtdbDragsRef.current[id]);
+                  }
+              }
+          }, 750);
+      }).catch(err => {
+          console.error("[Token3D] Position update failed:", err);
+          setSaveStatus(null);
+      });
+    }
+    setDraggedTokenId(null);
+  };
+
   return (
     <group>
       {waypoints.map((wp, i) => {
@@ -881,84 +978,7 @@ const Token3D = ({ token, updateTokenPosition, gridSize = 1, gridOffsetX = 0, gr
             }
           }}
           onDragEnd={() => {
-            console.log("[Token3D] onDragEnd triggered for", token.id);
-            if (controls) {
-                controls.mouseButtons.LEFT = 2;
-                controls.mouseButtons.RIGHT = 0;
-            }
-            hasDragged.current = false;
-            isLeftDragging.current = false;
-
-            if (rulerRef.current && rulerRef.current.hide) rulerRef.current.hide();
-            if (rulerLabelRef.current) rulerLabelRef.current.visible = false;
-            if (rulerTextRef.current) rulerTextRef.current.style.display = 'none';
-            setWaypoints([]);
-            totalWaypointDistRef.current = 0;
-            
-            if (meshRef.current && dragControlsRef.current) {
-              const worldPos = new THREE.Vector3();
-              meshRef.current.getWorldPosition(worldPos);
-              
-              dragControlsRef.current.position.set(0, 0, 0);
-              dragControlsRef.current.matrix.identity();
-              dragControlsRef.current.updateMatrixWorld();
-              
-              const tokenSize = token.size || 1;
-              const isEvenSize = Math.round(tokenSize) % 2 === 0;
-              const snapX = isSnapToGrid ? (isEvenSize ? Math.round((worldPos.x - gridOffsetX) / gridSize) * gridSize + gridOffsetX : Math.floor((worldPos.x - gridOffsetX) / gridSize) * gridSize + gridSize / 2 + gridOffsetX) : worldPos.x;
-              const snapZ = isSnapToGrid ? (isEvenSize ? Math.round((worldPos.z - gridOffsetY) / gridSize) * gridSize + gridOffsetY : Math.floor((worldPos.z - gridOffsetY) / gridSize) * gridSize + gridSize / 2 + gridOffsetY) : worldPos.z;
-              
-              if (groupDragData?.current?.activeTokenId === token.id) {
-                  const snappedDelta = new THREE.Vector3(snapX - dragStartPos.current.x, 0, snapZ - dragStartPos.current.z);
-                  if (onGroupDragEnd) onGroupDragEnd(token.id, snappedDelta);
-                  groupDragData.current.activeTokenId = null;
-                  groupDragData.current.delta.set(0, 0, 0);
-              }
-
-              const terrainY = getTerrainHeight ? getTerrainHeight(snapX, snapZ, safeSize / 2) : 0;
-              const targetY = terrainY + (token.elevationOffset || 0) + tokenBaseOffset;
-              
-              meshRef.current.position.set(snapX, targetY, snapZ);
-              syncTarget.current.set(snapX, targetY, snapZ);
-              isWaitingForSync.current = true;
-              
-              setSaveStatus('saving');
-              const updates = { 
-                x: snapX, 
-                y: targetY, 
-                z: snapZ,
-                elevationOffset: token.elevationOffset || 0,
-                rotationY: targetRotationY.current
-              };
-              console.log("[Token3D] Requesting position update with:", updates);
-              updateTokenPosition(token.id, updates).then(() => {
-                  console.log("[Token3D] Position update successful!");
-                  setSaveStatus('saved');
-                  setTimeout(() => setSaveStatus(null), 2000);
-                  
-                  setTimeout(() => {
-                      if (isLeftDragging.current) return; // Prevent clearing if they already started dragging again
-                      if (clearBroadcast) {
-                          clearBroadcast(token.id);
-                          const isGroupDrag = selectedTokenIds && selectedTokenIds.includes(token.id) && selectedTokenIds.length > 1;
-                          if (isGroupDrag && selectedTokenIds) {
-                              selectedTokenIds.forEach(id => clearBroadcast(id));
-                          }
-                      }
-                      if (rtdbDragsRef && rtdbDragsRef.current) {
-                          delete rtdbDragsRef.current[token.id];
-                          const isGroupDrag = selectedTokenIds && selectedTokenIds.includes(token.id) && selectedTokenIds.length > 1;
-                          if (isGroupDrag && selectedTokenIds) {
-                              selectedTokenIds.forEach(id => delete rtdbDragsRef.current[id]);
-                          }
-                      }
-                  }, 750);
-              }).catch(err => {
-                  console.error("[Token3D] Position update failed:", err);
-                  setSaveStatus(null);
-              });
-            }
-            setDraggedTokenId(null);
+            if (handleDragEndRef.current) handleDragEndRef.current();
           }}
         >
           {tokenContent}

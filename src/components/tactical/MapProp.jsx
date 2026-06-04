@@ -104,6 +104,11 @@ export const MapProp = ({ propData, isSelected, onSelect, onContextMenu, getTerr
     };
 
     const handlePointerDown = (e) => {
+        if (e.button === 1 || e.button === 2) {
+            e.stopPropagation();
+            return;
+        }
+        
         if (e.pointerType === 'touch') {
             touchStartPos.current = { x: e.clientX, y: e.clientY };
             longPressTimer.current = setTimeout(() => {

@@ -11,6 +11,7 @@ import ResolvedImage from './ResolvedImage'; // Add this import
 import { useToast } from './ToastProvider';
 import { useResolvedUrl } from '../utils/useResolvedUrl';
 import { fulfillMapData } from '../utils/moduleFulfillment';
+import { subscribeToMap } from '../utils/mapService';
 
 // Helper to generate a lightweight thumbnail so the gallery loads instantly
 const generateThumbnail = (dataUrl) => {
@@ -98,7 +99,7 @@ const ResolvedMapImage = ({ url, name, className }) => {
     return <div className="w-full h-full flex items-center justify-center text-slate-600 bg-slate-800"><Icon name="map" size={24} /></div>;
 };
 
-const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, onSetBackground, onSetHeightmap, onGenerateMap, onNewBlankMap, allCharacters, campaignData, updateCampaign, onSelectStamper, importTarget, aiHelper, generateNpc }) => {
+const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propActiveMapId, updateMap, onClose, onSetBackground, onSetHeightmap, onGenerateMap, onNewBlankMap, allCharacters, campaignData, updateCampaign, onSelectStamper, importTarget, aiHelper, generateNpc }) => {
     const toast = useToast();
     const [assets, setAssets] = useState([]);
     const [isUploading, setIsUploading] = useState(false);
@@ -109,6 +110,29 @@ const AssetManager = ({ campaignCode, mapData, activeMapId, updateMap, onClose, 
     const [activeTab, setActiveTab] = useState(importTarget ? 'web' : 'library');
     const [selectedAsset, setSelectedAsset] = useState(null);
     const [assetCategory, setAssetCategory] = useState('Maps');
+    const [editingMapData, setEditingMapData] = useState(null);
+
+    // Subscribe to map data for the settings tab when it's not the active map
+    useEffect(() => {
+        let unsubscribe = null;
+        if ((activeTab === 'settings' || activeTab === 'ai') && selectedAsset?.id) {
+            if (selectedAsset.id === propActiveMapId) {
+                setEditingMapData(propMapData);
+            } else {
+                unsubscribe = subscribeToMap(campaignCode, selectedAsset.id, (data) => {
+                    setEditingMapData(data || {});
+                });
+            }
+        } else {
+            setEditingMapData(null);
+        }
+        return () => {
+            if (unsubscribe) unsubscribe();
+        };
+    }, [activeTab, selectedAsset, propActiveMapId, propMapData, campaignCode]);
+
+    const mapData = ((activeTab === 'settings' || activeTab === 'ai') && selectedAsset?.id !== propActiveMapId) ? editingMapData : propMapData;
+    const activeMapId = ((activeTab === 'settings' || activeTab === 'ai') && selectedAsset?.id) ? selectedAsset.id : propActiveMapId;
 
     const [isProcessingMap, setIsProcessingMap] = useState(false);
     const [processingStep, setProcessingStep] = useState('');

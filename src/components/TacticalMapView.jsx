@@ -1339,6 +1339,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
 
   const handleGlobalTokenPointerMove = useCallback((e) => {
       if (activeTool || draggedTokenId) return;
+      if (e.buttons > 0 || e.nativeEvent?.buttons > 0) return;
 
       const hitTokenIds = [];
       e.intersections.forEach(hit => {
