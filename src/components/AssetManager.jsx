@@ -1579,6 +1579,9 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
                                                 }} className="bg-black/80 text-amber-500 hover:text-white p-1.5 rounded shadow-md" title={internalImportTarget || importTarget ? "Use Asset for Missing Map" : "Set as Map Background"}>
                                                     <Icon name={internalImportTarget || importTarget ? "check" : "map"} size={14}/>
                                                 </button>
+                                                <button onClick={(e) => { e.stopPropagation(); setSelectedAsset(asset); setActiveTab('settings'); }} className="bg-black/80 text-cyan-400 hover:text-white p-1.5 rounded shadow-md" title="Map Settings">
+                                                    <Icon name="settings" size={14}/>
+                                                </button>
                                                 <button onClick={(e) => { e.stopPropagation(); setSelectedAsset(asset); setActiveTab('ai'); }} className="bg-black/80 text-purple-400 hover:text-white p-1.5 rounded shadow-md" title="Map Layers & Importers">
                                                     <Icon name="layers" size={14}/>
                                                 </button>
