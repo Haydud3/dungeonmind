@@ -304,7 +304,7 @@ const MapSourcingModal = ({ sourcingMap, onClose, campaignCode, skeleton, update
                             type="file" 
                             ref={fileInputRef} 
                             onChange={handleMapUpload} 
-                            accept="image/*" 
+                            accept="image/*, video/mp4, video/webm" 
                             className="hidden" 
                         />
                         <button 

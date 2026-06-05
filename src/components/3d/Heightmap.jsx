@@ -2,6 +2,7 @@ import React, { useMemo, useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { useResolvedUrl } from '../../utils/useResolvedUrl';
+import { useAnimatedMapTexture } from '../../utils/useAnimatedMapTexture';
 
 const defaultFowTexture = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
 defaultFowTexture.minFilter = THREE.NearestFilter;
@@ -285,17 +286,20 @@ export const InstancedGrassHeightmap = ({ scale = 20, aspect = 1, uniforms: pare
     );
 };
 
-export const HeightmapContent = ({ resolvedHeightmapUrl, resolvedBackgroundUrl, resolvedNormalMapUrl, resolvedMaterialMaskUrl, dynamicMaterialMask, heightScale, scale, aspect = 1, dynamicDisplacementMap, tokensList = [], rtdbDragsRef, gridSize = 1, animatedEnvironment = true, isPaintingMaterial = false, fowTexture, fowEnabled, isDm }) => {
+export const HeightmapContent = ({ resolvedHeightmapUrl, resolvedBackgroundUrl, resolvedNormalMapUrl, resolvedMaterialMaskUrl, dynamicMaterialMask, heightScale, scale, aspect = 1, dynamicDisplacementMap, tokensList = [], rtdbDragsRef, gridSize = 1, animatedEnvironment = true, isPaintingMaterial = false, fowTexture, fowEnabled, isDm, playbackRate = 1 }) => {
     const isLowPerf = localStorage.getItem('vtt_low_performance') === 'true';
     const subdivisions = isLowPerf ? 128 : 256;
 
+    const { texture: animatedBgTexture } = useAnimatedMapTexture(resolvedBackgroundUrl, playbackRate);
+    
     const backgroundTexture = useMemo(() => {
-        if (!resolvedBackgroundUrl) return null;
-        const tex = new THREE.TextureLoader().load(resolvedBackgroundUrl);
-        tex.colorSpace = THREE.SRGBColorSpace;
-        tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-        return tex;
-    }, [resolvedBackgroundUrl]);
+        if (animatedBgTexture) {
+             animatedBgTexture.colorSpace = THREE.SRGBColorSpace;
+             animatedBgTexture.wrapS = animatedBgTexture.wrapT = THREE.RepeatWrapping;
+             return animatedBgTexture;
+        }
+        return null;
+    }, [animatedBgTexture]);
 
     const heightmapTexture = useMemo(() => {
         const url = resolvedHeightmapUrl || "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
@@ -538,7 +542,7 @@ export const HeightmapContent = ({ resolvedHeightmapUrl, resolvedBackgroundUrl, 
     );
 };
 
-export const Heightmap = ({ heightmapUrl, backgroundUrl, normalMapUrl, materialMaskUrl, dynamicMaterialMask, heightScale, scale = 20, aspect = 1, dynamicDisplacementMap, tokensList = [], rtdbDragsRef, gridSize = 1, animatedEnvironment = true, isPaintingMaterial = false, fowTexture, fowEnabled, isDm }) => {
+export const Heightmap = ({ heightmapUrl, backgroundUrl, normalMapUrl, materialMaskUrl, dynamicMaterialMask, heightScale, scale = 20, aspect = 1, dynamicDisplacementMap, tokensList = [], rtdbDragsRef, gridSize = 1, animatedEnvironment = true, isPaintingMaterial = false, fowTexture, fowEnabled, isDm, playbackRate = 1 }) => {
     const resolvedHeightmapUrl = useResolvedUrl(heightmapUrl);
     const resolvedBackgroundUrl = useResolvedUrl(backgroundUrl);
     const resolvedNormalMapUrl = useResolvedUrl(normalMapUrl);
@@ -566,5 +570,6 @@ export const Heightmap = ({ heightmapUrl, backgroundUrl, normalMapUrl, materialM
         fowTexture={fowTexture}
         fowEnabled={fowEnabled}
         isDm={isDm}
+        playbackRate={playbackRate}
     />
 };

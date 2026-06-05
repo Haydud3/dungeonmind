@@ -17,6 +17,7 @@
     "@tensorflow/tfjs": "^4.11.0",
     "clsx": "^2.1.1",
     "firebase": "^10.8.0",
+    "gifuct-js": "^2.1.2",
     "lucide-react": "^0.344.0",
     "pdfjs-dist": "^5.4.530",
     "quill-cursors": "^4.3.0",

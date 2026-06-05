@@ -547,6 +547,15 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
         setAspect(img.width / img.height || 1);
         setIsAspectReady(true);
     }
+    img.onerror = () => {
+        const vid = document.createElement('video');
+        vid.onloadedmetadata = () => {
+            setAspect(vid.videoWidth / vid.videoHeight || 1);
+            setIsAspectReady(true);
+        };
+        vid.onerror = () => setIsAspectReady(true);
+        vid.src = resolvedBackgroundUrl;
+    };
     img.src = resolvedBackgroundUrl;
   }, [resolvedBackgroundUrl, mapData?.backgroundUrl]);
 
@@ -2314,16 +2323,50 @@ ${pasteTextContent}`;
 
         let currentAspect = 1;
         if (assetUrl) {
-            // Load image to get aspect ratio for boundary walls
-            const img = new Image();
-            img.src = assetUrl;
-            await new Promise(resolve => {
-                img.onload = () => {
-                    currentAspect = img.width / img.height || 1;
-                    resolve();
-                };
-                img.onerror = () => { console.warn("Failed to load image for aspect ratio, defaulting to 1."); resolve(); };
-            });
+            try {
+                let loadUrl = assetUrl;
+                let isObjectUrl = false;
+                if (assetUrl.startsWith('chunked:')) {
+                    const blob = await retrieveChunkedMap(assetUrl);
+                    if (blob) {
+                        loadUrl = URL.createObjectURL(blob);
+                        isObjectUrl = true;
+                    }
+                }
+                
+                // Assuming it might be a video based on metadata or extension later, but we can check extension
+                // Because blob URLs don't have extensions, we'd ideally check MIME type.
+                // The Asset manager doesn't save MIME type in the URL, but if it's an mp4 it might be uploaded differently
+                // Actually, let's just try image first, and if it fails, try video, but wait, `onerror` takes time.
+                // If it's a video, `img.onload` will fail.
+                const isVideo = assetUrl.endsWith('.mp4') || assetUrl.endsWith('.webm') || assetUrl.startsWith('data:video');
+                
+                if (isVideo) {
+                    const vid = document.createElement('video');
+                    vid.src = loadUrl;
+                    await new Promise(resolve => {
+                        vid.onloadedmetadata = () => {
+                            currentAspect = vid.videoWidth / vid.videoHeight || 1;
+                            resolve();
+                        };
+                        vid.onerror = () => resolve();
+                    });
+                } else {
+                    const img = new Image();
+                    img.src = loadUrl;
+                    await new Promise(resolve => {
+                        img.onload = () => {
+                            currentAspect = img.width / img.height || 1;
+                            resolve();
+                        };
+                        img.onerror = () => resolve();
+                    });
+                }
+                
+                if (isObjectUrl) URL.revokeObjectURL(loadUrl);
+            } catch (e) {
+                console.warn("Failed to determine aspect ratio", e);
+            }
         }
         const newMapData = {
             name: assetName ? assetName.replace(/\.[^/.]+$/, "") : "New Map",
@@ -2617,10 +2660,10 @@ ${pasteTextContent}`;
             <ErrorBoundary fallback={null}>
                 {(mapData?.heightmapUrl || activeTool === 'sculpt') && !isCastMode ? (
                     <Heightmap 
-                        heightmapUrl={mapData.heightmapUrl}
-                        backgroundUrl={mapData.backgroundUrl}
-                        normalMapUrl={mapData.normalMapUrl}
-                        materialMaskUrl={mapData.materialMaskUrl}
+                        heightmapUrl={resolvedHeightmapUrl}
+                        backgroundUrl={resolvedBackgroundUrl}
+                        normalMapUrl={resolvedNormalMapUrl}
+                        materialMaskUrl={resolvedMaterialMaskUrl}
                         dynamicMaterialMask={materialData?.texture}
                         heightScale={mapData.heightScale || 1}
                         scale={mapData.scale || 20}
@@ -2634,11 +2677,12 @@ ${pasteTextContent}`;
                         fowTexture={fowTexture}
                         fowEnabled={mapData?.fowEnabled !== false}
                         isDm={role === 'dm' && !isCastMode}
+                        playbackRate={mapData?.playbackRate || 1}
                     />
                 ) : (
                     showPlane && <MapPlane 
-                        backgroundUrl={mapData.backgroundUrl} 
-                        materialMaskUrl={mapData.materialMaskUrl} 
+                        backgroundUrl={resolvedBackgroundUrl} 
+                        materialMaskUrl={resolvedMaterialMaskUrl} 
                         dynamicMaterialMask={materialData?.texture} 
                         scale={mapData.scale || 20} 
                         tokensList={tokensList} 
@@ -2649,6 +2693,7 @@ ${pasteTextContent}`;
                         fowTexture={fowTexture}
                         fowEnabled={mapData?.fowEnabled !== false}
                         isDm={role === 'dm' && !isCastMode}
+                        playbackRate={mapData?.playbackRate || 1}
                     />
                 )}
             </ErrorBoundary>
@@ -3034,8 +3079,8 @@ ${pasteTextContent}`;
           >
                   {role === 'dm' && (
                       <>
-                      <ToolButton name="Tokens" icon="users" isActive={showTokenManager} onClick={() => { setActiveTool(null); setShowAssetManager(false); setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); setShowTokenManager(p => { const next = !p; if (next && onSidebarOpen) onSidebarOpen(); return next; }); }} isStandalone={true} />
-                      <ToolButton name="Map" icon="map" isActive={showAssetManager} onClick={() => { setActiveTool(null); setShowTokenManager(false); setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); setShowAssetManager(p => { const next = !p; if (next && onSidebarOpen) onSidebarOpen(); return next; }); }} isStandalone={true} />
+                      <ToolButton name="Tokens" icon="users" isActive={showTokenManager} onClick={() => { setActiveTool(null); setShowAssetManager(false); setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); if (!showTokenManager && onSidebarOpen) onSidebarOpen(); setShowTokenManager(!showTokenManager); }} isStandalone={true} />
+                      <ToolButton name="Map" icon="map" isActive={showAssetManager} onClick={() => { setActiveTool(null); setShowTokenManager(false); setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); if (!showAssetManager && onSidebarOpen) onSidebarOpen(); setShowAssetManager(!showAssetManager); }} isStandalone={true} />
                       <ToolButton 
                           name="Combat" 
                           icon="swords" 
@@ -3260,13 +3305,11 @@ ${pasteTextContent}`;
                                           }
                                       } else {
                                           setActiveTool(null); setIsArchitectMode(false); setIsDrawingWalls(false); setIsPlacingLights(false); 
-                                          setIsDeleting(p => {
-                                              if (p) {
-                                                  setSelectedWalls([]);
-                                                  setSelectedLights([]);
-                                              }
-                                              return !p;
-                                          });
+                                          if (isDeleting) {
+                                              setSelectedWalls([]);
+                                              setSelectedLights([]);
+                                          }
+                                          setIsDeleting(!isDeleting);
                                       }
                                   }} />
                               </div>

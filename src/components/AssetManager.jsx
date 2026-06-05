@@ -37,7 +37,7 @@ const generateThumbnail = (dataUrl) => {
     });
 };
 
-const ThrottledSlider = ({ value, min, max, step, onChange, onDragStart, onDragEnd, className }) => {
+const ThrottledSlider = ({ value, min, max, step, onChange, onDragStart, onDragEnd, className, disabled }) => {
     const [localVal, setLocalVal] = useState(value);
     const isDragging = useRef(false);
 
@@ -49,6 +49,7 @@ const ThrottledSlider = ({ value, min, max, step, onChange, onDragStart, onDragE
         <input 
             type="range" min={min} max={max} step={step} 
             value={localVal}
+            disabled={disabled}
             onPointerDown={() => { isDragging.current = true; if (onDragStart) onDragStart(); }}
             onPointerUp={() => { isDragging.current = false; setLocalVal(value); if (onDragEnd) onDragEnd(); }}
             onChange={(e) => {
@@ -112,27 +113,30 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
     const [assetCategory, setAssetCategory] = useState('Maps');
     const [editingMapData, setEditingMapData] = useState(null);
 
+    // STEP 1: Fix Target Map ID logic - Only hijack active map if we specifically selected a map to edit
+    const targetMapId = (activeTab === 'settings' || activeTab === 'ai') && selectedAsset?.isSkeletonMap && selectedAsset?.activeMapId
+        ? selectedAsset.activeMapId
+        : propActiveMapId;
+
+    const isEditingDifferentMap = targetMapId !== propActiveMapId;
+
     // Subscribe to map data for the settings tab when it's not the active map
     useEffect(() => {
         let unsubscribe = null;
-        if ((activeTab === 'settings' || activeTab === 'ai') && selectedAsset?.id) {
-            if (selectedAsset.id === propActiveMapId) {
-                setEditingMapData(propMapData);
-            } else {
-                unsubscribe = subscribeToMap(campaignCode, selectedAsset.id, (data) => {
-                    setEditingMapData(data || {});
-                });
-            }
+        if (isEditingDifferentMap && targetMapId) {
+            unsubscribe = subscribeToMap(campaignCode, targetMapId, (data) => {
+                setEditingMapData(data || {});
+            });
         } else {
             setEditingMapData(null);
         }
         return () => {
             if (unsubscribe) unsubscribe();
         };
-    }, [activeTab, selectedAsset, propActiveMapId, propMapData, campaignCode]);
+    }, [isEditingDifferentMap, targetMapId, campaignCode]);
 
-    const mapData = ((activeTab === 'settings' || activeTab === 'ai') && selectedAsset?.id !== propActiveMapId) ? editingMapData : propMapData;
-    const activeMapId = ((activeTab === 'settings' || activeTab === 'ai') && selectedAsset?.id) ? selectedAsset.id : propActiveMapId;
+    const mapData = isEditingDifferentMap ? editingMapData : propMapData;
+    const activeMapId = targetMapId;
 
     const [isProcessingMap, setIsProcessingMap] = useState(false);
     const [processingStep, setProcessingStep] = useState('');
@@ -914,7 +918,7 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
                 await new Promise(r => setTimeout(r, 3500));
                 await updateCampaign({ activeMapId: newMapId });
                 setInternalImportTarget(null);
-                setSelectedAsset({ ...targetMap, url: reader.result, isSkeletonMap: true });
+                setSelectedAsset({ ...targetMap, url: reader.result, isSkeletonMap: true, activeMapId: newMapId });
                 setActiveTab('settings');
                 handleAutoDetectGrid(reader.result);
             } catch (err) {
@@ -1032,7 +1036,7 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
                 <TabButton name="web" activeTab={activeTab} onClick={setActiveTab} icon="search">Web</TabButton>
                 <TabButton name="library" activeTab={activeTab} onClick={setActiveTab} icon="library">Assets</TabButton>
                 <TabButton name="sketchfab" activeTab={activeTab} onClick={setActiveTab} icon="globe">Sketchfab</TabButton>
-                {activeTab === 'settings' && <TabButton name="settings" activeTab={activeTab} onClick={setActiveTab} icon="sliders-horizontal">Settings</TabButton>}
+                <TabButton name="settings" activeTab={activeTab} onClick={(tab) => { setSelectedAsset(null); setActiveTab(tab); }} icon="sliders-horizontal">Settings</TabButton>
                 {activeTab === 'ai' && <TabButton name="ai" activeTab={activeTab} onClick={setActiveTab} icon="layers">Layers</TabButton>}
             </div>
             
@@ -1114,7 +1118,7 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
                                                          await new Promise(r => setTimeout(r, 3500));
                                                          await updateCampaign({ activeMapId: newMapId });
                                                          setInternalImportTarget(null);
-                                                         setSelectedAsset({ ...targetMap, url: selectedMap.url, isSkeletonMap: true });
+                                                         setSelectedAsset({ ...targetMap, url: selectedMap.url, isSkeletonMap: true, activeMapId: newMapId });
                                                          setActiveTab('settings');
                                                          handleAutoDetectGrid(selectedMap.url);
                                                      } catch (e) {
@@ -1217,7 +1221,7 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
                                     await new Promise(r => setTimeout(r, 3500));
                                     await updateCampaign({ activeMapId: newMapId });
                                     setInternalImportTarget(null);
-                                    setSelectedAsset({ ...targetMap, url: data, isSkeletonMap: true });
+                                    setSelectedAsset({ ...targetMap, url: data, isSkeletonMap: true, activeMapId: newMapId });
                                     setActiveTab('settings');
                                     handleAutoDetectGrid(data);
                                 } catch (e) {
@@ -1241,7 +1245,7 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
                             ref={fileInputRef}
                             onChange={handleUpload}
                             className="hidden"
-                            accept="image/png, image/jpeg, image/gif, image/webp, .glb, .gltf"
+                            accept="image/png, image/jpeg, image/gif, image/webp, video/mp4, video/webm, .glb, .gltf"
                         />
                         <button onClick={() => fileInputRef.current?.click()} disabled={isUploading} className="flex-1 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded flex items-center justify-center gap-2 shadow">
                             {isUploading ? <Icon name="loader" size={14} className="animate-spin" /> : <Icon name="upload" size={14} />}
@@ -1337,6 +1341,10 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
                                                         </div>
                                                     );
                                                 } else {
+                                                    const lowerUrl = (map.mapUrl || map.image || map.backgroundUrl || '').toLowerCase();
+                                                    const lowerName = (map.name || '').toLowerCase();
+                                                    const isAnimated = lowerUrl.includes('.mp4') || lowerUrl.includes('.webm') || lowerUrl.includes('.gif') || lowerUrl.includes('data:video') || lowerUrl.includes('data:image/gif') || lowerName.includes('.mp4') || lowerName.includes('.webm') || lowerName.includes('.gif');
+
                                                     return (
                                                         <div key={map.id} className="flex flex-col gap-1.5 group">
                                                             <div 
@@ -1360,6 +1368,12 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
                                                             >
                                                                 <ResolvedMapImage url={map.mapUrl || map.image || map.backgroundUrl} name={map.name} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" />
                                                                 
+                                                                {isAnimated && (
+                                                                    <div className="absolute bottom-1 right-1 bg-black/60 text-amber-400 p-1.5 rounded backdrop-blur-sm pointer-events-none group-hover:opacity-0 transition-opacity shadow-md z-10" title="Animated Map">
+                                                                        <Icon name="film" size={14} />
+                                                                    </div>
+                                                                )}
+
                                                                 <div className="absolute top-1 left-1 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                                                     <button onClick={async (e) => { 
                                                                         e.stopPropagation(); 
@@ -1378,14 +1392,16 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
                                                                     }} className="bg-black/80 text-amber-500 hover:text-white p-1.5 rounded shadow-md" title={map.activeMapId ? "Load Map & Tokens" : "Set as Map Background"}>
                                                                         <Icon name="map" size={14}/>
                                                                     </button>
-                                                                    <button onClick={(e) => { 
-                                                                        e.stopPropagation(); 
-                                                                        const mapImg = map.mapUrl || map.image || map.backgroundUrl || '';
-                                                                        setSelectedAsset({ ...map, url: mapImg, isSkeletonMap: true }); 
-                                                                        setActiveTab('settings'); 
-                                                                    }} className="bg-black/80 text-cyan-400 hover:text-white p-1.5 rounded shadow-md" title="Map Settings">
-                                                                        <Icon name="settings" size={14}/>
-                                                                    </button>
+                                                                    {map.activeMapId && (
+                                                                        <button onClick={(e) => { 
+                                                                            e.stopPropagation(); 
+                                                                            const mapImg = map.mapUrl || map.image || map.backgroundUrl || '';
+                                                                            setSelectedAsset({ ...map, url: mapImg, isSkeletonMap: true }); 
+                                                                            setActiveTab('settings'); 
+                                                                        }} className="bg-black/80 text-cyan-400 hover:text-white p-1.5 rounded shadow-md" title="Map Settings">
+                                                                            <Icon name="settings" size={14}/>
+                                                                        </button>
+                                                                    )}
                                                                     <button onClick={(e) => { 
                                                                         e.stopPropagation(); 
                                                                         const mapImg = map.mapUrl || map.image || map.backgroundUrl || '';
@@ -1485,7 +1501,12 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
                                     </div>
                                 );
                             })}
-                            {assets.filter(a => assetCategory === 'All' || (a.category || 'Uncategorized') === assetCategory).map((asset) => (
+                            {assets.filter(a => assetCategory === 'All' || (a.category || 'Uncategorized') === assetCategory).map((asset) => {
+                                const lowerUrl = (asset.url || '').toLowerCase();
+                                const lowerName = (asset.name || '').toLowerCase();
+                                const isAnimated = lowerUrl.includes('.mp4') || lowerUrl.includes('.webm') || lowerUrl.includes('.gif') || lowerUrl.includes('data:video') || lowerUrl.includes('data:image/gif') || lowerName.includes('.mp4') || lowerName.includes('.webm') || lowerName.includes('.gif');
+                                
+                                return (
                                 <div key={asset.id} draggable 
                                     onClick={() => {
                                         if (onSelectStamper) onSelectStamper(asset);
@@ -1498,6 +1519,11 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
                                     className="aspect-square bg-slate-800 rounded border border-slate-700 overflow-hidden cursor-grab active:cursor-grabbing hover:border-amber-500 transition-colors relative group"
                                 >
                                     <AssetThumbnail asset={asset} />
+                                    {isAnimated && (
+                                        <div className="absolute top-1 right-1 bg-black/60 text-amber-400 p-1.5 rounded backdrop-blur-sm pointer-events-none group-hover:opacity-0 transition-opacity shadow-md z-10" title="Animated Asset">
+                                            <Icon name="film" size={14} />
+                                        </div>
+                                    )}
                                     <div className="absolute inset-x-0 bottom-0 bg-black/60 text-[9px] text-white p-1 truncate opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">{asset.name}</div>
                                     <div className="absolute top-1 left-1 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                         {asset.category !== 'Props' && asset.category !== 'Tokens' && (
@@ -1530,7 +1556,7 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
                                                             await new Promise(r => setTimeout(r, 3500));
                                                             if (updateCampaign) await updateCampaign({ activeMapId: newMapId });
                                                             setInternalImportTarget(null);
-                                                            setSelectedAsset({ ...targetMap, url: asset.generatedMapUrl || asset.url, isSkeletonMap: true });
+                                                            setSelectedAsset({ ...targetMap, url: asset.generatedMapUrl || asset.url, isSkeletonMap: true, activeMapId: newMapId });
                                                             setActiveTab('settings');
                                                             handleAutoDetectGrid(asset.generatedMapUrl || asset.url);
                                                         } catch (err) {
@@ -1552,9 +1578,6 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
                                                     }
                                                 }} className="bg-black/80 text-amber-500 hover:text-white p-1.5 rounded shadow-md" title={internalImportTarget || importTarget ? "Use Asset for Missing Map" : "Set as Map Background"}>
                                                     <Icon name={internalImportTarget || importTarget ? "check" : "map"} size={14}/>
-                                                </button>
-                                                <button onClick={(e) => { e.stopPropagation(); setSelectedAsset(asset); setActiveTab('settings'); }} className="bg-black/80 text-cyan-400 hover:text-white p-1.5 rounded shadow-md" title="Map Settings">
-                                                    <Icon name="settings" size={14}/>
                                                 </button>
                                                 <button onClick={(e) => { e.stopPropagation(); setSelectedAsset(asset); setActiveTab('ai'); }} className="bg-black/80 text-purple-400 hover:text-white p-1.5 rounded shadow-md" title="Map Layers & Importers">
                                                     <Icon name="layers" size={14}/>
@@ -1602,7 +1625,8 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
                                         </select>
                                     </div>
                                 </div>
-                            ))}
+                                );
+                            })}
                             {assets.filter(a => assetCategory === 'All' || (a.category || 'Uncategorized') === assetCategory).length === 0 && (!['Tokens', 'All'].includes(assetCategory) || !allCharacters || allCharacters.length === 0) && !isUploading && (
                                 <div className="col-span-2 text-center text-slate-500 text-sm mt-10 flex flex-col items-center"><Icon name={assetCategory === 'Tokens' ? 'users' : 'image'} size={32} className="opacity-20 mb-2" /> No {assetCategory === 'Tokens' ? 'tokens' : 'assets'} available.</div>
                             )}
@@ -1611,7 +1635,7 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
                 </>
             )}
 
-            {activeTab === 'settings' && selectedAsset && (
+            {activeTab === 'settings' && (
                  <div className="flex-1 min-h-0 overflow-y-auto custom-scroll p-4 space-y-6">
 
                     <div>
@@ -1624,6 +1648,45 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
                             className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm outline-none focus:border-amber-500 shadow-inner"
                         />
                     </div>
+
+                    {(() => {
+                        const bg = mapData?.backgroundUrl || mapData?.mapUrl || mapData?.image || selectedAsset?.url || '';
+                        const name = mapData?.name || selectedAsset?.name || '';
+                        const lowerBg = bg.toLowerCase();
+                        const lowerName = name.toLowerCase();
+                        const isAnimated = lowerBg.includes('.mp4') || lowerBg.includes('.webm') || lowerBg.includes('.gif') || lowerBg.includes('data:video') || lowerBg.includes('data:image/gif') || lowerName.includes('.mp4') || lowerName.includes('.webm') || lowerName.includes('.gif') || bg.startsWith('blob:') || bg.startsWith('chunked:');
+                        if (isAnimated) {
+                            return (
+                                <div>
+                                    <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Animation Playback Speed</label>
+                                    <div className="flex items-center gap-2 mb-6">
+                                        <ThrottledSlider 
+                                            type="range" 
+                                            min="0.1" 
+                                            max="5" 
+                                            step="0.1" 
+                                            value={mapData?.playbackRate ?? 1} 
+                                            onChange={(val) => throttledUpdateMap({ playbackRate: val })}
+                                            className="w-full accent-amber-500 flex-1"
+                                        />
+                                        <input 
+                                            type="number" 
+                                            min="0.1" 
+                                            max="5"
+                                            step="0.1" 
+                                            value={mapData?.playbackRate ?? 1} 
+                                            onChange={(e) => {
+                                                const val = parseFloat(e.target.value);
+                                                if (!isNaN(val)) throttledUpdateMap({ playbackRate: val });
+                                            }}
+                                            className="w-16 bg-slate-900 border border-slate-700 rounded p-1 text-xs text-white text-right outline-none focus:border-amber-500"
+                                        />
+                                    </div>
+                                </div>
+                            );
+                        }
+                        return null;
+                    })()}
                     
                     <div>
                         <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Grid Auto-Detect (AI)</label>
@@ -1657,7 +1720,16 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
                         <label className="block text-xs uppercase font-bold text-slate-500 mb-2 mt-4 tracking-wider">Ambient Life Effects</label>
                         <select 
                             value={mapData?.ambientLifeLevel || 'high'} 
-                            onChange={(e) => updateMap(campaignCode, activeMapId, { ambientLifeLevel: e.target.value })}
+                            onChange={(e) => {
+                                const val = e.target.value;
+                                const updates = { ambientLifeLevel: val };
+                                if (val === 'off') {
+                                    updates.particleDensity = 0;
+                                } else if (mapData?.particleDensity === 0) {
+                                    updates.particleDensity = 1;
+                                }
+                                updateMap(campaignCode, activeMapId, updates);
+                            }}
                             className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-xs outline-none focus:border-amber-500 mb-4"
                         >
                             <option value="off">Off (None)</option>
@@ -1687,7 +1759,8 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
                             step="0.1" 
                             value={mapData?.particleDensity ?? 1.0} 
                             onChange={(val) => throttledUpdateMap({ particleDensity: val })}
-                            className="w-full accent-indigo-500" 
+                            className={`w-full accent-indigo-500 ${mapData?.ambientLifeLevel === 'off' ? 'opacity-50 cursor-not-allowed' : ''}`}
+                            disabled={mapData?.ambientLifeLevel === 'off'}
                         />
                         <div className="text-right text-xs text-slate-400 mt-1 mb-4">{mapData?.particleDensity ?? 1.0}x</div>
 
@@ -1999,7 +2072,7 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
                 type="file" 
                 ref={mapFileInputRef} 
                 onChange={handleMapUpload} 
-                accept="image/*" 
+                accept="image/*, video/mp4, video/webm" 
                 className="hidden" 
             />
         </div>

@@ -35,7 +35,8 @@ export const imageElementToBlob = async (imgElement) => {
 
 // Phase 1: Store Base64 in chunks to bypass Firestore document size limits
 export const storeChunkedMap = async (base64, name) => {
-    const CHUNK_SIZE = 900000;
+    // Reduced chunk size to 400KB to safely avoid Firestore's 1MB limit and reduce memory pressure per write
+    const CHUNK_SIZE = 400000;
     const totalChunks = Math.ceil(base64.length / CHUNK_SIZE);
     
     const metaRef = await addDoc(collection(db, "map_metadata"), {
@@ -50,6 +51,10 @@ export const storeChunkedMap = async (base64, name) => {
             data: chunk,
             index: i
         });
+        // Tiny delay to let the write stream flush and avoid resource-exhausted error on large files
+        if (i % 2 === 1) {
+            await new Promise(r => setTimeout(r, 100));
+        }
     }
 
     return `chunked:${metaRef.id}`;
@@ -170,6 +175,21 @@ export const retrieveChunkedMap = async (chunkedId, signal) => {
         if (performance.now() - lastYieldTime > 12) {
             await new Promise(resolve => setTimeout(resolve, 0));
             lastYieldTime = performance.now();
+        }
+    }
+
+    if (remainder.length > 0) {
+        try {
+            while (remainder.length % 4 !== 0) remainder += '=';
+            const binaryStr = atob(remainder);
+            const len = binaryStr.length;
+            const bytes = new Uint8Array(len);
+            for (let j = 0; j < len; j++) {
+                bytes[j] = binaryStr.charCodeAt(j);
+            }
+            byteArrays.push(bytes);
+        } catch (e) {
+            console.error(`[Storage] Final remainder decode failed:`, e);
         }
     }
 

@@ -3,6 +3,8 @@ import * as THREE from 'three';
 import { useResolvedUrl } from '../../utils/useResolvedUrl';
 import { useFrame } from '@react-three/fiber';
 
+import { useAnimatedMapTexture } from '../../utils/useAnimatedMapTexture';
+
 const defaultFowTexture = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
 defaultFowTexture.minFilter = THREE.NearestFilter;
 defaultFowTexture.magFilter = THREE.NearestFilter;
@@ -280,16 +282,7 @@ export const InstancedGrass = ({ scale = 20, aspect = 1, uniforms: parentUniform
 };
 
 export const MapPlaneContent = ({ backgroundUrl, materialMaskUrl, dynamicMaterialMask, scale = 20, tokensList = [], rtdbDragsRef, gridSize = 1, animatedEnvironment = true, isPaintingMaterial = false, fowTexture, fowEnabled, isDm }) => {
-  const [aspect, setAspect] = useState(1);
-  const texture = useMemo(() => {
-      if (!backgroundUrl) return null;
-      const loader = new THREE.TextureLoader();
-      return loader.load(backgroundUrl, (tex) => {
-          if (tex.image) {
-              setAspect(tex.image.width / tex.image.height);
-          }
-      });
-  }, [backgroundUrl]);
+  const { texture, aspect } = useAnimatedMapTexture(backgroundUrl);
 
   const materialMaskTexture = useMemo(() => {
       if (!materialMaskUrl) return null;
