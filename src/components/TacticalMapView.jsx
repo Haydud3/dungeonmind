@@ -954,7 +954,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
 
           const radius = (tokenSize * gridSize) / 2;
           const terrainY = getTerrainHeight ? getTerrainHeight(finalX, finalZ, radius) : 0;
-          const finalY = terrainY + (t.elevationOffset || 0) + ((isCastMode || !mapData?.heightmapUrl) ? 0.04 : (mapData?.tokenElevationOffset ?? -0.12));
+          const finalY = terrainY + (t.elevationOffset || 0) + (mapData?.tokenElevationOffset ?? ((isCastMode || !mapData?.heightmapUrl) ? 0.04 : -0.12));
 
           updates[`tokens.${id}.x`] = finalX;
           updates[`tokens.${id}.y`] = finalY;
@@ -1821,7 +1821,7 @@ ${pasteTextContent}`;
     const newTokenId = `token_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const tokenData = {
         id: newTokenId, characterId: finalNpc.id, name: finalNpc.name,
-        type: 'npc', x: dropX, y: terrainY + ((isCastMode || !mapData?.heightmapUrl) ? 0.04 : (mapData?.tokenElevationOffset ?? -0.12)), z: dropZ,
+        type: 'npc', x: dropX, y: terrainY + (mapData?.tokenElevationOffset ?? ((isCastMode || !mapData?.heightmapUrl) ? 0.04 : -0.12)), z: dropZ,
         image: finalNpc.image || '', size: finalNpc.size || 1, hp: finalNpc.hp
     };
 
@@ -2158,7 +2158,7 @@ ${pasteTextContent}`;
             id: newTokenId,
             name: 'New Token',
             type: 'npc',
-            x: dropX, y: terrainY + ((isCastMode || !mapData?.heightmapUrl) ? 0.04 : (mapData?.tokenElevationOffset ?? -0.12)), z: dropZ,
+            x: dropX, y: terrainY + (mapData?.tokenElevationOffset ?? ((isCastMode || !mapData?.heightmapUrl) ? 0.04 : -0.12)), z: dropZ,
             image: payload.url || payload.image || '',
             size: 1,
             isHidden: false
@@ -2169,7 +2169,7 @@ ${pasteTextContent}`;
             characterId: payload.id || null, 
             name: payload.name || 'Unknown',
             type: payload.type || 'npc',
-            x: dropX, y: terrainY + ((isCastMode || !mapData?.heightmapUrl) ? 0.04 : (mapData?.tokenElevationOffset ?? -0.12)), z: dropZ,
+            x: dropX, y: terrainY + (mapData?.tokenElevationOffset ?? ((isCastMode || !mapData?.heightmapUrl) ? 0.04 : -0.12)), z: dropZ,
             image: payload.image || '',
             size: payload.size || 1,
         };
@@ -2501,7 +2501,7 @@ ${pasteTextContent}`;
                       isActiveTurn={activeCombatantId === token.id}
                       canControl={canControl && isInteractive}
                       shiftHeldRef={shiftHeldRef}
-                      tokenBaseOffset={((isCastMode || !mapData?.heightmapUrl) ? 0.04 : (mapData?.tokenElevationOffset ?? -0.12)) - (has3DModel && hideBaseIf3D ? 0.04 : 0)}
+                      tokenBaseOffset={(mapData?.tokenElevationOffset ?? ((isCastMode || !mapData?.heightmapUrl) ? 0.04 : -0.12)) - (has3DModel && hideBaseIf3D ? 0.04 : 0)}
                       isInteractive={isInteractive}
                       orientation={mapData?.orientation || 0}
                       activeTool={activeTool || (isDrawingFreehand ? 'freehand' : null)}
@@ -3534,7 +3534,7 @@ ${pasteTextContent}`;
                       const tokenSize = t.size || 1;
                       const radius = (tokenSize * gridSize) / 2;
                       const terrainY = getTerrainHeight(t.x, t.z, radius);
-                      const tokenBaseOffset = (isCastMode || !mapData?.heightmapUrl) ? 0.04 : (mapData?.tokenElevationOffset ?? -0.12);
+                      const tokenBaseOffset = mapData?.tokenElevationOffset ?? ((isCastMode || !mapData?.heightmapUrl) ? 0.04 : -0.12);
                       updates[`tokens.${id}.elevationOffset`] = 0;
                       updates[`tokens.${id}.y`] = terrainY + tokenBaseOffset;
                   });
@@ -3654,7 +3654,7 @@ ${pasteTextContent}`;
                                 const tokenSize = token.size || 1;
                                 const radius = (tokenSize * gridSize) / 2;
                                 const terrainY = getTerrainHeight(token.x, token.z, radius);
-                                const tokenBaseOffset = (isCastMode || !mapData?.heightmapUrl) ? 0.04 : (mapData?.tokenElevationOffset ?? -0.12);
+                                const tokenBaseOffset = mapData?.tokenElevationOffset ?? ((isCastMode || !mapData?.heightmapUrl) ? 0.04 : -0.12);
                                 const newY = terrainY + newElevation + tokenBaseOffset;
                                 updates[`tokens.${id}.elevationOffset`] = newElevation;
                                 updates[`tokens.${id}.y`] = newY;
@@ -3677,7 +3677,7 @@ ${pasteTextContent}`;
                                 const tokenSize = token.size || 1;
                                 const radius = (tokenSize * gridSize) / 2;
                                 const terrainY = getTerrainHeight(token.x, token.z, radius);
-                                const tokenBaseOffset = (isCastMode || !mapData?.heightmapUrl) ? 0.04 : (mapData?.tokenElevationOffset ?? -0.12);
+                                const tokenBaseOffset = mapData?.tokenElevationOffset ?? ((isCastMode || !mapData?.heightmapUrl) ? 0.04 : -0.12);
                                 const newY = terrainY + newElevation + tokenBaseOffset;
                                 updates[`tokens.${id}.elevationOffset`] = newElevation;
                                 updates[`tokens.${id}.y`] = newY;

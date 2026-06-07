@@ -723,7 +723,7 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
                 scale: mapData?.scale || 20,
                 environment: mapData?.environment || 'day',
                 lightingIntensity: mapData?.lightingIntensity || 1,
-                tokenElevationOffset: mapData?.tokenElevationOffset ?? 0.04,
+                tokenElevationOffset: mapData?.tokenElevationOffset ?? (!mapData?.heightmapUrl ? 0.04 : -0.12),
                 showGrid: mapData?.showGrid !== false,
                 isSnapToGrid: mapData?.isSnapToGrid !== false,
                 showNameplates: mapData?.showNameplates !== false,
@@ -1942,14 +1942,14 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
                                 min="-0.5" 
                                 max="0.5" 
                                 step="0.01" 
-                                value={mapData?.tokenElevationOffset ?? 0.04} 
+                                value={mapData?.tokenElevationOffset ?? (!mapData?.heightmapUrl ? 0.04 : -0.12)} 
                                 onChange={(val) => throttledUpdateMap({ tokenElevationOffset: val })}
                                 className="w-full accent-amber-500 flex-1"
                             />
                             <input 
                                 type="number" 
                                 step="0.01" 
-                                value={mapData?.tokenElevationOffset ?? 0.04} 
+                                value={mapData?.tokenElevationOffset ?? (!mapData?.heightmapUrl ? 0.04 : -0.12)} 
                                 onChange={(e) => {
                                     const val = parseFloat(e.target.value);
                                     if (!isNaN(val)) throttledUpdateMap({ tokenElevationOffset: val });
