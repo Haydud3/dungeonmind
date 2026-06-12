@@ -262,11 +262,42 @@ const AILayerGenerator = ({ asset, onUpdateLayer, mapData }) => {
             </div>
 
             <div className="space-y-4">
-                <LayerSection 
-                    type="baseMap" 
-                    title="1. Base Map (Albedo)" 
-                    description="The primary top-down visual texture of the map." 
-                />
+                <div className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden shadow-lg p-4 flex justify-between items-center">
+                    <div>
+                        <h3 className="font-bold text-slate-200">1. Base Map (Albedo)</h3>
+                        <p className="text-xs text-slate-400">Download the current base map to use as a reference for AI.</p>
+                    </div>
+                    <button 
+                        onClick={async () => {
+                            try {
+                                const url = asset?.generatedMapUrl || asset?.url || mapData?.backgroundUrl;
+                                if (!url) {
+                                    toast("No map image to download.", "error");
+                                    return;
+                                }
+                                let downloadUrl = url;
+                                if (url.startsWith('chunked:')) {
+                                    const { retrieveChunkedMap } = await import('../utils/storageUtils');
+                                    const blob = await retrieveChunkedMap(url);
+                                    if (blob) downloadUrl = URL.createObjectURL(blob);
+                                }
+                                const a = document.createElement('a');
+                                a.href = downloadUrl;
+                                a.download = `${asset?.name || 'map'}_base.png`;
+                                document.body.appendChild(a);
+                                a.click();
+                                document.body.removeChild(a);
+                                if (url.startsWith('chunked:')) URL.revokeObjectURL(downloadUrl);
+                            } catch (e) {
+                                console.error(e);
+                                toast("Download failed.", "error");
+                            }
+                        }}
+                        className="bg-amber-600 hover:bg-amber-500 text-white font-bold py-2 px-4 rounded shadow-lg transition-colors flex items-center gap-2"
+                    >
+                        <Icon name="download" size={16} /> Download
+                    </button>
+                </div>
                 <LayerSection 
                     type="heightMap" 
                     title="2. Heightmap (Displacement)" 
@@ -290,15 +321,6 @@ const AILayerGenerator = ({ asset, onUpdateLayer, mapData }) => {
                 <LayerSection 
                     type="illuminationMask" 
                     title="6. Illumination Data" 
-                    description="Identifies the position and radius of built-in light sources." 
-                />
-            </div>
-        </div>
-    );
-};
-
-export default AILayerGenerator;ionMask" 
-                    title="5. Illumination Data" 
                     description="Identifies the position and radius of built-in light sources." 
                 />
             </div>

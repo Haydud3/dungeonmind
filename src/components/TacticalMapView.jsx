@@ -289,6 +289,18 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
 
   const [isDraggingToken, setIsDraggingToken] = useState(false);
 
+  const [showAIPopup, setShowAIPopup] = useState(false);
+
+  useEffect(() => {
+      if (mapData?.backgroundUrl && !localStorage.getItem('dungeonmind_ai_popup_shown')) {
+          const timer = setTimeout(() => {
+              setShowAIPopup(true);
+              localStorage.setItem('dungeonmind_ai_popup_shown', 'true');
+          }, 3000);
+          return () => clearTimeout(timer);
+      }
+  }, [mapData?.backgroundUrl]);
+
   useEffect(() => {
       const handleSideSheetResize = (e) => setSideSheetWidth(e.detail);
       window.addEventListener('sidesheet-resize', handleSideSheetResize);
@@ -4290,6 +4302,46 @@ ${pasteTextContent}`;
                 <div className="flex-1"></div>
                 <button onClick={() => setActiveLorePin(null)} className="px-3 py-1.5 text-xs text-slate-400 hover:text-white transition-colors">Close</button>
                 <button onClick={sendLoreToChat} className="px-3 py-1.5 text-xs bg-indigo-600 hover:bg-indigo-500 text-white rounded font-bold shadow transition-colors flex items-center gap-1"><Icon name="message-circle" size={12}/> Send to Chat</button>
+            </div>
+        </div>
+    )}
+
+    {showAIPopup && (
+        <div className="absolute inset-0 z-[100] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4">
+            <div className="bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl p-6 max-w-lg w-full text-slate-200">
+                <div className="flex items-center gap-3 mb-4 text-amber-500">
+                    <Icon name="wand-2" size={32} />
+                    <h2 className="text-2xl font-bold">Discover AI Map Generation!</h2>
+                </div>
+                <div className="space-y-4 text-sm leading-relaxed mb-6">
+                    <p>
+                        Welcome to DungeonMind! Did you know you can easily turn any 2D map into an interactive 3D environment using our AI tools?
+                    </p>
+                    <p>
+                        Our <strong>AI Map Generator</strong> allows you to download your current map, feed it to AI tools to generate heightmaps and layer masks, and import them right back in to instantly build walls, add lighting, and create 3D terrain.
+                    </p>
+                    <p>
+                        To get started, simply open the <strong>Asset Manager</strong> and navigate to the <strong>AI Map Generator</strong> tab!
+                    </p>
+                </div>
+                <div className="flex justify-end gap-3">
+                    <button 
+                        onClick={() => setShowAIPopup(false)}
+                        className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded font-bold transition-colors"
+                    >
+                        Maybe Later
+                    </button>
+                    <button 
+                        onClick={() => {
+                            setShowAIPopup(false);
+                            setShowAssetManager(true);
+                            setAssetTab('ai');
+                        }}
+                        className="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded font-bold shadow-lg transition-colors flex items-center gap-2"
+                    >
+                        <Icon name="rocket" size={16} /> Try It Now
+                    </button>
+                </div>
             </div>
         </div>
     )}

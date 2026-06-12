@@ -1427,6 +1427,29 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
                                                                     }} className="bg-black/80 text-green-400 hover:text-white p-1.5 rounded shadow-md" title="Rename Map">
                                                                         <Icon name="pencil" size={14}/>
                                                                     </button>
+                                                                    <button onClick={async (e) => { 
+                                                                        e.stopPropagation();
+                                                                        try {
+                                                                            const url = map.mapUrl || map.image || map.backgroundUrl;
+                                                                            if (!url) return;
+                                                                            let downloadUrl = url;
+                                                                            if (url.startsWith('chunked:')) {
+                                                                                const blob = await retrieveChunkedMap(url);
+                                                                                if (blob) downloadUrl = URL.createObjectURL(blob);
+                                                                            }
+                                                                            const a = document.createElement('a');
+                                                                            a.href = downloadUrl;
+                                                                            a.download = `${map.name || 'map'}.png`;
+                                                                            document.body.appendChild(a);
+                                                                            a.click();
+                                                                            document.body.removeChild(a);
+                                                                            if (url.startsWith('chunked:')) URL.revokeObjectURL(downloadUrl);
+                                                                        } catch (err) {
+                                                                            console.error(err);
+                                                                        }
+                                                                    }} className="bg-black/80 text-blue-400 hover:text-white p-1.5 rounded shadow-md" title="Download Map">
+                                                                        <Icon name="download" size={14}/>
+                                                                    </button>
                                                                     <button onClick={(e) => { 
                                                                         e.stopPropagation(); 
                                                                         if (confirm(`Remove "${map.name}" and mark as missing?`)) {
@@ -1604,6 +1627,31 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
                                         }} className="bg-black/80 text-green-400 hover:text-white p-1.5 rounded shadow-md" title="Rename Asset">
                                             <Icon name="pencil" size={14}/>
                                         </button>
+                                        {(!asset.category || asset.category === 'Maps') && (
+                                        <button onClick={async (e) => { 
+                                            e.stopPropagation();
+                                            try {
+                                                const url = asset.generatedMapUrl || asset.url;
+                                                if (!url) return;
+                                                let downloadUrl = url;
+                                                if (url.startsWith('chunked:')) {
+                                                    const blob = await retrieveChunkedMap(url);
+                                                    if (blob) downloadUrl = URL.createObjectURL(blob);
+                                                }
+                                                const a = document.createElement('a');
+                                                a.href = downloadUrl;
+                                                a.download = `${asset.name || 'asset'}.png`;
+                                                document.body.appendChild(a);
+                                                a.click();
+                                                document.body.removeChild(a);
+                                                if (url.startsWith('chunked:')) URL.revokeObjectURL(downloadUrl);
+                                            } catch (err) {
+                                                console.error(err);
+                                            }
+                                        }} className="bg-black/80 text-blue-400 hover:text-white p-1.5 rounded shadow-md" title="Download Map">
+                                            <Icon name="download" size={14}/>
+                                        </button>
+                                        )}
                                         <button onClick={(e) => { e.stopPropagation(); handleDeleteAsset(asset); }} className="bg-black/80 text-red-500 hover:text-white p-1.5 rounded shadow-md" title="Delete Asset">
                                             <Icon name="trash" size={14}/>
                                         </button>
