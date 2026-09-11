@@ -320,7 +320,8 @@ const STYLES = {
     web: { color: '#cbd5e1', opacity: 0.8, blend: THREE.NormalBlending, useWeb: true },
     poison: { color: '#22c55e', opacity: 0.7, blend: THREE.AdditiveBlending },
     radiant: { color: '#fef08a', opacity: 0.8, blend: THREE.AdditiveBlending },
-    ice: { color: '#7dd3fc', opacity: 0.6, blend: THREE.AdditiveBlending }
+    ice: { color: '#7dd3fc', opacity: 0.6, blend: THREE.AdditiveBlending },
+    darkness: { color: '#000000', opacity: 0.9, blend: THREE.NormalBlending }
 };
 
 let webTexture = null;
@@ -385,6 +386,59 @@ const renderCircle = (start, end, opacity, gridSize, onDelete, styleKey = 'defau
             <Line points={circleBorder} color={getMaterialProps('circle', styleKey).color} lineWidth={2} depthTest={false} transparent opacity={opacity} />
             <Html position={[0, 0.3, radius]} center style={{ opacity }}>
                 <div className={`group bg-slate-900/80 text-blue-300 text-xs font-bold px-2 py-0.5 rounded-full shadow-lg whitespace-nowrap flex items-center gap-2 transition-all ${onDelete ? 'pointer-events-auto hover:bg-slate-800' : 'pointer-events-none'}`} style={{ opacity }}>
+                    <span>{radiusFt} ft</span>
+                    {onDelete && (
+                        <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDelete(); }} className="hidden group-hover:block text-slate-400 hover:text-red-400 transition-colors" title="Remove Measurement">
+                            <Icon name="x" size={12} />
+                        </button>
+                    )}
+                </div>
+            </Html>
+        </group>
+    );
+};
+
+const renderDarkness = (start, end, opacity, gridSize, onDelete, styleKey = 'darkness', userRole, playerSenses) => {
+    const isDM = userRole === 'dm';
+    const canSee = playerSenses?.canSeeInMagicalDarkness;
+
+    const radius = start.distanceTo(end) || 0.01;
+    const radiusFt = Math.round((radius / gridSize) * 5);
+    
+    const circleBorder = [];
+    for(let i=0; i<=64; i++) {
+        const a = (i/64) * Math.PI * 2;
+        circleBorder.push([Math.cos(a) * radius, 0, -Math.sin(a) * radius]);
+    }
+
+    // For DMs or players who can see, show a faint outline.
+    if (isDM || canSee) {
+        return (
+            <group position={[start.x, start.y + 0.1, start.z]}>
+                <Line points={circleBorder} color="#581c87" lineWidth={1} dashed dashSize={0.5} gapSize={0.25} depthTest={false} transparent opacity={opacity * 0.5} />
+                <Html position={[0, 0.3, radius]} center style={{ opacity }}>
+                    <div className={`group bg-slate-900/80 text-purple-300 text-xs font-bold px-2 py-0.5 rounded-full shadow-lg whitespace-nowrap flex items-center gap-2 transition-all ${onDelete ? 'pointer-events-auto hover:bg-slate-800' : 'pointer-events-none'}`} style={{ opacity }}>
+                        <span>{radiusFt} ft</span>
+                        {onDelete && (
+                            <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDelete(); }} className="hidden group-hover:block text-slate-400 hover:text-red-400 transition-colors" title="Remove Measurement">
+                                <Icon name="x" size={12} />
+                            </button>
+                        )}
+                    </div>
+                </Html>
+            </group>
+        );
+    }
+
+    return (
+        <group position={[start.x, start.y + 0.1, start.z]}>
+            <mesh rotation={[-Math.PI / 2, 0, 0]} scale={[radius, radius, 1]}>
+                <circleGeometry args={[1, 64]} />
+                <meshBasicMaterial {...getMaterialProps('circle', styleKey)} opacity={STYLES[styleKey || 'default']?.opacity * opacity} />
+            </mesh>
+            <Line points={circleBorder} color={getMaterialProps('circle', styleKey).color} lineWidth={2} depthTest={false} transparent opacity={opacity} />
+            <Html position={[0, 0.3, radius]} center style={{ opacity }}>
+                <div className={`group bg-slate-900/80 text-purple-300 text-xs font-bold px-2 py-0.5 rounded-full shadow-lg whitespace-nowrap flex items-center gap-2 transition-all ${onDelete ? 'pointer-events-auto hover:bg-slate-800' : 'pointer-events-none'}`} style={{ opacity }}>
                     <span>{radiusFt} ft</span>
                     {onDelete && (
                         <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDelete(); }} className="hidden group-hover:block text-slate-400 hover:text-red-400 transition-colors" title="Remove Measurement">
@@ -673,7 +727,25 @@ const BoxTool = ({ gridSize, tokens, onCompleteSelection, isLingering, onSaveMea
     </ShapeToolBase>
 );
 
-export const MeasurementTools = ({ activeTool, getTerrainHeight, gridSize, tokens, onCompleteSelection, measurements, onSaveMeasurement, onDeleteMeasurement, activeStyle }) => {
+const DarknessTool = ({ gridSize, tokens, onCompleteSelection, isLingering, onSaveMeasurement, activeStyle, getTerrainHeight, userRole, playerSenses }) => (
+    <ShapeToolBase
+        tokens={tokens}
+        onCompleteSelection={onCompleteSelection}
+        type="darkness"
+        isLingering={isLingering}
+        onSaveMeasurement={onSaveMeasurement}
+        getTerrainHeight={getTerrainHeight}
+        onHitTest={(start, end, tx, tz) => {
+            const radius = start.distanceTo(end);
+            const dist = Math.sqrt((start.x - tx) ** 2 + (start.z - tz) ** 2);
+            return dist <= radius + 0.25;
+        }}
+    >
+        {(start, end, opacity) => renderDarkness(start, end, opacity, gridSize, undefined, activeStyle, userRole, playerSenses)}
+    </ShapeToolBase>
+);
+
+export const MeasurementTools = ({ activeTool, getTerrainHeight, gridSize, tokens, onCompleteSelection, measurements, onSaveMeasurement, onDeleteMeasurement, activeStyle, userRole, playerSenses }) => {
     // Render lingering shapes
     const lingeringDrawings = Object.entries(measurements || {}).map(([id, m]) => {
         if (!m) return null;
@@ -699,6 +771,7 @@ export const MeasurementTools = ({ activeTool, getTerrainHeight, gridSize, token
             case 'circle': return <group key={id}>{renderCircle(start, end, 1, gridSize, handleDelete, m.style)}</group>;
             case 'cone': return <group key={id}>{renderCone(start, end, 1, gridSize, handleDelete, m.style)}</group>;
             case 'box': return <group key={id}>{renderBox(start, end, 1, gridSize, handleDelete, m.style)}</group>;
+            case 'darkness': return <group key={id}>{renderDarkness(start, end, 1, gridSize, handleDelete, m.style, userRole, playerSenses)}</group>;
             default: return null;
         }
     });
@@ -712,7 +785,8 @@ export const MeasurementTools = ({ activeTool, getTerrainHeight, gridSize, token
         case 'ruler': activeToolElement = <RulerTool getTerrainHeight={getTerrainHeight} gridSize={gridSize} />; break;
         case 'circle': activeToolElement = <CircleTool gridSize={gridSize} tokens={tokens} onCompleteSelection={onCompleteSelection} isLingering={isLingering} onSaveMeasurement={onSaveMeasurement} activeStyle={activeStyle} getTerrainHeight={getTerrainHeight} />; break;
         case 'cone': activeToolElement = <ConeTool gridSize={gridSize} tokens={tokens} onCompleteSelection={onCompleteSelection} isLingering={isLingering} onSaveMeasurement={onSaveMeasurement} activeStyle={activeStyle} getTerrainHeight={getTerrainHeight} />; break;
-        case 'box': activeToolElement = <BoxTool gridSize={gridSize} tokens={tokens} onCompleteSelection={onCompleteSelection} isLingering={isLingering} onSaveMeasurement={onSaveMeasurement} activeStyle={activeStyle} getTerrainHeight={getTerrainHeight} />; break;
+        case 'box': activeToolElement = <BoxTool gridSize={gridSize} tokens={tokens} onCompleteSelection={onCompleteSelection} isLingering={isLingering} onSaveMeasurement={onSaveMeasurement} activeStyle={activeStyle} />; break;
+        case 'darkness': activeToolElement = <DarknessTool gridSize={gridSize} tokens={tokens} onCompleteSelection={onCompleteSelection} isLingering={isLingering} onSaveMeasurement={onSaveMeasurement} activeStyle={activeStyle} getTerrainHeight={getTerrainHeight} userRole={userRole} playerSenses={playerSenses} />; break;
     }
 
     return (

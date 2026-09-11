@@ -8,14 +8,58 @@ export const calcAC = (char) => {
     const wis = Math.floor(((char.stats.wis || 10) - 10) / 2);
     
     // Check Inventory for Armor/Shields
-    const equippedArmor = char.inventory?.find(i => i.equipped && i.desc?.toLowerCase().includes('armor'));
-    const equippedShield = char.inventory?.find(i => i.equipped && (i.name.toLowerCase().includes('shield') || i.type === 'Shield'));
+    // Prefer the exact fields provided by dndBeyondParser if they exist
+    const equippedArmor = char.inventory?.find(i => i.equipped && (i.isArmor || i.armorTypeId >= 1 && i.armorTypeId <= 3 || (!i.isShield && i.desc?.toLowerCase().includes('armor'))));
+    const equippedShields = char.inventory?.filter(i => i.equipped && (i.isShield || i.armorTypeId === 4 || i.name.toLowerCase().includes('shield') || i.type === 'Shield'));
     
     let baseAC = 10 + dex; 
     let formula = "Unarmored (10 + DEX)";
 
-    // Unarmored Defense (Barbarian/Monk)
-    if (!equippedArmor) {
+    if (equippedArmor) {
+        const name = equippedArmor.name.toLowerCase();
+        
+        // If imported from D&D Beyond with explicit stats
+        if (equippedArmor.armorClass) {
+            let armorBase = equippedArmor.armorClass;
+            let typeId = equippedArmor.armorTypeId;
+            formula = `${equippedArmor.name} (${armorBase})`;
+            
+            if (typeId === 1) { // Light
+                baseAC = armorBase + dex;
+                formula += " + DEX";
+            } else if (typeId === 2) { // Medium
+                baseAC = armorBase + Math.min(dex, 2);
+                formula += " + DEX (max 2)";
+            } else if (typeId === 3) { // Heavy
+                baseAC = armorBase;
+            } else { // Fallback if typeId missing but AC present
+                baseAC = armorBase;
+            }
+        } else {
+            // Legacy / manual Armored Logic
+            let armorBase = 11; 
+            let maxDex = 100; 
+            
+            if (name.includes('leather') || name.includes('padded')) { armorBase = 11; formula = "Light Armor"; }
+            if (name.includes('studded')) { armorBase = 12; formula = "Light Armor"; }
+            
+            if (name.includes('hide') || name.includes('chain shirt') || name.includes('scale') || name.includes('breastplate') || name.includes('half plate')) {
+                // Fixed base armor values
+                armorBase = name.includes('hide') ? 12 : 
+                            name.includes('chain shirt') ? 13 :
+                            (name.includes('scale') || name.includes('breastplate')) ? 14 : 15; // half plate is 15
+                maxDex = 2;
+                formula = "Medium Armor (Max DEX +2)";
+            }
+            if (name.includes('ring mail') || name.includes('chain mail') || name.includes('splint') || name.includes('plate')) {
+                armorBase = name.includes('ring') ? 14 : name.includes('chain') ? 16 : name.includes('splint') ? 17 : 18;
+                maxDex = 0;
+                formula = "Heavy Armor";
+            }
+            baseAC = armorBase + Math.min(dex, maxDex);
+        }
+    } else {
+        // Unarmored Defense (Barbarian/Monk) if NO armor is equipped
         if (char.class?.toLowerCase().includes('barbarian')) {
             baseAC = 10 + dex + con;
             formula = "Unarmored (10 + DEX + CON)";
@@ -23,34 +67,24 @@ export const calcAC = (char) => {
             baseAC = 10 + dex + wis;
             formula = "Unarmored (10 + DEX + WIS)";
         }
-    } else {
-        // Armored Logic
-        let armorBase = 11; 
-        let maxDex = 100; 
-        const name = equippedArmor.name.toLowerCase();
-        
-        if (name.includes('leather') || name.includes('padded')) { armorBase = 11; formula = "Light Armor"; }
-        if (name.includes('studded')) { armorBase = 12; formula = "Light Armor"; }
-        
-        if (name.includes('hide') || name.includes('chain shirt') || name.includes('scale') || name.includes('breastplate') || name.includes('half plate')) {
-            armorBase = name.includes('hide') ? 12 : name.includes('half plate') ? 15 : 13;
-            maxDex = 2;
-            formula = "Medium Armor (Max DEX +2)";
-        }
-        
-        if (name.includes('ring') || name.includes('chain mail') || name.includes('splint') || name.includes('plate')) {
-            armorBase = name.includes('plate') ? 18 : 14;
-            maxDex = 0;
-            formula = "Heavy Armor";
-        }
-        const dexBonus = Math.min(dex, maxDex);
-        baseAC = armorBase + dexBonus;
     }
 
-    if (equippedShield) {
-        baseAC += 2;
-        formula += " + Shield";
+    // Add Shields
+    if (equippedShields && equippedShields.length > 0) {
+        equippedShields.forEach(shield => {
+            const shieldAc = shield.armorClass || 2;
+            baseAC += shieldAc;
+            formula += ` + ${shield.name} (${shieldAc})`;
+        });
     }
+
+    // Add Magic Bonuses from ALL equipped items
+    char.inventory?.filter(i => i.equipped).forEach(i => {
+        if (i.magicBonus) {
+            baseAC += i.magicBonus;
+            formula += ` + ${i.magicBonus} (${i.name})`;
+        }
+    });
 
     return { value: baseAC, formula };
 };
@@ -75,6 +109,7 @@ export const useCharacterStore = create((set, get) => ({
                 2: { current: 0, max: 0 }, 
                 3: { current: 0, max: 0 } 
             },
+            senses: char.senses || { darkvision: 0, canSeeInMagicalDarkness: false },
             // END CHANGE
             currency: char.currency || { cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
             inventory: char.inventory || [],

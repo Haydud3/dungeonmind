@@ -40,6 +40,7 @@ const MapLights = lazy(() => import('./3d/MapLights').then(m => ({ default: m.Ma
 const MapPings = lazy(() => import('./3d/MapPings').then(m => ({ default: m.MapPings })));
 
 const GpuFogOfWar = lazy(() => import('./3d/GpuFogOfWar').then(m => ({ default: m.GpuFogOfWar })));
+const MagicalDarknessFX = lazy(() => import('./3d/MagicalDarknessFX').then(m => ({ default: m.MagicalDarknessFX })));
 
 const ZoomHandler = lazy(() => import('./3d/ZoomHandler').then(m => ({ default: m.ZoomHandler })));
 const WallDrawingController = lazy(() => import('./3d/controllers/WallDrawingController').then(m => ({ default: m.WallDrawingController })));
@@ -276,6 +277,46 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
   const cameraControllerRef = useRef();
   const zoomRef = useRef();
   const [mapData, setMapData] = useState(null);
+
+  const fowRef = useRef();
+  const lastLoadedFogCounter = useRef(null);
+
+  useEffect(() => {
+      if (fowRef.current && mapData) {
+          const currentResetCounter = mapData.fowResetCounter || 0;
+          if (lastLoadedFogCounter.current !== currentResetCounter) {
+              lastLoadedFogCounter.current = currentResetCounter;
+              fowRef.current.loadFogState(mapData.fowExploredState || null);
+          } else if (lastLoadedFogCounter.current === 0 && mapData.fowExploredState && !fowRef.current.initialFogLoaded) {
+              // Initial load for clients joining mid-session without a counter bump
+              fowRef.current.initialFogLoaded = true;
+              fowRef.current.loadFogState(mapData.fowExploredState);
+          }
+      }
+  }, [mapData?.fowResetCounter, mapData?.fowExploredState, mapData]);
+
+  const handleSaveFog = useCallback((dataUrl) => {
+      if (campaignCode && activeMapId && dataUrl) {
+          updateMap(campaignCode, activeMapId, { fowExploredState: dataUrl });
+      }
+  }, [campaignCode, activeMapId, updateMap]);
+
+  const [previewPlayerView, setPreviewPlayerView] = useState(false);
+  const effectiveRole = previewPlayerView ? 'player' : role;
+
+  console.log('Vision Mode from mapData:', mapData?.visionMode);
+  const visionMode = mapData?.visionMode || 'off';
+  const fowEnabled = visionMode === 'fow' || visionMode === 'darkness';
+  const isMagicalDarkness = visionMode === 'darkness';
+  console.log('Derived vision states:', { visionMode, fowEnabled, isMagicalDarkness });
+
+  const darknessVolumes = useMemo(() => {
+    const volumes = Object.values(mapData?.measurements || [])
+    .filter(m => m && m.type === 'darkness-linger');
+    console.log('Darkness Volumes:', volumes);
+    return volumes;
+  }, [mapData?.measurements]);
+
   const selectedTokenIds = useCharacterStore(state => state.selectedTokenIds);
   const setSelectedTokenIds = useCharacterStore(state => state.setSelectedTokenIds);
   const viewedCharacterId = useCharacterStore(state => state.character?.id);
@@ -809,7 +850,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
         setMapData(fetchedData);
       } else {
         setMapData(null);
-        if (role === 'dm') {
+        if (effectiveRole === 'dm') {
             // Map doesn't exist, automatically create a new blank map
             const createBlank = async () => {
                 const newMapId = doc(collection(db, 'a')).id;
@@ -835,7 +876,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       }
     });
     return () => unsubscribe();
-  }, [campaignCode, activeMapId, role, updateCampaign]);
+  }, [campaignCode, activeMapId, effectiveRole, updateCampaign]);
 
   const gridSize = mapData?.gridSize || 1;
   const showPlane = mapData?.backgroundUrl && mapData.backgroundUrl.trim() !== '';
@@ -860,6 +901,11 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
   const allCharacters = useMemo(() => [...(data?.players || []), ...(data?.npcs || [])], [playersStr, npcsStr]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const stableAssignments = useMemo(() => data?.assignments || {}, [assignmentsStr]);
+
+  const myCharId = stableAssignments[user?.uid];
+  const myCharacter = myCharId ? allCharacters.find(c => String(c.id) === String(myCharId)) : null;
+  const playerSenses = myCharacter?.senses;
+  console.log('Player Senses:', playerSenses);
 
   const groupDragData = useRef({ activeTokenId: null, delta: new THREE.Vector3() });
 
@@ -910,7 +956,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       if (now - lastPingBroadcast.current > 50 || isLingering) { // Throttled to ~20fps
           lastPingBroadcast.current = now;
           if (isLingering) isLingeringRef.current = true;
-          const userColor = role === 'dm' ? "#ef4444" : "#3b82f6";
+          const userColor = effectiveRole === 'dm' ? "#ef4444" : "#3b82f6";
           set(ref(rtdb, `live_pings/${campaignCode}_${activeMapId}/${user.uid}`), { x, z, color: userColor, timestamp: Date.now(), isLingering }).catch(() => {});
           
           if (isLingering) {
@@ -918,7 +964,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
               lingerTimerRef.current = setTimeout(() => { clearPing(true); }, 5000);
           }
       }
-  }, [campaignCode, activeMapId, user?.uid, role, clearPing]);
+  }, [campaignCode, activeMapId, user?.uid, effectiveRole, clearPing]);
 
   const lastBroadcasts = useRef({});
   const broadcastDrag = useCallback((tokenId, x, z, rotationY) => {
@@ -944,7 +990,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           const t = latestTokensRef.current[id];
           if (!t) return;
 
-          if (role !== 'dm') {
+          if (effectiveRole !== 'dm') {
               const character = allCharacters.find(c => String(c.id) === String(t.characterId));
               const isOwner = (character?.ownerId && String(character.ownerId) === String(user?.uid)) || 
                               (t.ownerId && String(t.ownerId) === String(user?.uid));
@@ -977,14 +1023,14 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       if (Object.keys(updates).length > 0) {
           updateMap(campaignCode, activeMapId, updates);
       }
-  }, [selectedTokenIds, isSnapToGrid, gridSize, getTerrainHeight, campaignCode, activeMapId, mapData?.gridOffsetX, mapData?.gridOffsetY, mapData?.tokenElevationOffset, role, allCharacters, user?.uid, stableAssignments]);
+  }, [selectedTokenIds, isSnapToGrid, gridSize, getTerrainHeight, campaignCode, activeMapId, mapData?.gridOffsetX, mapData?.gridOffsetY, mapData?.tokenElevationOffset, effectiveRole, allCharacters, user?.uid, stableAssignments]);
 
   // Calculate Player Vision Sources (Used by both Fog Renderer and CPU Visibility checks)
   const playerVisionSources = useMemo(() => {
       if (!tokensList || !allCharacters) return [];
 
       let relevantTokens;
-      if (role === 'dm' || isCastMode) {
+      if (effectiveRole === 'dm' || isCastMode) {
           const playerCharIds = new Set((data?.players || []).map(p => String(p.id)));
           relevantTokens = tokensList.filter(t => t.isSharedControl || (t.characterId && playerCharIds.has(String(t.characterId))));
       } else {
@@ -998,7 +1044,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           });
       }
       
-      if (relevantTokens.length === 0 && mapData?.fowEnabled === false && mapData?.fowWallsEnabled === false) {
+      if (relevantTokens.length === 0 && fowEnabled === false && mapData?.fowWallsEnabled === false) {
           return [{
               id: 'global_vision',
               x: 0, y: 0, z: 0,
@@ -1073,7 +1119,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           if (parsedTruesight > visionRange) visionRange = parsedTruesight;
           if (parsedTremorsense > visionRange) visionRange = parsedTremorsense;
 
-          if (mapData?.fowEnabled === false) {
+          if (fowEnabled === false) {
               return { 
                   id: t.id, x: t.x || 0, y: t.y || 0, z: t.z || 0, 
                   range: 9999, // Max map vision
@@ -1094,16 +1140,16 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           };
       }).filter(Boolean);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tokensList, role, user?.uid, stableAssignments, allCharacters, gridSize, playersStr, mapData?.fowEnabled, mapData?.fowWallsEnabled]);
+  }, [tokensList, effectiveRole, user?.uid, stableAssignments, allCharacters, gridSize, playersStr, fowEnabled, mapData?.fowWallsEnabled]);
 
   // Calculate which doors and windows are visible to players based on their vision sources
   const visibleDoorWindowIds = useMemo(() => {
-      if (role === 'dm' && !isCastMode) {
+      if (effectiveRole === 'dm' && !isCastMode) {
           // DM sees all walls, so all doors/windows are visible to DM
           return new Set(Object.values(mapData?.walls || {}).filter(w => w && (w.type === 'door' || w.type === 'window')).map(w => w.id));
       }
 
-      if (mapData?.fowEnabled === false && mapData?.fowWallsEnabled === false) {
+      if (fowEnabled === false && mapData?.fowWallsEnabled === false) {
           return new Set(Object.values(mapData?.walls || {}).filter(w => w && (w.type === 'door' || w.type === 'window')).map(w => w.id));
       }
 
@@ -1133,7 +1179,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           }
       });
       return visibleIds;
-  }, [mapData?.walls, mapData?.fowWallsEnabled, playerVisionSources, role, isCastMode]);
+  }, [mapData?.walls, mapData?.fowWallsEnabled, playerVisionSources, effectiveRole, isCastMode]);
 
   // Calculate combined lights (map lights + dynamic token lights)
   const combinedLights = useMemo(() => {
@@ -1143,7 +1189,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       });
       tokensList.forEach(t => {
           if (t.light && t.light.radius > 0) {
-              if (role !== 'dm' && t.isHidden) return; // Hide light if token is hidden from players
+              if (effectiveRole !== 'dm' && t.isHidden) return; // Hide light if token is hidden from players
               allLights[`token_light_${t.id}`] = {
                   id: `token_light_${t.id}`,
                   position: { x: t.x || 0, y: (t.y || 0) + 1, z: t.z || 0 }, // Elevate light slightly
@@ -1155,13 +1201,13 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           }
       });
       return allLights;
-  }, [mapData?.lights, tokensList, role]);
+  }, [mapData?.lights, tokensList, effectiveRole]);
 
   // CPU-based Line of Sight / Token Visibility Filter
   const visibleTokenIds = useMemo(() => {
-      if (role === 'dm' && !isCastMode) return new Set(tokensList.map(t => t.id)); // DM sees everything
+      if (effectiveRole === 'dm' && !isCastMode) return new Set(tokensList.map(t => t.id)); // DM sees everything
       
-      if (mapData?.fowEnabled === false && mapData?.fowWallsEnabled === false) {
+      if (fowEnabled === false && mapData?.fowWallsEnabled === false) {
           return new Set(tokensList.filter(t => !t.isHidden).map(t => t.id));
       }
 
@@ -1226,7 +1272,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
               }
 
               // Condition 2: Is the target illuminated by a light source AND does the player have line of sight to it?
-              if (combinedLights && mapData?.fowEnabled !== false) {
+              if (combinedLights && fowEnabled) {
                   // First, check if the player has LOS to the target token. If not, no light can make it visible to them.
                   if (hasLOS) {
                       // Now, check if any light source illuminates the target token.
@@ -1246,14 +1292,14 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           }
       });
       return visibleIds;
-  }, [tokensList, role, playerVisionSources, mapData?.walls, mapData?.lights, mapData?.fowEnabled, mapData?.fowWallsEnabled, allCharacters, user?.uid, stableAssignments, gridSize, isCastMode, data?.players]);
+  }, [tokensList, effectiveRole, playerVisionSources, mapData?.walls, mapData?.lights, fowEnabled, mapData?.fowWallsEnabled, allCharacters, user?.uid, stableAssignments, gridSize, isCastMode, data?.players]);
 
   // CPU-based Line of Sight / Prop Visibility Filter
   const visiblePropIds = useMemo(() => {
       const props = mapData?.props ? Object.values(mapData.props).filter(Boolean) : [];
-      if (role === 'dm' && !isCastMode) return new Set(props.map(p => p.id)); // DM sees everything
+      if (effectiveRole === 'dm' && !isCastMode) return new Set(props.map(p => p.id)); // DM sees everything
       
-      if (mapData?.fowEnabled === false && mapData?.fowWallsEnabled === false) {
+      if (fowEnabled === false && mapData?.fowWallsEnabled === false) {
           return new Set(props.map(p => p.id));
       }
 
@@ -1291,7 +1337,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
               }
 
               // Condition 2: Is the target illuminated by a light source AND does the player have line of sight to it?
-              if (combinedLights && mapData?.fowEnabled !== false) {
+              if (combinedLights && fowEnabled) {
                   if (hasLOS) {
                       for (const light of Object.values(combinedLights)) {
                           const lightRange = (light.radius || 15) / 5 * gridSize;
@@ -1308,12 +1354,12 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           }
       });
       return visibleIds;
-  }, [mapData?.props, role, playerVisionSources, mapData?.walls, mapData?.lights, mapData?.fowEnabled, mapData?.fowWallsEnabled, combinedLights, gridSize, isCastMode]);
+  }, [mapData?.props, effectiveRole, playerVisionSources, mapData?.walls, mapData?.lights, fowEnabled, mapData?.fowWallsEnabled, combinedLights, gridSize, isCastMode]);
 
   // Calculate which 3D lights are visible to the players (prevents unseen lights from shining through walls via normal maps)
   const visibleLights = useMemo(() => {
       if (!combinedLights) return {};
-      if ((role === 'dm' && !isCastMode) || mapData?.fowEnabled === false) return combinedLights;
+      if ((effectiveRole === 'dm' && !isCastMode) || fowEnabled === false) return combinedLights;
 
       const filteredLights = {};
       const wallsArray = mapData?.fowWallsEnabled !== false ? Object.values(mapData?.walls || {}) : [];
@@ -1328,7 +1374,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           }
       });
       return filteredLights;
-  }, [mapData?.lights, mapData?.walls, mapData?.fowEnabled, mapData?.fowWallsEnabled, playerVisionSources, role, combinedLights, isCastMode]);
+  }, [mapData?.lights, mapData?.walls, fowEnabled, mapData?.fowWallsEnabled, playerVisionSources, effectiveRole, combinedLights, isCastMode]);
 
   // Extract active combatant early so the Camera Director can hook into it
   const activeCombatantId = mapData && data?.campaign?.combat?.active && data?.campaign?.combat?.combatants?.length 
@@ -1345,7 +1391,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       const char = allCharacters.find(c => String(c.id) === String(t.characterId));
       const isOwner = (char?.ownerId && String(char.ownerId) === String(user?.uid)) || (t.ownerId && String(t.ownerId) === String(user?.uid));
       const myCharAssigned = stableAssignments[user?.uid] && String(t.characterId) === String(stableAssignments[user?.uid]);
-      const canControl = role === 'dm' || isOwner || myCharAssigned || t.isSharedControl;
+      const canControl = effectiveRole === 'dm' || isOwner || myCharAssigned || t.isSharedControl;
       
       if (canControl) priority += 100; // You always grab tokens you own first
       
@@ -1356,7 +1402,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       priority += (1 / (t.size || 1)); // Smaller models intercept over massive ones
       
       return priority;
-  }, [allCharacters, user?.uid, stableAssignments, role]);
+  }, [allCharacters, user?.uid, stableAssignments, effectiveRole]);
 
   const handleGlobalTokenPointerMove = useCallback((e) => {
       if (activeTool || draggedTokenId) return;
@@ -1454,7 +1500,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
         }
         return [sortedHitIds[0]];
     });
-  }, [setSelectedTokenIds, allCharacters, user?.uid, stableAssignments, role]);
+  }, [setSelectedTokenIds, allCharacters, user?.uid, stableAssignments, effectiveRole]);
 
   // Group Initiative Roller
   const rollGroupInitiative = (tokenIds) => {
@@ -1950,7 +1996,7 @@ ${pasteTextContent}`;
     const isOwner = char?.ownerId === user?.uid;
     const myCharId = data?.assignments?.[user?.uid];
     const myCharAssigned = myCharId && String(token.characterId) === String(myCharId);
-    const canControl = role === 'dm' || isOwner || myCharAssigned || token.isSharedControl;
+    const canControl = effectiveRole === 'dm' || isOwner || myCharAssigned || token.isSharedControl;
 
     setContextMenu({
       x: e.clientX,
@@ -1966,7 +2012,7 @@ ${pasteTextContent}`;
       color: token.color,
       type: token.type,
     });
-  }, [allCharacters, user?.uid, data?.assignments, role]);
+  }, [allCharacters, user?.uid, data?.assignments, effectiveRole]);
 
   const handleWallContextMenu = useCallback((e, wallId) => {
     e.stopPropagation();
@@ -2218,7 +2264,7 @@ ${pasteTextContent}`;
           if (activeTool) return;
           if (selectedTokenIds.length > 0) {
               const updates = {};
-              if (role === 'dm') {
+              if (effectiveRole === 'dm') {
                   selectedTokenIds.forEach(id => {
                       updates[`tokens.${id}`] = null;
                   });
@@ -2242,7 +2288,7 @@ ${pasteTextContent}`;
 
       if (e.key === 'Escape') {
           setSelectedTokenIds([]); setContextMenu(null); setWallContextMenu(null); setLightContextMenu(null);
-          if (role === 'dm') { 
+          if (effectiveRole === 'dm') { 
               setIsDrawingWalls(false); 
               setIsArchitectMode(false); 
               setIsPlacingLights(false); 
@@ -2257,7 +2303,7 @@ ${pasteTextContent}`;
 
       if (e.key.toLowerCase() === 'v') { setViewMode(prev => prev === 'isometric' ? 'top-down' : 'isometric'); return; }
 
-      if (role === 'dm') {
+      if (effectiveRole === 'dm') {
           switch(e.key.toLowerCase()) {
               case 'a': setActiveTool(null); setShowAssetManager(false); setShowTokenManager(false); setIsDrawingWalls(false); setIsPlacingLights(false); setIsArchitectMode(p => !p); break;
               case 'd': setActiveTool(null); setShowAssetManager(false); setShowTokenManager(false); setIsArchitectMode(false); setIsPlacingLights(false); setIsDrawingWalls(p => !p); break;
@@ -2278,10 +2324,10 @@ ${pasteTextContent}`;
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [role, selectedTokenIds, data, user, campaignCode, activeMapId, activeTool]);
+  }, [effectiveRole, selectedTokenIds, data, user, campaignCode, activeMapId, activeTool]);
 
   const handleNewBlankMap = async (skipConfirm = false) => {
-      if (role !== 'dm') return;
+      if (effectiveRole !== 'dm') return;
       if (!skipConfirm) {
           if (!window.confirm("Create a new blank map? This will navigate away from the current map.")) return;
       }
@@ -2411,7 +2457,7 @@ ${pasteTextContent}`;
       if (!mapData || !mapData.props || !isAspectReady || (mapData.heightmapUrl && !terrainData)) return null;
 
       return Object.values(mapData.props).filter(Boolean).map(prop => {
-          if ((role !== 'dm' || isCastMode) && !visiblePropIds.has(prop.id)) {
+          if ((effectiveRole !== 'dm' || isCastMode) && !visiblePropIds.has(prop.id)) {
               return null;
           }
           return (
@@ -2419,7 +2465,7 @@ ${pasteTextContent}`;
                   <MapProp
                       propData={prop}
                       isSelected={false} 
-                      onContextMenu={role === 'dm' ? handlePropContextMenu : null}
+                      onContextMenu={effectiveRole === 'dm' ? handlePropContextMenu : null}
                       getTerrainHeight={getTerrainHeight}
                       updatePropPosition={handleUpdatePropPosition}
                       gridSize={gridSize}
@@ -2427,14 +2473,14 @@ ${pasteTextContent}`;
               </ErrorBoundary>
           );
       });
-  }, [mapData?.props, isAspectReady, mapData?.heightmapUrl, terrainData, role, visiblePropIds, handlePropContextMenu, getTerrainHeight, handleUpdatePropPosition, gridSize, isCastMode]);
+  }, [mapData?.props, isAspectReady, mapData?.heightmapUrl, terrainData, effectiveRole, visiblePropIds, handlePropContextMenu, getTerrainHeight, handleUpdatePropPosition, gridSize, isCastMode]);
 
   // Memoize Tokens to prevent UI states (like activeTool) from reloading their 3D models
   const tokensJSX = useMemo(() => {
       if (!mapData || !isAspectReady || (mapData.heightmapUrl && !terrainData)) return null;
 
       return tokensList.map(token => {
-          if ((role !== 'dm' || isCastMode) && token.isHidden) {
+          if ((effectiveRole !== 'dm' || isCastMode) && token.isHidden) {
               return null;
           }
 
@@ -2485,7 +2531,7 @@ ${pasteTextContent}`;
                           (token.ownerId && String(token.ownerId) === String(user?.uid));
           const myCharId = stableAssignments[user?.uid];
           const myCharAssigned = myCharId && String(token.characterId) === String(myCharId);
-          const canControl = role === 'dm' || isOwner || myCharAssigned || token.isSharedControl;
+          const canControl = effectiveRole === 'dm' || isOwner || myCharAssigned || token.isSharedControl;
 
           const isInteractive = true;
 
@@ -2499,7 +2545,7 @@ ${pasteTextContent}`;
                       isSelected={selectedTokenIds.includes(token.id)}
                       onSelect={handleSelectToken}
                       onContextMenu={handleContextMenu}
-                      role={role}
+                      role={effectiveRole}
                       getTerrainHeight={getTerrainHeight}
                       isSnapToGrid={isSnapToGrid}
                       isTerrainReady={!mapData.heightmapUrl || !!terrainData}
@@ -2526,8 +2572,8 @@ ${pasteTextContent}`;
                       playerVisionSources={playerVisionSources}
                       wallsArray={mapData?.fowWallsEnabled !== false ? Object.values(mapData?.walls || {}) : []}
                       combinedLights={combinedLights}
-                      fowEnabled={mapData?.fowEnabled}
-                      alwaysVisible={(role === 'dm' && !isCastMode) || (isCastMode && type === 'pc') || (canControl && !isCastMode)}
+                      fowEnabled={fowEnabled}
+                      alwaysVisible={(effectiveRole === 'dm' && !isCastMode) || (isCastMode && type === 'pc') || (canControl && !isCastMode)}
                       hideBaseIf3D={mapData?.hide3DTokenBases !== false}
                       isGlobalHovered={topHoveredTokenId === token.id}
                       setIsDraggingToken={setIsDraggingToken}
@@ -2558,6 +2604,17 @@ ${pasteTextContent}`;
       onMouseMove={handleMouseMove}
     >
       <LoadingOverlay activeMapId={activeMapId} isMapDataReady={!!mapData && isAspectReady && (!mapData.heightmapUrl || !!terrainData)} />
+      {role === 'dm' && previewPlayerView && (
+        <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-[100]">
+          <button 
+            onClick={() => setPreviewPlayerView(false)}
+            className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-full font-bold shadow-lg flex items-center gap-2"
+          >
+            <Icon name="eye-off" size={16} />
+            Exit Player View
+          </button>
+        </div>
+      )}
       <Canvas 
         frameloop="always"
         camera={{ position: [0, 8, 8], fov: 50 }} 
@@ -2654,11 +2711,13 @@ ${pasteTextContent}`;
                 tokens={tokensList}
                 measurements={mapData?.measurements || {}}
                 activeStyle={activeMeasurementStyle}
+                userRole={effectiveRole}
+                playerSenses={playerSenses}
                 onSaveMeasurement={(m) => {
                     const id = Date.now().toString();
                     updateMap(campaignCode, activeMapId, { [`measurements.${id}`]: { ...m, style: activeMeasurementStyle } });
                 }}
-                onDeleteMeasurement={role === 'dm' && !isCastMode ? (id) => {
+                onDeleteMeasurement={effectiveRole === 'dm' && !isCastMode ? (id) => {
                     updateMap(campaignCode, activeMapId, { [`measurements.${id}`]: null });
                 } : null}
                 onCompleteSelection={(ids) => {
@@ -2687,8 +2746,8 @@ ${pasteTextContent}`;
                         animatedEnvironment={mapData?.animatedEnvironment !== false}
                         isPaintingMaterial={activeTool === 'paintMaterial'}
                         fowTexture={fowTexture}
-                        fowEnabled={mapData?.fowEnabled !== false}
-                        isDm={role === 'dm' && !isCastMode}
+                        fowEnabled={fowEnabled}
+                        isDm={effectiveRole === 'dm' && !isCastMode}
                         playbackRate={mapData?.playbackRate || 1}
                     />
                 ) : (
@@ -2703,8 +2762,8 @@ ${pasteTextContent}`;
                         animatedEnvironment={mapData?.animatedEnvironment !== false} 
                         isPaintingMaterial={activeTool === 'paintMaterial'} 
                         fowTexture={fowTexture}
-                        fowEnabled={mapData?.fowEnabled !== false}
-                        isDm={role === 'dm' && !isCastMode}
+                        fowEnabled={fowEnabled}
+                        isDm={effectiveRole === 'dm' && !isCastMode}
                         playbackRate={mapData?.playbackRate || 1}
                     />
                 )}
@@ -2713,7 +2772,7 @@ ${pasteTextContent}`;
 
         <Suspense fallback={null}>
             <MarqueeSelector 
-                tokens={role === 'dm' ? tokensList : tokensList.filter(t => visibleTokenIds.has(t.id))} 
+                tokens={effectiveRole === 'dm' ? tokensList : tokensList.filter(t => visibleTokenIds.has(t.id))} 
                 walls={mapData?.walls}
                 lights={mapData?.lights}
                 isDeleting={isDeleting}
@@ -2778,11 +2837,11 @@ ${pasteTextContent}`;
                 selectedWalls={selectedWalls}
                 onWallContextMenu={isDeleting ? null : handleWallContextMenu} 
                 onToggleDoor={handleToggleDoor} 
-                showWalls={role === 'dm' && !isCastMode && (isDrawingWalls || isArchitectMode || isDeleting)}
-                role={isCastMode ? 'player' : role}
+                showWalls={effectiveRole === 'dm' && !isCastMode && (isDrawingWalls || isArchitectMode || isDeleting)}
+                role={isCastMode ? 'player' : effectiveRole}
                 playerDoorVisibility={mapData?.playerDoorVisibility}
                 visibleDoorWindowIds={visibleDoorWindowIds} // Pass calculated visibility for doors/windows
-                onDelete={isDeleting && role === 'dm' && !isCastMode ? (wallId) => {
+                onDelete={isDeleting && effectiveRole === 'dm' && !isCastMode ? (wallId) => {
                     updateMap(campaignCode, activeMapId, { [`walls.${wallId}`]: null });
                 } : null}
             />
@@ -2811,9 +2870,9 @@ ${pasteTextContent}`;
 
         {/* The Dynamic Fog of War layer */}
         <Suspense fallback={null}>
-            {mapData && <GpuFogOfWar
+            {mapData && <GpuFogOfWar ref={fowRef} onSaveFog={handleSaveFog}
                 key={`fow-${activeMapId}-${mapData?.scale}-${aspect}`}
-                enabled={mapData?.fowEnabled}
+                enabled={fowEnabled}
                 fowWallsEnabled={mapData?.fowWallsEnabled}
                 walls={mapData?.walls}
                 lights={combinedLights}
@@ -2822,22 +2881,33 @@ ${pasteTextContent}`;
                 aspect={aspect}
                 resolvedHeightmapUrl={isCastMode ? null : resolvedHeightmapUrl}
                 playerVisionSources={playerVisionSources}
-                role={isCastMode ? 'player' : role}
+                role={isCastMode ? 'player' : effectiveRole}
                 groupDragData={groupDragData}
                 selectedTokenIds={selectedTokenIds}
                 rtdbDragsRef={rtdbDragsRef}
                 onTextureReady={setFowTexture}
+                isMagicalDarkness={isMagicalDarkness}
+                darknessVolumes={darknessVolumes}
+                userRole={effectiveRole}
+                playerSenses={playerSenses}
             />}
+        </Suspense>
+        <Suspense fallback={null}>
+            <MagicalDarknessFX 
+                volumes={darknessVolumes}
+                userRole={effectiveRole}
+                playerSenses={playerSenses}
+            />
         </Suspense>
         <Suspense fallback={null}>
             <MapLights 
                 lights={visibleLights} 
                 selectedLights={selectedLights}
                 onContextMenu={handleLightContextMenu} 
-                role={isCastMode ? 'player' : role} 
+                role={isCastMode ? 'player' : effectiveRole} 
                 gridSize={gridSize} 
                 showLightRadius={!isCastMode && (isPlacingLights || isDeleting)} 
-                onDelete={isDeleting && role === 'dm' && !isCastMode ? (lightId) => {
+                onDelete={isDeleting && effectiveRole === 'dm' && !isCastMode ? (lightId) => {
                     updateMap(campaignCode, activeMapId, { [`lights.${lightId}`]: null });
                 } : null}
             />
@@ -2849,8 +2919,8 @@ ${pasteTextContent}`;
                 campaignCode={campaignCode}
                 activeMapId={activeMapId}
                 getTerrainHeight={getTerrainHeight}
-                userColor={role === 'dm' ? "#ef4444" : "#3b82f6"}
-                role={role}
+                userColor={effectiveRole === 'dm' ? "#ef4444" : "#3b82f6"}
+                role={effectiveRole}
                 onLorePinClick={handleLorePinClick}
             />
         </Suspense>
@@ -2865,7 +2935,7 @@ ${pasteTextContent}`;
                 getTerrainHeight={getTerrainHeight} 
             />
         </Suspense>
-        {role === 'dm' && (
+        {effectiveRole === 'dm' && (
             <Suspense fallback={null}>
                 <WallDrawingController
                     isEnabled={isDrawingWalls}
@@ -3049,37 +3119,65 @@ ${pasteTextContent}`;
               </div>
               </div>
               
-              {/* Row 2: View Modes */}
+              {/* Row 2: Camera & Display Controls */}
               <div className="flex items-center gap-1 bg-slate-900/80 backdrop-blur-md border border-slate-700 p-1 rounded-xl shadow-2xl h-10">
                   <ToolButton name="Reset View" icon="camera" onClick={() => { cameraControllerRef.current?.reset(); }} title="Reset Camera" />
-                  <div className="w-px h-5 bg-slate-700 mx-1"></div>
                   <ToolButton name={viewMode === 'isometric' ? 'Switch to Top-Down (V)' : 'Switch to Isometric (V)'} icon={viewMode === 'isometric' ? 'layout-grid' : 'box'} onClick={() => setViewMode(prev => prev === 'isometric' ? 'top-down' : 'isometric')} title={viewMode === 'isometric' ? 'Switch to Top-Down (V)' : 'Switch to Isometric (V)'} />
-                  <ToolButton name="Toggle Fullscreen" icon={isFullscreen ? "minimize" : "maximize"} onClick={toggleFullscreen} title="Toggle Fullscreen" />
-              </div>
+                  
+                  <div className="w-px h-5 bg-slate-700 mx-1"></div>
+                  
+                  <ToolButton name="Zoom Out" icon="zoom-out" onClick={() => zoomRef.current?.zoomOut()} title="Zoom Out" />
+                  <ToolButton name="Zoom In" icon="zoom-in" onClick={() => zoomRef.current?.zoomIn()} title="Zoom In" />
+                  <ToolButton name="Fit to Screen" icon="expand" onClick={() => setFitTrigger(p => p + 1)} title="Fit Map to Screen" />
+                  <ToolButton 
+                      name="Rotate View" 
+                      icon="rotate-cw" 
+                      onClick={() => updateMap(campaignCode, activeMapId, { 'orientation': ((mapData?.orientation || 0) + 1) % 4 })} 
+                      title="Rotate Map Orientation" 
+                  />
+                  
+                  <div className="w-px h-5 bg-slate-700 mx-1"></div>
 
-          {/* Row 3: Zoom Controls */}
-          <div className="flex flex-row items-center gap-1 bg-slate-900/80 backdrop-blur-md border border-slate-700 p-1 rounded-xl shadow-2xl h-10">
-              <ToolButton name="Zoom Out" icon="zoom-out" onClick={() => zoomRef.current?.zoomOut()} title="Zoom Out" />
-              <ToolButton name="Zoom In" icon="zoom-in" onClick={() => zoomRef.current?.zoomIn()} title="Zoom In" />
-              <div className="w-px h-5 bg-slate-700 mx-1"></div>
-              <ToolButton name="Fit to Screen" icon="expand" onClick={() => setFitTrigger(p => p + 1)} title="Fit Map to Screen" />
-              <ToolButton 
-                  name="Rotate View" 
-                  icon="rotate-cw" 
-                  onClick={() => updateMap(campaignCode, activeMapId, { 'orientation': ((mapData?.orientation || 0) + 1) % 4 })} 
-                  title="Rotate Map Orientation" 
-              />
-          </div>
+                  <ToolButton name="Toggle Fullscreen" icon={isFullscreen ? "minimize" : "maximize"} onClick={toggleFullscreen} title="Toggle Fullscreen" />
+                  
+                  {effectiveRole === 'dm' && (
+                      <>
+                          <ToolButton 
+                              name="Cast to TV" 
+                              icon="monitor" 
+                              onClick={() => {
+                                  if (onOpenCast) onOpenCast();
+                                  else {
+                                      const url = new URL(window.location.href);
+                                      url.searchParams.set('cast', 'true');
+                                      if (campaignCode) url.searchParams.set('join', campaignCode);
+                                      if (url.hash && !url.hash.includes('cast=true')) {
+                                          url.hash += url.hash.includes('?') ? '&cast=true' : '?cast=true';
+                                      }
+                                      window.open(url.toString(), 'DungeonMindCast');
+                                  }
+                              }} 
+                              title="Cast to Player Screen"
+                          />
+                          <ToolButton 
+                              name="Preview Player View" 
+                              icon="eye" 
+                              onClick={() => setPreviewPlayerView(true)} 
+                              title="Preview Player View"
+                          />
+                      </>
+                  )}
+              </div>
           </div>
       )}
 
       <Suspense fallback={null}>
-        {!isCastMode && <CombatRibbon combat={data?.campaign?.combat} updateCampaign={updateCampaign} tokens={tokensList} role={role} campaignData={data?.campaign} className={uiOpacityClass} />}
+        {!isCastMode && <CombatRibbon combat={data?.campaign?.combat} updateCampaign={updateCampaign} tokens={tokensList} role={effectiveRole} campaignData={data?.campaign} className={uiOpacityClass} />}
       </Suspense>
 
       {showInitiativeTracker && !isCastMode && (
         <Suspense fallback={null}>
-          <CombatTrackerSidebar combat={data?.campaign?.combat} updateCampaign={updateCampaign} tokens={tokensList} role={role} campaignCode={campaignCode} activeMapId={activeMapId} campaignData={data?.campaign} allCharacters={allCharacters} data={data} onOpenSheet={onOpenSheet} className={uiOpacityClass} onClose={() => setShowInitiativeTracker(false)} />
+          <CombatTrackerSidebar combat={data?.campaign?.combat} updateCampaign={updateCampaign} tokens={tokensList} role={effectiveRole} campaignCode={campaignCode} activeMapId={activeMapId} campaignData={data?.campaign} allCharacters={allCharacters} data={data} onOpenSheet={onOpenSheet} className={uiOpacityClass} onClose={() => setShowInitiativeTracker(false)} />
         </Suspense>
       )}
 
@@ -3089,7 +3187,7 @@ ${pasteTextContent}`;
               className={`absolute top-4 right-4 vtt-safe-right z-[70] flex flex-col gap-2 max-h-[calc(100vh-2rem)] pb-4 ${uiOpacityClass} custom-scrollbar-hide`}
               style={{ transform: `translateX(-${Math.max(sideSheetWidth > 0 ? sideSheetWidth : (rightOffset || 0), showTokenManager ? tokenManagerWidth : (showAssetManager ? 320 : 0))}px)`, transition: 'transform 0.3s ease-in-out' }}
           >
-                  {role === 'dm' && (
+                  {effectiveRole === 'dm' && (
                       <>
                       <ToolButton name="Tokens" icon="users" isActive={showTokenManager} onClick={() => { setActiveTool(null); setShowAssetManager(false); setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); if (!showTokenManager && onSidebarOpen) onSidebarOpen(); setShowTokenManager(!showTokenManager); }} isStandalone={true} />
                       <ToolButton name="Map" icon="map" isActive={showAssetManager} onClick={() => { setActiveTool(null); setShowTokenManager(false); setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); if (!showAssetManager && onSidebarOpen) onSidebarOpen(); setShowAssetManager(!showAssetManager); }} isStandalone={true} />
@@ -3105,30 +3203,7 @@ ${pasteTextContent}`;
                           }} 
                           isStandalone={true} 
                       />
-                      {!isCastMode && (
-                          <ToolButton 
-                              name="Cast to TV" 
-                              icon="monitor" 
-                              onClick={() => {
-                                  if (onOpenCast) onOpenCast();
-                                  else {
-                                      const url = new URL(window.location.href);
-                                      url.searchParams.set('cast', 'true');
-                                      if (campaignCode) {
-                                          url.searchParams.set('join', campaignCode);
-                                      }
-                                      
-                                      // If using hash routing, also append there just in case,
-                                      // though Lobby strictly checks window.location.search for 'join'.
-                                      if (url.hash && !url.hash.includes('cast=true')) {
-                                          url.hash += url.hash.includes('?') ? '&cast=true' : '?cast=true';
-                                      }
-                                      window.open(url.toString(), 'DungeonMindCast');
-                                  }
-                              }} 
-                              isStandalone={true} 
-                          />
-                      )}
+
                       <div className="h-px w-8 bg-slate-700/50 my-1 mx-auto"></div>
                   </>
               )}
@@ -3190,18 +3265,19 @@ ${pasteTextContent}`;
 
                               <div className="w-px h-6 bg-slate-700 self-center mx-1"></div>
 
-                              <ToolButton name="Live Ping" icon="radio" isActive={activeTool === 'ping'} onClick={() => { if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => p === 'ping' ? null : 'ping'); }} title="Live Ping" />
-                              <ToolButton name="freehand" icon="pen-tool" isActive={activeTool === 'freehand' || activeTool === 'freehand-linger'} onClick={() => { if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => (p === 'freehand' || p === 'freehand-linger') ? null : (p?.includes('-linger') ? 'freehand-linger' : 'freehand')); }} title="Measure Freehand" />
-                              <ToolButton name="ruler" icon="ruler" isActive={activeTool === 'ruler' || activeTool === 'ruler-linger'} onClick={() => { if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => (p === 'ruler' || p === 'ruler-linger') ? null : (p?.includes('-linger') ? 'ruler-linger' : 'ruler')); }} />
-                              <ToolButton name="cone" icon="triangle" isActive={activeTool === 'cone' || activeTool === 'cone-linger'} onClick={() => { if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => (p === 'cone' || p === 'cone-linger') ? null : (p?.includes('-linger') ? 'cone-linger' : 'cone')); }} />
-                              <ToolButton name="circle" icon="circle" isActive={activeTool === 'circle' || activeTool === 'circle-linger'} onClick={() => { if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => (p === 'circle' || p === 'circle-linger') ? null : (p?.includes('-linger') ? 'circle-linger' : 'circle')); }} />
-                              <ToolButton name="box" icon="square" isActive={activeTool === 'box' || activeTool === 'box-linger'} onClick={() => { if (role === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => (p === 'box' || p === 'box-linger') ? null : (p?.includes('-linger') ? 'box-linger' : 'box')); }} />
+                              <ToolButton name="Live Ping" icon="radio" isActive={activeTool === 'ping'} onClick={() => { if (effectiveRole === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => p === 'ping' ? null : 'ping'); }} title="Live Ping" />
+                              <ToolButton name="freehand" icon="pen-tool" isActive={activeTool === 'freehand' || activeTool === 'freehand-linger'} onClick={() => { if (effectiveRole === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => (p === 'freehand' || p === 'freehand-linger') ? null : (p?.includes('-linger') ? 'freehand-linger' : 'freehand')); }} title="Measure Freehand" />
+                              <ToolButton name="ruler" icon="ruler" isActive={activeTool === 'ruler' || activeTool === 'ruler-linger'} onClick={() => { if (effectiveRole === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => (p === 'ruler' || p === 'ruler-linger') ? null : (p?.includes('-linger') ? 'ruler-linger' : 'ruler')); }} />
+                              <ToolButton name="cone" icon="triangle" isActive={activeTool === 'cone' || activeTool === 'cone-linger'} onClick={() => { if (effectiveRole === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => (p === 'cone' || p === 'cone-linger') ? null : (p?.includes('-linger') ? 'cone-linger' : 'cone')); }} />
+                              <ToolButton name="circle" icon="circle" isActive={activeTool === 'circle' || activeTool === 'circle-linger'} onClick={() => { if (effectiveRole === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => (p === 'circle' || p === 'circle-linger') ? null : (p?.includes('-linger') ? 'circle-linger' : 'circle')); }} />
+                              <ToolButton name="box" icon="square" isActive={activeTool === 'box' || activeTool === 'box-linger'} onClick={() => { if (effectiveRole === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => (p === 'box' || p === 'box-linger') ? null : (p?.includes('-linger') ? 'box-linger' : 'box')); }} />
+                              <ToolButton name="darkness" icon="moon" isActive={activeTool === 'darkness' || activeTool === 'darkness-linger'} onClick={() => { if (effectiveRole === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => (p === 'darkness' || p === 'darkness-linger') ? null : (p?.includes('-linger') ? 'darkness-linger' : 'darkness')); }} />
                           </div>
                       </div>
                   )}
               </div>
               
-              {role === 'dm' && (
+              {effectiveRole === 'dm' && (
                   <div className="relative group flex justify-center">
                       <ToolButton
                           name="Sculpt" icon="mountain" isActive={activeTool === 'sculpt'} isStandalone={true}
@@ -3230,7 +3306,7 @@ ${pasteTextContent}`;
                   </div>
               )}
 
-              {role === 'dm' && (
+              {effectiveRole === 'dm' && (
                   <div className="relative group flex justify-center">
                       <ToolButton
                           name="Paint Effects" icon="brush" isActive={activeTool === 'paintMaterial'} isStandalone={true}
@@ -3266,7 +3342,7 @@ ${pasteTextContent}`;
                   </div>
               )}
 
-              {role === 'dm' && (
+              {effectiveRole === 'dm' && (
                   <div className="relative group flex justify-center">
                       <ToolButton 
                           name="Architect" 
@@ -3333,7 +3409,7 @@ ${pasteTextContent}`;
       )}
 
       {/* Actors Manager Drawer */}
-      {showTokenManager && role === 'dm' && (
+      {showTokenManager && effectiveRole === 'dm' && (
         <div 
             className="absolute top-0 right-0 bottom-0 bg-slate-900 border-l border-slate-700 shadow-2xl z-[80] flex flex-col animate-in slide-in-from-right duration-300"
             style={{ width: `${tokenManagerWidth}px` }}
@@ -3448,7 +3524,7 @@ ${pasteTextContent}`;
       )}
 
       {/* Asset Manager Drawer */}
-      {showAssetManager && role === 'dm' && (
+      {showAssetManager && effectiveRole === 'dm' && (
         <Suspense fallback={null}>
           <AssetManager 
             campaignCode={campaignCode} 
@@ -3558,7 +3634,7 @@ ${pasteTextContent}`;
               </button>
             )}
 
-            {role === 'dm' && (
+            {effectiveRole === 'dm' && (
               <>
                 <div className="border-t border-slate-700 my-1"></div>
                 <button 
@@ -3746,7 +3822,7 @@ ${pasteTextContent}`;
               </>
             )}
             
-            {role === 'dm' && (
+            {effectiveRole === 'dm' && (
               <>
                 <div className="border-t border-slate-700 my-1"></div>
                 <button 
@@ -4265,7 +4341,7 @@ ${pasteTextContent}`;
                 )}
             </div>
             <div className="p-3 border-t border-slate-800 bg-slate-950 flex flex-wrap justify-end gap-2">
-                {role === 'dm' && (
+                {effectiveRole === 'dm' && (
                     <>
                         {isEditingLorePin ? (
                             <button onClick={() => {

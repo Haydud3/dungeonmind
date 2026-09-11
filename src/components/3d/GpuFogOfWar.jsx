@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useImperativeHandle } from 'react';
 import { useThree, useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { checkLineOfSight } from '../../utils/losUtils';
@@ -7,11 +7,14 @@ import { checkLineOfSight } from '../../utils/losUtils';
 const MAX_SHADOW_VERTICES = 10000 * 6; // up to 10k wall segments
 const shadowVertexBuffer = new Float32Array(MAX_SHADOW_VERTICES * 3);
 
-export const GpuFogOfWar = ({ enabled, walls, lights, gridSize, mapData, aspect, resolvedHeightmapUrl, playerVisionSources, role, fowWallsEnabled, rtdbDragsRef, onTextureReady }) => {
+export const GpuFogOfWar = React.forwardRef(({ enabled, walls, lights, gridSize, mapData, aspect, resolvedHeightmapUrl, playerVisionSources, role, fowWallsEnabled, rtdbDragsRef, onTextureReady, isMagicalDarkness, userRole, playerSenses, darknessVolumes, onSaveFog }, ref) => {
     const { gl } = useThree();
     const scale = mapData?.scale || 20;
     const width = scale * aspect;
     const height = scale;
+
+    const isDM = userRole === 'dm';
+    const canSee = playerSenses?.canSeeInMagicalDarkness;
 
     const isLowPerf = localStorage.getItem('vtt_low_performance') === 'true';
     const subdivisions = isLowPerf ? 128 : 256;
@@ -45,6 +48,50 @@ export const GpuFogOfWar = ({ enabled, walls, lights, gridSize, mapData, aspect,
     }, []);
     const hasClearedExplored = useRef(false);
     const hasNotifiedTexture = useRef(false);
+
+    const pendingLoadFog = useRef(null);
+    const lastSaveTime = useRef(Date.now());
+    const needsSave = useRef(false);
+
+    const extractFogDataUrl = () => {
+        try {
+            const pixels = new Uint8Array(1024 * 1024 * 4);
+            gl.readRenderTargetPixels(exploredTarget, 0, 0, 1024, 1024, pixels);
+            const canvas = document.createElement('canvas');
+            canvas.width = 1024;
+            canvas.height = 1024;
+            const ctx = canvas.getContext('2d');
+            const imgData = new ImageData(new Uint8ClampedArray(pixels), 1024, 1024);
+            ctx.putImageData(imgData, 0, 0);
+            
+            const flipCanvas = document.createElement('canvas');
+            flipCanvas.width = 1024;
+            flipCanvas.height = 1024;
+            const fctx = flipCanvas.getContext('2d');
+            fctx.translate(0, 1024);
+            fctx.scale(1, -1);
+            fctx.drawImage(canvas, 0, 0);
+            
+            return flipCanvas.toDataURL('image/webp', 0.5);
+        } catch (e) {
+            console.error('Failed to extract FOW data URL', e);
+            return null;
+        }
+    };
+
+    useImperativeHandle(ref, () => ({
+        loadFogState: (dataUrl) => {
+            if (!dataUrl) {
+                hasClearedExplored.current = false;
+            } else {
+                pendingLoadFog.current = dataUrl;
+            }
+        },
+        saveFogState: () => {
+            return extractFogDataUrl();
+        }
+    }));
+
 
     // Reset exploration memory if the map changes or FOW is toggled off/on
     useEffect(() => {
@@ -91,10 +138,26 @@ export const GpuFogOfWar = ({ enabled, walls, lights, gridSize, mapData, aspect,
         side: THREE.DoubleSide
     }), []);
 
+    const darknessContext = useMemo(() => {
+        return {
+            material: new THREE.MeshBasicMaterial({ color: 0xffffff }),
+            circle: new THREE.CircleGeometry(1, 32),
+            box: new THREE.PlaneGeometry(1, 1)
+        };
+    }, []);
+
+    useEffect(() => {
+        return () => {
+            darknessContext.material.dispose();
+            darknessContext.circle.dispose();
+            darknessContext.box.dispose();
+        }
+    }, [darknessContext]);
+
     const fowNeedsUpdate = useRef(true);
     useEffect(() => {
         fowNeedsUpdate.current = true;
-    }, [walls, lights, playerVisionSources, enabled, fowWallsEnabled, role, gridSize]);
+    }, [walls, lights, playerVisionSources, enabled, fowWallsEnabled, role, gridSize, darknessVolumes]);
 
     useFrame((state, delta) => {
         let hasActiveDrag = false;
@@ -102,7 +165,50 @@ export const GpuFogOfWar = ({ enabled, walls, lights, gridSize, mapData, aspect,
             hasActiveDrag = Object.keys(rtdbDragsRef.current).length > 0;
         }
 
-        if (!fowCamera || (!fowNeedsUpdate.current && !hasActiveDrag)) return;
+        
+        if (pendingLoadFog.current) {
+            const url = pendingLoadFog.current;
+            pendingLoadFog.current = null;
+            new THREE.TextureLoader().load(url, (tex) => {
+                tex.minFilter = THREE.NearestFilter;
+                tex.magFilter = THREE.NearestFilter;
+                
+                const oldTarget = gl.getRenderTarget();
+                gl.setRenderTarget(exploredTarget);
+                
+                const scene = new THREE.Scene();
+                const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+                const mat = new THREE.MeshBasicMaterial({ map: tex, depthTest: false, depthWrite: false, transparent: true });
+                const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat);
+                scene.add(quad);
+                
+                gl.clear(true, true, true);
+                gl.render(scene, cam);
+                
+                gl.setRenderTarget(oldTarget);
+                
+                mat.dispose();
+                quad.geometry.dispose();
+                tex.dispose();
+                
+                hasClearedExplored.current = true;
+                // Force a render next frame so players see the loaded fog immediately
+                fowNeedsUpdate.current = true;
+            });
+        }
+
+        if (!fowCamera || (!fowNeedsUpdate.current && !hasActiveDrag)) {
+            if (needsSave.current && Date.now() - lastSaveTime.current > 30000) {
+                needsSave.current = false;
+                lastSaveTime.current = Date.now();
+                if (onSaveFog) {
+                    const url = extractFogDataUrl();
+                    if (url) onSaveFog(url);
+                }
+            }
+            return;
+        }
+
         fowNeedsUpdate.current = false;
 
         const oldColor = gl.getClearColor(new THREE.Color());
@@ -206,6 +312,34 @@ export const GpuFogOfWar = ({ enabled, walls, lights, gridSize, mapData, aspect,
             if (shadowGeo) shadowGeo.dispose(); // Prevent Memory leaks
         });
 
+        console.log('GpuFogOfWar useFrame darkness logic:', { isDM, canSee, darknessVolumes });
+        if (!isDM && !canSee && darknessVolumes && darknessVolumes.length > 0) {
+            const darknessMesh = new THREE.Mesh(undefined, darknessContext.material);
+            fowScene.add(darknessMesh);
+        
+            darknessVolumes.forEach(volume => {
+                if (volume.shape === 'circle') {
+                    const radius = Math.hypot(volume.points[1].x - volume.points[0].x, volume.points[1].z - volume.points[0].z);
+                    darknessMesh.geometry = darknessContext.circle;
+                    darknessMesh.position.set(volume.points[0].x, -volume.points[0].z, 0);
+                    darknessMesh.scale.set(radius, radius, 1);
+                    gl.render(fowScene, fowCamera);
+                } else if (volume.shape === 'box') {
+                    const width = Math.abs(volume.points[1].x - volume.points[0].x);
+                    const height = Math.abs(volume.points[1].z - volume.points[0].z);
+                    darknessMesh.geometry = darknessContext.box;
+                    darknessMesh.position.set(
+                        (volume.points[0].x + volume.points[1].x) / 2,
+                        -(volume.points[0].z + volume.points[1].z) / 2,
+                        0
+                    );
+                    darknessMesh.scale.set(width, height, 1);
+                    gl.render(fowScene, fowCamera);
+                }
+            });
+            fowScene.remove(darknessMesh);
+        }
+
         gl.setRenderTarget(exploredTarget);
         if (!hasClearedExplored.current) {
             gl.setClearColor(0xffffff, 1);
@@ -213,6 +347,7 @@ export const GpuFogOfWar = ({ enabled, walls, lights, gridSize, mapData, aspect,
             hasClearedExplored.current = true;
         }
         gl.render(accumulatorScene, accumulatorCamera);
+        needsSave.current = true;
         
         gl.autoClear = oldAutoClear;
 
@@ -226,6 +361,21 @@ export const GpuFogOfWar = ({ enabled, walls, lights, gridSize, mapData, aspect,
             onTextureReady(exploredTarget.texture);
         }
     });
+
+    if (isMagicalDarkness) {
+        if (!isDM && !canSee) {
+            // Player is in magical darkness and can't see.
+            return (
+                <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.015, 0]} renderOrder={100}>
+                    <planeGeometry args={[width, height]} />
+                    <meshBasicMaterial color={0x000000} depthWrite={false} />
+                </mesh>
+            );
+        } else {
+            // DM or player can see through the magical darkness.
+            return null;
+        }
+    }
 
     if (!width || !height || isNaN(width) || isNaN(height)) {
         return null;
@@ -286,4 +436,4 @@ export const GpuFogOfWar = ({ enabled, walls, lights, gridSize, mapData, aspect,
             </mesh>
         </group>
     );
-};
+});

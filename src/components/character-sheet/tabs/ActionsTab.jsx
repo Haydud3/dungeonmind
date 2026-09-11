@@ -265,6 +265,21 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
     };
 
     // --- 5. ACTION ROW COMPONENT ---
+    const getDamageIcon = (type) => {
+    const t = String(type || '').toLowerCase();
+    if (t.includes('slashing')) return 'sword';
+    if (t.includes('piercing')) return 'crosshair';
+    if (t.includes('bludgeoning')) return 'hammer';
+    if (t.includes('fire')) return 'flame';
+    if (t.includes('cold') || t.includes('ice')) return 'snowflake';
+    if (t.includes('lightning') || t.includes('thunder')) return 'zap';
+    if (t.includes('poison') || t.includes('acid')) return 'flask-conical';
+    if (t.includes('radiant')) return 'sun';
+    if (t.includes('necrotic')) return 'skull';
+    if (t.includes('psychic')) return 'brain';
+    if (t.includes('force')) return 'sparkles';
+    return null;
+};
     const ActionRow = ({ action }) => {
         const hasText = action.desc || action.notes;
         const [isExpanded, setIsExpanded] = useState(false);
@@ -284,9 +299,21 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
                                 {action.isItem && <Icon name="backpack" size={12} className="text-slate-500"/>}
                                 {action.source === 'spell' && <Icon name="sparkles" size={12} className="text-purple-400"/>}
                             </div>
-                            <div className="text-xs text-slate-500 truncate flex gap-2">
+                            <div className="text-xs text-slate-500 truncate flex gap-2 items-center">
                                 <span>{action.type || "Action"}</span>
                                 {action.range && <span>• {action.range}</span>}
+                                {(() => {
+                                    const match = String(action.dmg || '').match(/^([\d\sd\+\-]+)(.*)$/i);
+                                    let typeStr = action.notes || (match ? match[2].trim() : '');
+                                    if (!typeStr) return null;
+                                    const iconName = getDamageIcon(typeStr);
+                                    return (
+                                        <span className="flex items-center gap-1 text-slate-400 capitalize bg-slate-900/50 px-1.5 py-0.5 rounded ml-1 border border-slate-700/50">
+                                            {iconName && <Icon name={iconName} size={10} />}
+                                            {typeStr}
+                                        </span>
+                                    );
+                                })()}
                             </div>
                         </div>
                         
@@ -324,13 +351,23 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
                                             ? "bg-amber-400 hover:bg-amber-300 text-slate-900 border-amber-300 shadow-[0_0_15px_rgba(251,191,36,1)] animate-pulse font-extrabold" 
                                             : "max-w-[100px]";
                                             
-                                        let displayDmg = dmgStr.trim();
+                                        let rawDmg = dmgStr.trim();
+                                        let typeStr = action.notes || "";
+                                        const match = rawDmg.match(/^([\d\sd\+\-]+)(.*)$/i);
+                                        if (match && match[2].trim().length > 0) {
+                                            rawDmg = match[1].trim();
+                                            if (!typeStr) typeStr = match[2].trim();
+                                        }
+
+                                        let displayDmg = rawDmg;
                                         if (isCritTarget) {
-                                            displayDmg = String(displayDmg).replace(/(\d*)d(\d+)/g, (match, countStr, faces) => {
+                                            displayDmg = String(displayDmg).replace(/(\d*)d(\d+)/g, (m, countStr, faces) => {
                                                 const count = countStr ? parseInt(countStr) : 1;
                                                 return `${count * 2}d${faces}`;
                                             });
                                         }
+                                        
+                                        const iconName = getDamageIcon(typeStr);
                                             
                                         return (
                                             <RollButton 
@@ -343,7 +380,10 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
                                                 title={isCritTarget ? "CRITICAL DAMAGE" : (index === 0 ? "Roll Damage" : "Roll Versatile Damage")}
                                                 className={critClass}
                                             >
-                                                {displayDmg}
+                                                <div className="flex items-center gap-1">
+                                                    <span>{displayDmg}</span>
+                                                    {iconName && <Icon name={iconName} size={12} className="opacity-70" />}
+                                                </div>
                                             </RollButton>
                                         );
                                     })}

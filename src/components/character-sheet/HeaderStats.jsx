@@ -96,12 +96,24 @@ const HeaderStats = ({ character: propCharacter, onDiceRoll, onLogAction, onBack
                         <span className="text-[9px] text-slate-500 font-bold">AC</span>
                         <div className="text-sm font-bold text-white">{ac}</div>
                     </div>
+                    <div className="flex flex-col items-center bg-slate-800 px-2 py-1 rounded" title="Movement Speed">
+                        <span className="text-[9px] text-slate-500 font-bold">SPD</span>
+                        <div className="text-sm font-bold text-white flex items-center gap-1 mt-0.5">
+                            <Icon name="footprints" size={12} className="text-slate-400 opacity-50" />
+                            {character.speed || 30}
+                        </div>
+                    </div>
                     <div className="flex flex-col items-center bg-slate-800 px-2 py-1 rounded">
                         <span className="text-[9px] text-slate-500 font-bold">INIT</span>
-                        <div className="text-sm font-bold text-amber-500 cursor-pointer hover:text-amber-400 hover:underline" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDiceRoll && onDiceRoll(`1d20${init >= 0 ? '+' : ''}${init}`, { alias: 'Initiative', characterName: character.name }); }} title="Roll Initiative">{init >= 0 ? `+${init}` : init}</div>
-                        <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDiceRoll && onDiceRoll(`1d20${init >= 0 ? '+' : ''}${init}`, { alias: 'Initiative', characterName: character.name }); }} className="text-[8px] text-slate-500 hover:text-white mt-0.5">
-                            Roll
+                        <button 
+                            className="flex items-center gap-1 px-2 py-0.5 mt-0.5 rounded text-sm font-bold font-mono text-amber-300 bg-amber-900/40 border border-amber-700/50 hover:bg-amber-800/60 hover:border-amber-500 hover:text-amber-100 transition-colors shadow-sm" 
+                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDiceRoll && onDiceRoll(`1d20${init >= 0 ? '+' : ''}${init}`, { alias: 'Initiative', characterName: character.name }); }} 
+                            title="Roll Initiative"
+                        >
+                            <Icon name="dices" size={12} className="opacity-70" />
+                            {init >= 0 ? `+${init}` : init}
                         </button>
+                        
                     </div>
                     <button onClick={() => setIsExpanded(!isExpanded)} className="text-slate-400 ml-2">
                         <Icon name={isExpanded ? "chevron-up" : "chevron-down"} size={20} />
@@ -183,13 +195,9 @@ const HeaderStats = ({ character: propCharacter, onDiceRoll, onLogAction, onBack
                             const mod = Math.floor((score - 10) / 2);
                             return (
                                 <div key={s} className="bg-slate-800 p-1.5 rounded text-center flex flex-col items-center relative">
-                                    <button
-                                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDiceRoll && onDiceRoll(`1d20${mod >= 0 ? '+' : ''}${mod}`, { alias: `${s.toUpperCase()} Check`, characterName: character.name }); }}
-                                        className="text-[9px] uppercase font-bold text-amber-500 hover:text-amber-400 cursor-pointer hover:underline"
-                                        title={`Roll ${s.toUpperCase()} Check`}
-                                    >
+                                    <div className="text-[9px] uppercase font-bold text-amber-500 tracking-wider cursor-default">
                                         {s}
-                                    </button>
+                                    </div>
                                     <input
                                         className="w-full bg-transparent text-center text-sm font-bold text-white outline-none mt-0.5"
                                         value={score}
@@ -198,10 +206,10 @@ const HeaderStats = ({ character: propCharacter, onDiceRoll, onLogAction, onBack
                                     />
                                     <button
                                         onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDiceRoll && onDiceRoll(`1d20${mod >= 0 ? '+' : ''}${mod}`, { alias: `${s.toUpperCase()} Check`, characterName: character.name }); }}
-                                        className="text-[10px] font-bold text-slate-400 mt-0.5 hover:text-amber-400 cursor-pointer hover:underline"
+                                        className="mt-1 flex items-center justify-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold font-mono text-cyan-200 bg-slate-700 border border-slate-600 hover:bg-cyan-900 hover:border-cyan-500 transition-colors w-full"
                                         title={`Roll ${s.toUpperCase()} Check`}
                                     >
-                                        {mod >= 0 ? '+' : ''}{mod}
+                                        <Icon name="dices" size={10} className="opacity-70" /> {mod >= 0 ? "+" : ""}{mod}
                                     </button>
                                 </div>
                             );

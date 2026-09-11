@@ -116,7 +116,26 @@ export const parseDndBeyondJson = (json) => {
     characterSheet.image = data.decorations.avatarUrl;
     
     // Speed (Safely grab walking speed)
-    characterSheet.speed = data.race?.weightSpeeds?.normal?.walk || 30;
+    let baseSpeed = data.race?.weightSpeeds?.normal?.walk || 30;
+    let speedBonus = 0;
+    
+    ['race', 'class', 'background', 'item', 'feat', 'condition'].forEach(source => {
+        if (data.modifiers?.[source]) {
+            data.modifiers[source].forEach(mod => {
+                if (mod.type === 'bonus' && (mod.subType === 'speed' || mod.subType === 'unarmored-movement')) {
+                    // Check if it requires being unarmored for unarmored-movement
+                    if (mod.subType === 'unarmored-movement') {
+                        const hasArmor = (data.inventory || []).some(item => item.equipped && item.definition?.armorTypeId >= 1 && item.definition?.armorTypeId <= 3);
+                        if (!hasArmor) speedBonus += (mod.fixedValue || mod.value || 0);
+                    } else {
+                        speedBonus += (mod.fixedValue || mod.value || 0);
+                    }
+                }
+            });
+        }
+    });
+    
+    characterSheet.speed = baseSpeed + speedBonus;
 
     // Classes & Level (bulletproof version)
     characterSheet.classes = (data.classes || []).map(cls => {
@@ -133,16 +152,46 @@ export const parseDndBeyondJson = (json) => {
 
     const totalLevel = characterSheet.classes.reduce((acc, cls) => acc + cls.level, 0);
     characterSheet.level = totalLevel || 1;
+    characterSheet.profBonus = getProficiencyBonus(totalLevel);
     characterSheet.xp = data.currentXp || 0;
 
     // Stats & Modifiers (bulletproof version)
+    const statMods = { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 };
+    const statOverrides = { str: null, dex: null, con: null, int: null, wis: null, cha: null };
+
+    ['race', 'class', 'background', 'item', 'feat', 'condition'].forEach(source => {
+        if (data.modifiers?.[source]) {
+            data.modifiers[source].forEach(mod => {
+                if (mod.type === 'bonus' && mod.subType && mod.subType.endsWith('-score')) {
+                    const stat = mod.subType.split('-')[0].substring(0, 3);
+                    if (statMods[stat] !== undefined) {
+                        statMods[stat] += (mod.fixedValue || mod.value || 0);
+                    }
+                }
+                if (mod.type === 'set' && mod.subType && mod.subType.endsWith('-score')) {
+                    const stat = mod.subType.split('-')[0].substring(0, 3);
+                    if (statOverrides[stat] !== undefined) {
+                        const val = (mod.fixedValue || mod.value || 0);
+                        if (statOverrides[stat] === null || val > statOverrides[stat]) {
+                            statOverrides[stat] = val;
+                        }
+                    }
+                }
+            });
+        }
+    });
+
     (data.stats || []).forEach(stat => {
         const statName = ABILITY_ID_MAP[stat.id];
         let score = (stat.value || 0) + ((data.bonusStats || []).find(bs => bs.id === stat.id)?.value || 0);
         
-        const override = (data.overrideStats || []).find(os => os.id === stat.id)?.value;
-        if (override !== undefined && override !== null) {
-            score = override;
+        score += statMods[statName] || 0;
+
+        const explicitOverride = (data.overrideStats || []).find(os => os.id === stat.id)?.value;
+        if (explicitOverride !== undefined && explicitOverride !== null) {
+            score = explicitOverride;
+        } else if (statOverrides[statName] !== null && statOverrides[statName] > score) {
+            score = statOverrides[statName];
         }
         
         characterSheet.stats[statName] = score;
@@ -150,10 +199,72 @@ export const parseDndBeyondJson = (json) => {
     });
 
     // Initiative (bulletproof version)
-    characterSheet.initiative = characterSheet.modifiers.dex || 0;
+    
+    let initBonus = 0;
+    ['race', 'class', 'background', 'item', 'feat', 'condition'].forEach(source => {
+        if (data.modifiers?.[source]) {
+            data.modifiers[source].forEach(mod => {
+                if (mod.type === 'bonus' && mod.subType === 'initiative') {
+                    initBonus += (mod.fixedValue || mod.value || 0);
+                }
+                if (mod.type === 'proficiency' && mod.subType === 'initiative') {
+                    initBonus += characterSheet.profBonus;
+                }
+                if (mod.type === 'half-proficiency' && mod.subType === 'initiative') {
+                    initBonus += Math.floor(characterSheet.profBonus / 2);
+                }
+            });
+        }
+    });
+    
+    // Fallback for 2024 Alert feat which might not have machine-readable modifiers yet
+    let hasAlert = false;
+    
+    // Check feats
+    if (data.feats) {
+        hasAlert = hasAlert || data.feats.some(f => f.definition?.name === 'Alert');
+    }
+    // Check background granted feats
+    if (data.background?.definition?.grantedFeats) {
+        hasAlert = hasAlert || data.background.definition.grantedFeats.some(f => f.name === 'Alert');
+    }
+    // Check custom background features
+    if (data.customBackground?.featuresBackground) {
+        // Just in case it's custom
+    }
+    
+    // Some older versions of Alert added a flat +5
+    let flatAlertBonus = 0;
+    if (hasAlert) {
+        // If the feat description contains "add your Proficiency Bonus", it's the 2024 version
+        const alertFeat = (data.feats || []).find(f => f.definition?.name === 'Alert')?.definition || 
+                          (data.background?.definition?.featList?.name === 'Alert' ? data.background.definition : null);
+        
+        // Let's just add prof bonus if it's the 2024 feat
+        initBonus += characterSheet.profBonus;
+    }
 
-    // Proficiency Bonus (bulletproof version)
-    characterSheet.profBonus = getProficiencyBonus(totalLevel);
+    // Harengon adds proficiency to initiative as well
+    const isHarengon = data.race?.fullName?.toLowerCase().includes('harengon');
+    if (isHarengon && !hasAlert) { // Assuming they don't stack if both just add proficiency
+        initBonus += characterSheet.profBonus;
+    }
+
+    // Swashbuckler Rogue adds Charisma, Gloom Stalker adds Wisdom, War Magic adds Int
+    (data.classes || []).forEach(cls => {
+        const subName = cls.subclassDefinition?.name || '';
+        if (subName === 'Swashbuckler' && cls.level >= 3) {
+            initBonus += Math.max(0, characterSheet.modifiers.cha || 0);
+        }
+        if (subName === 'Gloom Stalker' && cls.level >= 3) {
+            initBonus += Math.max(0, characterSheet.modifiers.wis || 0);
+        }
+        if (subName === 'War Magic' && cls.level >= 2) {
+            initBonus += Math.max(0, characterSheet.modifiers.int || 0);
+        }
+    });
+
+    characterSheet.initiative = (characterSheet.modifiers.dex || 0) + initBonus;
 
     // Collect Proficiencies (bulletproof version)
     const proficiencies = new Set();
@@ -219,7 +330,23 @@ export const parseDndBeyondJson = (json) => {
 
     // HP (bulletproof version)
     const conMod = characterSheet.modifiers.con || 0;
-    let maxHp = (data.baseHitPoints || 0) + (data.bonusHitPoints || 0) + (conMod * characterSheet.level);
+    
+    let hpBonusPerLevel = 0;
+    let flatHpBonus = 0;
+    
+    ['race', 'class', 'background', 'item', 'feat', 'condition'].forEach(source => {
+        if (data.modifiers?.[source]) {
+            data.modifiers[source].forEach(mod => {
+                if (mod.type === 'bonus') {
+                    if (mod.subType === 'hit-points-per-level') hpBonusPerLevel += (mod.fixedValue || mod.value || 0);
+                    if (mod.subType === 'hit-points') flatHpBonus += (mod.fixedValue || mod.value || 0);
+                }
+            });
+        }
+    });
+
+    let maxHp = (data.baseHitPoints || 0) + (data.bonusHitPoints || 0) + (conMod * characterSheet.level) + flatHpBonus + (hpBonusPerLevel * characterSheet.level);
+    
     if (data.overrideHitPoints !== undefined && data.overrideHitPoints !== null && data.overrideHitPoints !== 0) {
         maxHp = data.overrideHitPoints;
     }
@@ -231,33 +358,82 @@ export const parseDndBeyondJson = (json) => {
     };
 
     // AC (bulletproof version)
+    let baseAc = 10 + (characterSheet.modifiers.dex || 0);
     let acFormula = "10 + DEX";
-    let ac = 10 + (characterSheet.modifiers.dex || 0);
     
-    const equippedArmor = (data.inventory || []).find(item => item.equipped && item.definition?.armorTypeId);
+    // Find base armor (excluding shields, which are type 4)
+    const equippedArmor = (data.inventory || []).find(item => item.equipped && item.definition?.armorTypeId >= 1 && item.definition?.armorTypeId <= 3);
+    
     if (equippedArmor?.definition) {
-        ac = equippedArmor.definition.armorClass ?? ac;
-        acFormula = `${equippedArmor.definition.name || 'Armor'} (${ac})`;
+        baseAc = equippedArmor.definition.armorClass ?? baseAc;
+        acFormula = `${equippedArmor.definition.name || 'Armor'} (${baseAc})`;
         const armorType = equippedArmor.definition.armorTypeId;
         if (armorType === 1) {
-            ac += (characterSheet.modifiers.dex || 0);
+            baseAc += (characterSheet.modifiers.dex || 0);
             acFormula += " + DEX";
         } else if (armorType === 2) {
-            ac += Math.min((characterSheet.modifiers.dex || 0), 2);
+            const maxDex = 2; // Medium armor master feat could change this to 3, handled later if needed
+            baseAc += Math.min((characterSheet.modifiers.dex || 0), maxDex);
             acFormula += " + DEX (max 2)";
         }
     }
 
-    ['item', 'feat', 'race', 'class'].forEach(source => {
+    let shieldAc = 0;
+    const equippedShields = (data.inventory || []).filter(item => item.equipped && item.definition?.armorTypeId === 4);
+    equippedShields.forEach(shield => {
+        const shieldBase = shield.definition.armorClass || 2;
+        shieldAc += shieldBase;
+        acFormula += ` + ${shield.definition.name} (${shieldBase})`;
+    });
+
+    let ac = baseAc + shieldAc;
+
+    ['item', 'feat', 'race', 'class', 'background'].forEach(source => {
         if (data.modifiers?.[source]) {
             data.modifiers[source].forEach(mod => {
                 if (mod.type === 'bonus' && mod.subType === 'armor-class' && mod.fixedValue) {
                     ac += mod.fixedValue;
-                    acFormula += ` + ${mod.fixedValue} (${mod.friendlyTypeName})`;
+                    acFormula += ` + ${mod.fixedValue} (${mod.friendlyTypeName || source})`;
                 }
             });
         }
     });
+    
+    // Also check equipped items for grantedModifiers, just in case they aren't in data.modifiers.item
+    (data.inventory || []).filter(item => item.equipped).forEach(item => {
+        (item.definition?.grantedModifiers || []).forEach(mod => {
+            // Avoid double counting if it's already in data.modifiers.item
+            const alreadyCounted = (data.modifiers?.item || []).some(m => m.id === mod.id || (m.type === mod.type && m.subType === mod.subType && m.fixedValue === mod.fixedValue));
+            if (!alreadyCounted && mod.type === 'bonus' && mod.subType === 'armor-class' && mod.fixedValue) {
+                ac += mod.fixedValue;
+                acFormula += ` + ${mod.fixedValue} (${item.definition.name})`;
+            }
+        });
+    });
+
+    // Unarmored Defense (Monk/Barbarian)
+    const hasMonkUnarmored = (data.classes || []).some(c => c.definition?.name === 'Monk');
+    const hasBarbUnarmored = (data.classes || []).some(c => c.definition?.name === 'Barbarian');
+    
+    if (!equippedArmor && !equippedShields.length) {
+        if (hasMonkUnarmored) {
+            const monkAc = 10 + (characterSheet.modifiers.dex || 0) + (characterSheet.modifiers.wis || 0);
+            if (monkAc > ac) {
+                ac = monkAc;
+                acFormula = `10 + DEX + WIS (Unarmored Defense)`;
+            }
+        }
+    }
+    if (!equippedArmor) {
+        if (hasBarbUnarmored) {
+            const barbAc = 10 + (characterSheet.modifiers.dex || 0) + (characterSheet.modifiers.con || 0) + shieldAc;
+            if (barbAc > ac) {
+                ac = barbAc;
+                acFormula = `10 + DEX + CON (Unarmored Defense)` + (shieldAc ? ` + Shield (${shieldAc})` : '');
+            }
+        }
+    }
+
     characterSheet.ac = ac;
     characterSheet.acFormula = acFormula;
 
@@ -308,18 +484,41 @@ export const parseDndBeyondJson = (json) => {
             }
         }
         
+        let itemMagicBonus = 0;
+        let isArmor = false;
+        let isShield = false;
+        if (def.armorTypeId) {
+            if (def.armorTypeId === 4) isShield = true;
+            else if (def.armorTypeId >= 1 && def.armorTypeId <= 3) isArmor = true;
+        } else if (def.name && def.name.toLowerCase().includes('shield')) {
+            isShield = true;
+        }
+
+        (def.grantedModifiers || []).forEach(m => {
+            if (m.type === 'bonus' && m.subType === 'armor-class') {
+                itemMagicBonus += (m.fixedValue || m.value || 0);
+            }
+        });
+
         return {
             name: def.name || 'Unknown Item',
             quantity: item.quantity || 1,
             description: parseDndBeyondSnippets(def.description || def.snippet || '', characterSheet, def),
             equipped: item.equipped || false,
             weight: def.weight || 0,
-            combat: combat, // Maps straight to ActionsTab
+            combat: combat,
             limitedUse: item.limitedUse ? {
                 maxUses: item.limitedUse.maxUses || 0,
                 numberUsed: item.limitedUse.numberUsed || 0,
                 resetTypeDescription: item.limitedUse.resetTypeDescription || ''
-            } : null
+            } : null,
+            // Hidden fields for calcAC
+            armorClass: def.armorClass || 0,
+            armorTypeId: def.armorTypeId || 0,
+            magicBonus: itemMagicBonus,
+            isArmor: isArmor,
+            isShield: isShield,
+            rawType: def.type || def.filterType || ''
         };
     });
     
@@ -382,6 +581,14 @@ export const parseDndBeyondJson = (json) => {
             if (match) darkvision = Math.max(darkvision, parseInt(match[1], 10));
         }
     });
+
+    const canSeeInMagicalDarkness = (data.options?.class || [])
+        .some(option => option.definition?.name?.toLowerCase() === "devil's sight");
+
+    characterSheet.senses = {
+        darkvision: darkvision,
+        canSeeInMagicalDarkness: canSeeInMagicalDarkness
+    };
 
     // Assign to top level of character sheet, which is what the UI expects
     characterSheet.darkvision = darkvision;

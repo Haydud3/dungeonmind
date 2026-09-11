@@ -13,6 +13,8 @@ import { searchGithubModels } from '../utils/miniManifest';
 import { Client } from "@gradio/client";
 import { retrieveChunkedMap, storeChunkedMap } from '../utils/storageUtils';
 
+import * as fb from '../firebase';
+import { collection, addDoc } from 'firebase/firestore';
 import { useNewCampaign } from '../contexts/NewCampaignProvider';
 
 // START CHANGE: Add generatePlayer to props
@@ -195,8 +197,31 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
             newPlayers = [...playersList, cleanChar];
         }
         updateCampaign({ players: newPlayers });
+        
+        // Save to Hub for the current user
+        if (user && user.uid) {
+            console.log("Attempting to save to hub for user", user.uid);
+            try {
+                const charRef = collection(fb.db, 'users', user.uid, 'characters');
+                // Strip the numeric ID so Firestore uses its own doc ID
+                const { id, ...charWithoutId } = cleanChar;
+                const safeHubChar = { ...charWithoutId, dateCreated: Date.now() };
+                
+                addDoc(charRef, safeHubChar)
+                    .then(docRef => {
+                        console.log("Successfully saved character to hub with ID:", docRef.id);
+                        alert("Character saved to your personal Hub!");
+                    })
+                    .catch(e => {
+                        console.error("Firebase addDoc error:", e);
+                        alert("Failed to save to Hub: " + e.message);
+                    });
+            } catch(e) {
+                console.error("Failed to setup save character to hub", e);
+                alert("Failed to setup save to Hub: " + e.message);
+            }
+        }
         // END CHANGE
-
     };
 
     // START CHANGE: Anti-Meta Privacy Lock Handler

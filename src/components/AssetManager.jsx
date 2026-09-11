@@ -1826,6 +1826,8 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
                             className="w-full accent-amber-500" 
                         />
                         <div className="text-right text-xs text-slate-400 mt-1">{mapData?.lightingIntensity ?? 1}x</div>
+
+
                     </div>
                     
                     <div>
@@ -2041,14 +2043,51 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
                     </div>
 
                     <div>
-                        <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Fog of War (Vision)</label>
+                        <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Vision & Fog</label>
                         <button
-                            onClick={() => updateMap(campaignCode, activeMapId, { fowEnabled: mapData?.fowEnabled === true ? false : true })}
-                            className={`w-full py-2 border rounded text-center text-xs font-bold transition-colors flex items-center justify-center gap-2 ${mapData?.fowEnabled ? 'border-indigo-500 bg-indigo-900/20 text-indigo-400' : 'border-slate-600 text-slate-300 hover:border-indigo-500'}`}
+                            onClick={() => {
+                                const currentMode = mapData?.visionMode || 'off';
+                                let nextMode;
+                                if (currentMode === 'off') nextMode = 'fow';
+                                else if (currentMode === 'fow') nextMode = 'darkness';
+                                else nextMode = 'off';
+                                updateMap(campaignCode, activeMapId, { visionMode: nextMode });
+                            }}
+                            className={`w-full py-2 border rounded text-center text-xs font-bold transition-colors flex items-center justify-center gap-2 ${
+                                mapData?.visionMode === 'fow' ? 'border-indigo-500 bg-indigo-900/20 text-indigo-400' :
+                                mapData?.visionMode === 'darkness' ? 'border-purple-500 bg-purple-900/20 text-purple-400' :
+                                'border-slate-600 text-slate-300 hover:border-indigo-500'
+                            }`}
                         >
-                            <Icon name={mapData?.fowEnabled ? "eye-off" : "eye"} size={14} className="inline mr-1" />
-                            {mapData?.fowEnabled ? 'Fog of War is ON' : 'Fog of War is OFF'}
+                            <Icon name={
+                                mapData?.visionMode === 'fow' ? 'eye' :
+                                mapData?.visionMode === 'darkness' ? 'moon' :
+                                'eye-off'
+                            } size={14} className="inline mr-1" />
+                            {
+                                mapData?.visionMode === 'fow' ? 'Fog of War is ON' :
+                                mapData?.visionMode === 'darkness' ? 'Magical Darkness is ON' :
+                                'Vision is OFF'
+                            }
                         </button>
+                        <div className="flex gap-2 mt-2">
+                            <button
+                                onClick={() => {
+                                    if (window.confirm("Are you sure you want to reset the Fog of War? All explored areas will be hidden again.")) {
+                                        const currentReset = mapData?.fowResetCounter || 0;
+                                        updateMap(campaignCode, activeMapId, { 
+                                            fowExploredState: null, 
+                                            fowResetCounter: currentReset + 1 
+                                        });
+                                    }
+                                }}
+                                className="flex-1 py-1.5 bg-red-900/40 hover:bg-red-900/60 border border-red-700/50 rounded text-center text-xs font-bold text-red-200 transition-colors flex items-center justify-center gap-1"
+                                title="Reset explored areas back to pitch black"
+                            >
+                                <Icon name="rotate-ccw" size={12} />
+                                Reset Fog
+                            </button>
+                        </div>
                     </div>
 
                     <div>
