@@ -2,7 +2,6 @@ import React from 'react';
 import * as THREE from 'three';
 
 export const MagicalDarknessFX = ({ volumes, userRole, playerSenses }) => {
-    console.log('MagicalDarknessFX props:', { volumes, userRole, playerSenses });
     const isDM = userRole === 'dm';
     const canSee = playerSenses?.canSeeInMagicalDarkness;
 

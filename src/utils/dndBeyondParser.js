@@ -58,10 +58,6 @@ export const parseDndBeyondJson = (json) => {
     const data = json.data; 
     if (!data) throw new Error("Invalid D&D Beyond JSON: 'data' property not found.");
     
-    console.log("Parser received data:", data);
-    console.log("[DEBUG] Raw D&D Beyond Actions:", data.actions);
-    console.log("[DEBUG] Raw D&D Beyond Custom Actions:", data.customActions);
-
     // Initialize ALL arrays and objects the sheet expects to prevent crashes (bulletproof version)
     const characterSheet = {
         stats: {}, modifiers: {}, skills: {}, savingThrows: {}, proficiencies: {}, 
@@ -439,19 +435,6 @@ export const parseDndBeyondJson = (json) => {
             console.warn(`  ${index + 1}. ${warning}`);
         });
     }
-
-    // NEW DEBUG: Log the final characterSheet object before returning
-    console.log("DndBeyondParser: Final characterSheet object:", characterSheet);
-
-    // NEW DEBUG: Add checks for critical properties
-    const criticalProperties = ['name', 'level', 'class', 'race', 'hp', 'stats', 'modifiers', 'profBonus'];
-    criticalProperties.forEach(prop => {
-        if (!characterSheet[prop]) {
-            console.warn(`DndBeyondParser: Critical property '${prop}' is missing or empty in the final characterSheet. Current value:`, characterSheet[prop]);
-        } else if (typeof characterSheet[prop] === 'object' && Object.keys(characterSheet[prop]).length === 0) {
-            console.warn(`DndBeyondParser: Critical object property '${prop}' is empty in the final characterSheet.`);
-        }
-    });
 
     return characterSheet;
 };

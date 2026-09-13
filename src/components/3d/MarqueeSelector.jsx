@@ -7,17 +7,43 @@ export const MarqueeSelector = ({ tokens = [], walls = {}, lights = {}, isDeleti
 
     useEffect(() => {
         const container = gl.domElement.parentNode;
+        let isPotentialDrag = false;
         let isSelecting = false;
         let startPos = { x: 0, y: 0 };
         let boxOverlay = null;
 
+        const cleanupSelection = () => {
+            if (boxOverlay && document.body.contains(boxOverlay)) {
+                document.body.removeChild(boxOverlay);
+                boxOverlay = null;
+            }
+            if (isSelecting) {
+                document.body.style.cursor = 'auto';
+            }
+            if (controls) {
+                controls.enabled = true;
+            }
+            isSelecting = false;
+            isPotentialDrag = false;
+        };
+
         const onPointerDown = (e) => {
             // Button 2 is Right-Click
             if (e.button === 2) {
-                isSelecting = true;
+                isPotentialDrag = true;
                 startPos = { x: e.clientX, y: e.clientY };
+            }
+        };
+
+        const onPointerMove = (e) => {
+            if (!isPotentialDrag) return;
+
+            const dist = Math.hypot(e.clientX - startPos.x, e.clientY - startPos.y);
+
+            // Only start marquee selection if the user actually drags beyond a threshold (5px)
+            if (!isSelecting && dist > 5) {
+                isSelecting = true;
                 document.body.style.cursor = 'crosshair';
-                
                 if (controls) controls.enabled = false;
 
                 boxOverlay = document.createElement('div');
@@ -32,9 +58,7 @@ export const MarqueeSelector = ({ tokens = [], walls = {}, lights = {}, isDeleti
                 boxOverlay.style.height = '0px';
                 document.body.appendChild(boxOverlay);
             }
-        };
 
-        const onPointerMove = (e) => {
             if (isSelecting && boxOverlay) {
                 const minX = Math.min(startPos.x, e.clientX);
                 const minY = Math.min(startPos.y, e.clientY);
@@ -50,21 +74,15 @@ export const MarqueeSelector = ({ tokens = [], walls = {}, lights = {}, isDeleti
 
         const onPointerUp = (e) => {
             if (isSelecting) {
-                isSelecting = false;
-                document.body.style.cursor = 'auto';
-                if (controls) controls.enabled = true;
-                if (boxOverlay && document.body.contains(boxOverlay)) {
-                    document.body.removeChild(boxOverlay);
-                    boxOverlay = null;
-                }
-
                 const endPos = { x: e.clientX, y: e.clientY };
                 const minX = Math.min(startPos.x, endPos.x);
                 const maxX = Math.max(startPos.x, endPos.x);
                 const minY = Math.min(startPos.y, endPos.y);
                 const maxY = Math.max(startPos.y, endPos.y);
 
-                // If the box is tiny, treat it as a normal click and ignore
+                cleanupSelection();
+
+                // If the box is tiny, ignore
                 if (maxX - minX < 5 && maxY - minY < 5) return;
 
                 const rect = gl.domElement.getBoundingClientRect();
@@ -112,23 +130,24 @@ export const MarqueeSelector = ({ tokens = [], walls = {}, lights = {}, isDeleti
                 if (onSelectTokens) onSelectTokens(prev => e.shiftKey ? [...new Set([...prev, ...selectedTokens])] : selectedTokens);
                 if (isDeleting && onSelectWalls) onSelectWalls(prev => e.shiftKey ? [...new Set([...prev, ...selectedWalls])] : selectedWalls);
                 if (isDeleting && onSelectLights) onSelectLights(prev => e.shiftKey ? [...new Set([...prev, ...selectedLights])] : selectedLights);
+            } else {
+                isPotentialDrag = false;
             }
         };
 
         container.addEventListener('pointerdown', onPointerDown);
         window.addEventListener('pointermove', onPointerMove);
         window.addEventListener('pointerup', onPointerUp);
+        window.addEventListener('pointercancel', cleanupSelection);
+        window.addEventListener('blur', cleanupSelection);
 
         return () => {
             container.removeEventListener('pointerdown', onPointerDown);
             window.removeEventListener('pointermove', onPointerMove);
             window.removeEventListener('pointerup', onPointerUp);
-            if (boxOverlay && document.body.contains(boxOverlay)) {
-                document.body.removeChild(boxOverlay);
-            }
-            if (isSelecting) {
-                document.body.style.cursor = 'auto';
-            }
+            window.removeEventListener('pointercancel', cleanupSelection);
+            window.removeEventListener('blur', cleanupSelection);
+            cleanupSelection();
         };
     }, [camera, size, gl, controls, tokens, walls, lights, isDeleting, onSelectTokens, onSelectWalls, onSelectLights]);
 

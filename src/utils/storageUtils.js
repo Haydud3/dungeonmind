@@ -113,7 +113,6 @@ export const storeMapWithThumbnail = async (fullBase64, thumbBase64, name) => {
 // Phase 2: Retrieve and assemble chunks directly into a Blob
 export const retrieveChunkedMap = async (chunkedId, signal) => {
     if (!chunkedId) return null;
-    console.log(`[Storage] Retrieving ${chunkedId}...`);
     const startTime = performance.now();
 
     const docId = chunkedId.replace('chunked:', '').trim().replace(/['"]/g, '');
@@ -134,7 +133,6 @@ export const retrieveChunkedMap = async (chunkedId, signal) => {
     for (let i = 0; i < totalDocs; i++) {
         // ABORT CHECK: Stop processing if the component unmounted
         if (signal?.aborted) {
-            console.log(`[Storage] Aborted retrieval of ${chunkedId}`);
             throw new DOMException('Aborted', 'AbortError');
         }
 
@@ -201,7 +199,6 @@ export const retrieveChunkedMap = async (chunkedId, signal) => {
     }
 
     const blob = new Blob(byteArrays, { type: mimeType });
-    console.log(`[Storage] Assembled ${chunkedId} in ${(performance.now() - startTime).toFixed(2)}ms. Size: ${(blob.size / 1024 / 1024).toFixed(2)}MB`);
     return blob;
 };
 

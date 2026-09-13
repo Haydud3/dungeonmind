@@ -25,7 +25,6 @@ export const useAnimatedMapTexture = (url, playbackRate = 1) => {
             setTexture(EMPTY_TEXTURE);
             return;
         }
-        console.log(`[Map Texture Debug] 🎬 Hook mounted. Target URL: ${url.substring(0, 50)}...`);
 
         let isActive = true;
         let animationFrameId;
@@ -41,7 +40,6 @@ export const useAnimatedMapTexture = (url, playbackRate = 1) => {
 
             // If it's a blob url, we need to check its actual mime type
             if (url.startsWith('blob:')) {
-                console.log(`[Map Texture Debug] 🔍 Checking blob metadata...`);
                 try {
                     // HEAD requests on blob: URLs are not supported in Chrome/WebKit. Use GET.
                     const response = await fetch(url);
@@ -50,18 +48,14 @@ export const useAnimatedMapTexture = (url, playbackRate = 1) => {
                         const cloned = response.clone();
                         contentType = (await cloned.blob()).type;
                     }
-                    console.log(`[Map Texture Debug] 📄 Blob Content-Type: ${contentType}`);
                     if (contentType) {
                         if (contentType.startsWith('video/')) isVideo = true;
                         if (contentType === 'image/gif') isGif = true;
                     }
-                } catch (e) {
-                    console.debug(`[Map Texture Debug] Could not fetch blob metadata. Falling back to default loader.`, e);
-                }
+                } catch (e) {}
             }
 
             if (!isActive) return;
-            console.log(`[Map Texture Debug] 🚀 Starting loader. isVideo: ${isVideo}, isGif: ${isGif}`);
 
             if (isVideo) {
                 videoElement = document.createElement('video');
@@ -203,7 +197,6 @@ export const useAnimatedMapTexture = (url, playbackRate = 1) => {
                 loader.load(
                     url, 
                     (loadedTex) => {
-                        console.log(`[Map Texture Debug] ✅ TextureLoader SUCCESS! Image dims:`, loadedTex.image?.width, "x", loadedTex.image?.height);
                         if (isActive) {
                             if (loadedTex.image) {
                                 setAspect(loadedTex.image.width / loadedTex.image.height);
@@ -213,13 +206,12 @@ export const useAnimatedMapTexture = (url, playbackRate = 1) => {
                             createdTexture = loadedTex;
                             setTexture(loadedTex);
                         } else {
-                            console.warn(`[Map Texture Debug] 🛑 Texture loaded, but component is no longer active.`);
                             loadedTex.dispose();
                         }
                     },
                     undefined,
                     (err) => {
-                        console.error(`[Map Texture Debug] ❌ TextureLoader FAILED to load: ${url.substring(0, 50)}...`, err);
+                        console.error(`Failed to load texture: ${url.substring(0, 50)}...`, err);
                     }
                 );
             }

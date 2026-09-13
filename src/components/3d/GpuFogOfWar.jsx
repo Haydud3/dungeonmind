@@ -350,7 +350,6 @@ export const GpuFogOfWar = React.forwardRef(({ enabled, walls, lights, gridSize,
             if (shadowGeo) shadowGeo.dispose(); // Prevent Memory leaks
         });
 
-        console.log('GpuFogOfWar useFrame darkness logic:', { isDM, canSee, darknessVolumes });
         if (!isDM && !canSee && darknessVolumes && darknessVolumes.length > 0) {
             const darknessMesh = new THREE.Mesh(undefined, darknessContext.material);
             fowScene.add(darknessMesh);

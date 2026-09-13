@@ -271,13 +271,6 @@ function DungeonMindApp() {
       resolveAndShow();
   }, [data?.activeHandout, localHandout]);
 
-  // Add a debug log right above it to see what's happening
-  console.log("DEBUG ROLE:", { 
-      myId: user?.uid, 
-      dmList: data?.dmIds, 
-      isMatch: data?.dmIds?.includes(user?.uid) 
-  });
-
   // --- HELPER FUNCTIONS ---
   const handleDiceRoll = (formula, options = {}) => {
       try {
@@ -364,9 +357,6 @@ function DungeonMindApp() {
           }
 
 
-          // Debugging: Log the calculated values to console
-          console.log("DEBUG: handleDiceRoll calculated values - totalNatural:", safeTotalNatural, "result:", safeResult);
-          
           // Determine character name for display, prioritizing options.characterName
           const isDm = effectiveRole === 'dm';
           const myChar = data?.players?.find(p => p.ownerId === user?.uid);

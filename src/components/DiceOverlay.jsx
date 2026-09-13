@@ -158,7 +158,6 @@ const DICE_PHYSICS_REGISTRY = {};
 // --- DIE MESH ---
 const DieMesh = ({ id, dieType, result, actionType, index = 0, total = 1, isRemote = false, physicsParams = null }) => {
     const meshRef = useRef();
-    console.log("[DEBUG] DieMesh input:", { dieType, result });
     
     // START CHANGE: Robust parsing for dieType (e.g. "d20", "1d20", 20)
     let type = 6;
@@ -558,7 +557,6 @@ const RollHUD = ({ roll, isStacked }) => {
 };
 
 const DiceOverlay = ({ roll }) => {
-    console.log("[DEBUG] DiceOverlay roll data:", roll);
     const [activeRolls, setActiveRolls] = useState([]);
     const [activeDice, setActiveDice] = useState([]);
     const lastProcessedRoll = useRef(null);
@@ -577,11 +575,8 @@ const DiceOverlay = ({ roll }) => {
         if (!campaignCode) return;
         const liveRollsRef = ref(rtdb, `live_drags/rolls_${campaignCode}`);
         
-        console.log(`[DiceOverlay] Mounted and listening to RTDB path: live_drags/rolls_${campaignCode}`);
-        
         const unsub = onValue(liveRollsRef, (snapshot) => {
             const data = snapshot.val();
-            console.log(`[DiceOverlay] Raw Firebase Data Received:`, data);
             if (!data) return;
 
             const incomingRolls = [];
@@ -589,8 +584,6 @@ const DiceOverlay = ({ roll }) => {
 
             Object.values(data).forEach(r => {
                 if (r.clientId === clientId) return; // Skip own broadcast
-                
-                console.log(`[DiceOverlay] Evaluating remote roll: now=${now}, timestamp=${r.timestamp}, age=${now - r.timestamp}ms`);
                 
                 // Tolerate massive clock skew (up to 1 hour) between devices.
                 // If a player's PC clock is out of sync, a 60-second limit will silently drop their rolls.
@@ -601,7 +594,6 @@ const DiceOverlay = ({ roll }) => {
 
                 // Respect DM privacy
                 if (r.type === 'roll-private' && !isDm) {
-                    console.log(`[DiceOverlay] ❌ Filtered out (DM private roll blocked from player)`);
                     return;
                 }
 
@@ -719,9 +711,7 @@ const DiceOverlay = ({ roll }) => {
             
             if (campaignCode) {
                 const rollRef = ref(rtdb, `live_drags/rolls_${campaignCode}/${rtId}`);
-                console.log(`[DiceOverlay] Attempting to broadcast roll`, rollPayload);
                 set(rollRef, rollPayload)
-                    .then(() => console.log("[DiceOverlay] ✅ Broadcast success! Data sent to Firebase."))
                     .catch(e => console.error("[DiceOverlay] ❌ Roll broadcast failed", e));
                 setTimeout(() => remove(rollRef).catch(() => {}), 6000);
             }

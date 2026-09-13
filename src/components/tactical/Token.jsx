@@ -378,6 +378,10 @@ const Token3D = ({
       meshRef.current.position.copy(dragStartPos.current);
       hasDragged.current = false;
       setDraggedTokenId(null);
+      const isMulti = shiftHeldRef?.current;
+      if (!isMulti && selectedTokenIds && selectedTokenIds.length > 1) {
+        onSelect?.(null, token.id, false);
+      }
       return;
     }
 
@@ -808,6 +812,16 @@ const Token3D = ({
               .filter(Boolean);
             if (tokenHits.length > 0 && tokenHits[0] !== token.id) return;
           }
+
+          if (onSelect) {
+            const isMulti = e.shiftKey || shiftHeldRef?.current;
+            if (isMulti) {
+              onSelect(e, token.id, true);
+            } else if (!selectedTokenIds?.includes(token.id)) {
+              onSelect(e, token.id, false);
+            }
+          }
+
           handleTouchStart(e);
           beginDrag(e.nativeEvent);
         }}
@@ -819,26 +833,9 @@ const Token3D = ({
         onClick={(!isInteractive || activeTool || isSpaceDown) ? undefined : (e) => {
           e.stopPropagation();
           if (e.button === 2) return;
-          if (!isTerrainReady || draggedTokenId) return;
-          if (!isGlobalHovered) {
-            // Touch fallback: check intersections
-            if (e.pointerType === 'touch' || e.pointerType === 'pen') {
-              const tokenHits = (e.intersections || [])
-                .map(h => {
-                  let curr = h.object;
-                  while (curr) {
-                    if (curr.userData?.tokenId) return curr.userData.tokenId;
-                    curr = curr.parent;
-                  }
-                  return null;
-                })
-                .filter(Boolean);
-              if (tokenHits.length > 0 && tokenHits[0] !== token.id) return;
-            } else {
-              return;
-            }
-          }
-          onSelect(e, token.id, e.shiftKey);
+          if (!isTerrainReady) return;
+          const isMulti = e.shiftKey || shiftHeldRef?.current;
+          onSelect?.(e, token.id, isMulti);
         }}
         onContextMenu={(!isInteractive || activeTool || isSpaceDown) ? undefined : (e) => {
           e.stopPropagation();

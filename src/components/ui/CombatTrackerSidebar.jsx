@@ -266,6 +266,7 @@ export const InitiativePrompt = ({ combat, tokens, allCharacters, user, assignme
 
 export const CombatTrackerSidebar = ({ combat, updateCampaign, tokens, role, campaignData, allCharacters, onOpenSheet, data, campaignCode, activeMapId, className = "", onClose, onDiceRoll }) => {
     const [showAddModal, setShowAddModal] = useState(false);
+    const [addModalSearch, setAddModalSearch] = useState('');
     const dialog = useDialog();
     const toast = useToast();
     const selectedTokenIds = useCharacterStore(state => state.selectedTokenIds);
@@ -310,29 +311,134 @@ export const CombatTrackerSidebar = ({ combat, updateCampaign, tokens, role, cam
 
     // The initiative tracker is a DM-only tool. Players see the top ribbon instead.
     if (role !== 'dm') return null;
+
+    const handleAddTokenToCombat = (token) => {
+        const currentCombat = combat || { active: false, round: 1, turn: 0, combatants: [] };
+        const combatants = currentCombat.combatants || [];
+
+        if (combatants.some(c => c.tokenId === token.id)) {
+            toast(`${token.name || 'Token'} is already in combat.`, "info");
+            return;
+        }
+
+        const char = allCharacters?.find(c => String(c.id) === String(token.characterId));
+        const dex = token.stats?.dex || char?.stats?.dex || 10;
+        const mod = Math.floor((dex - 10) / 2);
+
+        let total;
+        if (onDiceRoll) {
+            const formula = `1d20${mod >= 0 ? `+${mod}` : `${mod}`}`;
+            const res = onDiceRoll(formula, {
+                alias: 'Initiative',
+                characterName: token.name || char?.name || 'Unknown',
+                actionType: 'Roll',
+                weaponName: 'Initiative'
+            });
+            total = (res && typeof res.total === 'number') ? res.total : (Number(res) || (10 + mod));
+        } else {
+            const roll = Math.floor(Math.random() * 20) + 1;
+            total = roll + mod;
+        }
+
+        const isNpc = !data?.players?.some(p => String(p.id) === String(token.characterId));
+
+        const newCombatant = {
+            tokenId: token.id,
+            characterId: token.characterId || token.id,
+            initiative: total,
+            name: token.name || char?.name || 'Unknown',
+            isNpc: isNpc
+        };
+
+        const newCombatants = [...combatants, newCombatant].sort((a,b) => b.initiative - a.initiative);
+        updateCampaign({ campaign: { ...campaignData, combat: { ...currentCombat, active: true, combatants: newCombatants } } });
+        toast(`Added ${newCombatant.name} to combat (Init: ${total})`, "success");
+    };
+
+    const handleAddAllMapTokens = () => {
+        const currentCombat = combat || { active: false, round: 1, turn: 0, combatants: [] };
+        const combatants = currentCombat.combatants || [];
+        const unaddedTokens = (tokens || []).filter(t => t?.id && !combatants.some(c => c.tokenId === t.id));
+
+        if (unaddedTokens.length === 0) {
+            toast("All map tokens are already in combat.", "info");
+            return;
+        }
+
+        const newEntries = unaddedTokens.map(token => {
+            const char = allCharacters?.find(c => String(c.id) === String(token.characterId));
+            const dex = token.stats?.dex || char?.stats?.dex || 10;
+            const mod = Math.floor((dex - 10) / 2);
+            let total;
+            if (onDiceRoll) {
+                const res = onDiceRoll(`1d20${mod >= 0 ? `+${mod}` : `${mod}`}`, {
+                    alias: 'Initiative',
+                    characterName: token.name || char?.name || 'Unknown',
+                    actionType: 'Roll',
+                    weaponName: 'Initiative'
+                });
+                total = (res && typeof res.total === 'number') ? res.total : (Number(res) || (10 + mod));
+            } else {
+                const roll = Math.floor(Math.random() * 20) + 1;
+                total = roll + mod;
+            }
+            const isNpc = !data?.players?.some(p => String(p.id) === String(token.characterId));
+            return {
+                tokenId: token.id,
+                characterId: token.characterId || token.id,
+                initiative: total,
+                name: token.name || char?.name || 'Unknown',
+                isNpc: isNpc
+            };
+        });
+
+        const newCombatants = [...combatants, ...newEntries].sort((a,b) => b.initiative - a.initiative);
+        updateCampaign({ campaign: { ...campaignData, combat: { ...currentCombat, active: true, combatants: newCombatants } } });
+        toast(`Added ${newEntries.length} tokens to combat`, "success");
+    };
+
     const handleAddActorToCombat = (actor, isNpc) => {
         const currentCombat = combat || { active: false, round: 1, turn: 0, combatants: [] };
         const combatants = currentCombat.combatants || [];
         
-        if (combatants.some(c => c.characterId === actor.id)) {
+        // Find if this actor has a token on the map that isn't already added
+        const mapToken = (tokens || []).find(t => String(t.characterId) === String(actor.id) && !combatants.some(c => c.tokenId === t.id));
+        const targetTokenId = mapToken ? mapToken.id : `tracker_${actor.id}_${Date.now()}`;
+
+        if (combatants.some(c => c.tokenId === targetTokenId || (!mapToken && c.characterId === actor.id))) {
             toast(`${actor.name} is already in combat.`, "info");
             return;
         }
     
         const dex = actor?.stats?.dex || 10;
         const mod = Math.floor((dex - 10) / 2);
-        const roll = Math.floor(Math.random() * 20) + 1;
+        
+        let total;
+        if (onDiceRoll) {
+            const formula = `1d20${mod >= 0 ? `+${mod}` : `${mod}`}`;
+            const res = onDiceRoll(formula, {
+                alias: 'Initiative',
+                characterName: actor.name || 'Unknown',
+                actionType: 'Roll',
+                weaponName: 'Initiative'
+            });
+            total = (res && typeof res.total === 'number') ? res.total : (Number(res) || (10 + mod));
+        } else {
+            const roll = Math.floor(Math.random() * 20) + 1;
+            total = roll + mod;
+        }
         
         const newCombatant = {
-            tokenId: `tracker_${actor.id}_${Date.now()}`,
+            tokenId: targetTokenId,
             characterId: actor.id,
-            initiative: roll + mod,
-            name: actor.name || 'Unknown',
+            initiative: total,
+            name: mapToken?.name || actor.name || 'Unknown',
             isNpc: isNpc
         };
         
         const newCombatants = [...combatants, newCombatant].sort((a,b) => b.initiative - a.initiative);
         updateCampaign({ campaign: { ...campaignData, combat: { ...currentCombat, active: true, combatants: newCombatants } } });
+        toast(`Added ${newCombatant.name} to combat (Init: ${total})`, "success");
     };
 
     if (!combat) return null;
@@ -607,53 +713,272 @@ export const CombatTrackerSidebar = ({ combat, updateCampaign, tokens, role, cam
             )}
 
             {/* Add Combatant Modal */}
-            {showAddModal && createPortal(
-                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in zoom-in-95">
-                    <div className="bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl w-full max-w-md flex flex-col max-h-[80vh]">
-                        <div className="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-800 rounded-t-xl shrink-0">
-                            <h3 className="font-bold text-white flex items-center gap-2">
-                                <Icon name="users" size={18} className="text-amber-500"/> Add to Combat
-                            </h3>
-                            <button onClick={() => setShowAddModal(false)} className="text-slate-400 hover:text-white">
-                                <Icon name="x" size={20}/>
-                            </button>
-                        </div>
-                        
-                        <div className="p-4 overflow-y-auto custom-scroll flex-1 min-h-0 space-y-2">
-                            {allCharacters?.length > 0 ? allCharacters.map(actor => {
-                                const isNpc = data?.npcs?.some(n => String(n.id) === String(actor.id));
-                                const isAlreadyInCombat = combatants.some(c => c.characterId === actor.id);
-                                
-                                return (
-                                    <div 
-                                        key={actor.id} 
-                                        className={`flex items-center gap-3 p-2 rounded-lg border ${isAlreadyInCombat ? 'bg-slate-800/50 border-slate-700 opacity-50' : 'bg-slate-800 border-slate-600 hover:border-amber-500 cursor-pointer'}`}
-                                        onClick={() => !isAlreadyInCombat && handleAddActorToCombat(actor, isNpc)}
-                                    >
-                                        <div className="w-10 h-10 rounded bg-slate-900 overflow-hidden shrink-0">
-                                            {actor.image ? <img src={actor.image} className="w-full h-full object-cover"/> : <div className="w-full h-full flex items-center justify-center font-bold text-slate-500">{actor.name?.[0] || '?'}</div>}
+            {showAddModal && (() => {
+                const query = addModalSearch.toLowerCase().trim();
+
+                const formatClasses = (classes) => {
+                    if (!classes) return '';
+                    if (typeof classes === 'string') return classes;
+                    if (Array.isArray(classes)) {
+                        return classes.map(c => {
+                            if (typeof c === 'string') return c;
+                            if (typeof c === 'object' && c !== null) {
+                                return `${c.name || ''}${c.level ? ` ${c.level}` : ''}${c.subclass ? ` (${c.subclass})` : ''}`.trim();
+                            }
+                            return String(c);
+                        }).filter(Boolean).join(' / ');
+                    }
+                    if (typeof classes === 'object' && classes !== null) {
+                        return `${classes.name || ''}${classes.level ? ` ${classes.level}` : ''}${classes.subclass ? ` (${classes.subclass})` : ''}`.trim();
+                    }
+                    return String(classes);
+                };
+
+                const formatType = (type) => {
+                    if (!type) return 'NPC / Monster';
+                    if (typeof type === 'string') return type;
+                    if (typeof type === 'object' && type !== null) return type.name || 'NPC / Monster';
+                    return String(type);
+                };
+
+                const filteredMapTokens = (tokens || []).filter(t => {
+                    if (!t?.id) return false;
+                    if (!query) return true;
+                    const char = allCharacters?.find(c => String(c.id) === String(t.characterId));
+                    const name = (t.name || char?.name || '').toLowerCase();
+                    return name.includes(query);
+                });
+
+                const unaddedMapTokensCount = (tokens || []).filter(t => t?.id && !combatants.some(c => c.tokenId === t.id)).length;
+
+                const filteredPlayers = (data?.players || []).filter(p => {
+                    if (!p?.id) return false;
+                    if (!query) return true;
+                    const classStr = formatClasses(p.classes);
+                    return (p.name || '').toLowerCase().includes(query) || classStr.toLowerCase().includes(query);
+                });
+
+                const filteredNpcs = (data?.npcs || []).filter(n => {
+                    if (!n?.id) return false;
+                    if (!query) return true;
+                    const typeStr = formatType(n.type);
+                    return (n.name || '').toLowerCase().includes(query) || typeStr.toLowerCase().includes(query);
+                });
+
+                return createPortal(
+                    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in zoom-in-95" onClick={() => setShowAddModal(false)}>
+                        <div 
+                            className="bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl w-full max-w-lg flex flex-col max-h-[85vh] overflow-hidden"
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            <div className="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-800 shrink-0">
+                                <h3 className="font-bold text-white flex items-center gap-2 text-base">
+                                    <Icon name="users" size={18} className="text-amber-500"/> Add to Combat
+                                </h3>
+                                <button onClick={() => setShowAddModal(false)} className="text-slate-400 hover:text-white p-1 rounded hover:bg-slate-700">
+                                    <Icon name="x" size={20}/>
+                                </button>
+                            </div>
+                            
+                            <div className="p-3 border-b border-slate-800 bg-slate-950/60 shrink-0">
+                                <div className="relative">
+                                    <Icon name="search" size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                    <input
+                                        type="text"
+                                        placeholder="Search tokens, party, NPCs..."
+                                        value={addModalSearch}
+                                        onChange={(e) => setAddModalSearch(e.target.value)}
+                                        className="w-full bg-slate-800 text-sm text-white pl-9 pr-8 py-2 rounded-lg border border-slate-700 focus:border-amber-500 focus:outline-none placeholder-slate-500"
+                                        autoFocus
+                                    />
+                                    {addModalSearch && (
+                                        <button 
+                                            onClick={() => setAddModalSearch('')} 
+                                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                                        >
+                                            <Icon name="x" size={14}/>
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="p-4 overflow-y-auto custom-scroll flex-1 min-h-0 space-y-6">
+                                {/* SECTION 1: Active On Map */}
+                                {filteredMapTokens.length > 0 && (
+                                    <div>
+                                        <div className="flex justify-between items-center mb-2.5">
+                                            <h4 className="text-xs uppercase font-bold text-amber-500 tracking-wider flex items-center gap-1.5">
+                                                <Icon name="map-pin" size={13} /> Active on Map ({filteredMapTokens.length})
+                                            </h4>
+                                            {unaddedMapTokensCount > 1 && (
+                                                <button 
+                                                    onClick={handleAddAllMapTokens}
+                                                    className="text-[10px] uppercase font-bold bg-amber-600 hover:bg-amber-500 text-white px-2 py-1 rounded shadow flex items-center gap-1 transition-all"
+                                                >
+                                                    <Icon name="plus" size={12}/> Add All ({unaddedMapTokensCount})
+                                                </button>
+                                            )}
                                         </div>
-                                        <div className="flex-1 min-w-0">
-                                            <div className="font-bold text-white text-sm truncate">{actor.name}</div>
-                                            <div className="text-[10px] uppercase text-slate-400 font-bold">{isNpc ? 'NPC' : 'Player'}</div>
+                                        <div className="space-y-1.5">
+                                            {filteredMapTokens.map(t => {
+                                                const isAlreadyInCombat = combatants.some(c => c.tokenId === t.id);
+                                                const char = allCharacters?.find(c => String(c.id) === String(t.characterId));
+                                                const img = t.image || t.img || char?.image;
+                                                const name = t.name || char?.name || 'Token';
+                                                const isNpc = !data?.players?.some(p => String(p.id) === String(t.characterId));
+                                                
+                                                return (
+                                                    <div 
+                                                        key={`map-token-${t.id}`}
+                                                        className={`flex items-center gap-3 p-2.5 rounded-lg border transition-all ${
+                                                            isAlreadyInCombat 
+                                                                ? 'bg-slate-800/40 border-slate-700/60 opacity-60' 
+                                                                : 'bg-slate-800/90 border-slate-700 hover:border-amber-500 cursor-pointer group shadow-sm'
+                                                        }`}
+                                                        onClick={() => !isAlreadyInCombat && handleAddTokenToCombat(t)}
+                                                    >
+                                                        <div className="w-9 h-9 rounded bg-slate-900 border border-slate-600 overflow-hidden shrink-0">
+                                                            {img ? <img src={img} className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : <div className="w-full h-full flex items-center justify-center font-bold text-slate-400 text-xs">{name[0] || '?'}</div>}
+                                                        </div>
+                                                        <div className="flex-1 min-w-0">
+                                                            <div className="font-bold text-white text-sm truncate flex items-center gap-2">
+                                                                <span>{name}</span>
+                                                                <span className="text-[9px] bg-amber-950/80 text-amber-400 border border-amber-800/60 px-1.5 py-0.2 rounded font-normal">On Map</span>
+                                                            </div>
+                                                            <div className="text-[10px] text-slate-400 flex items-center gap-2 mt-0.5">
+                                                                <span>{isNpc ? 'NPC / Monster' : 'Party Member'}</span>
+                                                                <span>•</span>
+                                                                <span>Pos: ({Math.round(t.x || 0)}, {Math.round(t.z || 0)})</span>
+                                                            </div>
+                                                        </div>
+                                                        {isAlreadyInCombat ? (
+                                                            <span className="text-xs text-slate-400 bg-slate-800 px-2 py-1 rounded border border-slate-700 font-medium">In Combat</span>
+                                                        ) : (
+                                                            <button className="px-2.5 py-1 bg-amber-600 group-hover:bg-amber-500 text-white text-xs font-bold rounded shadow flex items-center gap-1 transition-colors">
+                                                                <Icon name="plus" size={13}/> Add
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
                                         </div>
-                                        {!isAlreadyInCombat ? (
-                                            <button className="p-2 text-amber-500 hover:text-amber-400">
-                                                <Icon name="plus" size={16}/>
-                                            </button>
-                                        ) : (
-                                            <span className="text-xs text-slate-500 px-2">Added</span>
-                                        )}
                                     </div>
-                                );
-                            }) : (
-                                <div className="text-center p-4 text-slate-500 text-sm">No characters found.</div>
-                            )}
+                                )}
+
+                                {/* SECTION 2: Party */}
+                                {filteredPlayers.length > 0 && (
+                                    <div>
+                                        <div className="flex justify-between items-center mb-2.5">
+                                            <h4 className="text-xs uppercase font-bold text-indigo-400 tracking-wider flex items-center gap-1.5">
+                                                <Icon name="shield" size={13} /> Party ({filteredPlayers.length})
+                                            </h4>
+                                        </div>
+                                        <div className="space-y-1.5">
+                                            {filteredPlayers.map(p => {
+                                                const mapToken = (tokens || []).find(t => String(t.characterId) === String(p.id));
+                                                const isAlreadyInCombat = combatants.some(c => c.characterId === p.id || (mapToken && c.tokenId === mapToken.id));
+                                                const classLabel = formatClasses(p.classes);
+                                                
+                                                return (
+                                                    <div 
+                                                        key={`player-${p.id}`}
+                                                        className={`flex items-center gap-3 p-2.5 rounded-lg border transition-all ${
+                                                            isAlreadyInCombat 
+                                                                ? 'bg-slate-800/40 border-slate-700/60 opacity-60' 
+                                                                : 'bg-slate-800/90 border-slate-700 hover:border-indigo-500 cursor-pointer group shadow-sm'
+                                                        }`}
+                                                        onClick={() => !isAlreadyInCombat && handleAddActorToCombat(p, false)}
+                                                    >
+                                                        <div className="w-9 h-9 rounded bg-slate-900 border border-slate-600 overflow-hidden shrink-0">
+                                                            {p.image ? <img src={p.image} className="w-full h-full object-cover" referrerPolicy="no-referrer"/> : <div className="w-full h-full flex items-center justify-center font-bold text-slate-400 text-xs">{p.name?.[0] || '?'}</div>}
+                                                        </div>
+                                                        <div className="flex-1 min-w-0">
+                                                            <div className="font-bold text-white text-sm truncate flex items-center gap-2">
+                                                                <span>{p.name}</span>
+                                                                {mapToken && <span className="text-[9px] bg-amber-950/80 text-amber-400 border border-amber-800/60 px-1.5 py-0.2 rounded font-normal">On Map</span>}
+                                                            </div>
+                                                            <div className="text-[10px] text-slate-400 flex items-center gap-2 mt-0.5">
+                                                                <span>Player Character</span>
+                                                                {classLabel && <span>• {classLabel}</span>}
+                                                            </div>
+                                                        </div>
+                                                        {isAlreadyInCombat ? (
+                                                            <span className="text-xs text-slate-400 bg-slate-800 px-2 py-1 rounded border border-slate-700 font-medium">In Combat</span>
+                                                        ) : (
+                                                            <button className="px-2.5 py-1 bg-indigo-600 group-hover:bg-indigo-500 text-white text-xs font-bold rounded shadow flex items-center gap-1 transition-colors">
+                                                                <Icon name="plus" size={13}/> Add
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* SECTION 3: NPCs & Monsters */}
+                                {filteredNpcs.length > 0 && (
+                                    <div>
+                                        <div className="flex justify-between items-center mb-2.5">
+                                            <h4 className="text-xs uppercase font-bold text-rose-400 tracking-wider flex items-center gap-1.5">
+                                                <Icon name="skull" size={13} /> NPCs & Monsters ({filteredNpcs.length})
+                                            </h4>
+                                        </div>
+                                        <div className="space-y-1.5">
+                                            {filteredNpcs.map(n => {
+                                                const mapToken = (tokens || []).find(t => String(t.characterId) === String(n.id));
+                                                const isAlreadyInCombat = combatants.some(c => c.characterId === n.id || (mapToken && c.tokenId === mapToken.id));
+                                                const typeLabel = formatType(n.type);
+                                                
+                                                return (
+                                                    <div 
+                                                        key={`npc-${n.id}`}
+                                                        className={`flex items-center gap-3 p-2.5 rounded-lg border transition-all ${
+                                                            isAlreadyInCombat 
+                                                                ? 'bg-slate-800/40 border-slate-700/60 opacity-60' 
+                                                                : 'bg-slate-800/90 border-slate-700 hover:border-rose-500 cursor-pointer group shadow-sm'
+                                                        }`}
+                                                        onClick={() => !isAlreadyInCombat && handleAddActorToCombat(n, true)}
+                                                    >
+                                                        <div className="w-9 h-9 rounded bg-slate-900 border border-slate-600 overflow-hidden shrink-0">
+                                                            {n.image ? <img src={n.image} className="w-full h-full object-cover" referrerPolicy="no-referrer"/> : <div className="w-full h-full flex items-center justify-center font-bold text-slate-400 text-xs">{n.name?.[0] || '?'}</div>}
+                                                        </div>
+                                                        <div className="flex-1 min-w-0">
+                                                            <div className="font-bold text-white text-sm truncate flex items-center gap-2">
+                                                                <span>{n.name}</span>
+                                                                {mapToken && <span className="text-[9px] bg-amber-950/80 text-amber-400 border border-amber-800/60 px-1.5 py-0.2 rounded font-normal">On Map</span>}
+                                                            </div>
+                                                            <div className="text-[10px] text-slate-400 flex items-center gap-2 mt-0.5">
+                                                                <span>{typeLabel}</span>
+                                                                {n.cr && <span>• CR {n.cr}</span>}
+                                                            </div>
+                                                        </div>
+                                                        {isAlreadyInCombat ? (
+                                                            <span className="text-xs text-slate-400 bg-slate-800 px-2 py-1 rounded border border-slate-700 font-medium">In Combat</span>
+                                                        ) : (
+                                                            <button className="px-2.5 py-1 bg-rose-600 group-hover:bg-rose-500 text-white text-xs font-bold rounded shadow flex items-center gap-1 transition-colors">
+                                                                <Icon name="plus" size={13}/> Add
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {filteredMapTokens.length === 0 && filteredPlayers.length === 0 && filteredNpcs.length === 0 && (
+                                    <div className="text-center p-8 text-slate-500 text-sm">
+                                        <Icon name="search" size={28} className="mx-auto text-slate-600 mb-2 opacity-50" />
+                                        No characters or tokens found matching "{addModalSearch}".
+                                    </div>
+                                )}
+                            </div>
                         </div>
-                    </div>
-                </div>,
-                document.body
-            )}
+                    </div>,
+                    document.body
+                );
+            })()}
         </div>
     );
 };

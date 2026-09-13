@@ -21,17 +21,31 @@ export const CombatCameraDirector = ({ activeTokenId, tokensList }) => {
     }, [activeTokenId, tokensList, camera, controls]);
 
     useEffect(() => {
-        if (!controls) return;
         const cancelPan = () => setTargetData(null);
-        controls.addEventListener('start', cancelPan); // Yield to user if they touch the map
-        return () => controls.removeEventListener('start', cancelPan);
+        if (controls) {
+            controls.addEventListener('start', cancelPan);
+        }
+        window.addEventListener('pointerdown', cancelPan, { capture: true });
+        window.addEventListener('touchstart', cancelPan, { capture: true, passive: true });
+        window.addEventListener('wheel', cancelPan, { capture: true, passive: true });
+        return () => {
+            if (controls) {
+                controls.removeEventListener('start', cancelPan);
+            }
+            window.removeEventListener('pointerdown', cancelPan, { capture: true });
+            window.removeEventListener('touchstart', cancelPan, { capture: true });
+            window.removeEventListener('wheel', cancelPan, { capture: true });
+        };
     }, [controls]);
 
     useFrame(() => {
         if (targetData && controls) {
             controls.target.lerp(targetData.target, 0.08);
             camera.position.lerp(targetData.camPos, 0.08);
-            if (controls.target.distanceTo(targetData.target) < 0.05) setTargetData(null);
+            controls.update?.();
+            if (controls.target.distanceTo(targetData.target) < 0.05) {
+                setTargetData(null);
+            }
         }
     });
     return null;

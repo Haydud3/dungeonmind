@@ -365,11 +365,6 @@ const SessionView = ({
             
             const isPublic = (type === 'ai-public');
             const prompt = buildPrompt(query, aiContext, recentChat, isPublic, castList);
-            // END CHANGE
-
-            // START CHANGE: Debug logging to verify the AI's "Brain"
-            console.log("DEBUG AI PROMPT:", prompt);
-            // END CHANGE
 
             if (aiHelper) {
                 let answer = await aiHelper([{ role: 'user', content: prompt }]);
