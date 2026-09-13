@@ -196,8 +196,10 @@ const Token3D = ({
 
   const ndcFromEvent = (nativeEvent) => {
     const rect = gl.domElement.getBoundingClientRect();
-    const clientX = nativeEvent?.clientX ?? (nativeEvent?.touches && nativeEvent.touches[0]?.clientX) ?? (nativeEvent?.changedTouches && nativeEvent.changedTouches[0]?.clientX) ?? 0;
-    const clientY = nativeEvent?.clientY ?? (nativeEvent?.touches && nativeEvent.touches[0]?.clientY) ?? (nativeEvent?.changedTouches && nativeEvent.changedTouches[0]?.clientY) ?? 0;
+    const touch = (nativeEvent?.touches && nativeEvent.touches[0]) ||
+                  (nativeEvent?.changedTouches && nativeEvent.changedTouches[0]);
+    const clientX = nativeEvent?.clientX ?? touch?.clientX ?? 0;
+    const clientY = nativeEvent?.clientY ?? touch?.clientY ?? 0;
     return {
       x:  ((clientX - rect.left) / rect.width)  *  2 - 1,
       y: -((clientY - rect.top)  / rect.height) *  2 + 1,
@@ -258,7 +260,12 @@ const Token3D = ({
       } catch (err) {}
     }
 
-    const onMove = (e) => moveDrag(e);
+    const onMove = (e) => {
+      if (e.cancelable) {
+        try { e.preventDefault(); } catch (err) {}
+      }
+      moveDrag(e);
+    };
     const onUp   = (e) => {
       endDrag(e);
       window.removeEventListener('pointermove', onMove);
@@ -276,10 +283,10 @@ const Token3D = ({
       }
     };
     dragCleanup.current = { move: onMove, up: onUp };
-    window.addEventListener('pointermove', onMove, { passive: true });
+    window.addEventListener('pointermove', onMove, { passive: false });
     window.addEventListener('pointerup', onUp);
     window.addEventListener('pointercancel', onUp);
-    window.addEventListener('touchmove', onMove, { passive: true });
+    window.addEventListener('touchmove', onMove, { passive: false });
     window.addEventListener('touchend', onUp);
     window.addEventListener('touchcancel', onUp);
   };
