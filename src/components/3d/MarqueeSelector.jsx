@@ -16,6 +16,7 @@ export const MarqueeSelector = ({ tokens = [], walls = {}, lights = {}, isDeleti
             if (e.button === 2) {
                 isSelecting = true;
                 startPos = { x: e.clientX, y: e.clientY };
+                document.body.style.cursor = 'crosshair';
                 
                 if (controls) controls.enabled = false;
 
@@ -50,6 +51,7 @@ export const MarqueeSelector = ({ tokens = [], walls = {}, lights = {}, isDeleti
         const onPointerUp = (e) => {
             if (isSelecting) {
                 isSelecting = false;
+                document.body.style.cursor = 'auto';
                 if (controls) controls.enabled = true;
                 if (boxOverlay && document.body.contains(boxOverlay)) {
                     document.body.removeChild(boxOverlay);
@@ -123,6 +125,9 @@ export const MarqueeSelector = ({ tokens = [], walls = {}, lights = {}, isDeleti
             window.removeEventListener('pointerup', onPointerUp);
             if (boxOverlay && document.body.contains(boxOverlay)) {
                 document.body.removeChild(boxOverlay);
+            }
+            if (isSelecting) {
+                document.body.style.cursor = 'auto';
             }
         };
     }, [camera, size, gl, controls, tokens, walls, lights, isDeleting, onSelectTokens, onSelectWalls, onSelectLights]);

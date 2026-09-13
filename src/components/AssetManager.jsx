@@ -4,11 +4,12 @@ import { db, appId } from '../firebase';
 import { storeChunkedMap, deleteChunkedMap, retrieveChunkedMap } from '../utils/storageUtils';
 import { exportMapPreset, importMapPreset } from '../utils/presetManager';
 import Icon from './Icon';
+import { useToast } from './ToastProvider';
+import { useDialog } from './DialogProvider';
 import SketchfabImporter from './SketchfabImporter';
 import MapGenerator from './MapGenerator';
 import ResolvedImage from './ResolvedImage'; // Add this import
 
-import { useToast } from './ToastProvider';
 import { useResolvedUrl } from '../utils/useResolvedUrl';
 import { fulfillMapData } from '../utils/moduleFulfillment';
 import { subscribeToMap } from '../utils/mapService';
@@ -468,20 +469,20 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
                     await addDoc(assetsRef, assetData);
                     
                     await fetchAssets();
-                } catch (err) { console.error(err); alert("Processing failed."); }
+                } catch (err) { console.error(err); toast("Processing failed.", "error"); }
                 setIsUploading(false);
             };
             reader.readAsDataURL(file);
         } catch (err) {
             console.error(err);
-            alert("Upload failed.");
+            toast("Upload failed.", "error");
             setIsUploading(false);
         }
         if (e.target) e.target.value = null;
     };
 
     const handleDeleteCharacter = async (char) => {
-        if (!confirm(`Permanently remove "${char.name}" from the campaign?`)) return;
+        if (!(await dialog.confirm(`Permanently remove "${char.name}" from the campaign?`))) return;
         try {
             if (campaignData?.players?.find(p => p.id === char.id)) {
                 if (updateCampaign) updateCampaign({ players: campaignData.players.filter(p => p.id !== char.id) });
@@ -490,12 +491,12 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
             }
         } catch (err) {
             console.error("Failed to delete character", err);
-            alert("Delete failed.");
+            toast("Delete failed.", "error");
         }
     };
 
     const handleDeleteAsset = async (asset) => {
-        if (!confirm(`Permanently delete "${asset.name}"?`)) return;
+        if (!(await dialog.confirm(`Permanently delete "${asset.name}"?`))) return;
 
         try {
             const assetRef = doc(db, 'artifacts', appId || 'dungeonmind', 'public', 'data', 'campaigns', campaignCode, 'assets', asset.id);
@@ -522,7 +523,7 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
 
         } catch (err) {
             console.error("Error deleting asset:", err);
-            alert("Failed to delete asset.");
+            toast("Failed to delete asset.", "error");
         }
     }
 
@@ -614,7 +615,7 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
     const handleAutoDetectGrid = async (overrideUrl) => {
         const imageUrl = typeof overrideUrl === 'string' ? overrideUrl : mapData?.backgroundUrl;
         if (!imageUrl) {
-            alert("Please set a map background first.");
+            dialog.alert("Please set a map background first.");
             return;
         }
         setIsDetectingGrid(true);
@@ -667,7 +668,7 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
             img.onerror = () => {
                 console.error("Failed to load image for grid detection.");
                 setIsDetectingGrid(false);
-                alert("Could not load image. Cross-Origin Resource Sharing (CORS) might be preventing it.");
+                dialog.alert("Could not load image. Cross-Origin Resource Sharing (CORS) might be preventing it.");
                 if (objectUrl) setTimeout(() => URL.revokeObjectURL(objectUrl), 5000);
             };
             img.src = finalUrl;
@@ -754,7 +755,7 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
             await exportMapPreset(mapSettings, geometry, lights, tokens, characters);
         } catch (err) {
             console.error("Failed to export preset:", err);
-            alert("Failed to export preset.");
+            toast("Failed to export preset.", "error");
         } finally {
             setIsExporting(false);
         }
@@ -806,7 +807,7 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
 
             if (preset.mapSettings?.mapImageBase64) {
                 if (preset.mapSettings.mapImageBase64.startsWith('blob:')) {
-                    alert("This preset was exported incorrectly and is missing its background image data. Please re-export the preset.");
+                    dialog.alert("This preset was exported incorrectly and is missing its background image data. Please re-export the preset.");
                     setIsImporting(false);
                     if (e.target) e.target.value = null;
                     return;
@@ -880,7 +881,7 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
             
         } catch (err) {
             console.error("Failed to import preset:", err);
-            alert("Failed to import preset. Make sure it's a valid DungeonMind preset JSON file.");
+            dialog.alert("Failed to import preset. Make sure it's a valid DungeonMind preset JSON file.");
         } finally {
             setIsImporting(false);
         }
@@ -1621,7 +1622,7 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
                                                     setAssets(prev => prev.map(a => a.id === asset.id ? { ...a, name: newName } : a));
                                                 }).catch(err => {
                                                     console.error("Error renaming asset", err);
-                                                    alert("Failed to rename asset.");
+                                                    toast("Failed to rename asset.", "error");
                                                 });
                                             }
                                         }} className="bg-black/80 text-green-400 hover:text-white p-1.5 rounded shadow-md" title="Rename Asset">
@@ -2072,8 +2073,8 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
                         </button>
                         <div className="flex gap-2 mt-2">
                             <button
-                                onClick={() => {
-                                    if (window.confirm("Are you sure you want to reset the Fog of War? All explored areas will be hidden again.")) {
+                                onClick={async () => {
+                                    if (await dialog.confirm("Are you sure you want to reset the Fog of War? All explored areas will be hidden again.")) {
                                         const currentReset = mapData?.fowResetCounter || 0;
                                         updateMap(campaignCode, activeMapId, { 
                                             fowExploredState: null, 

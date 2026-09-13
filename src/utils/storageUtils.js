@@ -33,6 +33,13 @@ export const imageElementToBlob = async (imgElement) => {
     });
 };
 
+export const fileToBase64 = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = error => reject(error);
+});
+
 // Phase 1: Store Base64 in chunks to bypass Firestore document size limits
 export const storeChunkedMap = async (base64, name) => {
     // Reduced chunk size to 400KB to safely avoid Firestore's 1MB limit and reduce memory pressure per write
@@ -199,23 +206,38 @@ export const retrieveChunkedMap = async (chunkedId, signal) => {
 };
 
 // Phase 3: Resolve all chunked references in an HTML string with Diagnostics
+// LRU cache for resolved chunked Object URLs to prevent memory leaks
+const resolvedUrlCache = new Map(); // id -> objectUrl
+const MAX_CACHED_OBJECT_URLS = 20;
+
 export const resolveChunkedHtml = async (html) => {
     if (!html || !html.trim()) return html || "";
-    console.group("Handout Resolution Diagnostic");
     try {
         const regex = /chunked:[a-zA-Z0-9_-]+/g;
         const matches = html.match(regex);
         
         if (!matches || matches.length === 0) {
-            console.groupEnd();
             return html;
         }
 
         const uniqueIds = [...new Set(matches)];
         const resolutions = await Promise.all(uniqueIds.map(async (id) => {
+            if (resolvedUrlCache.has(id)) {
+                return { id, url: resolvedUrlCache.get(id) };
+            }
             try {
                 const blob = await retrieveChunkedMap(id);
+                if (!blob) return { id, url: "" };
                 const url = URL.createObjectURL(blob);
+                
+                // Evict oldest if cache exceeds limit
+                if (resolvedUrlCache.size >= MAX_CACHED_OBJECT_URLS) {
+                    const oldestKey = resolvedUrlCache.keys().next().value;
+                    const oldestUrl = resolvedUrlCache.get(oldestKey);
+                    if (oldestUrl) URL.revokeObjectURL(oldestUrl);
+                    resolvedUrlCache.delete(oldestKey);
+                }
+                resolvedUrlCache.set(id, url);
                 return { id, url };
             } catch (e) {
                 console.error(`FAILED to reassemble ${id}:`, e);
@@ -229,11 +251,9 @@ export const resolveChunkedHtml = async (html) => {
                 resolvedHtml = resolvedHtml.split(id).join(url);
             }
         });
-        console.groupEnd();
         return resolvedHtml;
     } catch (err) {
         console.error("Critical error in resolveChunkedHtml:", err);
-        console.groupEnd();
         return html;
     }
 };

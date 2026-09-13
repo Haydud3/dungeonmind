@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import Icon from '../Icon';
 import { parseDndBeyondJson } from './dndBeyondParser';
 import { enrichCharacter } from '../../utils/srdEnricher';
+import { fetchDndBeyondCharacter } from '../../utils/dndBeyondService';
 
 const DndBeyondImporter = ({ onImport, onCancel }) => {
     const [mode, setMode] = useState('url'); // 'url' or 'json'
@@ -18,25 +19,7 @@ const DndBeyondImporter = ({ onImport, onCancel }) => {
 
         try {
             if (mode === 'url') {
-                const idMatch = inputValue.match(/\/characters\/(\d+)|^\d+$/);
-                const characterId = idMatch ? (idMatch[1] || idMatch[0]) : inputValue.replace(/\D/g, '');
-
-                if (!characterId) {
-                    throw new Error("Invalid D&D Beyond URL or Character ID.");
-                }
-
-                const encodedUrl = encodeURIComponent(`https://character-service.dndbeyond.com/character/v5/character/${characterId}`);
-                let response = await fetch(`https://corsproxy.io/?url=${encodedUrl}`).catch(() => null);
-
-                if (!response || !response.ok) {
-                    response = await fetch(`https://api.allorigins.win/raw?url=${encodedUrl}`).catch(() => null);
-                }
-
-                if (!response || !response.ok) {
-                    throw new Error("Failed to fetch character. Make sure the sheet is public, or try Manual JSON mode.");
-                }
-
-                characterData = await response.json();
+                characterData = await fetchDndBeyondCharacter(inputValue);
             } else {
                 characterData = JSON.parse(inputValue);
             }

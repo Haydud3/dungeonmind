@@ -1,34 +1,75 @@
 import { useState, useEffect } from 'react';
 import { retrieveChunkedMap } from './storageUtils';
 
+const globalBlobUrlCache = new Map(); // chunkedId -> { url, refCount, timeoutId }
+const MAX_CACHED_BLOBS = 15;
+
 export const useResolvedUrl = (url) => {
-    const [resolvedUrl, setResolvedUrl] = useState(null);
+    const [resolvedUrl, setResolvedUrl] = useState(() => {
+        if (!url) return null;
+        if (!url.startsWith('chunked:')) return url;
+        const cached = globalBlobUrlCache.get(url);
+        return cached ? cached.url : null;
+    });
+
     useEffect(() => {
         if (!url) {
             setResolvedUrl(null);
             return;
         }
-        let isActive = true;
-        if (url.startsWith('chunked:')) {
-            let objectUrl = null;
-            retrieveChunkedMap(url).then(blob => {
-                if (isActive && blob) {
-                    objectUrl = URL.createObjectURL(blob);
-                    console.log(`[Map Texture Debug] 🔗 Created Blob URL: ${objectUrl.substring(0, 40)}... (Size: ${(blob.size / 1024 / 1024).toFixed(2)}MB)`);
-                    setResolvedUrl(objectUrl);
-                }
-            }).catch(console.error);
-            return () => { 
-                isActive = false; 
-                if (objectUrl) {
-                    // Delay revoke to avoid interrupting in-flight fetches during StrictMode remounts
-                    setTimeout(() => URL.revokeObjectURL(objectUrl), 10000); 
-                }
-            };
-        } else {
+        if (!url.startsWith('chunked:')) {
             setResolvedUrl(url);
+            return;
         }
-        return () => { isActive = false; }
+
+        let isActive = true;
+        const entry = globalBlobUrlCache.get(url);
+
+        if (entry) {
+            if (entry.timeoutId) {
+                clearTimeout(entry.timeoutId);
+                entry.timeoutId = null;
+            }
+            entry.refCount += 1;
+            setResolvedUrl(entry.url);
+        } else {
+            retrieveChunkedMap(url).then(blob => {
+                if (!isActive || !blob) return;
+
+                // Evict oldest if exceeding limit
+                if (globalBlobUrlCache.size >= MAX_CACHED_BLOBS) {
+                    for (const [k, v] of globalBlobUrlCache.entries()) {
+                        if (v.refCount <= 0) {
+                            if (v.timeoutId) clearTimeout(v.timeoutId);
+                            URL.revokeObjectURL(v.url);
+                            globalBlobUrlCache.delete(k);
+                            break;
+                        }
+                    }
+                }
+
+                const objectUrl = URL.createObjectURL(blob);
+                globalBlobUrlCache.set(url, { url: objectUrl, refCount: 1, timeoutId: null });
+                setResolvedUrl(objectUrl);
+            }).catch(console.error);
+        }
+
+        return () => {
+            isActive = false;
+            const currentEntry = globalBlobUrlCache.get(url);
+            if (currentEntry) {
+                currentEntry.refCount = Math.max(0, currentEntry.refCount - 1);
+                if (currentEntry.refCount === 0 && !currentEntry.timeoutId) {
+                    currentEntry.timeoutId = setTimeout(() => {
+                        if (currentEntry.refCount === 0) {
+                            URL.revokeObjectURL(currentEntry.url);
+                            globalBlobUrlCache.delete(url);
+                        }
+                    }, 15000);
+                }
+            }
+        };
     }, [url]);
+
     return resolvedUrl;
 };

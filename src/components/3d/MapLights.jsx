@@ -156,7 +156,7 @@ const LightNode = React.memo(LightNodeComponent, areLightsEqual);
 
 export const MapLights = ({ lights, onContextMenu, role, gridSize = 1, showLightRadius, onDelete }) => {
     const [hovered, setHover] = useState(null);
-    useCursor(hovered, 'pointer', 'auto');
+    useCursor(!!hovered, 'pointer', 'auto');
 
     if (!lights) return null;
 

@@ -2,8 +2,8 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { useResolvedUrl } from '../../utils/useResolvedUrl';
 import { useFrame } from '@react-three/fiber';
-
 import { useAnimatedMapTexture } from '../../utils/useAnimatedMapTexture';
+import { safeDisposeTexture, safeDisposeGeometry, safeDisposeMaterial } from '../../utils/threeDisposalUtils';
 
 const defaultFowTexture = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
 defaultFowTexture.minFilter = THREE.NearestFilter;
@@ -16,28 +16,29 @@ export const InstancedGrass = ({ scale = 20, aspect = 1, uniforms: parentUniform
     const materialRef = useRef();
     const shaderRef = useRef();
     const isLowPerf = typeof window !== 'undefined' && localStorage.getItem('vtt_low_performance') === 'true';
-    const grassDensity = isLowPerf ? 70 : 120;
+    const isTouchDevice = typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+    const grassDensity = isLowPerf ? 30 : (isTouchDevice ? 45 : 75);
 
     const grassAlphaMap = useMemo(() => {
         const canvas = document.createElement('canvas');
-        canvas.width = 256;
-        canvas.height = 256;
+        canvas.width = 128;
+        canvas.height = 128;
         const ctx = canvas.getContext('2d');
-        ctx.clearRect(0, 0, 256, 256);
+        ctx.clearRect(0, 0, 128, 128);
         ctx.fillStyle = '#ffffff';
         
-        for(let i=0; i<20; i++) {
-            const rootX = 128 + (Math.random() - 0.5) * 180;
-            const tipX = rootX + (Math.random() - 0.5) * 150;
-            const tipY = Math.random() * 80;
-            const cpX = (rootX + tipX) / 2 + (Math.random() - 0.5) * 50;
-            const cpY = 128 + (Math.random() - 0.5) * 50;
-            const bladeWidth = 6 + Math.random() * 8;
+        for(let i=0; i<15; i++) {
+            const rootX = 64 + (Math.random() - 0.5) * 90;
+            const tipX = rootX + (Math.random() - 0.5) * 75;
+            const tipY = Math.random() * 40;
+            const cpX = (rootX + tipX) / 2 + (Math.random() - 0.5) * 25;
+            const cpY = 64 + (Math.random() - 0.5) * 25;
+            const bladeWidth = 4 + Math.random() * 5;
             
             ctx.beginPath();
-            ctx.moveTo(rootX - bladeWidth/2, 256);
+            ctx.moveTo(rootX - bladeWidth/2, 128);
             ctx.quadraticCurveTo(cpX - bladeWidth/2, cpY, tipX, tipY);
-            ctx.quadraticCurveTo(cpX + bladeWidth/2, cpY, rootX + bladeWidth/2, 256);
+            ctx.quadraticCurveTo(cpX + bladeWidth/2, cpY, rootX + bladeWidth/2, 128);
             ctx.fill();
         }
         
@@ -45,6 +46,12 @@ export const InstancedGrass = ({ scale = 20, aspect = 1, uniforms: parentUniform
         texture.colorSpace = THREE.NoColorSpace;
         return texture;
     }, []);
+
+    useEffect(() => {
+        return () => {
+            safeDisposeTexture(grassAlphaMap);
+        };
+    }, [grassAlphaMap]);
 
     const { geometry, count } = useMemo(() => {
         const height = 0.25;
@@ -89,6 +96,12 @@ export const InstancedGrass = ({ scale = 20, aspect = 1, uniforms: parentUniform
         const total = countX * countZ;
         return { geometry: geo, count: total };
     }, [aspect, grassDensity]);
+
+    useEffect(() => {
+        return () => {
+            safeDisposeGeometry(geometry);
+        };
+    }, [geometry]);
 
     useEffect(() => {
         if (!meshRef.current) return;
@@ -281,17 +294,28 @@ export const InstancedGrass = ({ scale = 20, aspect = 1, uniforms: parentUniform
     );
 };
 
-export const MapPlaneContent = ({ backgroundUrl, materialMaskUrl, dynamicMaterialMask, scale = 20, tokensList = [], rtdbDragsRef, gridSize = 1, animatedEnvironment = true, isPaintingMaterial = false, fowTexture, fowEnabled, isDm }) => {
+export const MapPlaneContent = ({ backgroundUrl, materialMaskUrl, dynamicMaterialMask, scale = 20, tokensList = [], rtdbDragsRef, gridSize = 1, animatedEnvironment = true, isPaintingMaterial = false, fowTexture, fowEnabled, isDm, manualFogTexture }) => {
   const { texture, aspect } = useAnimatedMapTexture(backgroundUrl);
 
-  const materialMaskTexture = useMemo(() => {
-      if (!materialMaskUrl) return null;
+  const [materialMaskTexture, setMaterialMaskTexture] = useState(null);
+  useEffect(() => {
+      if (!materialMaskUrl) {
+          setMaterialMaskTexture(null);
+          return;
+      }
       const loader = new THREE.TextureLoader();
-      return loader.load(materialMaskUrl, (tex) => {
-          tex.colorSpace = THREE.NoColorSpace;
-          tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-          tex.needsUpdate = true;
+      let active = true;
+      const tex = loader.load(materialMaskUrl, (loaded) => {
+          loaded.colorSpace = THREE.NoColorSpace;
+          loaded.wrapS = loaded.wrapT = THREE.RepeatWrapping;
+          loaded.needsUpdate = true;
+          if (active) setMaterialMaskTexture(loaded);
+          else loaded.dispose();
       });
+      return () => {
+          active = false;
+          safeDisposeTexture(tex);
+      };
   }, [materialMaskUrl]);
   
   const activeMaskTexture = dynamicMaterialMask || materialMaskTexture;
@@ -309,7 +333,9 @@ export const MapPlaneContent = ({ backgroundUrl, materialMaskUrl, dynamicMateria
           uIsPainting: { value: 0 },
           uFowTexture: { value: defaultFowTexture },
           uFowEnabled: { value: 0 },
-          uIsDm: { value: 0 }
+          uIsDm: { value: 0 },
+          uManualFogTexture: { value: new THREE.Texture() },
+          uManualFogEnabled: { value: 0 }
       };
   }, []);
 
@@ -332,6 +358,11 @@ export const MapPlaneContent = ({ backgroundUrl, materialMaskUrl, dynamicMateria
       uniforms.uFowEnabled.value = fowEnabled ? 1.0 : 0.0;
       uniforms.uIsDm.value = isDm ? 1.0 : 0.0;
   }, [fowTexture, fowEnabled, isDm, uniforms]);
+
+  useMemo(() => {
+      if (manualFogTexture) uniforms.uManualFogTexture.value = manualFogTexture;
+      uniforms.uManualFogEnabled.value = manualFogTexture ? 1.0 : 0.0;
+  }, [manualFogTexture, uniforms]);
 
   useFrame((state) => {
       uniforms.uTime.value = state.clock.elapsedTime;

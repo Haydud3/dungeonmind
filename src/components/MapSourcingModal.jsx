@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import Icon from './Icon';
+import { useToast } from './ToastProvider';
+import { useDialog } from './DialogProvider';
 import { fulfillMapData } from '../utils/moduleFulfillment';
 
 const MapSourcingModal = ({ sourcingMap, onClose, campaignCode, skeleton, updateCampaign, data, aiHelper, generateNpc }) => {
@@ -176,13 +178,13 @@ const MapSourcingModal = ({ sourcingMap, onClose, campaignCode, skeleton, update
             setRedditResults(hits);
         } catch (e) {
             console.error("Reddit fetch failed", e);
-            alert("Failed to find maps. CORS or network error.");
+            toast("Failed to find maps. CORS or network error.", "error");
         }
         setIsSourcing(false);
     };
 
     const acceptMap = async (imgUrl) => {
-        if (!campaignCode) return alert("Missing campaign code.");
+        if (!campaignCode) return toast("Missing campaign code.", "error");
         
         setIsProcessingMap(true);
         try {
@@ -201,7 +203,7 @@ const MapSourcingModal = ({ sourcingMap, onClose, campaignCode, skeleton, update
                 setProcessingStep
             });
 
-            alert(`Map "${sourcingMap.name}" imported successfully!\n\nTokens and Lore Pins have been placed. Remember to open the Tactical Map and use the [Detect Grid Size] and [Architect Mask] tools to automatically align the map and generate walls!`);
+            dialog.alert(`Map "${sourcingMap.name}" imported successfully!\n\nTokens and Lore Pins have been placed. Remember to open the Tactical Map and use the [Detect Grid Size] and [Architect Mask] tools to automatically align the map and generate walls!`);
             
             setProcessingStep('Populating Entities...');
             await new Promise(r => setTimeout(r, 3500));
@@ -212,7 +214,7 @@ const MapSourcingModal = ({ sourcingMap, onClose, campaignCode, skeleton, update
             onClose();
         } catch (e) {
             console.error("Accept map failed", e);
-            alert("Failed to process and save map.");
+            toast("Failed to process and save map.", "error");
         } finally {
             setIsProcessingMap(false);
             setProcessingStep('');

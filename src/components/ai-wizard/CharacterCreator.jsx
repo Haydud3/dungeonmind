@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import Icon from '../Icon';
+import { useToast } from '../ToastProvider';
+import { useDialog } from '../DialogProvider';
 
 // Use same constants as MapBoard for ease (or pass via props if preferred)
 const GOOGLE_SEARCH_CX = "c38cb56920a4f45df"; 
@@ -26,15 +28,15 @@ const CharacterCreator = ({ aiHelper, apiKey, onComplete, onCancel, edition = '2
                 const res = await fetch(`https://customsearch.googleapis.com/customsearch/v1?key=${key}&cx=${GOOGLE_SEARCH_CX}&q=${encodeURIComponent(searchQuery + " fantasy character portrait")}&searchType=image&num=6&imgSize=medium`);
                 const json = await res.json();
                 if (json.items) setSearchResults(json.items.map(i => i.link));
-                else alert("No results.");
-            } catch (e) { alert("Search Error"); }
-        } else { alert("No API Key configured."); }
+                else toast("No results.", "warning");
+            } catch (e) { toast("Search Error", "error"); }
+        } else { toast("No API Key configured.", "error"); }
         setIsSearching(false);
     };
 
     const handleGenerate = async () => {
         if (!aiHelper || typeof aiHelper !== 'function') {
-            alert("AI Helper not ready. Please refresh.");
+            toast("AI Helper not ready. Please refresh.", "error");
             return;
         }
         setIsGenerating(true);
@@ -83,7 +85,7 @@ const CharacterCreator = ({ aiHelper, apiKey, onComplete, onCancel, edition = '2
             onComplete(finalChar);
         } catch (e) {
             console.error(e);
-            alert("Forge failed. Error: " + e.message);
+            toast("Forge failed. Error: " + e.message, "error");
             setIsGenerating(false);
         }
     };

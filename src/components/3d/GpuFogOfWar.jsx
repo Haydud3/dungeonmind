@@ -2,10 +2,13 @@ import React, { useEffect, useMemo, useRef, useImperativeHandle } from 'react';
 import { useThree, useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { checkLineOfSight } from '../../utils/losUtils';
+import { safeDisposeRenderTarget, safeDisposeTexture, safeDisposeMaterial, safeDisposeGeometry } from '../../utils/threeDisposalUtils';
 
 // Pre-allocate buffer outside component to avoid GC spikes during FOW calculation
 const MAX_SHADOW_VERTICES = 10000 * 6; // up to 10k wall segments
 const shadowVertexBuffer = new Float32Array(MAX_SHADOW_VERTICES * 3);
+const sharedPixelBuffer = new Uint8Array(1024 * 1024 * 4);
+let sharedFogCanvas = null;
 
 export const GpuFogOfWar = React.forwardRef(({ enabled, walls, lights, gridSize, mapData, aspect, resolvedHeightmapUrl, playerVisionSources, role, fowWallsEnabled, rtdbDragsRef, onTextureReady, isMagicalDarkness, userRole, playerSenses, darknessVolumes, onSaveFog }, ref) => {
     const { gl } = useThree();
@@ -17,11 +20,26 @@ export const GpuFogOfWar = React.forwardRef(({ enabled, walls, lights, gridSize,
     const canSee = playerSenses?.canSeeInMagicalDarkness;
 
     const isLowPerf = localStorage.getItem('vtt_low_performance') === 'true';
-    const subdivisions = isLowPerf ? 128 : 256;
+    const isTouchDevice = typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+    const subdivisions = isLowPerf || isTouchDevice ? 64 : 128;
 
-    const heightmapTexture = useMemo(() => {
-        if (!resolvedHeightmapUrl) return null;
-        return new THREE.TextureLoader().load(resolvedHeightmapUrl);
+    const [heightmapTexture, setHeightmapTexture] = React.useState(null);
+
+    useEffect(() => {
+        if (!resolvedHeightmapUrl) {
+            setHeightmapTexture(null);
+            return;
+        }
+        const loader = new THREE.TextureLoader();
+        let active = true;
+        const tex = loader.load(resolvedHeightmapUrl, (loaded) => {
+            if (active) setHeightmapTexture(loaded);
+            else loaded.dispose();
+        });
+        return () => {
+            active = false;
+            safeDisposeTexture(tex);
+        };
     }, [resolvedHeightmapUrl]);
 
     const fowScene = useMemo(() => new THREE.Scene(), []);
@@ -46,6 +64,15 @@ export const GpuFogOfWar = React.forwardRef(({ enabled, walls, lights, gridSize,
         rt.texture.magFilter = THREE.NearestFilter;
         return rt;
     }, []);
+
+    // Clean up WebGLRenderTargets when GpuFogOfWar unmounts or remounts
+    useEffect(() => {
+        return () => {
+            safeDisposeRenderTarget(fowTarget);
+            safeDisposeRenderTarget(exploredTarget);
+        };
+    }, [fowTarget, exploredTarget]);
+
     const hasClearedExplored = useRef(false);
     const hasNotifiedTexture = useRef(false);
 
@@ -55,13 +82,15 @@ export const GpuFogOfWar = React.forwardRef(({ enabled, walls, lights, gridSize,
 
     const extractFogDataUrl = () => {
         try {
-            const pixels = new Uint8Array(1024 * 1024 * 4);
-            gl.readRenderTargetPixels(exploredTarget, 0, 0, 1024, 1024, pixels);
-            const canvas = document.createElement('canvas');
-            canvas.width = 1024;
-            canvas.height = 1024;
-            const ctx = canvas.getContext('2d');
-            const imgData = new ImageData(new Uint8ClampedArray(pixels), 1024, 1024);
+            gl.readRenderTargetPixels(exploredTarget, 0, 0, 1024, 1024, sharedPixelBuffer);
+            if (!sharedFogCanvas) {
+                sharedFogCanvas = document.createElement('canvas');
+                sharedFogCanvas.width = 1024;
+                sharedFogCanvas.height = 1024;
+            }
+            const canvas = sharedFogCanvas;
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
+            const imgData = new ImageData(new Uint8ClampedArray(sharedPixelBuffer.buffer), 1024, 1024);
             ctx.putImageData(imgData, 0, 0);
             
             const flipCanvas = document.createElement('canvas');
@@ -137,6 +166,15 @@ export const GpuFogOfWar = React.forwardRef(({ enabled, walls, lights, gridSize,
         stencilZPass: THREE.ReplaceStencilOp,
         side: THREE.DoubleSide
     }), []);
+
+    useEffect(() => {
+        return () => {
+            safeDisposeMaterial(accumulatorMaterial);
+            safeDisposeGeometry(visionGeometry);
+            safeDisposeMaterial(visionMaterial);
+            safeDisposeMaterial(shadowMaterial);
+        };
+    }, [accumulatorMaterial, visionGeometry, visionMaterial, shadowMaterial]);
 
     const darknessContext = useMemo(() => {
         return {

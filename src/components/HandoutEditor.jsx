@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import ReactQuill, { Quill } from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
 import Icon from './Icon';
+import { useDialog } from './DialogProvider';
 import { useToast } from './ToastProvider';
 import { storeChunkedMap, retrieveChunkedMap, resolveChunkedHtml } from '../utils/storageUtils';
 import { compressImage } from '../utils/imageCompressor';
@@ -68,7 +69,7 @@ const HandoutEditor = ({ onCancel, onLocalReveal }) => {
         resolve();
     }, [imageUrl, content]);
 
-    const resizeImage = () => {
+    const resizeImage = async () => {
         const quill = quillRef.current?.getEditor();
         if (!quill) return;
         const range = quill.getSelection(true);
@@ -84,7 +85,7 @@ const HandoutEditor = ({ onCancel, onLocalReveal }) => {
 
         if (img) {
             const currentWidth = img.style.width || "100%";
-            const newWidth = prompt("Enter new width (e.g., '50%', '300px'):", currentWidth);
+            const newWidth = await dialog.prompt("Enter new width (e.g., '50%', '300px'):", currentWidth);
             if (newWidth) {
                 img.style.width = newWidth;
                 setContent(quill.root.innerHTML);

@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import Icon from './Icon';
+import { useToast } from './ToastProvider';
+import { useDialog } from './DialogProvider';
 import { retrieveContext, buildPrompt, buildCastList } from '../utils/loreEngine';
 // START CHANGE: Import Character Store for Targeting
 import { useCharacterStore } from '../stores/useCharacterStore';
@@ -183,7 +185,7 @@ const SessionView = ({
             onSendMessage(id, sendMode, targetUser);
         } catch (err) {
             console.error("Upload failed", err);
-            alert("Failed to upload image.");
+            toast("Failed to upload image.", "error");
         }
         setIsUploading(false);
         e.target.value = null;
@@ -192,7 +194,7 @@ const SessionView = ({
     // START CHANGE: Apply Damage Handler
     const handleApplyDamage = useCallback(async (amount) => {
         const { selectedTokenIds } = useCharacterStore.getState();
-        if (!selectedTokenIds || selectedTokenIds.length === 0) return alert("No target selected!");
+        if (!selectedTokenIds || selectedTokenIds.length === 0) return toast("No target selected!", "warning");
 
         const activeMapId = data?.activeMapId;
         const code = gameParams?.code;
@@ -259,17 +261,17 @@ const SessionView = ({
                             context.updateCampaign({ players: newPlayers, npcs: newNpcs });
                         }
                         
-                        alert(`Applied ${amount} damage:\n${alertText.join('\\n')}`);
+                        toast(`Applied ${amount} damage`, "success");
                     } else {
-                        alert("Selected tokens don't have HP tracking enabled.");
+                        toast("Selected tokens do not have HP tracking enabled.", "warning");
                     }
                 }
             } catch(e) {
                 console.error("Failed to apply damage", e);
-                alert("Failed to apply damage. See console.");
+                toast("Failed to apply damage. See console.", "error");
             }
         } else {
-            alert("No active map found.");
+            toast("No active map found.", "error");
         }
     }, [data, gameParams, context]);
     // END CHANGE
@@ -277,8 +279,8 @@ const SessionView = ({
     // START CHANGE: Interactive Save Handler
     const handleRollSave = useCallback((dcData, targetsToRoll, advMode = 'normal') => {
         if (!targetsToRoll || targetsToRoll.length === 0) {
-            if (role === 'dm') return alert("Select tokens on the map to roll their saves.");
-            return alert("No character selected or assigned to roll the save.");
+            if (role === 'dm') return toast("Select tokens on the map to roll their saves.", "warning");
+            return toast("No character selected or assigned to roll the save.", "warning");
         }
         
         targetsToRoll.forEach((char, idx) => {
@@ -486,7 +488,7 @@ const SessionView = ({
         }
         // END CHANGE
 
-        if (sendMode === 'chat-private' && !targetUser) return alert("Select a player.");
+        if (sendMode === 'chat-private' && !targetUser) return toast("Select a player.", "warning");
         onSendMessage(inputText, sendMode, targetUser, aiContextMode);
         setInputText('');
     };

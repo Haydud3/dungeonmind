@@ -262,10 +262,10 @@ const SpellsTab = ({ onDiceRoll, onLogAction, onPlaceTemplate, isOwner, onUse })
                 {/* Main Row */}
                 {editingIndex !== index && (
                     <div className="p-3 flex flex-col gap-2">
-                        <div className="flex justify-between items-start">
+                        <div className="flex flex-wrap justify-between items-start gap-2">
                         
                         {/* Left: Info */}
-                        <div className="flex-1 min-w-0 cursor-pointer" onClick={() => hasText && setExpanded(!expanded)}>
+                        <div className="flex-1 min-w-[150px] cursor-pointer" onClick={() => hasText && setExpanded(!expanded)}>
                             <div className="font-bold text-slate-200 truncate flex items-center gap-2">
                                 {spell.name}
                                 {spell.components && <span className="text-[9px] text-slate-500 font-mono tracking-widest">{spell.components}</span>}

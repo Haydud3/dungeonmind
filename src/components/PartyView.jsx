@@ -1,5 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import Icon from './Icon';
+import { useToast } from './ToastProvider';
+import { useDialog } from './DialogProvider';
 import SheetContainer from './character-sheet/SheetContainer'; 
 import { useCharacterStore } from '../stores/useCharacterStore';
 // START CHANGE: Import D&D Beyond Importer
@@ -9,17 +11,17 @@ import { parseDndBeyondJson } from './character-sheet/dndBeyondParser.js';
 import CharacterBuilder from '../utils/CharacterBuilder';
 // END CHANGE
 import { enrichCharacter } from '../utils/srdEnricher.js';
-import { searchGithubModels } from '../utils/miniManifest';
-import { Client } from "@gradio/client";
-import { retrieveChunkedMap, storeChunkedMap } from '../utils/storageUtils';
+import { fetchDndBeyondCharacter } from '../utils/dndBeyondService.js';
+import { retrieveChunkedMap, storeChunkedMap, fileToBase64 } from '../utils/storageUtils';
 
 import * as fb from '../firebase';
 import { collection, addDoc } from 'firebase/firestore';
 import { useNewCampaign } from '../contexts/NewCampaignProvider';
 
 // START CHANGE: Add generatePlayer to props
-const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, onLogAction, edition, apiKey, onOpenDiceTray }) => {
-    const { updateCampaign } = useNewCampaign();
+const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, onLogAction, edition, apiKey, onOpenDiceTray, initialAction, onClearInitialAction }) => {
+    const { updateCampaign, gameParams } = useNewCampaign();
+    const dialog = useDialog();
     
     // FIX: Add a safety check. If data is missing, use an empty array.
     const playersList = data?.players || []; 
@@ -29,9 +31,20 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
         localStorage.setItem('dm_party_view_mode', viewMode);
     }, [viewMode]);
     // START CHANGE: Add state for D&D Beyond Importer
-    const [showDndBeyondImport, setShowDndBeyondImport] = useState(false);
-    const [showBuilder, setShowBuilder] = useState(false);
+    const [showDndBeyondImport, setShowDndBeyondImport] = useState(initialAction === 'dndbeyond');
+    const [quickActorModal, setQuickActorModal] = useState(null); // { isOpen: boolean, editId?: string, name?: string, image?: string, size?: number, ownerId?: string }
+    const [showBuilder, setShowBuilder] = useState(initialAction === 'builder');
     const [refreshCharacter, setRefreshCharacter] = useState(null);
+
+    useEffect(() => {
+        if (initialAction === 'dndbeyond') {
+            setShowDndBeyondImport(true);
+            onClearInitialAction?.();
+        } else if (initialAction === 'builder') {
+            setShowBuilder(true);
+            onClearInitialAction?.();
+        }
+    }, [initialAction, onClearInitialAction]);
     // END CHANGE
     // END CHANGE
     const [viewingCharacterId, setViewingCharacterId] = useState(null);
@@ -76,17 +89,7 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
         setIsImporting(true);
         setImportStatus("Fetching from D&D Beyond...");
         try {
-            const dndBeyondRaw = String(refreshCharacter.dndBeyondId);
-            const characterId = dndBeyondRaw.match(/\/characters\/(\d+)/)?.[1] || dndBeyondRaw.match(/^\d+$/)?.[0] || dndBeyondRaw;
-            const encodedUrl = encodeURIComponent(`https://character-service.dndbeyond.com/character/v5/character/${characterId}`);
-            let response = await fetch(`https://corsproxy.io/?url=${encodedUrl}`).catch(() => null);
-
-            if (!response || !response.ok) {
-                response = await fetch(`https://api.allorigins.win/raw?url=${encodedUrl}`).catch(() => null);
-            }
-
-            if (!response || !response.ok) throw new Error(`Fetch failed. D&D Beyond's security might be blocking the request.`);
-            const jsonData = await response.json();
+            const jsonData = await fetchDndBeyondCharacter(refreshCharacter.dndBeyondId);
             const parsedData = parseDndBeyondJson(jsonData);
             const enrichedChar = await enrichCharacter(parsedData);
             
@@ -112,7 +115,7 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
                         spellSlots: existing.spellSlots,
                         currency: existing.currency
                     }, (k, v) => v === undefined ? null : v));
-                    alert(`Combined updates for ${cleanChar.name}`);
+                    toast(`Combined updates for ${cleanChar.name}`, "success");
                 } else {
                     // Overwrite mode: Completely replace the character except for ID, Owner, Image
                     cleanChar = JSON.parse(JSON.stringify({
@@ -122,7 +125,7 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
                         image: existing.image || enrichedChar.image,
                         bio: { ...enrichedChar.bio, notes: existing.bio?.notes || enrichedChar.bio?.notes }
                     }, (k, v) => v === undefined ? null : v));
-                    alert(`Overwrote ${cleanChar.name} with fresh D&D Beyond data.`);
+                    toast(`Overwrote ${cleanChar.name} with fresh D&D Beyond data.`, "success");
                 }
                 
                 const newPlayers = [...pList];
@@ -130,7 +133,7 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
                 updateCampaign({ players: newPlayers });
             }
         } catch(err) {
-            alert("Refresh failed: " + err.message);
+            toast("Refresh failed: " + err.message, "error");
         }
         setRefreshCharacter(null);
         setIsImporting(false);
@@ -151,7 +154,71 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
         updateCampaign({ players: newPlayers });
     };
 
+    const handleSaveQuickHero = async ({ editId, name, image, size, ownerId }) => {
+        const cleanName = (name || '').trim() || 'New Hero';
+        const cleanImage = (image || '').trim();
+        const cleanSize = Number(size) || 1;
+        const cleanOwnerId = ownerId || null;
+
+        const currentData = dataRef.current || {};
+        const currentPlayers = currentData.players || [];
+
+        if (editId) {
+            const updatedPlayers = currentPlayers.map(p => String(p.id) === String(editId) ? {
+                ...p,
+                name: cleanName,
+                image: cleanImage,
+                size: cleanSize,
+                ownerId: cleanOwnerId,
+                isSimple: true,
+                noSheet: true
+            } : p);
+            updateCampaign({ players: updatedPlayers });
+        } else {
+            const newChar = {
+                id: `hero_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+                name: cleanName,
+                image: cleanImage,
+                size: cleanSize,
+                type: 'pc',
+                hp: 20,
+                maxHp: 20,
+                ac: 10,
+                speed: 30,
+                ownerId: cleanOwnerId,
+                isSimple: true,
+                noSheet: true
+            };
+            updateCampaign({ players: [...currentPlayers, newChar] });
+        }
+
+        setQuickActorModal(null);
+        toast(`Saved ${cleanName}`, "success");
+    };
+
+    const handleDeleteQuickHero = async (modalData) => {
+        if (!modalData?.editId) return;
+        if (!(await dialog.confirm(`Delete ${modalData.name || 'this hero'}?`))) return;
+        const currentData = dataRef.current || {};
+        const currentPlayers = (currentData.players || []).filter(p => String(p.id) !== String(modalData.editId));
+        updateCampaign({ players: currentPlayers });
+        setQuickActorModal(null);
+        toast(`Deleted ${modalData.name || 'hero'}`, "info");
+    };
+
     const openSheet = (character) => {
+        if (character.isSimple || character.noSheet) {
+            setQuickActorModal({
+                isOpen: true,
+                category: 'pc',
+                editId: character.id,
+                name: character.name,
+                image: character.image,
+                size: character.size || 1,
+                ownerId: character.ownerId || null
+            });
+            return;
+        }
         useCharacterStore.getState().loadCharacter(character);
         setViewingCharacterId(character.id);
     };
@@ -192,7 +259,7 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
         if (existingIndex !== -1) {
             newPlayers = [...playersList];
             newPlayers[existingIndex] = cleanChar;
-            alert(`Updated existing hero: ${cleanChar.name}`);
+            toast(`Updated existing hero: ${cleanChar.name}`, "success");
         } else {
             newPlayers = [...playersList, cleanChar];
         }
@@ -205,20 +272,28 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
                 const charRef = collection(fb.db, 'users', user.uid, 'characters');
                 // Strip the numeric ID so Firestore uses its own doc ID
                 const { id, ...charWithoutId } = cleanChar;
-                const safeHubChar = { ...charWithoutId, dateCreated: Date.now() };
+                
+                const campName = data?.campaign?.genesis?.campaignName || data?.campaignName || "Unknown Campaign";
+                
+                const safeHubChar = { 
+                    ...charWithoutId, 
+                    dateCreated: Date.now(),
+                    campaignId: gameParams?.code || data?.id || null,
+                    campaignName: campName
+                };
                 
                 addDoc(charRef, safeHubChar)
                     .then(docRef => {
                         console.log("Successfully saved character to hub with ID:", docRef.id);
-                        alert("Character saved to your personal Hub!");
+                        toast("Character saved to your personal Hub!", "success");
                     })
                     .catch(e => {
                         console.error("Firebase addDoc error:", e);
-                        alert("Failed to save to Hub: " + e.message);
+                        toast("Failed to save to Hub: " + e.message, "error");
                     });
             } catch(e) {
                 console.error("Failed to setup save character to hub", e);
-                alert("Failed to setup save to Hub: " + e.message);
+                toast("Failed to setup save to Hub: " + e.message, "error");
             }
         }
         // END CHANGE
@@ -246,7 +321,7 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
         }
 
         // 4. Block everyone else
-        alert("You cannot peer into the soul of another adventurer.");
+        dialog.alert("You cannot peer into the soul of another adventurer.");
     };
     // END CHANGE
 
@@ -263,16 +338,16 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
             handleNewCharacter(charData);
         } catch (err) {
             console.error(err);
-            alert("Import Failed: " + err.message);
+            toast("Import Failed: " + err.message, "error");
         }
         setIsImporting(false);
         e.target.value = null;
     };
     // END CHANGE
 
-    const handleDelete = (id, e) => {
+    const handleDelete = async (id, e) => {
         e.stopPropagation();
-        if (!confirm("Delete this hero permanently?")) return;
+        if (!(await dialog.confirm("Delete this hero permanently?"))) return;
         const currentData = dataRef.current;
         const newPlayers = currentData.players.filter(p => p.id !== id);
         updateCampaign({ players: newPlayers });
@@ -297,7 +372,7 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
             let imageBlob = null;
             let imageUrl = charForModel.image;
             if (!imageUrl) {
-                alert("No image available to forge a 3D mini.");
+                toast("No image available to forge a 3D mini.", "error");
                 setIsForging3D(false);
                 return;
             }
@@ -356,7 +431,7 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
             
         } catch (e) {
             console.error(e);
-            alert("3D Forge Failed: " + e.message);
+            toast("3D Forge Failed: " + e.message, "error");
         } finally {
             setIsForging3D(false);
         }
@@ -377,7 +452,7 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
         }
         
         handleSheetSave(finalChar);
-        alert(`Updated 3D model for ${finalChar.name}!`);
+        toast(`Updated 3D model for ${finalChar.name}!`, "success");
         if (viewingCharacterId === finalChar.id) {
             useCharacterStore.getState().loadCharacter(finalChar);
         }
@@ -510,6 +585,19 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
                     </div>
                     
                     <div className="flex flex-wrap gap-2 justify-center items-center">
+                        <button 
+                            onClick={() => setQuickActorModal({
+                                isOpen: true,
+                                editId: null,
+                                name: '',
+                                image: '',
+                                size: 1,
+                                ownerId: null
+                            })}
+                            className="bg-amber-600 hover:bg-amber-500 text-white py-2 px-4 rounded-lg font-bold flex items-center gap-2 shadow-lg transition-all border border-amber-500/50"
+                        >
+                            <Icon name="zap" size={18} /> <span className="hidden md:inline">+ Quick Hero</span>
+                        </button>
                         <button onClick={() => setShowDndBeyondImport(true)} className="bg-slate-800 hover:bg-slate-700 text-white py-2 px-4 rounded-lg font-bold flex items-center gap-2 shadow-lg transition-all border border-slate-700 hover:border-indigo-500/50">
                             <Icon name="download" size={18} /> <span className="hidden md:inline">Import D&D Beyond</span>
                         </button>
@@ -638,6 +726,164 @@ const PartyView = ({ data, role, setView, user, aiHelper, onDiceRoll, diceLog, o
                         setShowBuilder(false);
                     }}
                 />
+            )}
+
+            {/* Quick Hero Modal (Name & Photo Only) */}
+            {quickActorModal?.isOpen && (
+                <div className="fixed inset-0 z-[100] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
+                    <div className="max-w-md w-full bg-slate-900 border border-slate-700 rounded-xl shadow-2xl overflow-hidden flex flex-col">
+                        <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-950">
+                            <div className="flex items-center gap-2">
+                                <div className="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold">
+                                    <Icon name="zap" size={18} />
+                                </div>
+                                <div>
+                                    <h3 className="font-bold text-white text-base">
+                                        {quickActorModal.editId ? 'Edit Quick Hero' : 'New Quick Hero'}
+                                    </h3>
+                                    <p className="text-xs text-slate-400">Name & Photo Only (No Sheet)</p>
+                                </div>
+                            </div>
+                            <button onClick={() => setQuickActorModal(null)} className="text-slate-400 hover:text-white p-1"><Icon name="x" size={18}/></button>
+                        </div>
+
+                        <div className="p-5 space-y-4 max-h-[70vh] overflow-y-auto custom-scroll">
+                            {/* Photo / Avatar Section */}
+                            <div className="flex flex-col items-center gap-3">
+                                <div className="w-24 h-24 rounded-2xl bg-slate-800 border-2 border-slate-700 overflow-hidden shrink-0 flex items-center justify-center relative shadow-inner">
+                                    {quickActorModal.image ? (
+                                        <img src={quickActorModal.image} className="w-full h-full object-cover" alt="Preview" referrerPolicy="no-referrer" />
+                                    ) : (
+                                        <div className="font-bold text-3xl text-slate-500 uppercase">{quickActorModal.name?.[0] || '?'}</div>
+                                    )}
+                                </div>
+
+                                <div className="w-full space-y-2">
+                                    <input 
+                                        type="text"
+                                        value={quickActorModal.image || ''}
+                                        onChange={(e) => setQuickActorModal(prev => ({ ...prev, image: e.target.value }))}
+                                        placeholder="Paste Image URL (https://...)"
+                                        className="w-full bg-slate-800 border border-slate-700 focus:border-amber-500 rounded-lg px-3 py-2 text-xs text-white outline-none transition-colors"
+                                    />
+                                    <div className="flex items-center justify-center gap-2">
+                                        <label className="cursor-pointer text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded border border-slate-700 flex items-center gap-1.5 transition-colors">
+                                            <Icon name="upload" size={13} /> Upload File
+                                            <input 
+                                                type="file" 
+                                                onChange={async (e) => {
+                                                    const file = e.target.files?.[0];
+                                                    if (!file) return;
+                                                    try {
+                                                        const b64 = await fileToBase64(file);
+                                                        const chunkedUrl = await storeChunkedMap(b64, file.name);
+                                                        setQuickActorModal(prev => ({ ...prev, image: chunkedUrl }));
+                                                    } catch(err) {
+                                                        alert("Failed to upload image: " + err.message);
+                                                    }
+                                                }} 
+                                                accept="image/*" 
+                                                className="hidden" 
+                                            />
+                                        </label>
+                                        {quickActorModal.image && (
+                                            <button
+                                                type="button"
+                                                onClick={() => setQuickActorModal(prev => ({ ...prev, image: '' }))}
+                                                className="text-xs text-slate-400 hover:text-red-400 transition-colors"
+                                            >
+                                                Clear
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Name Input */}
+                            <div>
+                                <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block mb-1">Hero Name</label>
+                                <input 
+                                    type="text"
+                                    value={quickActorModal.name || ''}
+                                    onChange={(e) => setQuickActorModal(prev => ({ ...prev, name: e.target.value }))}
+                                    placeholder="e.g. Sir Reginald, Goblin Scout..."
+                                    className="w-full bg-slate-800 border border-slate-700 focus:border-amber-500 rounded-lg px-3 py-2 text-sm text-white outline-none transition-colors"
+                                />
+                            </div>
+
+                            {/* Grid Size */}
+                            <div>
+                                <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block mb-1">Grid Size</label>
+                                <div className="grid grid-cols-4 gap-2">
+                                    {[
+                                        { val: 1, label: '1x1 (Med)' },
+                                        { val: 2, label: '2x2 (Lrg)' },
+                                        { val: 3, label: '3x3 (Huge)' },
+                                        { val: 4, label: '4x4 (Garg)' },
+                                    ].map(s => (
+                                        <button
+                                            key={s.val}
+                                            type="button"
+                                            onClick={() => setQuickActorModal(prev => ({ ...prev, size: s.val }))}
+                                            className={`py-1.5 text-xs font-semibold rounded border transition-all ${
+                                                Number(quickActorModal.size || 1) === s.val ? 'bg-amber-950/80 border-amber-500 text-amber-200' : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-slate-200'
+                                            }`}
+                                        >
+                                            {s.label}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Player Assignment */}
+                            <div>
+                                <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block mb-1">Player Assignment (Optional)</label>
+                                <select
+                                    value={quickActorModal.ownerId || ''}
+                                    onChange={(e) => setQuickActorModal(prev => ({ ...prev, ownerId: e.target.value || null }))}
+                                    className="w-full bg-slate-800 border border-slate-700 focus:border-amber-500 rounded-lg px-3 py-2 text-xs text-white outline-none"
+                                >
+                                    <option value="">-- No Player Assigned --</option>
+                                    {Object.entries(data?.activeUsers || {}).map(([uid, rawName]) => {
+                                        const displayName = typeof rawName === 'object' ? rawName?.displayName : rawName;
+                                        const clean = displayName?.includes('@') ? displayName.split('@')[0] : (displayName || 'Player');
+                                        return <option key={uid} value={uid}>{clean}</option>;
+                                    })}
+                                </select>
+                            </div>
+                        </div>
+
+                        <div className="p-4 border-t border-slate-800 bg-slate-950/60 flex items-center justify-between">
+                            <div>
+                                {quickActorModal.editId && (
+                                    <button
+                                        type="button"
+                                        onClick={() => handleDeleteQuickHero(quickActorModal.editId)}
+                                        className="text-xs text-red-400 hover:text-red-300 hover:bg-red-950/50 px-2.5 py-1.5 rounded border border-red-900/50 flex items-center gap-1 transition-colors"
+                                    >
+                                        <Icon name="trash-2" size={13} /> Delete
+                                    </button>
+                                )}
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setQuickActorModal(null)}
+                                    className="px-4 py-1.5 text-xs text-slate-400 hover:text-white transition-colors"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => handleSaveQuickHero(quickActorModal)}
+                                    className="px-5 py-1.5 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-white font-bold text-xs rounded-lg shadow-lg transition-all"
+                                >
+                                    {quickActorModal.editId ? 'Save Changes' : 'Create Hero'}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             )}
 
         </div>

@@ -9,8 +9,9 @@ import { enrichCharacter } from '../utils/srdEnricher.js';
 import { useNewCampaign } from '../contexts/NewCampaignProvider';
 import { searchGithubModels } from '../utils/miniManifest';
 import { Client } from "@gradio/client";
-import { retrieveChunkedMap, storeChunkedMap } from '../utils/storageUtils';
+import { retrieveChunkedMap, storeChunkedMap, fileToBase64 } from '../utils/storageUtils';
 import ResolvedImage from './ResolvedImage';
+import { useDialog } from './DialogProvider';
 
 const SafeImage = ({ src, className, alt }) => {
     if (!src) return null;
@@ -23,9 +24,11 @@ const SafeImage = ({ src, className, alt }) => {
 // START CHANGE: Add generateNpc to props
 const NpcView = ({ data, setData, role, setChatInput, setView, onPossess, aiHelper, apiKey, edition, onDiceRoll, diceLog, generateNpc, onOpenDiceTray }) => {
     const { updateCampaign, user } = useNewCampaign();
+    const dialog = useDialog();
     // View State
     const [viewingNpcId, setViewingNpcId] = useState(null);
     const [editableName, setEditableName] = useState('');
+    const [quickActorModal, setQuickActorModal] = useState(null); // { isOpen: boolean, category: 'npc' | 'companion', editId?: string, name?: string, image?: string, size?: number, ownerId?: string }
 
     const viewingNpc = useMemo(() => {
         if (!viewingNpcId) return null;
@@ -96,6 +99,37 @@ const NpcView = ({ data, setData, role, setChatInput, setView, onPossess, aiHelp
     // --- FIX: FILTER OUT INSTANCES (CLONES) ---
     // This stops the list from showing "Goblin", "Goblin", "Goblin" if you have 3 on the map.
     const visibleNpcs = (role === 'dm' ? npcs : npcs.filter(n => !n.isHidden)).filter(n => !n.isInstance);
+    const assignedNpcs = visibleNpcs.filter(n => n.ownerId);
+    const unassignedNpcs = visibleNpcs.filter(n => !n.ownerId);
+
+    const getPlayerDisplayName = (ownerId) => {
+        if (!ownerId) return 'Unassigned';
+        const active = data?.activeUsers?.[ownerId];
+        if (active) {
+            const raw = typeof active === 'object' ? active.displayName : active;
+            if (raw) return raw.includes('@') ? raw.split('@')[0] : raw;
+        }
+        const playerChar = (data?.players || []).find(p => p.ownerId === ownerId || String(data?.assignments?.[ownerId]) === String(p.id));
+        if (playerChar) return playerChar.name;
+        return 'Player';
+    };
+
+    const handleAssignNpc = (npc, targetUid, e) => {
+        if (e) e.stopPropagation();
+        const currentData = dataRef.current;
+        const currentNpcs = (currentData.npcs || []).filter(n => n && n.id);
+        const newNpcs = currentNpcs.map(n => {
+            if (String(n.id) === String(npc.id)) {
+                return {
+                    ...n,
+                    ownerId: targetUid || null,
+                    isHidden: targetUid ? false : n.isHidden // Automatically reveal when assigned!
+                };
+            }
+            return n;
+        });
+        updateCampaign({ npcs: newNpcs });
+    };
 
     // --- HELPER: Process Puter Image ---
     const processPuterImage = async (imgElement) => {
@@ -161,7 +195,7 @@ const NpcView = ({ data, setData, role, setChatInput, setView, onPossess, aiHelp
             setShowModelPicker(true);
             setMiniSearchQuery(finalNpc.name);
             handleMiniSearch(finalNpc.name, finalNpc.race);
-        } else { alert("The Forge failed."); }
+        } else { toast("The Forge failed.", "error"); }
         setIsForging(false);
     };
     // END CHANGE
@@ -241,11 +275,11 @@ ${pasteTextContent}`;
                 setMiniSearchQuery(finalNpc.name);
                 handleMiniSearch(finalNpc.name, finalNpc.race);
             } catch (e) {
-                alert("Failed to parse the AI response into a valid NPC. Check the text format.");
+                toast("Failed to parse the AI response into a valid NPC. Check the text format.", "error");
                 console.error("AI Parse Error:", e, resultText);
             }
         } catch (e) {
-            alert("AI request failed.");
+            toast("AI request failed.", "error");
             console.error(e);
         }
         setIsParsingText(false);
@@ -266,7 +300,7 @@ ${pasteTextContent}`;
             const data = await res.json();
             
             if (data.count === 0) {
-                alert("No monsters found in the SRD with that name.");
+                toast("No monsters found in the SRD with that name.", "error");
                 setCompendiumResults([]);
             } else {
                 const results = data.results.slice(0, 20);
@@ -274,7 +308,7 @@ ${pasteTextContent}`;
             }
         } catch (e) {
             console.error(e);
-            alert("Could not connect to D&D 5e API.");
+            toast("Could not connect to D&D 5e API.", "error");
         }
         setIsLoadingCompendium(false);
     };
@@ -415,7 +449,7 @@ ${pasteTextContent}`;
 
         } catch (e) {
             console.error(e);
-            alert("Failed to import monster details. Check console.");
+            toast("Failed to import monster details. Check console.", "error");
         }
         setIsLoadingCompendium(false);
     };
@@ -432,7 +466,7 @@ ${pasteTextContent}`;
             let imageBlob = null;
             let imageUrl = npcForModel.image;
             if (!imageUrl) {
-                alert("No image available to forge a 3D mini.");
+                toast("No image available to forge a 3D mini.", "error");
                 setIsForging3D(false);
                 return;
             }
@@ -529,7 +563,7 @@ ${pasteTextContent}`;
             
         } catch (e) {
             console.error(e);
-            alert("3D Forge Failed: " + e.message);
+            toast("3D Forge Failed: " + e.message, "error");
         } finally {
             setIsForging3D(false);
         }
@@ -561,10 +595,10 @@ ${pasteTextContent}`;
         }
         if (isNewNpc) {
             handleNpcComplete(finalNpc);
-            alert(`Successfully summoned ${finalNpc.name}!`);
+            toast(`Successfully summoned ${finalNpc.name}!`, "success");
         } else {
             handleSheetSave(finalNpc);
-            alert(`Updated 3D model for ${finalNpc.name}!`);
+            toast(`Updated 3D model for ${finalNpc.name}!`, "success");
             if (viewingNpcId === finalNpc.id) {
                 useCharacterStore.getState().loadCharacter(finalNpc);
             }
@@ -592,10 +626,10 @@ ${pasteTextContent}`;
             const rawData = await parsePdf(file);
             const charData = await enrichCharacter(rawData);
             handleNpcComplete(charData);
-            alert(`Success! Imported ${charData.name}`);
+            toast(`Success! Imported ${charData.name}`, "success");
         } catch (err) { 
             console.error(err);
-            alert("Import Failed: " + err.message); 
+            toast("Import Failed: " + err.message, "error"); 
         }
         setIsProcessing(false);
         e.target.value = null; 
@@ -617,9 +651,9 @@ ${pasteTextContent}`;
         e.target.value = null;
     };
 
-    const deleteNpc = (id, e) => {
+    const deleteNpc = async (id, e) => {
         e.stopPropagation(); 
-        if(!confirm("Delete this NPC?")) return;
+        if(!(await dialog.confirm("Delete this NPC?"))) return;
         const currentData = dataRef.current;
         const currentNpcs = (currentData.npcs || []).filter(n => n && n.id);
         const newNpcs = currentNpcs.filter(n => n.id !== id); 
@@ -635,7 +669,70 @@ ${pasteTextContent}`;
         updateCampaign({ npcs: newNpcs });
     };
 
+    const handleSaveQuickActor = async ({ category, editId, name, image, size, ownerId }) => {
+        const cleanName = (name || '').trim() || 'New Entity';
+        const cleanImage = (image || '').trim();
+        const cleanSize = Number(size) || 1;
+        const cleanOwnerId = ownerId || null;
+
+        const currentData = dataRef.current || {};
+        const currentNpcs = (currentData.npcs || []).filter(n => n && n.id);
+
+        if (editId) {
+            const updatedNpcs = currentNpcs.map(n => String(n.id) === String(editId) ? {
+                ...n,
+                name: cleanName,
+                image: cleanImage,
+                size: cleanSize,
+                ownerId: cleanOwnerId,
+                isHidden: cleanOwnerId ? false : (n.isHidden ?? false),
+                isSimple: true,
+                noSheet: true
+            } : n);
+            updateCampaign({ npcs: updatedNpcs });
+        } else {
+            const newNpc = {
+                id: `npc_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+                name: cleanName,
+                image: cleanImage,
+                size: cleanSize,
+                type: 'npc',
+                hp: { current: 10, max: 10 },
+                ac: 10,
+                speed: 30,
+                ownerId: cleanOwnerId,
+                isHidden: false,
+                isSimple: true,
+                noSheet: true
+            };
+            updateCampaign({ npcs: [...currentNpcs, newNpc] });
+        }
+
+        setQuickActorModal(null);
+    };
+
+    const handleDeleteQuickActor = async (modalData) => {
+        if (!modalData?.editId) return;
+        if (!(await dialog.confirm(`Delete ${modalData.name || 'this actor'}?`))) return;
+        const currentData = dataRef.current || {};
+        const currentNpcs = (currentData.npcs || []).filter(n => n && n.id && String(n.id) !== String(modalData.editId));
+        updateCampaign({ npcs: currentNpcs });
+        setQuickActorModal(null);
+    };
+
     const openSheet = (npc) => {
+        if (npc.isSimple || npc.noSheet) {
+            setQuickActorModal({
+                isOpen: true,
+                category: npc.ownerId ? 'companion' : 'npc',
+                editId: npc.id,
+                name: npc.name,
+                image: npc.image,
+                size: npc.size || 1,
+                ownerId: npc.ownerId || null
+            });
+            return;
+        }
         useCharacterStore.getState().loadCharacter(npc);
         setViewingNpcId(npc.id);
     };
@@ -766,6 +863,9 @@ ${pasteTextContent}`;
     {/* RESTRICTION APPLIED HERE */}
     {role === 'dm' && (
         <div className="flex flex-wrap gap-2 justify-center items-center">
+            <button onClick={() => setQuickActorModal({ isOpen: true, category: 'npc' })} className="bg-slate-800 hover:bg-slate-700 text-emerald-400 px-3.5 py-2 rounded-lg font-bold shadow-lg flex items-center gap-1.5 transition-all border border-emerald-900/50" title="Quick Token (Name & Photo only)">
+                <Icon name="image" size={18}/> <span>Quick Token</span>
+            </button>
             <button onClick={() => setShowCompendium(true)} className="bg-slate-800 hover:bg-slate-700 text-blue-400 px-4 py-2 rounded-lg font-bold shadow-lg flex items-center gap-2 transition-all border border-blue-900/50">
                 <Icon name="book" size={20}/> <span className="hidden md:inline">5e API</span>
             </button>
@@ -780,62 +880,245 @@ ${pasteTextContent}`;
     )}
 </div>
 
-                {/* GRID LAYOUT */}
-                <div className={viewMode === 'grid' ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" : "space-y-3"}>
-                    {visibleNpcs.map(npc => (
-                        viewMode === 'grid' ? (
-                            <div key={npc.id} onClick={() => openSheet(npc)} className={`group relative bg-slate-800 rounded-xl overflow-hidden border transition-all hover:-translate-y-1 cursor-pointer shadow-lg ${npc.isHidden ? 'border-dashed border-slate-600 opacity-75' : 'border-slate-700 hover:border-amber-500/50'}`}>
-                            <div className="h-32 bg-slate-700 relative overflow-hidden">
-                                {npc.image ? <SafeImage src={npc.image} className="w-full h-full object-cover opacity-60 group-hover:opacity-80 transition-opacity" alt={npc.name} /> : <div className="w-full h-full flex items-center justify-center bg-slate-700 opacity-20"><Icon name="skull" size={64}/></div>}
-                                <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-transparent to-transparent"></div>
-                                <div className="absolute top-2 right-2 flex gap-2">
-                                    {npc.isHidden && <div className="bg-slate-900/80 text-slate-300 text-xs font-bold px-2 py-1 rounded border border-slate-600 flex items-center gap-1"><Icon name="eye-off" size={12}/> Hidden</div>}
-                                </div>
+                {/* 1. COMPANIONS & ASSIGNED NPCS SECTION */}
+                {assignedNpcs.length > 0 && (
+                    <div className="space-y-4">
+                        <div className="flex items-center gap-2 border-b border-indigo-900/60 pb-2">
+                            <div className="p-1.5 rounded-lg bg-indigo-950/80 text-indigo-400 border border-indigo-500/30">
+                                <Icon name="shield" size={18} />
                             </div>
-                            <div className="p-4 relative -mt-8">
-                                <div className="flex justify-between items-end">
-                                    <div className="w-16 h-16 rounded-xl bg-slate-800 border-2 border-slate-600 shadow-2xl flex items-center justify-center overflow-hidden">
-                                        {npc.image ? <SafeImage src={npc.image} className="w-full h-full object-cover" alt={npc.name} /> : <span className="text-2xl font-bold text-slate-500">{npc.name?.[0]}</span>}
+                            <div>
+                                <h3 className="text-xl font-bold text-indigo-300">Companions & Assigned NPCs</h3>
+                                <p className="text-xs text-slate-400">Creatures, familiars, and allies under player control</p>
+                            </div>
+                            <span className="ml-auto bg-indigo-500/20 text-indigo-300 text-xs px-2.5 py-1 rounded-full border border-indigo-500/30 font-bold">
+                                {assignedNpcs.length}
+                            </span>
+                        </div>
+                        <div className={viewMode === 'grid' ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" : "space-y-3"}>
+                            {assignedNpcs.map(npc => {
+                                const assignedName = getPlayerDisplayName(npc.ownerId);
+                                return viewMode === 'grid' ? (
+                                    <div key={npc.id} onClick={() => openSheet(npc)} className={`group relative bg-slate-800 rounded-xl overflow-hidden border transition-all hover:-translate-y-1 cursor-pointer shadow-lg border-indigo-500/50 hover:border-indigo-400`}>
+                                        <div className="h-32 bg-slate-700 relative overflow-hidden">
+                                            {npc.image ? <SafeImage src={npc.image} className="w-full h-full object-cover opacity-60 group-hover:opacity-80 transition-opacity" alt={npc.name} /> : <div className="w-full h-full flex items-center justify-center bg-slate-700 opacity-20"><Icon name="skull" size={64}/></div>}
+                                            <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-transparent to-transparent"></div>
+                                            <div className="absolute top-2 right-2 flex flex-col items-end gap-1.5 z-10">
+                                                <div className="bg-indigo-950/95 text-indigo-200 text-xs font-bold px-2 py-1 rounded border border-indigo-500/40 flex items-center gap-1.5 shadow-md">
+                                                    <Icon name="user" size={12} className="text-indigo-400"/>
+                                                    <span>Assigned: <strong className="text-white">{assignedName}</strong></span>
+                                                </div>
+                                                {npc.isHidden && <div className="bg-slate-900/80 text-slate-300 text-xs font-bold px-2 py-1 rounded border border-slate-600 flex items-center gap-1"><Icon name="eye-off" size={12}/> Hidden</div>}
+                                            </div>
+                                        </div>
+                                        <div className="p-4 relative -mt-8">
+                                            <div className="flex justify-between items-end">
+                                                <div className="w-16 h-16 rounded-xl bg-slate-800 border-2 border-indigo-500/50 shadow-2xl flex items-center justify-center overflow-hidden shrink-0">
+                                                    {npc.image ? <SafeImage src={npc.image} className="w-full h-full object-cover" alt={npc.name} /> : <span className="text-2xl font-bold text-slate-500">{npc.name?.[0]}</span>}
+                                                </div>
+                                                <div className="flex-1 ml-3 mb-1 min-w-0">
+                                                    <h3 className="text-xl font-bold text-slate-100 leading-tight group-hover:text-indigo-300 truncate">{npc.name}</h3>
+                                                    <div className="flex items-center gap-2 mt-0.5">
+                                                        <p className="text-xs text-amber-600 font-bold uppercase tracking-wider truncate">{npc.race || 'Companion'} {npc.class || ''}</p>
+                                                        <span className="text-[9px] bg-indigo-500/20 text-indigo-300 px-1 rounded border border-indigo-500/30 font-mono font-bold">COMPANION</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {role === 'dm' && (
+                                                <div className="mt-3 pt-3 border-t border-slate-700/60 flex items-center justify-between gap-2" onClick={e => e.stopPropagation()}>
+                                                    <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                                                        <Icon name="user" size={13} className="text-indigo-400 shrink-0" />
+                                                        <select 
+                                                            value={npc.ownerId || ""}
+                                                            onChange={(e) => handleAssignNpc(npc, e.target.value || null, e)}
+                                                            className="bg-slate-900 border border-indigo-900/80 hover:border-indigo-500 text-xs text-indigo-200 rounded px-2 py-1 outline-none cursor-pointer w-full transition-colors font-medium"
+                                                            title="Reassign or unassign player"
+                                                        >
+                                                            <option value="">Clear Assignment</option>
+                                                            {Object.entries(data?.activeUsers || {}).map(([uid, rawName]) => {
+                                                                const displayName = typeof rawName === 'object' ? rawName?.displayName : rawName;
+                                                                const cleanName = displayName?.includes('@') ? displayName.split('@')[0] : (displayName || 'Player');
+                                                                return (
+                                                                    <option key={uid} value={uid}>
+                                                                        Assign: {cleanName}
+                                                                    </option>
+                                                                );
+                                                            })}
+                                                        </select>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                        {role === 'dm' && (
+                                            <div className="absolute top-2 left-2 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                                                <button onClick={(e) => deleteNpc(npc.id, e)} className="p-2 bg-red-900/80 text-white rounded hover:bg-red-700 shadow-lg" title="Delete"><Icon name="trash-2" size={14}/></button>
+                                                <button onClick={(e) => toggleHidden(npc, e)} className="p-2 bg-slate-700/80 text-white rounded hover:bg-slate-600 shadow-lg" title={npc.isHidden ? "Reveal to Players" : "Hide from Players"}><Icon name={npc.isHidden ? "eye" : "eye-off"} size={14}/></button>
+                                            </div>
+                                        )}
                                     </div>
-                                    <div className="flex-1 ml-3 mb-1 min-w-0">
-                                        <h3 className="text-xl font-bold text-slate-100 leading-tight group-hover:text-amber-400 truncate">{npc.name}</h3>
-                                        {/* START CHANGE: Master Blueprint Tag */}
-                                        <div className="flex items-center gap-2">
+                                ) : (
+                                    <div key={npc.id} onClick={() => openSheet(npc)} className={`group bg-slate-800 border border-indigo-500/50 hover:border-indigo-400 rounded-xl p-3 flex items-center gap-4 cursor-pointer shadow-lg transition-all hover:-translate-y-0.5`}>
+                                        <div className="w-12 h-12 rounded-lg bg-slate-700 border border-indigo-500/40 overflow-hidden shrink-0 relative">
+                                            {npc.image ? <SafeImage src={npc.image} className="w-full h-full object-cover" alt={npc.name} /> : <div className="w-full h-full flex items-center justify-center font-bold text-slate-500 text-xl">{npc.name?.[0]}</div>}
+                                            {npc.isHidden && <div className="absolute inset-0 bg-black/50 flex items-center justify-center"><Icon name="eye-off" size={16} className="text-slate-300"/></div>}
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                            <div className="flex items-center gap-2">
+                                                <h3 className="font-bold text-slate-100 group-hover:text-indigo-300 truncate">{npc.name}</h3>
+                                                <span className="text-[9px] bg-indigo-500/20 text-indigo-300 px-1 rounded border border-indigo-500/30 font-mono font-bold shrink-0">COMPANION</span>
+                                            </div>
+                                            <div className="flex flex-wrap items-center gap-2 mt-0.5">
+                                                <p className="text-xs text-amber-600 font-bold uppercase tracking-wider truncate">{npc.race || 'Companion'} {npc.class || ''}</p>
+                                                <span className="text-xs bg-indigo-950/80 text-indigo-300 border border-indigo-500/40 px-2 py-0.5 rounded flex items-center gap-1 font-semibold">
+                                                    <Icon name="user" size={11} className="text-indigo-400"/>
+                                                    <span>Assigned to <strong className="text-white">{assignedName}</strong></span>
+                                                </span>
+                                            </div>
+                                        </div>
+                                        {role === 'dm' && (
+                                            <div className="flex items-center gap-2 shrink-0" onClick={e => e.stopPropagation()}>
+                                                <select 
+                                                    value={npc.ownerId || ""}
+                                                    onChange={(e) => handleAssignNpc(npc, e.target.value || null, e)}
+                                                    className="bg-slate-900 border border-indigo-900/80 hover:border-indigo-500 text-xs text-indigo-200 rounded px-2 py-1 outline-none cursor-pointer"
+                                                    title="Reassign or unassign player"
+                                                >
+                                                    <option value="">Clear Assignment</option>
+                                                    {Object.entries(data?.activeUsers || {}).map(([uid, rawName]) => {
+                                                        const displayName = typeof rawName === 'object' ? rawName?.displayName : rawName;
+                                                        const cleanName = displayName?.includes('@') ? displayName.split('@')[0] : (displayName || 'Player');
+                                                        return (
+                                                            <option key={uid} value={uid}>
+                                                                Assign: {cleanName}
+                                                            </option>
+                                                        );
+                                                    })}
+                                                </select>
+                                                <button onClick={(e) => { e.stopPropagation(); toggleHidden(npc, e); }} className="p-2 bg-slate-700 text-slate-300 rounded hover:bg-slate-600 transition-colors" title={npc.isHidden ? "Reveal to Players" : "Hide from Players"}><Icon name={npc.isHidden ? "eye" : "eye-off"} size={16}/></button>
+                                                <button onClick={(e) => { e.stopPropagation(); deleteNpc(npc.id, e); }} className="p-2 bg-red-900/50 text-red-400 rounded hover:bg-red-700 hover:text-white transition-colors" title="Delete"><Icon name="trash-2" size={16}/></button>
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                )}
+
+                {/* 2. BESTIARY / UNASSIGNED NPCS SECTION */}
+                <div className="space-y-4">
+                    {assignedNpcs.length > 0 && (
+                        <div className="flex items-center gap-2 border-b border-slate-700 pb-2 pt-2">
+                            <div className="p-1.5 rounded-lg bg-slate-800 text-amber-500 border border-slate-700">
+                                <Icon name="skull" size={18} />
+                            </div>
+                            <div>
+                                <h3 className="text-xl font-bold text-slate-200">Monsters & Bestiary</h3>
+                                <p className="text-xs text-slate-400">World encounters and adversary stat blocks</p>
+                            </div>
+                            <span className="ml-auto bg-slate-800 text-slate-400 text-xs px-2.5 py-1 rounded-full border border-slate-700 font-bold">
+                                {unassignedNpcs.length}
+                            </span>
+                        </div>
+                    )}
+                    <div className={viewMode === 'grid' ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" : "space-y-3"}>
+                        {unassignedNpcs.map(npc => (
+                            viewMode === 'grid' ? (
+                                <div key={npc.id} onClick={() => openSheet(npc)} className={`group relative bg-slate-800 rounded-xl overflow-hidden border transition-all hover:-translate-y-1 cursor-pointer shadow-lg ${npc.isHidden ? 'border-dashed border-slate-600 opacity-75' : 'border-slate-700 hover:border-amber-500/50'}`}>
+                                    <div className="h-32 bg-slate-700 relative overflow-hidden">
+                                        {npc.image ? <SafeImage src={npc.image} className="w-full h-full object-cover opacity-60 group-hover:opacity-80 transition-opacity" alt={npc.name} /> : <div className="w-full h-full flex items-center justify-center bg-slate-700 opacity-20"><Icon name="skull" size={64}/></div>}
+                                        <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-transparent to-transparent"></div>
+                                        <div className="absolute top-2 right-2 flex gap-2">
+                                            {npc.isHidden && <div className="bg-slate-900/80 text-slate-300 text-xs font-bold px-2 py-1 rounded border border-slate-600 flex items-center gap-1"><Icon name="eye-off" size={12}/> Hidden</div>}
+                                        </div>
+                                    </div>
+                                    <div className="p-4 relative -mt-8">
+                                        <div className="flex justify-between items-end">
+                                            <div className="w-16 h-16 rounded-xl bg-slate-800 border-2 border-slate-600 shadow-2xl flex items-center justify-center overflow-hidden shrink-0">
+                                                {npc.image ? <SafeImage src={npc.image} className="w-full h-full object-cover" alt={npc.name} /> : <span className="text-2xl font-bold text-slate-500">{npc.name?.[0]}</span>}
+                                            </div>
+                                            <div className="flex-1 ml-3 mb-1 min-w-0">
+                                                <h3 className="text-xl font-bold text-slate-100 leading-tight group-hover:text-amber-400 truncate">{npc.name}</h3>
+                                                <div className="flex items-center gap-2">
+                                                    <p className="text-xs text-amber-600 font-bold uppercase tracking-wider truncate">{npc.race} {npc.class}</p>
+                                                    <span className="text-[9px] bg-indigo-500/20 text-indigo-400 px-1 rounded border border-indigo-500/30 font-mono">MASTER</span>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {role === 'dm' && (
+                                            <div className="mt-3 pt-3 border-t border-slate-700/60 flex items-center justify-between gap-2" onClick={e => e.stopPropagation()}>
+                                                <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                                                    <Icon name="user" size={13} className="text-slate-400 shrink-0" />
+                                                    <select 
+                                                        value={npc.ownerId || ""}
+                                                        onChange={(e) => handleAssignNpc(npc, e.target.value || null, e)}
+                                                        className="bg-slate-900 border border-slate-700 hover:border-indigo-500 text-xs text-slate-300 rounded px-2 py-1 outline-none cursor-pointer w-full transition-colors"
+                                                        title="Assign NPC to Player"
+                                                    >
+                                                        <option value="">Assign to Player...</option>
+                                                        {Object.entries(data?.activeUsers || {}).map(([uid, rawName]) => {
+                                                            const displayName = typeof rawName === 'object' ? rawName?.displayName : rawName;
+                                                            const cleanName = displayName?.includes('@') ? displayName.split('@')[0] : (displayName || 'Player');
+                                                            return (
+                                                                <option key={uid} value={uid}>
+                                                                    Assign: {cleanName}
+                                                                </option>
+                                                            );
+                                                        })}
+                                                    </select>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                    {role === 'dm' && (
+                                        <div className="absolute top-2 left-2 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                                            <button onClick={(e) => deleteNpc(npc.id, e)} className="p-2 bg-red-900/80 text-white rounded hover:bg-red-700 shadow-lg" title="Delete"><Icon name="trash-2" size={14}/></button>
+                                            <button onClick={(e) => toggleHidden(npc, e)} className="p-2 bg-slate-700/80 text-white rounded hover:bg-slate-600 shadow-lg" title={npc.isHidden ? "Reveal to Players" : "Hide from Players"}><Icon name={npc.isHidden ? "eye" : "eye-off"} size={14}/></button>
+                                        </div>
+                                    )}
+                                </div>
+                            ) : (
+                                <div key={npc.id} onClick={() => openSheet(npc)} className={`group bg-slate-800 border rounded-xl p-3 flex items-center gap-4 cursor-pointer shadow-lg transition-all hover:-translate-y-0.5 ${npc.isHidden ? 'border-dashed border-slate-600 opacity-75' : 'border-slate-700 hover:border-amber-500/50'}`}>
+                                    <div className="w-12 h-12 rounded-lg bg-slate-700 border border-slate-600 overflow-hidden shrink-0 relative">
+                                        {npc.image ? <SafeImage src={npc.image} className="w-full h-full object-cover" alt={npc.name} /> : <div className="w-full h-full flex items-center justify-center font-bold text-slate-500 text-xl">{npc.name?.[0]}</div>}
+                                        {npc.isHidden && <div className="absolute inset-0 bg-black/50 flex items-center justify-center"><Icon name="eye-off" size={16} className="text-slate-300"/></div>}
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                        <h3 className="font-bold text-slate-100 group-hover:text-amber-400 truncate">{npc.name}</h3>
+                                        <div className="flex items-center gap-2 mt-0.5">
                                             <p className="text-xs text-amber-600 font-bold uppercase tracking-wider truncate">{npc.race} {npc.class}</p>
                                             <span className="text-[9px] bg-indigo-500/20 text-indigo-400 px-1 rounded border border-indigo-500/30 font-mono">MASTER</span>
                                         </div>
                                     </div>
-                                </div> {/* START CHANGE: Added missing closing div for nameplate area */}
-                            </div>
-                            {role === 'dm' && (
-                                <div className="absolute top-2 left-2 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                    <button onClick={(e) => deleteNpc(npc.id, e)} className="p-2 bg-red-900/80 text-white rounded hover:bg-red-700 shadow-lg" title="Delete"><Icon name="trash-2" size={14}/></button>
-                                    <button onClick={(e) => toggleHidden(npc, e)} className="p-2 bg-slate-700/80 text-white rounded hover:bg-slate-600 shadow-lg" title={npc.isHidden ? "Reveal to Players" : "Hide from Players"}><Icon name={npc.isHidden ? "eye" : "eye-off"} size={14}/></button>
+                                    {role === 'dm' && (
+                                        <div className="flex items-center gap-2 shrink-0" onClick={e => e.stopPropagation()}>
+                                            <select 
+                                                value={npc.ownerId || ""}
+                                                onChange={(e) => handleAssignNpc(npc, e.target.value || null, e)}
+                                                className="bg-slate-900 border border-slate-700 hover:border-indigo-500 text-xs text-slate-300 rounded px-2 py-1 outline-none cursor-pointer"
+                                                title="Assign NPC to Player"
+                                            >
+                                                <option value="">Assign to Player...</option>
+                                                {Object.entries(data?.activeUsers || {}).map(([uid, rawName]) => {
+                                                    const displayName = typeof rawName === 'object' ? rawName?.displayName : rawName;
+                                                    const cleanName = displayName?.includes('@') ? displayName.split('@')[0] : (displayName || 'Player');
+                                                    return (
+                                                        <option key={uid} value={uid}>
+                                                            Assign: {cleanName}
+                                                        </option>
+                                                    );
+                                                })}
+                                            </select>
+                                            <button onClick={(e) => { e.stopPropagation(); toggleHidden(npc, e); }} className="p-2 bg-slate-700 text-slate-300 rounded hover:bg-slate-600 transition-colors" title={npc.isHidden ? "Reveal to Players" : "Hide from Players"}><Icon name={npc.isHidden ? "eye" : "eye-off"} size={16}/></button>
+                                            <button onClick={(e) => { e.stopPropagation(); deleteNpc(npc.id, e); }} className="p-2 bg-red-900/50 text-red-400 rounded hover:bg-red-700 hover:text-white transition-colors" title="Delete"><Icon name="trash-2" size={16}/></button>
+                                        </div>
+                                    )}
                                 </div>
-                            )}
-                            </div>
-                        ) : (
-                            <div key={npc.id} onClick={() => openSheet(npc)} className={`group bg-slate-800 border rounded-xl p-3 flex items-center gap-4 cursor-pointer shadow-lg transition-all hover:-translate-y-0.5 ${npc.isHidden ? 'border-dashed border-slate-600 opacity-75' : 'border-slate-700 hover:border-amber-500/50'}`}>
-                                <div className="w-12 h-12 rounded-lg bg-slate-700 border border-slate-600 overflow-hidden shrink-0 relative">
-                                    {npc.image ? <SafeImage src={npc.image} className="w-full h-full object-cover" alt={npc.name} /> : <div className="w-full h-full flex items-center justify-center font-bold text-slate-500 text-xl">{npc.name?.[0]}</div>}
-                                    {npc.isHidden && <div className="absolute inset-0 bg-black/50 flex items-center justify-center"><Icon name="eye-off" size={16} className="text-slate-300"/></div>}
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                    <h3 className="font-bold text-slate-100 group-hover:text-amber-400 truncate">{npc.name}</h3>
-                                    <div className="flex items-center gap-2 mt-0.5">
-                                        <p className="text-xs text-amber-600 font-bold uppercase tracking-wider truncate">{npc.race} {npc.class}</p>
-                                        <span className="text-[9px] bg-indigo-500/20 text-indigo-400 px-1 rounded border border-indigo-500/30 font-mono">MASTER</span>
-                                    </div>
-                                </div>
-                                {role === 'dm' && (
-                                    <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                        <button onClick={(e) => { e.stopPropagation(); toggleHidden(npc, e); }} className="p-2 bg-slate-700 text-slate-300 rounded hover:bg-slate-600 transition-colors" title={npc.isHidden ? "Reveal to Players" : "Hide from Players"}><Icon name={npc.isHidden ? "eye" : "eye-off"} size={16}/></button>
-                                        <button onClick={(e) => { e.stopPropagation(); deleteNpc(npc.id, e); }} className="p-2 bg-red-900/50 text-red-400 rounded hover:bg-red-700 hover:text-white transition-colors" title="Delete"><Icon name="trash-2" size={16}/></button>
-                                    </div>
-                                )}
-                            </div>
-                        )
-                    ))}
+                            )
+                        ))}
+                    </div>
                     {visibleNpcs.length === 0 && <div className="col-span-full py-12 text-center border-2 border-dashed border-slate-700 rounded-xl"><Icon name="ghost" size={48} className="mx-auto text-slate-600 mb-4"/><p className="text-slate-500">No entities found.</p></div>}
                 </div>
             </div>
@@ -857,7 +1140,12 @@ ${pasteTextContent}`;
                             ) : (
                                 <>
                                     <p className="text-slate-400 mb-8">How shall this creature arrive?</p>
-                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                                        <div onClick={() => { setShowCreationMenu(false); setQuickActorModal({ isOpen: true, category: 'npc' }); }} className="bg-slate-800 border-2 border-slate-700 hover:border-emerald-500 rounded-xl p-4 cursor-pointer group transition-all hover:-translate-y-1">
+                                            <div className="w-12 h-12 bg-emerald-900/30 text-emerald-400 rounded-full flex items-center justify-center mx-auto mb-2"><Icon name="image" size={24}/></div>
+                                            <h3 className="font-bold text-white">Quick Token</h3>
+                                            <p className="text-[10px] text-slate-400">Name & Photo only.</p>
+                                        </div>
                                         <div onClick={() => { setShowCreationMenu(false); setShowCompendium(true); }} className="bg-slate-800 border-2 border-slate-700 hover:border-blue-500 rounded-xl p-4 cursor-pointer group transition-all hover:-translate-y-1">
                                             <div className="w-12 h-12 bg-blue-900/30 text-blue-500 rounded-full flex items-center justify-center mx-auto mb-2"><Icon name="book" size={24}/></div>
                                             <h3 className="font-bold text-white">5e API</h3>
@@ -914,7 +1202,7 @@ ${pasteTextContent}`;
                         </div>
                         <div className="flex-1 p-0 overflow-hidden relative">
                             <textarea readOnly value={debugOutput} className="w-full h-full bg-slate-950 text-green-400 font-mono text-xs p-4 resize-none outline-none custom-scroll"/>
-                            <button onClick={() => { navigator.clipboard.writeText(debugOutput); alert("Copied to clipboard!"); }} className="absolute top-4 right-4 bg-slate-800 hover:bg-slate-700 text-white text-xs px-3 py-1 rounded border border-slate-600 shadow-lg">Copy JSON</button>
+                            <button onClick={() => { navigator.clipboard.writeText(debugOutput); toast("Copied to clipboard!", "success"); }} className="absolute top-4 right-4 bg-slate-800 hover:bg-slate-700 text-white text-xs px-3 py-1 rounded border border-slate-600 shadow-lg">Copy JSON</button>
                         </div>
                     </div>
                 </div>
@@ -1056,6 +1344,164 @@ ${pasteTextContent}`;
                             </div>
                                 </>
                             )}
+                        </div>
+                    </div>
+                </div>
+            )}
+            {/* Quick Actor Modal (Name & Photo Only) */}
+            {quickActorModal && (
+                <div className="fixed inset-0 z-[110] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
+                    <div className="max-w-md w-full bg-slate-900 border border-slate-700 rounded-xl shadow-2xl overflow-hidden flex flex-col">
+                        <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-950">
+                            <div className="flex items-center gap-2">
+                                <div className="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold">
+                                    <Icon name="image" size={18} />
+                                </div>
+                                <div>
+                                    <h3 className="font-bold text-white text-base">{quickActorModal.editId ? 'Edit Quick Token' : 'Create Quick Token'}</h3>
+                                    <p className="text-[11px] text-slate-400">Name & photo only • No character sheet</p>
+                                </div>
+                            </div>
+                            <button onClick={() => setQuickActorModal(null)} className="text-slate-400 hover:text-white p-1"><Icon name="x" size={20}/></button>
+                        </div>
+
+                        <div className="p-5 space-y-4 max-h-[75vh] overflow-y-auto custom-scroll">
+                            {/* Name Input */}
+                            <div>
+                                <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block mb-1">Entity Name</label>
+                                <input 
+                                    type="text"
+                                    value={quickActorModal.name || ''}
+                                    onChange={(e) => setQuickActorModal(prev => ({ ...prev, name: e.target.value }))}
+                                    placeholder="e.g. Goblin Scout, Tavern Keeper"
+                                    autoFocus
+                                    className="w-full bg-slate-800 border border-slate-700 focus:border-emerald-500 rounded-lg px-3 py-2 text-white text-sm outline-none transition-colors font-medium"
+                                />
+                            </div>
+
+                            {/* Photo & Avatar Preview */}
+                            <div>
+                                <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block mb-1">Token Photo</label>
+                                <div className="flex gap-3 items-center">
+                                    <div className="w-16 h-16 rounded-full bg-slate-800 border-2 border-slate-700 overflow-hidden shrink-0 flex items-center justify-center relative shadow-inner">
+                                        {quickActorModal.image ? (
+                                            <SafeImage src={quickActorModal.image} className="w-full h-full object-cover" alt="Preview" />
+                                        ) : (
+                                            <div className="font-bold text-2xl text-slate-500 uppercase">{quickActorModal.name?.[0] || '?'}</div>
+                                        )}
+                                    </div>
+                                    <div className="flex-1 space-y-2">
+                                        <input 
+                                            type="text"
+                                            value={quickActorModal.image || ''}
+                                            onChange={(e) => setQuickActorModal(prev => ({ ...prev, image: e.target.value }))}
+                                            placeholder="Paste Image URL (https://...)"
+                                            className="w-full bg-slate-800 border border-slate-700 focus:border-emerald-500 rounded-lg px-3 py-1.5 text-xs text-white outline-none transition-colors"
+                                        />
+                                        <div className="flex items-center gap-2">
+                                            <label className="cursor-pointer text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1 rounded border border-slate-700 flex items-center gap-1.5 transition-colors">
+                                                <Icon name="upload" size={13} /> Upload File
+                                                <input 
+                                                    type="file" 
+                                                    onChange={async (e) => {
+                                                        const file = e.target.files?.[0];
+                                                        if (!file) return;
+                                                        try {
+                                                            const b64 = await fileToBase64(file);
+                                                            const chunkedUrl = await storeChunkedMap(b64, file.name);
+                                                            setQuickActorModal(prev => ({ ...prev, image: chunkedUrl }));
+                                                        } catch(err) {
+                                                            alert("Failed to upload image: " + err.message);
+                                                        }
+                                                    }} 
+                                                    accept="image/*" 
+                                                    className="hidden" 
+                                                />
+                                            </label>
+                                            {quickActorModal.image && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setQuickActorModal(prev => ({ ...prev, image: '' }))}
+                                                    className="text-xs text-slate-400 hover:text-red-400 transition-colors"
+                                                >
+                                                    Clear
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Size Selector */}
+                            <div>
+                                <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block mb-1">Grid Size</label>
+                                <div className="grid grid-cols-4 gap-2">
+                                    {[
+                                        { val: 1, label: '1x1 (Med)' },
+                                        { val: 2, label: '2x2 (Lrg)' },
+                                        { val: 3, label: '3x3 (Huge)' },
+                                        { val: 4, label: '4x4 (Garg)' },
+                                    ].map(s => (
+                                        <button
+                                            key={s.val}
+                                            type="button"
+                                            onClick={() => setQuickActorModal(prev => ({ ...prev, size: s.val }))}
+                                            className={`py-1.5 text-xs font-semibold rounded border transition-all ${
+                                                Number(quickActorModal.size || 1) === s.val ? 'bg-emerald-950/80 border-emerald-500 text-emerald-200' : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-slate-200'
+                                            }`}
+                                        >
+                                            {s.label}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Player Assignment */}
+                            <div>
+                                <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block mb-1">Player Assignment (Optional)</label>
+                                <select
+                                    value={quickActorModal.ownerId || ''}
+                                    onChange={(e) => setQuickActorModal(prev => ({ ...prev, ownerId: e.target.value || null }))}
+                                    className="w-full bg-slate-800 border border-slate-700 focus:border-emerald-500 rounded-lg px-3 py-2 text-xs text-white outline-none"
+                                >
+                                    <option value="">-- No Player Assigned --</option>
+                                    {Object.entries(data?.activeUsers || {}).map(([uid, rawName]) => {
+                                        const displayName = typeof rawName === 'object' ? rawName?.displayName : rawName;
+                                        const clean = displayName?.includes('@') ? displayName.split('@')[0] : (displayName || 'Player');
+                                        return <option key={uid} value={uid}>{clean}</option>;
+                                    })}
+                                </select>
+                            </div>
+                        </div>
+
+                        <div className="p-4 border-t border-slate-800 bg-slate-950/60 flex items-center justify-between">
+                            <div>
+                                {quickActorModal.editId && (
+                                    <button
+                                        type="button"
+                                        onClick={() => handleDeleteQuickActor(quickActorModal)}
+                                        className="text-xs text-red-400 hover:text-red-300 hover:bg-red-950/50 px-2.5 py-1.5 rounded border border-red-900/50 flex items-center gap-1 transition-colors"
+                                    >
+                                        <Icon name="trash-2" size={13} /> Delete
+                                    </button>
+                                )}
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setQuickActorModal(null)}
+                                    className="px-4 py-1.5 text-xs text-slate-400 hover:text-white transition-colors"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => handleSaveQuickActor(quickActorModal)}
+                                    className="px-5 py-1.5 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white font-bold text-xs rounded-lg shadow-lg transition-all"
+                                >
+                                    {quickActorModal.editId ? 'Save Changes' : 'Create Token'}
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>

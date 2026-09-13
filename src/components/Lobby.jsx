@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import Icon from './Icon';
+import { useToast } from './ToastProvider';
+import { useDialog } from './DialogProvider';
 import { useNewCampaign } from '../contexts/NewCampaignProvider';
 import * as fb from '../firebase';
 import { doc, getDoc, setDoc, collection, getDocs, addDoc, deleteDoc, updateDoc, query, where, onSnapshot, deleteField, arrayRemove } from 'firebase/firestore';
@@ -9,6 +11,8 @@ import CharacterBuilder from '../utils/CharacterBuilder';
 
 const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
     const { joinCampaign } = useNewCampaign();
+    const toast = useToast();
+    const dialog = useDialog();
     const [joinCode, setJoinCode] = useState("");
     const [isLoggingIn, setIsLoggingIn] = useState(false);
     const [recents, setRecents] = useState([]);
@@ -54,7 +58,7 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
             }
         } catch (err) {
             console.error("Failed to update realm", err);
-            alert("Failed to update realm details.");
+            toast("Failed to update realm details.", "error");
         }
         setEditingRealm(null);
     };
@@ -109,10 +113,10 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
             await user.updateProfile({ displayName: newName, photoURL: newPhoto });
             setLocalDisplayName(newName);
             setLocalPhotoUrl(newPhoto);
-            alert("Profile updated successfully!");
+            toast("Profile updated successfully!", "success");
         } catch (err) {
             console.error("Failed to update profile", err);
-            alert("Failed to update profile.");
+            toast("Failed to update profile.", "error");
         }
     };
     
@@ -142,7 +146,7 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                         const campaignDoc = snapshot.docs[0];
                         handleJoinClick(campaignDoc.id);
                     } else {
-                        alert("This invite link is invalid or has been reset by the Dungeon Master.");
+                        dialog.alert("This invite link is invalid or has been reset by the Dungeon Master.");
                     }
                 } catch (e) {
                     console.error("Failed to resolve invite link", e);
@@ -402,11 +406,11 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                 }
             }
             
-            alert(recoveredCount > 0 ? `Successfully recovered ${recoveredCount} missing realm(s)!` : "No missing realms found to recover.");
+            toast(recoveredCount > 0 ? `Successfully recovered ${recoveredCount} missing realm(s)!` : "No missing realms found to recover.", "info");
             
         } catch (err) {
             console.error("Failed to recover realms", err);
-            alert("An error occurred while scanning for lost realms.");
+            toast("An error occurred while scanning for lost realms.", "error");
         } finally {
             setIsRecovering(false);
         }
@@ -417,7 +421,7 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
         setIsLoggingIn(true);
         try {
             await fb.signInWithPopup(fb.auth, fb.googleProvider);
-        } catch (e) { alert("Login Error: " + e.message); setIsLoggingIn(false); }
+        } catch (e) { dialog.alert("Login Error: " + e.message); setIsLoggingIn(false); }
     };
 
     const addToRecents = async (code, role, campaignName = null, coverImage = null, theme = null) => {
@@ -466,7 +470,7 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
 
     const openCampaignWizard = () => {
         if (!user) {
-            alert("You must be logged in to Forge a new Realm.");
+            dialog.alert("You must be logged in to Forge a new Realm.");
             return;
         }
         setNewCampaignData({ name: '', theme: 'Heroic Fantasy', coverImage: '' });
@@ -523,7 +527,9 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
     const finalizeJoin = async () => {
         setIsJoiningCampaign(false);
         
-        const selectedChar = characters.find(c => c.id === selectedCharacterId) || null;
+        let selectedChar = characters.find(c => c.id === selectedCharacterId) || null;
+        let finalCharId = selectedCharacterId;
+        
         let campaignName = null;
         let coverImage = null;
         let tone = null;
@@ -532,18 +538,53 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
             const campDoc = await getDoc(doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', joiningCode));
             if (campDoc.exists()) {
                 const cData = campDoc.data();
-                campaignName = cData.campaign?.genesis?.campaignName || cData.campaignName;
+                campaignName = cData.campaign?.genesis?.campaignName || cData.campaignName || "Unknown Campaign";
                 coverImage = cData.campaign?.genesis?.coverImage || cData.coverImage;
                 tone = cData.campaign?.genesis?.tone || cData.tone;
+                
+                // Clone the character to tie it uniquely to this campaign if it isn't already
+                if (selectedChar && selectedChar.campaignId !== joiningCode) {
+                    try {
+                        const { id, ...charWithoutId } = selectedChar;
+                        const clonedChar = {
+                            ...charWithoutId,
+                            campaignId: joiningCode,
+                            campaignName: campaignName,
+                            dateCreated: Date.now()
+                        };
+                        const newDocRef = await addDoc(collection(fb.db, 'users', user.uid, 'characters'), clonedChar);
+                        selectedChar = { ...clonedChar, id: newDocRef.id };
+                        finalCharId = newDocRef.id;
+                    } catch (err) {
+                        console.error("Failed to clone character for campaign", err);
+                    }
+                } else if (selectedChar && selectedChar.campaignId === joiningCode && selectedChar.campaignName !== campaignName) {
+                    // Update campaign name if it changed
+                    try {
+                        await updateDoc(doc(fb.db, 'users', user.uid, 'characters', selectedChar.id), { campaignName });
+                        selectedChar.campaignName = campaignName;
+                    } catch(e){}
+                }
 
                 if (cData.campaign?.requireApproval) {
-                    setIsInWaitingRoom(true);
                     const reqRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', joiningCode, 'joinRequests', user.uid);
                     
+                    // Check if this player was already approved — don't re-prompt the DM
+                    const existingSnap = await getDoc(reqRef);
+                    if (existingSnap.exists() && existingSnap.data().status === 'approved') {
+                        // Already approved — join directly without going through the waiting room
+                        addToRecents(joiningCode, 'player', campaignName, coverImage, tone);
+                        localStorage.setItem('dm_last_session', JSON.stringify({ code: joiningCode, role: 'player', characterId: finalCharId }));
+                        joinCampaign(joiningCode, 'player', user.uid, false, {}, selectedChar);
+                        return;
+                    }
+
+                    // First time or previously denied — submit a fresh pending request
+                    setIsInWaitingRoom(true);
                     await setDoc(reqRef, {
                         uid: user.uid,
                         name: user.displayName || 'Player',
-                        characterId: selectedCharacterId || null,
+                        characterId: finalCharId || null,
                         characterName: selectedChar ? selectedChar.name : null,
                         status: 'pending',
                         timestamp: Date.now()
@@ -555,33 +596,13 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                             if (status === 'approved') {
                                 unsub();
                                 setIsInWaitingRoom(false);
-                                
-                                if (selectedChar) {
-                                    try {
-                                        const freshCampDoc = await getDoc(doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', joiningCode));
-                                        if (freshCampDoc.exists()) {
-                                            const freshData = freshCampDoc.data();
-                                            const freshPlayers = freshData.players || [];
-                                            const existingIdx = freshPlayers.findIndex(p => String(p.id) === String(selectedChar.id));
-                                            const newPlayers = [...freshPlayers];
-                                            if (existingIdx > -1) newPlayers[existingIdx] = selectedChar;
-                                            else newPlayers.push(selectedChar);
-                                            
-                                            await updateDoc(doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', joiningCode), {
-                                                players: newPlayers,
-                                                [`assignments.${user.uid}`]: selectedChar.id
-                                            });
-                                        }
-                                    } catch (err) { console.error("Auto-assign failed", err); }
-                                }
-                                
                                 addToRecents(joiningCode, 'player', campaignName, coverImage, tone);
-                                localStorage.setItem('dm_last_session', JSON.stringify({ code: joiningCode, role: 'player', characterId: selectedCharacterId }));
+                                localStorage.setItem('dm_last_session', JSON.stringify({ code: joiningCode, role: 'player', characterId: finalCharId }));
                                 joinCampaign(joiningCode, 'player', user.uid, false, {}, selectedChar);
                             } else if (status === 'denied') {
                                 unsub();
                                 setIsInWaitingRoom(false);
-                                alert("Your request to join was denied by the Dungeon Master.");
+                                dialog.alert("Your request to join was denied by the Dungeon Master.");
                             }
                         }
                     });
@@ -589,27 +610,14 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                 }
             }
             
-            if (selectedChar) {
-                try {
-                    const freshPlayers = campDoc.data().players || [];
-                    const existingIdx = freshPlayers.findIndex(p => String(p.id) === String(selectedChar.id));
-                    const newPlayers = [...freshPlayers];
-                    if (existingIdx > -1) newPlayers[existingIdx] = selectedChar;
-                    else newPlayers.push(selectedChar);
-                    
-                    await updateDoc(doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', joiningCode), {
-                        players: newPlayers,
-                        [`assignments.${user.uid}`]: selectedChar.id
-                    });
-                } catch (err) { console.error("Auto-assign failed", err); }
-            }
+
 
         } catch (e) {
             console.error("Failed to check approval setting", e);
         }
 
         addToRecents(joiningCode, 'player', campaignName, coverImage, tone);
-        localStorage.setItem('dm_last_session', JSON.stringify({ code: joiningCode, role: 'player', characterId: selectedCharacterId }));
+        localStorage.setItem('dm_last_session', JSON.stringify({ code: joiningCode, role: 'player', characterId: finalCharId }));
         joinCampaign(joiningCode, 'player', user.uid, false, {}, selectedChar);
     };
 
@@ -624,14 +632,14 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
             joinCampaign(invite.code, 'player', user.uid, false, {}, null);
         } catch(err) {
             console.error("Failed to accept invite", err);
-            alert("Failed to accept invite.");
+            toast("Failed to accept invite.", "error");
         }
     };
 
     const handleDeclineInvite = async (e, invite) => {
         e.stopPropagation();
         if (!user || !user.email) return;
-        if (!confirm(`Decline invite to ${invite.name}?`)) return;
+        if (!(await dialog.confirm(`Decline invite to ${invite.name}?`))) return;
         try {
             const campRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', invite.code);
             await updateDoc(campRef, { pendingEmailInvites: arrayRemove(user.email.toLowerCase()) });
@@ -649,7 +657,7 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
             ? `Permanently delete the realm "${item.name || item.code}" and all its data? This cannot be undone.` 
             : `Leave the realm "${item.name || item.code}"?`;
             
-        if (confirm(confirmMessage)) {
+        if (await dialog.confirm(confirmMessage)) {
             const newRecents = recents.filter(r => r.code !== item.code);
             setRecents(newRecents);
             localStorage.setItem('dm_recents', JSON.stringify(newRecents));
@@ -1000,6 +1008,11 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                                             <div className="flex-1 min-w-0">
                                                 <h3 className="font-bold text-xl text-white truncate">{char.name || "Unnamed"}</h3>
                                                 <p className="text-sm text-slate-400 truncate">Lvl {char.level || 1} {char.class || "Commoner"}</p>
+                                                {char.campaignName && (
+                                                    <p className="text-xs text-indigo-400/80 truncate mt-1 flex items-center gap-1">
+                                                        <Icon name="map" size={12} /> {char.campaignName}
+                                                    </p>
+                                                )}
                                             </div>
                                         </div>
                                         <div className="p-3 bg-slate-900/50 border-t border-slate-800 flex justify-between">
@@ -1357,6 +1370,9 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                                                 <div className="flex-1 min-w-0">
                                                     <div className="font-bold text-white truncate">{char.name}</div>
                                                     <div className="text-xs text-slate-400 truncate">Lvl {char.level || 1} {char.class}</div>
+                                                    {char.campaignName && (
+                                                        <div className="text-[10px] text-indigo-400/80 truncate mt-0.5">Campaign: {char.campaignName}</div>
+                                                    )}
                                                 </div>
                                                 {selectedCharacterId === char.id && <Icon name="check-circle" size={20} className="text-indigo-400 shrink-0" />}
                                             </div>

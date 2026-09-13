@@ -41,76 +41,90 @@ const HeaderStats = ({ character: propCharacter, onDiceRoll, onLogAction, onBack
     const ac = character.ac || 10;
     const init = character.initiative || 0;
     const hitDice = character.hitDice || { current: 1, max: 1, die: "d8" };
-    const pb = character.proficiencyBonus || Math.ceil((character.level || 1) / 4) + 1;
     const exhaustion = character.exhaustion || 0;
     const conditions = character.conditions || [];
     const ds = character.deathSaves || { successes: 0, failures: 0 };
     
     return (
         <div className="bg-slate-900 border-b border-slate-800 shadow-lg shrink-0 relative">
-            {/* Top Bar: Avatar, HP, Name, Stats */}
-            <div className="flex items-center gap-2 p-3">
-                {onBack && <button onClick={onBack} className="text-slate-400 hover:text-white p-1 shrink-0"><Icon name="arrow-left" size={20}/></button>}
+            {/* Top Bar: HP, AC, Init */}
+            <div className="flex items-center gap-3 p-3 h-16">
+                {onBack && <button onClick={onBack} className="text-slate-400 hover:text-white p-1"><Icon name="arrow-left" size={20}/></button>}
                 
-                {/* Avatar + HP inputs — always compact, never wrap */}
-                <div className="flex items-center gap-2 shrink-0">
-                    <input type="file" accept="image/*" className="hidden" ref={fileInputRef} onChange={handleAvatarUpload} />
-                    <button onClick={() => fileInputRef.current?.click()} className="w-9 h-9 rounded-full bg-slate-700 overflow-hidden shrink-0">
-                        <img src={character.image} className="w-full h-full object-cover" alt="Character" referrerPolicy="no-referrer" />
-                    </button>
-                    <div className="flex flex-col items-center">
-                        <span className="text-[9px] text-slate-500 font-bold">HP</span>
-                        <div className="flex items-center gap-0.5">
-                            <input type="number" className="w-8 bg-transparent text-center text-sm font-bold text-green-400 outline-none" value={currentHP} onChange={e => updateHP('current', parseInt(e.target.value) || 0)} />
-                            <span className="text-xs font-bold text-slate-500">/</span>
-                            <input type="number" className="w-8 bg-transparent text-center text-sm font-bold text-white outline-none" value={maxHP} onChange={e => updateHP('max', parseInt(e.target.value) || 0)} />
+                <div className="flex-1 min-w-0 flex items-center gap-2"> {/* Combined character info and HP bar */}
+                    <div className="flex items-center gap-2">
+                        <input type="file" accept="image/*" className="hidden" ref={fileInputRef} onChange={handleAvatarUpload} />
+                        <button onClick={() => fileInputRef.current?.click()} className="w-8 h-8 rounded-full bg-slate-700 overflow-hidden flex-shrink-0 relative"> {/* Avatar button */}
+                            <img src={character.image} className="w-full h-full object-cover" alt="Character" referrerPolicy="no-referrer" />
+                        </button>
+                        {/* HP Input */}
+                        <div className="flex flex-col items-center">
+                            <span className="text-[9px] text-slate-500 font-bold">HP</span>
+                            <div className="flex items-center gap-1">
+                                <input
+                                    type="number"
+                                    className="w-10 bg-transparent text-center text-sm font-bold text-green-400 outline-none"
+                                    value={currentHP}
+                                    onChange={e => updateHP('current', parseInt(e.target.value) || 0)}
+                                />
+                                <span className="text-sm font-bold text-white">/</span>
+                                <input
+                                    type="number"
+                                    className="w-10 bg-transparent text-center text-sm font-bold text-white outline-none"
+                                    value={maxHP}
+                                    onChange={e => updateHP('max', parseInt(e.target.value) || 0)}
+                                />
+                            </div>
+                        </div>
+                        <div className="flex-1 flex flex-col justify-center cursor-pointer group" onClick={() => setIsExpanded(!isExpanded)}>
+                            <div className="flex items-center gap-2 flex-wrap">
+                                <div className="font-bold text-white text-sm truncate">{character.name} <span className="text-slate-400 font-normal text-xs ml-1">Lvl {character.level || 1} {character.class || "Class"}</span></div>
+                                <button 
+                                    onClick={(e) => { e.stopPropagation(); setShowLevelUp(true); }}
+                                    className="text-[10px] font-bold text-indigo-400 bg-indigo-900/30 border border-indigo-700/50 hover:bg-indigo-800/50 hover:text-white px-1.5 py-0.5 rounded flex items-center gap-1 transition-colors"
+                                >
+                                    <Icon name="arrow-up" size={10} /> Level Up
+                                </button>
+                                <button 
+                                    onClick={(e) => { e.stopPropagation(); updateInfo('inspiration', !character.inspiration); }}
+                                    className={`transition-colors p-0.5 rounded-full ${character.inspiration ? 'text-amber-400 bg-amber-900/30' : 'text-slate-600 hover:text-slate-400'}`}
+                                    title="Inspiration"
+                                >
+                                    <Icon name="sparkles" size={14} />
+                                </button>
+                            </div>
+                            <div className="relative h-3 bg-slate-800 rounded-full overflow-hidden mt-0.5">
+                                <div className={`h-full ${hpColor}`} style={{ width: `${hpPercent}%` }}></div>
+                            </div>
                         </div>
                     </div>
                 </div>
-
-                {/* Name + HP bar — grows to fill available space, truncates */}
-                <div className="flex-1 min-w-0 flex flex-col justify-center cursor-pointer" onClick={() => setIsExpanded(!isExpanded)}>
-                    <div className="flex items-center gap-1 min-w-0">
-                        <span className="font-bold text-white text-sm truncate">{character.name}</span>
-                        <span className="text-slate-400 font-normal text-[10px] whitespace-nowrap shrink-0">Lvl {character.level || 1} {character.class || 'Class'}</span>
+                <div className="flex items-center gap-2">
+                    <div className="flex flex-col items-center bg-slate-800 px-2 py-1 rounded">
+                        <span className="text-[9px] text-slate-500 font-bold">AC</span>
+                        <div className="text-sm font-bold text-white">{ac}</div>
                     </div>
-                    <div className="flex items-center gap-1.5 mt-1 min-w-0">
-                        <div className="relative h-2 bg-slate-800 rounded-full overflow-hidden flex-1 min-w-0">
-                            <div className={`h-full ${hpColor}`} style={{ width: `${hpPercent}%` }}></div>
+                    <div className="flex flex-col items-center bg-slate-800 px-2 py-1 rounded" title="Movement Speed">
+                        <span className="text-[9px] text-slate-500 font-bold">SPD</span>
+                        <div className="text-sm font-bold text-white flex items-center gap-1 mt-0.5">
+                            <Icon name="footprints" size={12} className="text-slate-400 opacity-50" />
+                            {character.speed || 30}
                         </div>
-                        <button onClick={(e) => { e.stopPropagation(); setShowLevelUp(true); }} className="shrink-0 text-[9px] font-bold text-indigo-400 bg-indigo-900/30 border border-indigo-700/50 hover:bg-indigo-800/50 hover:text-white px-1 py-0.5 rounded flex items-center gap-0.5 transition-colors whitespace-nowrap">
-                            <Icon name="arrow-up" size={9} /> Lvl
-                        </button>
-                        <button onClick={(e) => { e.stopPropagation(); updateInfo('inspiration', !character.inspiration); }} className={`shrink-0 transition-colors p-0.5 rounded-full ${character.inspiration ? 'text-amber-400 bg-amber-900/30' : 'text-slate-600 hover:text-slate-400'}`} title="Inspiration">
-                            <Icon name="sparkles" size={12} />
-                        </button>
-                    </div>
-                </div>
-
-                {/* AC + SPD + INIT + PB + Chevron — always compact, never wraps */}
-                <div className="flex items-center gap-1 shrink-0">
-                    <div className="flex flex-col items-center bg-slate-800 px-2 py-1 rounded">
-                        <span className="text-[8px] text-slate-500 font-bold">AC</span>
-                        <div className="text-sm font-bold text-white leading-tight">{ac}</div>
                     </div>
                     <div className="flex flex-col items-center bg-slate-800 px-2 py-1 rounded">
-                        <span className="text-[8px] text-slate-500 font-bold">SPD</span>
-                        <div className="text-sm font-bold text-white leading-tight">{character.speed || 30}</div>
-                    </div>
-                    <div className="flex flex-col items-center bg-slate-800 px-2 py-1 rounded">
-                        <span className="text-[8px] text-slate-500 font-bold">INIT</span>
-                        <button className="text-sm font-bold font-mono text-amber-300 hover:text-amber-100 leading-tight transition-colors" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDiceRoll && onDiceRoll(`1d20${init >= 0 ? '+' : ''}${init}`, { alias: 'Initiative', characterName: character.name }); }} title="Roll Initiative">
+                        <span className="text-[9px] text-slate-500 font-bold">INIT</span>
+                        <button 
+                            className="flex items-center gap-1 px-2 py-0.5 mt-0.5 rounded text-sm font-bold font-mono text-amber-300 bg-amber-900/40 border border-amber-700/50 hover:bg-amber-800/60 hover:border-amber-500 hover:text-amber-100 transition-colors shadow-sm" 
+                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDiceRoll && onDiceRoll(`1d20${init >= 0 ? '+' : ''}${init}`, { alias: 'Initiative', characterName: character.name }); }} 
+                            title="Roll Initiative"
+                        >
+                            <Icon name="dices" size={12} className="opacity-70" />
                             {init >= 0 ? `+${init}` : init}
                         </button>
+                        
                     </div>
-                    <div className="flex flex-col items-center bg-slate-800 px-2 py-1 rounded">
-                        <span className="text-[8px] text-slate-500 font-bold">PB</span>
-                        <div className="text-sm font-bold font-mono text-white leading-tight">
-                            {pb >= 0 ? `+${pb}` : pb}
-                        </div>
-                    </div>
-                    <button onClick={() => setIsExpanded(!isExpanded)} className="text-slate-400 hover:text-white p-1">
-                        <Icon name={isExpanded ? "chevron-up" : "chevron-down"} size={18} />
+                    <button onClick={() => setIsExpanded(!isExpanded)} className="text-slate-400 ml-2">
+                        <Icon name={isExpanded ? "chevron-up" : "chevron-down"} size={20} />
                     </button>
                 </div>
             </div>
@@ -260,11 +274,7 @@ const HeaderStats = ({ character: propCharacter, onDiceRoll, onLogAction, onBack
                         </button>
                     </div>
                 </div>
-            )}
-            
-            {showLevelUp && <LevelUpModal character={character} onClose={() => setShowLevelUp(false)} />}
-        </div>
-    );
-};
-
-export default HeaderStats;
+            {isExpanded && (
+                // ... (the existing isExpanded content)
+                // wait, I don't want to replace all of isExpanded.
+                // Let's replace the last few lines.

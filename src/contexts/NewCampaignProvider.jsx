@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { useDialog } from '../components/DialogProvider';
 import * as fb from '../firebase';
 import { doc, onSnapshot, updateDoc, deleteField, arrayUnion, arrayRemove, setDoc, deleteDoc, collection, query, orderBy, addDoc, writeBatch, getDocs, getDoc } from '../firebase';
 
@@ -17,6 +18,7 @@ export const useNewCampaign = () => {
 
 export const NewCampaignProvider = ({ children }) => {
     const [gameParams, setGameParams] = useState(null);
+    const dialog = useDialog();
     const [campaign, setCampaign] = useState(null);
     const [chatLog, setChatLog] = useState([]);
     const [journal_pages, setJournalPages] = useState({});
@@ -209,7 +211,7 @@ export const NewCampaignProvider = ({ children }) => {
             }
         } catch (err) {
             console.error("FIREBASE ERROR:", err);
-            alert("Database Error: Check your Firestore Rules in the Firebase Console!");
+            dialog.alert("Database Error: Check your Firestore Rules in the Firebase Console!");
         }
     };
 
@@ -256,7 +258,7 @@ export const NewCampaignProvider = ({ children }) => {
 
     const clearChat = async () => {
         if (!gameParams?.code) return;
-        if (!confirm("Delete all chat history?")) return;
+        if (!(await dialog.confirm("Delete all chat history?"))) return;
 
         const chatRef = collection(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'chat');
         const batch = writeBatch(fb.db);
@@ -296,12 +298,11 @@ export const NewCampaignProvider = ({ children }) => {
                 console.error("Initialization failed:", e);
             }
         } else if (uid && uid !== 'anon') {
-            // Register player presence in the activeUsers map so they show up in DM Settings
             try {
-                const updateData = {
+                // Register player presence in the activeUsers map so they show up in DM Settings
+                await updateDoc(campaignRef, {
                     [`activeUsers.${uid}`]: user?.displayName || 'Player'
-                };
-                await setDoc(campaignRef, updateData, { merge: true });
+                });
                 
                 // If a character was selected from the vault, we should add it to the players array
                 if (selectedCharacter) {
@@ -329,7 +330,10 @@ export const NewCampaignProvider = ({ children }) => {
                             updatedPlayers.push(charData);
                         }
                         
-                        await setDoc(campaignRef, { players: updatedPlayers, [`assignments.${uid}`]: selectedCharacter.id }, { merge: true });
+                        await updateDoc(campaignRef, { 
+                            players: updatedPlayers, 
+                            [`assignments.${uid}`]: selectedCharacter.id 
+                        });
                     }
                 }
                 
@@ -382,7 +386,7 @@ export const NewCampaignProvider = ({ children }) => {
             }
         } catch (e) {
             console.error("Error uploading lore:", e);
-            alert("Failed to save to cloud. Check console.");
+            dialog.alert("Failed to save to cloud. Check console.");
         }
     };
 

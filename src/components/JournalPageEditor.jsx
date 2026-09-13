@@ -316,10 +316,10 @@ const JournalPageEditor = ({
         };
     };
 
-    const insertDynamicTable = () => {
+    const insertDynamicTable = async () => {
         if (!isEditing) return;
-        const rows = prompt("How many rows?", "3");
-        const cols = prompt("How many columns?", "3");
+        const rows = await dialog.prompt("How many rows?", "3");
+        const cols = await dialog.prompt("How many columns?", "3");
         if (!rows || !cols) return;
 
         const quill = quillRef.current.getEditor();
@@ -385,7 +385,7 @@ const JournalPageEditor = ({
         }
     };
 
-    const resizeImage = () => {
+    const resizeImage = async () => {
         if (!isEditing) return;
         const quill = quillRef.current.getEditor();
         const range = quill.getSelection(true);
@@ -401,7 +401,7 @@ const JournalPageEditor = ({
 
         if (img) {
             const currentWidth = img.style.width || "100%";
-            const newWidth = prompt("Enter new width (e.g., '50%', '300px'):", currentWidth);
+            const newWidth = await dialog.prompt("Enter new width (e.g., '50%', '300px'):", currentWidth);
             if (newWidth) {
                 img.style.width = newWidth;
                 handleChange(quill.root.innerHTML, null, 'user', quill);

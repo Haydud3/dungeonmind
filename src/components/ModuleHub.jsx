@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Icon from './Icon';
+import { useDialog } from './DialogProvider';
 import { storeChunkedMap } from '../utils/storageUtils';
 import { createMap } from '../utils/mapService';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
@@ -96,11 +97,11 @@ const ModuleHub = ({ data, updateCampaign, aiHelper, loreChunks, campaignCode, g
         setDraggedMapData(null);
     };
 
-    const handleDeleteItem = (chapterId, itemType, itemId, mapId = null) => {
+    const handleDeleteItem = async (chapterId, itemType, itemId, mapId = null) => {
         const msg = itemType === 'chapter' 
             ? "Are you sure you want to delete this entire chapter and all its contents?" 
             : "Are you sure you want to remove this requirement?";
-        if (!confirm(msg)) return;
+        if (!(await dialog.confirm(msg))) return;
         
         const newSkeleton = JSON.parse(JSON.stringify(skeleton));
         
@@ -299,7 +300,7 @@ const ModuleHub = ({ data, updateCampaign, aiHelper, loreChunks, campaignCode, g
     };
 
     const generateSkeleton = async () => {
-        if (!promptText.trim() && (!loreChunks || loreChunks.length === 0)) return alert("Enter a prompt or upload a PDF to the Archives.");
+        if (!promptText.trim() && (!loreChunks || loreChunks.length === 0)) return dialog.alert("Enter a prompt or upload a PDF to the Archives.");
         setIsGenerating(true);
 
         let contextSource = promptText ? `Based on the following request: "${promptText}"` : "Based on the uploaded lore archives.";
@@ -367,7 +368,7 @@ CRITICAL INSTRUCTION: Do NOT use placeholders like "Unknown". If there are no sp
             });
         } catch (e) {
             console.error("Failed to generate skeleton:", e);
-            alert("Failed to generate campaign skeleton. See console.");
+            dialog.alert("Failed to generate campaign skeleton. See console.");
         } finally {
             setIsGenerating(false);
         }
@@ -390,7 +391,7 @@ CRITICAL INSTRUCTION: Do NOT use placeholders like "Unknown". If there are no sp
     };
 
     const clearSkeleton = async () => {
-        if(confirm("Are you sure you want to delete the current module skeleton?")) {
+        if(await dialog.confirm("Are you sure you want to delete the current module skeleton?")) {
             try {
                 await updateCampaign({
                     'moduleSkeleton': null,
@@ -479,8 +480,8 @@ CRITICAL INSTRUCTION: Do NOT use placeholders like "Unknown". If there are no sp
                     <div>
                         <h2 
                             className="text-3xl fantasy-font text-amber-500 cursor-pointer hover:underline flex items-center gap-2 group"
-                            onClick={() => {
-                                const newTitle = prompt("Enter new campaign title:", skeleton.title);
+                            onClick={async () => {
+                                const newTitle = await dialog.prompt("Enter new campaign title:", skeleton.title);
                                 if (newTitle && newTitle.trim()) {
                                     const newSkeleton = JSON.parse(JSON.stringify(skeleton));
                                     newSkeleton.title = newTitle.trim();

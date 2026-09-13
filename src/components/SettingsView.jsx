@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import Icon from './Icon';
+import { useToast } from './ToastProvider';
+import { useDialog } from './DialogProvider';
 import { useNewCampaign } from '../contexts/NewCampaignProvider';
 import { useVfxStore } from '../stores/useVfxStore';
 import { doc, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
@@ -18,6 +20,8 @@ const SettingsView = ({
 }) => {
     const { campaign, updateCampaign, kickPlayer, banPlayer, unbanPlayer } = useNewCampaign();
     const data = campaign; // for compatibility
+    const toast = useToast();
+    const dialog = useDialog();
     const [activeTab, setActiveTab] = useState('general');
     
     const [autoJoin, setAutoJoin] = useState(() => localStorage.getItem('dm_auto_join') === 'true');
@@ -71,11 +75,11 @@ const SettingsView = ({
         try {
             await user.updateProfile({ displayName: newName, photoURL: newPhoto });
             updateCampaign({ [`activeUsers.${user.uid}`]: newName });
-            alert("Profile updated successfully!");
+            toast("Profile updated successfully!", "success");
             window.location.reload(); // Refresh to instantly apply the name to the global chat handlers
         } catch (err) {
             console.error("Failed to update profile", err);
-            alert("Failed to update profile.");
+            toast("Failed to update profile.", "error");
         }
     };
 
@@ -96,13 +100,13 @@ const SettingsView = ({
         );
         
         updateCampaign({ players: updatedPlayers });
-        alert("Character Integration Updated!");
+        toast("Character Integration Updated!", "success");
     };
     // END CHANGE
     
     const handleSendInvite = async () => {
         if (!inviteEmail.trim() || !inviteEmail.includes('@')) {
-            alert("Please enter a valid email address.");
+            toast("Please enter a valid email address.", "error");
             return;
         }
         const cleanEmail = inviteEmail.trim().toLowerCase();
@@ -112,15 +116,15 @@ const SettingsView = ({
                 pendingEmailInvites: arrayUnion(cleanEmail)
             });
             setInviteEmail('');
-            alert(`Invite sent to ${cleanEmail}!`);
+            toast(`Invite sent to ${cleanEmail}!`, "success");
         } catch (err) {
             console.error("Failed to send invite", err);
-            alert("Failed to send invite. " + err.message);
+            toast("Failed to send invite. " + err.message, "error");
         }
     };
 
     const handleRevokeInvite = async (email) => {
-        if (!confirm(`Revoke invite for ${email}?`)) return;
+        if (!(await dialog.confirm(`Revoke invite for ${email}?`))) return;
         try {
             const campaignRef = doc(db, 'artifacts', appId || 'dungeonmind', 'public', 'data', 'campaigns', code);
             await updateDoc(campaignRef, {
@@ -136,7 +140,7 @@ const SettingsView = ({
             'campaign.genesis': bibleData,
             'campaignName': bibleData.campaignName
         });
-        alert("Campaign Bible Updated!");
+        toast("Campaign Bible Updated!", "success");
     };
 
     // --- PLAYER MANAGEMENT LOGIC ---
@@ -149,21 +153,21 @@ const SettingsView = ({
         // END CHANGE
     };
 
-    const toggleDmStatus = (uid) => {
+    const toggleDmStatus = async (uid) => {
         let newDmIds = [...(data.dmIds || [])];
         
         // If already DM, remove (Renounce)
         if (newDmIds.includes(uid)) {
             if (newDmIds.length <= 1) {
-                alert("Cannot renounce: You are the only DM left!");
+                dialog.alert("Cannot renounce: You are the only DM left!");
                 return;
             }
-            if (!confirm("Are you sure you want to renounce your Dungeon Master status? You will lose access to DM tools immediately.")) return;
+            if (!(await dialog.confirm("Are you sure you want to renounce your Dungeon Master status? You will lose access to DM tools immediately."))) return;
             newDmIds = newDmIds.filter(id => id !== uid);
         } 
         // If not DM, add (Promote)
         else {
-            if (!confirm("Promote this user to Dungeon Master? They will have full control over the campaign settings.")) return;
+            if (!(await dialog.confirm("Promote this user to Dungeon Master? They will have full control over the campaign settings."))) return;
             newDmIds.push(uid);
         }
 
@@ -171,8 +175,8 @@ const SettingsView = ({
     };
 
     // START CHANGE: Safe Exit Handler to prevent Auto-Join loop
-    const handleSafeExit = () => {
-        if (window.confirm("Disconnect from session?")) {
+    const handleSafeExit = async () => {
+        if (await dialog.confirm("Disconnect from session?")) {
             localStorage.removeItem('dm_last_session'); // Prevent auto-join loop
             if (onExit) onExit(); // Now exit the view
         }
@@ -282,7 +286,7 @@ const SettingsView = ({
                                         <button 
                                             onClick={() => {
                                                 navigator.clipboard.writeText(inviteUrl);
-                                                alert("Invite link copied to clipboard!");
+                                                toast("Invite link copied to clipboard!", "success");
                                             }}
                                             className="bg-indigo-600 hover:bg-indigo-500 px-4 py-2 rounded text-white font-bold transition-colors whitespace-nowrap"
                                         >
@@ -290,8 +294,8 @@ const SettingsView = ({
                                         </button>
                                         {role === 'dm' && (
                                             <button 
-                                                onClick={() => {
-                                                    if(window.confirm("Invalidate the old invite link and generate a new one?")) {
+                                                onClick={async () => {
+                                                    if(await dialog.confirm("Invalidate the old invite link and generate a new one?")) {
                                                         updateCampaign({ 'campaign.inviteToken': Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15) });
                                                     }
                                                 }}

@@ -1,6 +1,26 @@
 import React, { useState } from 'react';
 import Icon from './Icon';
 
+const DiceIcon = ({ sides, className }) => {
+    switch (sides) {
+        case 4:
+            return <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2L2 20h20L12 2z"/><path d="M12 2v18"/><path d="M2 20l10-8 10 8"/></svg>;
+        case 6:
+            return <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><path d="M8 8h.01"/><path d="M16 8h.01"/><path d="M8 16h.01"/><path d="M16 16h.01"/><path d="M12 12h.01"/></svg>;
+        case 8:
+            return <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2l8 10-8 10-8-10z"/><path d="M12 2v20"/><path d="M4 12h16"/></svg>;
+        case 10:
+        case 100:
+            return <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2L4 10l8 12 8-12-8-8z"/><path d="M12 2v20"/><path d="M4 10l8 3 8-3"/></svg>;
+        case 12:
+            return <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2L3 9l3 10h12l3-10-9-7z"/><path d="M12 2l-6 10"/><path d="M12 2l6 10"/><path d="M6 12l6 7 6-7"/><path d="M3 9h18"/></svg>;
+        case 20:
+            return <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2L21 7v10l-9 5-9-5V7z M7 9h10l-5 8z M7 9L12 2 M17 9L12 2 M7 9L3 7 M17 9L21 7 M7 9L3 17 M17 9L21 17 M12 17v5" /></svg>;
+        default:
+            return <Icon name="dices" className={className} size={24} />;
+    }
+};
+
 const DiceTray = ({ diceLog = [], handleDiceRoll, onClose, role, rollMode, setRollMode }) => {
     const [pool, setPool] = useState({ 4: 0, 6: 0, 8: 0, 10: 0, 12: 0, 20: 0, 100: 0 });
     const [modifier, setModifier] = useState(0);
@@ -102,9 +122,10 @@ const DiceTray = ({ diceLog = [], handleDiceRoll, onClose, role, rollMode, setRo
                             <button 
                                 onClick={() => addDie(d)} 
                                 onContextMenu={(e) => { e.preventDefault(); removeDie(d); }}
-                                className="w-full bg-slate-800 hover:bg-amber-600 text-sm font-bold font-mono py-3 rounded border border-slate-600 hover:border-amber-500 transition-colors text-white relative overflow-hidden"
+                                className="w-full bg-slate-800 hover:bg-amber-600 text-sm font-bold font-mono py-2 rounded border border-slate-600 hover:border-amber-500 transition-colors text-white relative overflow-hidden flex flex-col items-center gap-1"
                                 title="Left click to add, Right click to remove"
                             >
+                                <DiceIcon sides={d} className="w-6 h-6 opacity-70 mb-0.5" />
                                 d{d}
                             </button>
                             {pool[d] > 0 && (

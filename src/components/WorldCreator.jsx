@@ -346,8 +346,8 @@ Constraints: All 4 quadrants must be exactly the same size and perfectly aligned
     setGeneratingNode(null);
     };
 
-    const deleteLocation = (id) => {
-        if (confirm("Destroy this location?")) {
+    const deleteLocation = async (id) => {
+        if (await dialog.confirm("Destroy this location?")) {
             updateCampaign({ locations: locations.filter(l => l.id !== id) });
         }
     };

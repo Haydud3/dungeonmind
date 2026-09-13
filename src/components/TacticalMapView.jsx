@@ -8,7 +8,9 @@ import { useCharacterStore } from '../stores/useCharacterStore';
 const AssetManager = lazy(() => import('./AssetManager'));
 const MeasurementTools = lazy(() => import('./MeasurementTools').then(m => ({ default: m.MeasurementTools })));
 import Icon from './Icon';
-import { retrieveChunkedMap, storeChunkedMap, deleteChunkedMap } from '../utils/storageUtils';
+import { useDialog } from './DialogProvider';
+import { useToast } from './ToastProvider';
+import { retrieveChunkedMap, storeChunkedMap, deleteChunkedMap, fileToBase64 } from '../utils/storageUtils';
 const Token3D = lazy(() => import('./tactical/Token').then(m => ({ default: m.default })));
 const MapProp = lazy(() => import('./tactical/MapProp').then(m => ({ default: m.default })));
 import CameraController from '../utils/CameraController';
@@ -19,8 +21,9 @@ import { searchGithubModels } from '../utils/miniManifest';
 
 import { ENV_SETTINGS } from '../constants/environment';
 import { segmentsIntersect } from '../utils/mathUtils';
-import { checkLineOfSight } from '../utils/losUtils';
+import { checkLineOfSight, isPointInManualFog, isSegmentBlockedByManualFog } from '../utils/losUtils';
 import { useResolvedUrl } from '../utils/useResolvedUrl';
+import { safeDisposeTexture } from '../utils/threeDisposalUtils';
 
 const MapPlane = lazy(() => import('./3d/MapPlane').then(m => ({ default: m.MapPlane })));
 
@@ -32,6 +35,7 @@ const Walls = lazy(() => import('./3d/Walls').then(m => ({ default: m.Walls })))
 
 const CombatTrackerSidebar = lazy(() => import('./ui/CombatTrackerSidebar').then(m => ({ default: m.CombatTrackerSidebar })));
 const CombatRibbon = lazy(() => import('./ui/CombatTrackerSidebar').then(m => ({ default: m.CombatRibbon })));
+const InitiativePrompt = lazy(() => import('./ui/CombatTrackerSidebar').then(m => ({ default: m.InitiativePrompt })));
 
 const CombatCameraDirector = lazy(() => import('./3d/CombatCameraDirector').then(m => ({ default: m.CombatCameraDirector })));
 const ArchitectPenController = lazy(() => import('./3d/controllers/ArchitectPenController').then(m => ({ default: m.ArchitectPenController })));
@@ -47,6 +51,7 @@ const WallDrawingController = lazy(() => import('./3d/controllers/WallDrawingCon
 const StampingController = lazy(() => import('./3d/controllers/StampingController').then(m => ({ default: m.StampingController })));
 const TerrainSculptorController = lazy(() => import('./3d/controllers/TerrainSculptorController').then(m => ({ default: m.TerrainSculptorController })));
 const MaterialPainterController = lazy(() => import('./3d/controllers/MaterialPainterController').then(m => ({ default: m.MaterialPainterController })));
+const FogPainterController = lazy(() => import('./3d/controllers/FogPainterController').then(m => ({ default: m.FogPainterController })));
 const WeatherParticles = lazy(() => import('./3d/WeatherParticles').then(m => ({ default: m.WeatherParticles })));
 const AmbientEcosystem = lazy(() => import('./3d/AmbientEcosystem').then(m => ({ default: m.AmbientEcosystem })));
 const PostProcessingEffects = lazy(() => import('./3d/PostProcessingEffects').then(m => ({ default: m.PostProcessingEffects })));
@@ -108,16 +113,10 @@ const LivePingController = React.memo(({ isEnabled, broadcastPing, clearPing }) 
 
     useEffect(() => {
         if (controls) {
-            if (isEnabled) {
-                controls.mouseButtons.LEFT = 0; // Disable left-click pan so raycaster works
-            } else {
-                controls.mouseButtons.LEFT = 2; // Restore pan
+            if (!isEnabled) {
                 clearPing();
             }
         }
-        return () => {
-            if (controls) controls.mouseButtons.LEFT = 2;
-        };
     }, [isEnabled, controls, clearPing]);
 
     if (!isEnabled) return null;
@@ -220,6 +219,29 @@ const LoadingOverlay = ({ activeMapId, isMapDataReady }) => {
     );
 };
 
+const ToolSubmenu = ({ children }) => {
+    const [expandUp, setExpandUp] = useState(false);
+    const menuRef = useRef(null);
+
+    useEffect(() => {
+        if (!menuRef.current) return;
+        const rect = menuRef.current.getBoundingClientRect();
+        // If bottom of menu goes below window height (with some padding), expand up instead
+        if (rect.bottom > window.innerHeight - 20) {
+            setExpandUp(true);
+        }
+    }, [children]);
+
+    return (
+        <div 
+            ref={menuRef} 
+            className={`absolute right-[110%] flex flex-row justify-end gap-2 z-[100] ${expandUp ? 'bottom-0 items-end' : 'top-0 items-start'}`}
+        >
+            {children}
+        </div>
+    );
+};
+
 const ViewManager = React.memo(({ aspect, scale, orientation, fitTrigger }) => {
     const { camera } = useThree();
     const controls = useThree(state => state.controls);
@@ -269,14 +291,40 @@ const ViewManager = React.memo(({ aspect, scale, orientation, fitTrigger }) => {
     return null;
 });
 
-export default React.memo(function TacticalMapView({ campaignCode, activeMapId, onOpenSheet, role, onOpenHandouts, onOpenChat, onOpenJournal, onOpenDiceTray, onOpenCast, isCastMode: propIsCastMode, onBack, rightOffset, onSidebarOpen, isChatOpen, isJournalOpen, isHandoutsOpen, isDiceTrayOpen, aiHelper, generateNpc, hideInviteCode, setHideInviteCode, onSendMessage }) {
+const MapControlsCursorHandler = () => {
+    const { controls, gl } = useThree();
+    useEffect(() => {
+        if (!controls) return;
+        const handleStart = () => {
+            document.body.style.cursor = 'grabbing';
+            if (gl?.domElement) gl.domElement.style.cursor = 'grabbing';
+        };
+        const handleEnd = () => {
+            document.body.style.cursor = 'auto';
+            if (gl?.domElement) gl.domElement.style.cursor = '';
+        };
+        controls.addEventListener('start', handleStart);
+        controls.addEventListener('end', handleEnd);
+        return () => {
+            controls.removeEventListener('start', handleStart);
+            controls.removeEventListener('end', handleEnd);
+        };
+    }, [controls, gl]);
+    return null;
+};
+
+export default React.memo(function TacticalMapView({ campaignCode, activeMapId, onOpenSheet, role, onOpenHandouts, onOpenChat, onOpenJournal, onOpenDiceTray, onOpenCast, isCastMode: propIsCastMode, onBack, rightOffset, onSidebarOpen, isChatOpen, isJournalOpen, isHandoutsOpen, isDiceTrayOpen, aiHelper, generateNpc, hideInviteCode, setHideInviteCode, onSendMessage, setView, onNavigate, onDiceRoll }) {
   const isCastMode = propIsCastMode || (typeof window !== 'undefined' && (new URLSearchParams(window.location.search).get('cast') === 'true' || window.location.hash.includes('cast=true')));
   const isLowPerformance = typeof window !== 'undefined' && localStorage.getItem('vtt_low_performance') === 'true';
   const { campaign, updateCampaign, user, sendMessage } = useNewCampaign();
+    const dialog = useDialog();
+    const toast = useToast();
   const data = campaign;
   const cameraControllerRef = useRef();
   const zoomRef = useRef();
   const [mapData, setMapData] = useState(null);
+  const [isTopMenuCollapsed, setIsTopMenuCollapsed] = useState(false);
+  const isCombatActive = data?.campaign?.combat?.active;
 
   const fowRef = useRef();
   const lastLoadedFogCounter = useRef(null);
@@ -301,8 +349,157 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       }
   }, [campaignCode, activeMapId, updateMap]);
 
+  // Manual Fog of War references and state
+  const manualFogCanvasRef = useRef(null);
+  const manualFogTextureRef = useRef(null);
+  const manualFogAlphaRef = useRef(null);
+  const [manualFogTexture, setManualFogTexture] = useState(null);
+  const [manualFogRevision, setManualFogRevision] = useState(0);
+
+  const updateManualFogAlpha = useCallback(() => {
+      if (!manualFogCanvasRef.current?.ctx) return;
+      try {
+          const imgData = manualFogCanvasRef.current.ctx.getImageData(0, 0, 1024, 1024);
+          manualFogAlphaRef.current = imgData.data;
+          setManualFogRevision(r => r + 1);
+      } catch (e) {
+          console.error('Failed to read manual fog alpha buffer:', e);
+      }
+  }, []);
+
+  // Initialize manual fog canvas on mount
+  useEffect(() => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 1024;
+      canvas.height = 1024;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      ctx.clearRect(0, 0, 1024, 1024);
+      manualFogCanvasRef.current = { canvas, ctx, width: 1024, height: 1024 };
+      manualFogAlphaRef.current = new Uint8ClampedArray(1024 * 1024 * 4);
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.minFilter = THREE.LinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+      manualFogTextureRef.current = tex;
+      manualFogCanvasRef.current.texture = tex;
+      setManualFogTexture(tex);
+      return () => { tex.dispose(); };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Load manual fog from Firebase when mapData.manualFogUrl changes or map switches
+  const lastLoadedManualFogUrl = useRef(null);
+  useEffect(() => {
+      if (!manualFogCanvasRef.current) return;
+      const { ctx, canvas, texture } = manualFogCanvasRef.current;
+      const url = mapData?.manualFogUrl;
+      
+      if (!url) {
+          lastLoadedManualFogUrl.current = null;
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          manualFogAlphaRef.current = new Uint8ClampedArray(1024 * 1024 * 4);
+          if (texture) texture.needsUpdate = true;
+          setManualFogRevision(r => r + 1);
+          return;
+      }
+
+      if (url === lastLoadedManualFogUrl.current) return;
+      lastLoadedManualFogUrl.current = url;
+
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          if (texture) texture.needsUpdate = true;
+          try {
+              const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+              manualFogAlphaRef.current = imgData.data;
+              setManualFogRevision(r => r + 1);
+          } catch (e) {
+              console.error('Failed to read loaded fog alpha:', e);
+          }
+      };
+      img.src = url;
+  }, [mapData?.manualFogUrl, activeMapId]);
+
   const [previewPlayerView, setPreviewPlayerView] = useState(false);
   const effectiveRole = previewPlayerView ? 'player' : role;
+
+  const selectedTokenIds = useCharacterStore(state => state.selectedTokenIds);
+  const setSelectedTokenIds = useCharacterStore(state => state.setSelectedTokenIds);
+  const viewedCharacterId = useCharacterStore(state => state.character?.id);
+  const [contextMenu, setContextMenu] = useState(null);
+  const [showAssetManager, setShowAssetManager] = useState(false);
+  const [showTokenManager, setShowTokenManager] = useState(false);
+  const [showInitiativeTracker, setShowInitiativeTracker] = useState(false);
+  const [isSpaceDown, setIsSpaceDown] = useState(false);
+  
+  const [tokenManagerWidth, setTokenManagerWidth] = useState(320);
+  const [sideSheetWidth, setSideSheetWidth] = useState(0);
+
+  const [isDraggingToken, setIsDraggingToken] = useState(false);
+  const [draggedTokenId, setDraggedTokenId] = useState(null);
+
+  const getPlayerDisplayName = useCallback((uid) => {
+      if (!uid) return 'Unassigned';
+      const active = data?.activeUsers?.[uid];
+      if (active) {
+          const raw = typeof active === 'object' ? active.displayName : active;
+          if (raw) return raw.includes('@') ? raw.split('@')[0] : raw;
+      }
+      const playerChar = (data?.players || []).find(p => p.ownerId === uid || String(data?.assignments?.[uid]) === String(p.id));
+      if (playerChar) return playerChar.name;
+      return 'Player';
+  }, [data?.activeUsers, data?.players, data?.assignments]);
+
+  const handleDeletePlayerActor = useCallback(async (p, e) => {
+      if (e) e.stopPropagation();
+      if (!(await dialog.confirm(`Are you sure you want to remove "${p.name}" from the party?`))) return;
+      const currentPlayers = (data?.players || []).filter(item => String(item.id) !== String(p.id));
+      updateCampaign({ players: currentPlayers });
+  }, [data?.players, dialog, updateCampaign]);
+
+  const handleDeleteNpcActor = useCallback(async (n, e) => {
+      if (e) e.stopPropagation();
+      if (!(await dialog.confirm(`Are you sure you want to delete "${n.name}" from the campaign?`))) return;
+      const currentNpcs = (data?.npcs || []).filter(item => String(item.id) !== String(n.id));
+      updateCampaign({ npcs: currentNpcs });
+  }, [data?.npcs, dialog, updateCampaign]);
+
+  const handleUnassignNpcActor = useCallback((n, e) => {
+      if (e) e.stopPropagation();
+      const currentNpcs = (data?.npcs || []).map(item => String(item.id) === String(n.id) ? { ...item, ownerId: null } : item);
+      updateCampaign({ npcs: currentNpcs });
+  }, [data?.npcs, updateCampaign]);
+
+  const handleAddNewPlayerActor = useCallback(async () => {
+      const name = await dialog.prompt("Enter Hero / Character Name:", "New Hero");
+      if (!name || !name.trim()) return;
+      const newChar = {
+          id: Date.now(),
+          name: name.trim(),
+          type: 'pc',
+          hp: 20,
+          maxHp: 20,
+          ac: 10,
+          speed: 30,
+          ownerId: null,
+          stats: { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 }
+      };
+      const currentPlayers = data?.players || [];
+      updateCampaign({ players: [...currentPlayers, newChar] });
+  }, [data?.players, dialog, updateCampaign]);
+
+  const handleDeleteMapToken = useCallback((tokenId, e) => {
+      if (e) e.stopPropagation();
+      updateMap(campaignCode, activeMapId, { [`tokens.${tokenId}`]: null });
+      setSelectedTokenIds(prev => (Array.isArray(prev) ? prev.filter(id => id !== tokenId) : []));
+  }, [campaignCode, activeMapId, updateMap, setSelectedTokenIds]);
+
+  useEffect(() => {
+      if (isCombatActive && effectiveRole !== 'dm') {
+          setIsTopMenuCollapsed(true);
+      }
+  }, [isCombatActive, effectiveRole]);
 
   console.log('Vision Mode from mapData:', mapData?.visionMode);
   const visionMode = mapData?.visionMode || 'off';
@@ -317,18 +514,14 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
     return volumes;
   }, [mapData?.measurements]);
 
-  const selectedTokenIds = useCharacterStore(state => state.selectedTokenIds);
-  const setSelectedTokenIds = useCharacterStore(state => state.setSelectedTokenIds);
-  const viewedCharacterId = useCharacterStore(state => state.character?.id);
-  const [contextMenu, setContextMenu] = useState(null);
-  const [showAssetManager, setShowAssetManager] = useState(false);
-  const [showTokenManager, setShowTokenManager] = useState(false);
-  const [showInitiativeTracker, setShowInitiativeTracker] = useState(false);
-  
-  const [tokenManagerWidth, setTokenManagerWidth] = useState(320);
-  const [sideSheetWidth, setSideSheetWidth] = useState(0);
-
-  const [isDraggingToken, setIsDraggingToken] = useState(false);
+  useEffect(() => {
+    if (isSpaceDown) {
+      document.body.style.cursor = 'grab';
+      return () => {
+        document.body.style.cursor = 'auto';
+      };
+    }
+  }, [isSpaceDown]);
 
   const [showAIPopup, setShowAIPopup] = useState(false);
 
@@ -401,6 +594,26 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       }
   }, [data?.campaign?.combat?.active, isCastMode]);
 
+  useEffect(() => {
+      const handleKeyDown = (e) => {
+          if (e.code === 'Space' && !e.repeat && e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
+              if (draggedTokenId) return; // Ignore space for map pan when a token is currently being moved
+              setIsSpaceDown(true);
+          }
+      };
+      const handleKeyUp = (e) => {
+          if (e.code === 'Space') {
+              setIsSpaceDown(false);
+          }
+      };
+      window.addEventListener('keydown', handleKeyDown);
+      window.addEventListener('keyup', handleKeyUp);
+      return () => {
+          window.removeEventListener('keydown', handleKeyDown);
+          window.removeEventListener('keyup', handleKeyUp);
+      };
+  }, [draggedTokenId]);
+
   const [isDrawingWalls, setIsDrawingWalls] = useState(false);
   const [drawingWallType, setDrawingWallType] = useState('wall');
   const [isDrawingFreehand, setIsDrawingFreehand] = useState(false);
@@ -420,11 +633,19 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
   const lightMenuRef = useRef(null);
   const propMenuRef = useRef(null);
   const [activeTool, setActiveTool] = useState(null);
+  const [isStampMode, setIsStampMode] = useState(false);
   const [activeLorePin, setActiveLorePin] = useState(null);
     const [isMovingLorePin, setIsMovingLorePin] = useState(null);
   const [isEditingLorePin, setIsEditingLorePin] = useState(false);
   const [editedLorePinLabel, setEditedLorePinLabel] = useState('');
   const [editedLorePinContent, setEditedLorePinContent] = useState('');
+
+  // Manual Fog of War Painter
+  const [isFogPainting, setIsFogPainting] = useState(false);
+  const [fogBrushMode, setFogBrushMode] = useState('paint'); // 'paint' | 'erase'
+  const [fogBrushSize, setFogBrushSize] = useState(40);
+  const [fogBrushShape, setFogBrushShape] = useState('circle');
+  const [fogBrushSoftness, setFogBrushSoftness] = useState(0.2);
 
   const resetAllTools = useCallback(() => {
       setActiveTool(null);
@@ -433,18 +654,47 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       setIsPlacingLights(false);
       setIsDeleting(false);
       setIsDrawingFreehand(false);
+      setIsFogPainting(false);
         setIsMovingLorePin(null);
         setIsEditingLorePin(false);
   }, []);
+
+  // Determine active cursor based on current action, tool, or mode
+  const activeCursor = useMemo(() => {
+    if (isSpaceDown) return 'grab';
+    if (isMovingLorePin) return 'move';
+    if (isDeleting) return 'not-allowed';
+    if (activeStampingAsset || isPlacingLights) return 'copy';
+    if (
+      isDrawingWalls ||
+      isArchitectMode ||
+      isDrawingFreehand ||
+      isFogPainting ||
+      ['ruler', 'ruler-linger', 'freehand', 'freehand-linger', 'cone', 'cone-linger', 'circle', 'circle-linger', 'box', 'box-linger', 'darkness', 'darkness-linger', 'ping', 'sculpt', 'paintMaterial'].includes(activeTool)
+    ) {
+      return 'crosshair';
+    }
+    return 'default';
+  }, [
+    isSpaceDown,
+    isMovingLorePin,
+    isDeleting,
+    activeStampingAsset,
+    isPlacingLights,
+    isDrawingWalls,
+    isArchitectMode,
+    isDrawingFreehand,
+    isFogPainting,
+    activeTool
+  ]);
   const [activeMeasurementStyle, setActiveMeasurementStyle] = useState('default');
   const [isToolbarOpen, setIsToolbarOpen] = useState(true);
   const [viewModeState, setViewModeState] = useState('isometric');
   const viewMode = isCastMode ? 'top-down' : viewModeState;
   const setViewMode = setViewModeState;
-  const [draggedTokenId, setDraggedTokenId] = useState(null);
   const [remountKey, setRemountKey] = useState(0);
   const [assetTab, setAssetTab] = useState('library');
-  const [dpr, setDpr] = useState(typeof window !== 'undefined' ? Math.min(window.devicePixelRatio, 2) : 1);
+  const [dpr, setDpr] = useState(typeof window !== 'undefined' ? Math.min(window.devicePixelRatio, 1.5) : 1);
 
   const [sculptBrushType, setSculptBrushType] = useState('raise');
   const [sculptBrushSize, setSculptBrushSize] = useState(2);
@@ -473,11 +723,158 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
   const [isLoadingCompendium, setIsLoadingCompendium] = useState(false);
 
   const [showCreationMenu, setShowCreationMenu] = useState(false);
+  const [showHeroCreationMenu, setShowHeroCreationMenu] = useState(false);
+  const [quickActorModal, setQuickActorModal] = useState(null); // { isOpen: boolean, category: 'pc' | 'npc' | 'companion', editId?: string, tokenId?: string, name?: string, image?: string, size?: number, ownerId?: string }
+  const [photoEditModal, setPhotoEditModal] = useState(null); // { isOpen: boolean, tokenId: string, characterId?: string, name?: string, image?: string }
   const [showForge, setShowForge] = useState(false);
   const [forgeTab, setForgeTab] = useState('generate');
   const [forgeName, setForgeName] = useState('');
   const [forgeContext, setForgeContext] = useState('');
   const [isForging, setIsForging] = useState(false);
+
+  const handleSaveQuickActor = useCallback(async ({ category, editId, tokenId, name, image, size, ownerId }) => {
+      const cleanName = (name || '').trim() || (category === 'pc' ? 'New Hero' : 'New Entity');
+      const cleanImage = (image || '').trim();
+      const cleanSize = Number(size) || 1;
+      const cleanOwnerId = ownerId || null;
+
+      if (category === 'pc') {
+          const existingPlayers = data?.players || [];
+          if (editId) {
+              const updatedPlayers = existingPlayers.map(p => String(p.id) === String(editId) ? {
+                  ...p,
+                  name: cleanName,
+                  image: cleanImage,
+                  size: cleanSize,
+                  ownerId: cleanOwnerId,
+                  isSimple: true,
+                  noSheet: true
+              } : p);
+              updateCampaign({ players: updatedPlayers });
+          } else {
+              const newChar = {
+                  id: `hero_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+                  name: cleanName,
+                  image: cleanImage,
+                  size: cleanSize,
+                  type: 'pc',
+                  hp: 20,
+                  maxHp: 20,
+                  ac: 10,
+                  speed: 30,
+                  ownerId: cleanOwnerId,
+                  isSimple: true,
+                  noSheet: true
+              };
+              updateCampaign({ players: [...existingPlayers, newChar] });
+          }
+      } else {
+          // NPC or Companion
+          const existingNpcs = data?.npcs || [];
+          if (editId) {
+              const updatedNpcs = existingNpcs.map(n => String(n.id) === String(editId) ? {
+                  ...n,
+                  name: cleanName,
+                  image: cleanImage,
+                  size: cleanSize,
+                  ownerId: cleanOwnerId,
+                  isHidden: cleanOwnerId ? false : (n.isHidden ?? false),
+                  isSimple: true,
+                  noSheet: true
+              } : n);
+              updateCampaign({ npcs: updatedNpcs });
+          } else {
+              const newNpc = {
+                  id: `npc_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+                  name: cleanName,
+                  image: cleanImage,
+                  size: cleanSize,
+                  type: 'npc',
+                  hp: { current: 10, max: 10 },
+                  ac: 10,
+                  speed: 30,
+                  ownerId: cleanOwnerId,
+                  isHidden: false,
+                  isSimple: true,
+                  noSheet: true
+              };
+              updateCampaign({ npcs: [...existingNpcs, newNpc] });
+          }
+      }
+
+      // If a map token was being directly edited or active map tokens share this characterId, sync them
+      const updates = {};
+      if (tokenId && mapData?.tokens?.[tokenId]) {
+          updates[`tokens.${tokenId}.name`] = cleanName;
+          updates[`tokens.${tokenId}.image`] = cleanImage;
+          updates[`tokens.${tokenId}.size`] = cleanSize;
+          if (cleanOwnerId !== undefined) updates[`tokens.${tokenId}.ownerId`] = cleanOwnerId;
+      }
+      if (editId && mapData?.tokens) {
+          Object.entries(mapData.tokens).forEach(([tId, t]) => {
+              if (t && String(t.characterId) === String(editId)) {
+                  updates[`tokens.${tId}.name`] = cleanName;
+                  updates[`tokens.${tId}.image`] = cleanImage;
+                  updates[`tokens.${tId}.size`] = cleanSize;
+                  if (cleanOwnerId !== undefined) updates[`tokens.${tId}.ownerId`] = cleanOwnerId;
+              }
+          });
+      }
+      if (Object.keys(updates).length > 0) {
+          updateMap(campaignCode, activeMapId, updates);
+      }
+
+      toast(`Saved ${cleanName}`, "success");
+      setQuickActorModal(null);
+  }, [data?.players, data?.npcs, mapData?.tokens, campaignCode, activeMapId, updateCampaign, updateMap, toast]);
+
+  const handleSaveTokenPhoto = useCallback(async ({ tokenId, characterId, image }) => {
+      const cleanImage = (image || '').trim();
+      const updates = {};
+      if (tokenId) {
+          updates[`tokens.${tokenId}.image`] = cleanImage;
+      }
+      if (characterId) {
+          if ((data?.players || []).some(p => String(p.id) === String(characterId))) {
+              const newPlayers = (data.players || []).map(p => String(p.id) === String(characterId) ? { ...p, image: cleanImage } : p);
+              updateCampaign({ players: newPlayers });
+          } else if ((data?.npcs || []).some(n => String(n.id) === String(characterId))) {
+              const newNpcs = (data.npcs || []).map(n => String(n.id) === String(characterId) ? { ...n, image: cleanImage } : n);
+              updateCampaign({ npcs: newNpcs });
+          }
+
+          if (mapData?.tokens) {
+              Object.entries(mapData.tokens).forEach(([tId, t]) => {
+                  if (t && String(t.characterId) === String(characterId)) {
+                      updates[`tokens.${tId}.image`] = cleanImage;
+                  }
+              });
+          }
+      }
+
+      if (Object.keys(updates).length > 0) {
+          updateMap(campaignCode, activeMapId, updates);
+      }
+
+      toast("Photo updated successfully!", "success");
+      setPhotoEditModal(null);
+  }, [data?.players, data?.npcs, mapData?.tokens, campaignCode, activeMapId, updateCampaign, updateMap, toast]);
+
+  const handleDeleteQuickActor = useCallback(async (modalData) => {
+      if (!modalData?.editId) return;
+      if (!(await dialog.confirm(`Delete ${modalData.name || 'this actor'}?`))) return;
+      
+      if (modalData.category === 'pc') {
+          const newPlayers = (data?.players || []).filter(p => String(p.id) !== String(modalData.editId));
+          updateCampaign({ players: newPlayers });
+      } else {
+          const newNpcs = (data?.npcs || []).filter(n => String(n.id) !== String(modalData.editId));
+          updateCampaign({ npcs: newNpcs });
+      }
+
+      setQuickActorModal(null);
+      toast(`Deleted ${modalData.name || 'actor'}`, "info");
+  }, [data?.players, data?.npcs, dialog, updateCampaign, toast]);
   
   const [pasteTextContent, setPasteTextContent] = useState('');
   const [isParsingText, setIsParsingText] = useState(false);
@@ -613,6 +1010,9 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
   }, [resolvedBackgroundUrl, mapData?.backgroundUrl]);
 
   useEffect(() => {
+    const isTouch = typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+    const maxDim = isLowPerformance || isTouch ? 1024 : 2048;
+
     if (!resolvedHeightmapUrl) {
       // Create a blank heightmap canvas so sculpting works on new/blank maps
       const size = 1024;
@@ -631,30 +1031,42 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           data: imageData.data, width: size, height: size,
           canvas: canvas, ctx: ctx, texture: texture
       });
-      return;
+      return () => safeDisposeTexture(texture);
     }
     let isActive = true;
+    let texture = null;
     const img = new Image();
     if (!resolvedHeightmapUrl.startsWith('blob:') && !resolvedHeightmapUrl.startsWith('data:')) {
         img.crossOrigin = "Anonymous";
     }
     img.onload = () => {
       if (!isActive) return;
+      let targetW = img.width || 1024;
+      let targetH = img.height || 1024;
+      if (targetW > maxDim || targetH > maxDim) {
+          if (targetW > targetH) {
+              targetH = Math.round((targetH * maxDim) / targetW);
+              targetW = maxDim;
+          } else {
+              targetW = Math.round((targetW * maxDim) / targetH);
+              targetH = maxDim;
+          }
+      }
       const canvas = document.createElement('canvas');
-      canvas.width = img.width;
-      canvas.height = img.height;
+      canvas.width = targetW;
+      canvas.height = targetH;
       const ctx = canvas.getContext('2d', { willReadFrequently: true });
-      ctx.drawImage(img, 0, 0);
+      ctx.drawImage(img, 0, 0, targetW, targetH);
       try {
-        const imageData = ctx.getImageData(0, 0, img.width, img.height);
+        const imageData = ctx.getImageData(0, 0, targetW, targetH);
         
         // Phase 1: Create the dynamic CanvasTexture for real-time sculpting
-        const texture = new THREE.CanvasTexture(canvas);
+        texture = new THREE.CanvasTexture(canvas);
 
         setTerrainData({
           data: imageData.data,
-          width: img.width,
-          height: img.height,
+          width: targetW,
+          height: targetH,
           canvas: canvas,
           ctx: ctx,
           texture: texture
@@ -664,11 +1076,17 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       }
     };
     img.src = resolvedHeightmapUrl;
-    return () => { isActive = false; };
-  }, [resolvedHeightmapUrl]);
+    return () => { 
+        isActive = false; 
+        if (texture) safeDisposeTexture(texture);
+    };
+  }, [resolvedHeightmapUrl, isLowPerformance]);
 
   useEffect(() => {
+      const isTouch = typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+      const maxDim = isLowPerformance || isTouch ? 1024 : 2048;
       const size = 1024;
+
       if (!resolvedMaterialMaskUrl) {
           const canvas = document.createElement('canvas');
           canvas.width = size;
@@ -682,7 +1100,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
           
           setMaterialData({ width: size, height: size, canvas: canvas, ctx: ctx, texture: texture });
-          return () => texture.dispose();
+          return () => safeDisposeTexture(texture);
       }
       let isActive = true;
       let texture = null;
@@ -692,20 +1110,34 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       }
       img.onload = () => {
           if (!isActive) return;
+          let targetW = img.width || 1024;
+          let targetH = img.height || 1024;
+          if (targetW > maxDim || targetH > maxDim) {
+              if (targetW > targetH) {
+                  targetH = Math.round((targetH * maxDim) / targetW);
+                  targetW = maxDim;
+              } else {
+                  targetW = Math.round((targetW * maxDim) / targetH);
+                  targetH = maxDim;
+              }
+          }
           const canvas = document.createElement('canvas');
-          canvas.width = img.width;
-          canvas.height = img.height;
+          canvas.width = targetW;
+          canvas.height = targetH;
           const ctx = canvas.getContext('2d', { willReadFrequently: true });
-          ctx.drawImage(img, 0, 0);
+          ctx.drawImage(img, 0, 0, targetW, targetH);
           
           texture = new THREE.CanvasTexture(canvas);
           texture.colorSpace = THREE.NoColorSpace;
           texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
-          setMaterialData({ width: img.width, height: img.height, canvas: canvas, ctx: ctx, texture: texture });
+          setMaterialData({ width: targetW, height: targetH, canvas: canvas, ctx: ctx, texture: texture });
       };
       img.src = resolvedMaterialMaskUrl;
-      return () => { isActive = false; if (texture) texture.dispose(); };
-  }, [resolvedMaterialMaskUrl]);
+      return () => { 
+          isActive = false; 
+          if (texture) safeDisposeTexture(texture);
+      };
+  }, [resolvedMaterialMaskUrl, isLowPerformance]);
 
   const mapScale = mapData?.scale || 20;
   const mapHeightScale = mapData?.heightScale || 1;
@@ -890,7 +1322,20 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       latestTokensRef.current = tokens;
   }, [tokens]);
 
-  const tokensList = useMemo(() => Object.values(tokens).filter(Boolean), [tokens]); // Filter out null/undefined tokens
+  // Declared here (before tokensList) so the useMemo below can safely reference it
+  const [topHoveredTokenId, setTopHoveredTokenId] = useState(null);
+
+  const tokensList = useMemo(() => {
+    const list = Object.values(tokens).filter(Boolean);
+    // Ensure the dragged or hovered token renders on top (last in array = rendered last = on top in WebGL).
+    // This matters both visually and for raycasting so overlapping tokens don't compete.
+    const topId = draggedTokenId || topHoveredTokenId;
+    if (topId) {
+        list.sort((a, b) => (a.id === topId ? 1 : b.id === topId ? -1 : 0));
+    }
+    return list;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tokens, draggedTokenId, topHoveredTokenId]); // Filter out null/undefined tokens
 
   // Stabilize context objects that secretly bust React caches on every UI click
   const playersStr = JSON.stringify(data?.players || []);
@@ -1149,8 +1594,20 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           return new Set(Object.values(mapData?.walls || {}).filter(w => w && (w.type === 'door' || w.type === 'window')).map(w => w.id));
       }
 
+      const fogAlpha = manualFogAlphaRef.current;
+      const mapScale = mapData?.scale || 20;
+      const mapAspect = aspect || 1;
+
       if (fowEnabled === false && mapData?.fowWallsEnabled === false) {
-          return new Set(Object.values(mapData?.walls || {}).filter(w => w && (w.type === 'door' || w.type === 'window')).map(w => w.id));
+          return new Set(Object.values(mapData?.walls || {}).filter(w => {
+              if (!w || (w.type !== 'door' && w.type !== 'window')) return false;
+              if (!w.points || w.points.length < 2) return false;
+              const wallMidpoint = {
+                  x: (w.points[0].x + w.points[1].x) / 2,
+                  z: (w.points[0].z + w.points[1].z) / 2,
+              };
+              return !isPointInManualFog(wallMidpoint.x, wallMidpoint.z, fogAlpha, mapScale, mapAspect);
+          }).map(w => w.id));
       }
 
       const visibleIds = new Set();
@@ -1159,11 +1616,15 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       }
 
       Object.values(mapData.walls).filter(Boolean).forEach(wall => {
-          if (wall && (wall.type === 'door' || wall.type === 'window')) {
+          if (wall && (wall.type === 'door' || wall.type === 'window') && wall.points && wall.points.length >= 2) {
               const wallMidpoint = {
                   x: (wall.points[0].x + wall.points[1].x) / 2,
                   z: (wall.points[0].z + wall.points[1].z) / 2,
               };
+
+              if (isPointInManualFog(wallMidpoint.x, wallMidpoint.z, fogAlpha, mapScale, mapAspect)) {
+                  return;
+              }
 
               const wallsToCheck = mapData?.fowWallsEnabled !== false ? mapData.walls : null;
 
@@ -1171,7 +1632,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                   const dist = Math.sqrt(Math.pow(source.x - wallMidpoint.x, 2) + Math.pow(source.z - wallMidpoint.z, 2));
 
                   // Check if within vision range and if there's line of sight
-                  if (dist <= source.range && checkLineOfSight(source, wallMidpoint, wallsToCheck, wall.id)) {
+                  if (dist <= source.range && checkLineOfSight(source, wallMidpoint, wallsToCheck, wall.id) && !isSegmentBlockedByManualFog(source, wallMidpoint, fogAlpha, mapScale, mapAspect)) {
                       visibleIds.add(wall.id);
                       break; // This door/window is visible, no need to check other sources
                   }
@@ -1179,7 +1640,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           }
       });
       return visibleIds;
-  }, [mapData?.walls, mapData?.fowWallsEnabled, playerVisionSources, effectiveRole, isCastMode]);
+  }, [mapData?.walls, mapData?.fowWallsEnabled, mapData?.scale, aspect, playerVisionSources, effectiveRole, isCastMode, manualFogRevision]);
 
   // Calculate combined lights (map lights + dynamic token lights)
   const combinedLights = useMemo(() => {
@@ -1207,35 +1668,54 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
   const visibleTokenIds = useMemo(() => {
       if (effectiveRole === 'dm' && !isCastMode) return new Set(tokensList.map(t => t.id)); // DM sees everything
       
+      const fogAlpha = manualFogAlphaRef.current;
+      const mapScale = mapData?.scale || 20;
+      const mapAspect = aspect || 1;
+
       if (fowEnabled === false && mapData?.fowWallsEnabled === false) {
-          return new Set(tokensList.filter(t => !t.isHidden).map(t => t.id));
+          return new Set(tokensList.filter(t => {
+              if (t.isHidden) return false;
+              if (isPointInManualFog(t.x || 0, t.z || 0, fogAlpha, mapScale, mapAspect)) {
+                  const character = allCharacters.find(c => String(c.id) === String(t.characterId));
+                  const isOwner = (character?.ownerId && String(character.ownerId) === String(user?.uid)) || (t.ownerId && String(t.ownerId) === String(user?.uid));
+                  const myCharAssigned = stableAssignments[user?.uid] && String(t.characterId) === String(stableAssignments[user.uid]);
+                  if (!isOwner && !myCharAssigned && !t.isSharedControl) return false;
+              }
+              return true;
+          }).map(t => t.id));
       }
 
       const visibleIds = new Set();
-
       const playerCharIds = isCastMode ? new Set((data?.players || []).map(p => String(p.id))) : new Set();
 
       tokensList.forEach(t => {
           if (t.isHidden) return; // Hidden tokens are completely excluded
           
+          const character = allCharacters.find(c => String(c.id) === String(t.characterId));
+          const isOwner = (character?.ownerId && String(character.ownerId) === String(user?.uid)) || (t.ownerId && String(t.ownerId) === String(user?.uid));
+          const myCharAssigned = stableAssignments[user?.uid] && String(t.characterId) === String(stableAssignments[user.uid]);
+          const isOwnControl = isOwner || myCharAssigned || t.isSharedControl;
+
           // In cast mode, always see all PCs and shared control tokens
           if (isCastMode && (t.isSharedControl || (t.characterId && playerCharIds.has(String(t.characterId))))) {
               visibleIds.add(t.id);
               return;
           }
 
-          const character = allCharacters.find(c => String(c.id) === String(t.characterId));
-          const isOwner = (character?.ownerId && String(character.ownerId) === String(user?.uid)) || (t.ownerId && String(t.ownerId) === String(user?.uid));
-          const myCharAssigned = stableAssignments[user?.uid] && String(t.characterId) === String(stableAssignments[user.uid]);
-          
+          // If token is inside manual painted fog and user doesn't own it, it is completely hidden
+          const targetPt = { x: t.x || 0, z: t.z || 0 };
+          const inManualFog = isPointInManualFog(targetPt.x, targetPt.z, fogAlpha, mapScale, mapAspect);
+          if (inManualFog && !isOwnControl && !isCastMode) {
+              return;
+          }
+
           // You can always see yourself and tokens you share control over
-          if (!isCastMode && (isOwner || myCharAssigned || t.isSharedControl)) {
+          if (!isCastMode && isOwnControl) {
               visibleIds.add(t.id);
               return;
           }
 
           const wallsArray = mapData?.fowWallsEnabled !== false ? Object.values(mapData?.walls || {}) : [];
-          const targetPt = { x: t.x || 0, z: t.z || 0 };
 
           // Check visibility from each of the player's vision sources
           for (const src of playerVisionSources) {
@@ -1246,8 +1726,8 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
               const tremorsenseRange = src.tremorsense ?? 0;
               const baseVisionRange = src.darkvision ?? src.range;
 
-              // Optimization: We check LOS only once if needed
-              const hasLOS = checkLineOfSight(src, targetPt, wallsArray);
+              // Line of sight: must not cross walls AND must not cross opaque painted fog
+              const hasLOS = checkLineOfSight(src, targetPt, wallsArray) && !isSegmentBlockedByManualFog(src, targetPt, fogAlpha, mapScale, mapAspect);
 
               const canSeeWithTruesight = dist <= truesightRange && hasLOS;
               const canSeeWithBlindsight = dist <= blindsightRange && hasLOS;
@@ -1281,8 +1761,8 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                           const lightPt = { x: light.position.x, z: light.position.z };
                           const distToLight = Math.sqrt(Math.pow(lightPt.x - targetPt.x, 2) + Math.pow(lightPt.z - targetPt.z, 2));
                           
-                          // A token is illuminated if it's within a light's range AND the light has LOS to it.
-                          if (distToLight <= lightRange && checkLineOfSight(lightPt, targetPt, wallsArray)) {
+                          // A token is illuminated if it's within a light's range AND the light has LOS to it (no walls and no fog blocking light)
+                          if (distToLight <= lightRange && checkLineOfSight(lightPt, targetPt, wallsArray) && !isSegmentBlockedByManualFog(lightPt, targetPt, fogAlpha, mapScale, mapAspect)) {
                               visibleIds.add(t.id);
                               return; // Visible
                           }
@@ -1292,15 +1772,19 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           }
       });
       return visibleIds;
-  }, [tokensList, effectiveRole, playerVisionSources, mapData?.walls, mapData?.lights, fowEnabled, mapData?.fowWallsEnabled, allCharacters, user?.uid, stableAssignments, gridSize, isCastMode, data?.players]);
+  }, [tokensList, effectiveRole, playerVisionSources, mapData?.walls, mapData?.lights, mapData?.scale, aspect, fowEnabled, mapData?.fowWallsEnabled, allCharacters, user?.uid, stableAssignments, gridSize, isCastMode, data?.players, manualFogRevision]);
 
   // CPU-based Line of Sight / Prop Visibility Filter
   const visiblePropIds = useMemo(() => {
       const props = mapData?.props ? Object.values(mapData.props).filter(Boolean) : [];
       if (effectiveRole === 'dm' && !isCastMode) return new Set(props.map(p => p.id)); // DM sees everything
       
+      const fogAlpha = manualFogAlphaRef.current;
+      const mapScale = mapData?.scale || 20;
+      const mapAspect = aspect || 1;
+
       if (fowEnabled === false && mapData?.fowWallsEnabled === false) {
-          return new Set(props.map(p => p.id));
+          return new Set(props.filter(p => !isPointInManualFog(p.x || 0, p.z || 0, fogAlpha, mapScale, mapAspect)).map(p => p.id));
       }
 
       const visibleIds = new Set();
@@ -1308,6 +1792,11 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
 
       props.forEach(p => {
           const targetPt = { x: p.x || 0, z: p.z || 0 };
+
+          // If prop is inside manual fog, it's hidden from players
+          if (isPointInManualFog(targetPt.x, targetPt.z, fogAlpha, mapScale, mapAspect)) {
+              return;
+          }
 
           // Check visibility from each of the player's vision sources
           for (const src of playerVisionSources) {
@@ -1318,8 +1807,8 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
               const tremorsenseRange = src.tremorsense ?? 0;
               const baseVisionRange = src.darkvision ?? src.range;
 
-              // Optimization: We check LOS only once if needed
-              const hasLOS = checkLineOfSight(src, targetPt, wallsArray);
+              // Line of sight check: must not cross walls AND must not cross painted fog
+              const hasLOS = checkLineOfSight(src, targetPt, wallsArray) && !isSegmentBlockedByManualFog(src, targetPt, fogAlpha, mapScale, mapAspect);
 
               const canSeeWithTruesight = dist <= truesightRange && hasLOS;
               const canSeeWithBlindsight = dist <= blindsightRange && hasLOS;
@@ -1344,7 +1833,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
                           const lightPt = { x: light.position.x, z: light.position.z };
                           const distToLight = Math.sqrt(Math.pow(lightPt.x - targetPt.x, 2) + Math.pow(lightPt.z - targetPt.z, 2));
                           
-                          if (distToLight <= lightRange && checkLineOfSight(lightPt, targetPt, wallsArray)) {
+                          if (distToLight <= lightRange && checkLineOfSight(lightPt, targetPt, wallsArray) && !isSegmentBlockedByManualFog(lightPt, targetPt, fogAlpha, mapScale, mapAspect)) {
                               visibleIds.add(p.id);
                               return; // Visible
                           }
@@ -1354,7 +1843,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           }
       });
       return visibleIds;
-  }, [mapData?.props, effectiveRole, playerVisionSources, mapData?.walls, mapData?.lights, fowEnabled, mapData?.fowWallsEnabled, combinedLights, gridSize, isCastMode]);
+  }, [mapData?.props, mapData?.scale, aspect, effectiveRole, playerVisionSources, mapData?.walls, mapData?.lights, fowEnabled, mapData?.fowWallsEnabled, combinedLights, gridSize, isCastMode, manualFogRevision]);
 
   // Calculate which 3D lights are visible to the players (prevents unseen lights from shining through walls via normal maps)
   const visibleLights = useMemo(() => {
@@ -1363,25 +1852,33 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
 
       const filteredLights = {};
       const wallsArray = mapData?.fowWallsEnabled !== false ? Object.values(mapData?.walls || {}) : [];
+      const fogAlpha = manualFogAlphaRef.current;
+      const mapScale = mapData?.scale || 20;
+      const mapAspect = aspect || 1;
 
       Object.values(combinedLights).filter(Boolean).forEach(light => {
           const lightPt = { x: light.position.x, z: light.position.z };
+          if (isPointInManualFog(lightPt.x, lightPt.z, fogAlpha, mapScale, mapAspect)) {
+              return;
+          }
           for (const src of playerVisionSources) {
-              if (checkLineOfSight(src, lightPt, wallsArray)) {
+              if (checkLineOfSight(src, lightPt, wallsArray) && !isSegmentBlockedByManualFog(src, lightPt, fogAlpha, mapScale, mapAspect)) {
                   filteredLights[light.id] = light;
                   break;
               }
           }
       });
       return filteredLights;
-  }, [mapData?.lights, mapData?.walls, fowEnabled, mapData?.fowWallsEnabled, playerVisionSources, effectiveRole, combinedLights, isCastMode]);
+  }, [mapData?.lights, mapData?.walls, mapData?.scale, aspect, fowEnabled, mapData?.fowWallsEnabled, playerVisionSources, effectiveRole, combinedLights, isCastMode, manualFogRevision]);
 
   // Extract active combatant early so the Camera Director can hook into it
+  const isPlayerInCombat = effectiveRole === 'player' && data?.campaign?.combat?.active;
+  const wrapperFlexClass = isPlayerInCombat ? 'flex-col' : 'flex-row';
+  const iconsMarginClass = 'mt-0'; // Removed the big gap
+
   const activeCombatantId = mapData && data?.campaign?.combat?.active && data?.campaign?.combat?.combatants?.length 
       ? data.campaign.combat.combatants[(data.campaign.combat.turn || 0) % data.campaign.combat.combatants.length].tokenId 
       : null;
-
-  const [topHoveredTokenId, setTopHoveredTokenId] = useState(null);
 
   const getTokenPriority = useCallback((tid) => {
       const t = latestTokensRef.current[tid];
@@ -1405,7 +1902,10 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
   }, [allCharacters, user?.uid, stableAssignments, effectiveRole]);
 
   const handleGlobalTokenPointerMove = useCallback((e) => {
-      if (activeTool || draggedTokenId) return;
+      if (activeTool || draggedTokenId || isSpaceDown) {
+          if (topHoveredTokenId) setTopHoveredTokenId(null);
+          return;
+      }
       if (e.buttons > 0 || e.nativeEvent?.buttons > 0) return;
 
       const hitTokenIds = [];
@@ -1431,7 +1931,14 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       const topId = sortedHitIds[0];
       
       setTopHoveredTokenId(prev => prev !== topId ? topId : prev);
-  }, [activeTool, draggedTokenId, getTokenPriority]);
+  }, [activeTool, draggedTokenId, isSpaceDown, topHoveredTokenId, getTokenPriority]);
+
+  // Definitively clear hover state when a drag starts so it never leaks to the wrong token
+  useEffect(() => {
+      if (draggedTokenId) {
+          setTopHoveredTokenId(null);
+      }
+  }, [draggedTokenId]);
 
   const handleGlobalTokenPointerOut = useCallback(() => {
       if (!draggedTokenId) {
@@ -1440,84 +1947,74 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
   }, [draggedTokenId]);
 
   // Handle clicking a token to both select it and open the side sheet
-  const handleSelectToken = useCallback((arg1, arg2, arg3) => {
-    let e, tokenId, isMulti;
-    
-    // Backward compatibility: check if the first arg is a 3D event object
-    if (arg1 && typeof arg1.stopPropagation === 'function') {
-        e = arg1;
-        tokenId = arg2;
-        isMulti = arg3;
-    } else {
-        e = null;
-        tokenId = arg1;
-        isMulti = arg2;
-    }
-
-    setContextMenu(null);
-
-    if (isMulti) {
-        setSelectedTokenIds(prev => prev.includes(tokenId) ? prev.filter(id => id !== tokenId) : [...prev, tokenId]);
-        return;
-    }
-
-    // If we didn't receive an event or intersections, fallback to standard single selection
-    if (!e || !e.intersections || e.intersections.length === 0) {
-        setSelectedTokenIds([tokenId]);
-        return;
-    }
-
-    // Map out every unique token ID hit by the Raycaster
-    const hitTokenIds = [];
-    e.intersections.forEach(hit => {
-        let current = hit.object;
-        while (current) {
-            if (current.userData?.tokenId) {
-                if (!hitTokenIds.includes(current.userData.tokenId)) {
-                    hitTokenIds.push(current.userData.tokenId);
-                }
-                break; // Stop climbing the tree once we identify the token
-            }
-            current = current.parent;
+    const handleSelectToken = useCallback((arg1, arg2, arg3) => {
+        let e, tokenId, isMulti;
+        // Backward compatibility: first argument may be the 3D event object
+        if (arg1 && typeof arg1.stopPropagation === 'function') {
+            e = arg1;
+            tokenId = arg2;
+            isMulti = arg3;
+        } else {
+            e = null;
+            tokenId = arg1;
+            isMulti = arg2;
         }
-    });
-
-    if (hitTokenIds.length <= 1) {
-        setSelectedTokenIds([tokenId]);
-        return;
-    }
-
-
-    // Sort the stack of tokens by priority
-    const sortedHitIds = [...hitTokenIds].sort((a, b) => getTokenPriority(b) - getTokenPriority(a));
-
-    // Cycle through the stack if clicking the same crowded square
-    setSelectedTokenIds(prev => {
-        if (prev.length === 1 && sortedHitIds.includes(prev[0])) {
-            const currentIndex = sortedHitIds.indexOf(prev[0]);
-            const nextIndex = (currentIndex + 1) % sortedHitIds.length;
-            return [sortedHitIds[nextIndex]];
+        setContextMenu(null);
+        // If a drag operation is already active, ignore selection changes
+        if (draggedTokenId) {
+            return;
         }
-        return [sortedHitIds[0]];
-    });
-  }, [setSelectedTokenIds, allCharacters, user?.uid, stableAssignments, effectiveRole]);
+        // Shift‑click (isMulti) toggles multi‑selection; otherwise single selection
+        if (isMulti) {
+            setSelectedTokenIds(prev =>
+                prev.includes(tokenId) ? prev.filter(id => id !== tokenId) : [...prev, tokenId]
+            );
+        } else {
+            setSelectedTokenIds([tokenId]);
+        }
+    }, [setSelectedTokenIds, draggedTokenId]);
 
   // Group Initiative Roller
-  const rollGroupInitiative = (tokenIds) => {
+  const rollGroupInitiative = async (tokenIds) => {
       const currentCombat = data?.campaign?.combat || { active: false, round: 1, turn: 0, combatants: [] };
       const currentCombatants = currentCombat.combatants || [];
       
-      const newEntries = tokenIds.map(tId => {
+      const alreadyInCombat = tokenIds.filter(tId => currentCombatants.some(c => c.tokenId === tId));
+      let finalTokenIds = [...tokenIds];
+
+      if (alreadyInCombat.length > 0) {
+          const overwrite = await dialog.confirm(`Some of the selected characters are already in the initiative tracker. Do you want to overwrite their existing initiatives? (Click 'Cancel' to only roll for new characters)`);
+          if (!overwrite) {
+              finalTokenIds = tokenIds.filter(tId => !alreadyInCombat.includes(tId));
+          }
+      }
+      
+      if (finalTokenIds.length === 0) return;
+
+      const newEntries = finalTokenIds.map(tId => {
           const token = tokensList.find(t => t.id === tId);
           const char = allCharacters.find(c => String(c.id) === String(token?.characterId));
           const dex = char?.stats?.dex || 10;
           const mod = Math.floor((dex - 10) / 2);
-          const roll = Math.floor(Math.random() * 20) + 1;
+          const name = token?.name || char?.name || 'Unknown';
+          let total;
+          if (onDiceRoll) {
+              const res = onDiceRoll(`1d20${mod >= 0 ? `+${mod}` : `${mod}`}`, {
+                  alias: 'Initiative',
+                  characterName: name,
+                  actionType: 'Roll',
+                  weaponName: 'Initiative'
+              });
+              total = (res && typeof res.total === 'number') ? res.total : (Number(res) || (10 + mod));
+          } else {
+              const roll = Math.floor(Math.random() * 20) + 1;
+              total = roll + mod;
+          }
           const isNpc = !data?.players?.some(p => String(p.id) === String(token?.characterId));
           return { 
               tokenId: tId, 
-              initiative: roll + mod,
-              name: token?.name || char?.name || 'Unknown',
+              initiative: total,
+              name: name,
               isNpc: isNpc
           };
       });
@@ -1561,14 +2058,14 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           const res = await fetch('https://www.dnd5eapi.co/api/monsters?name=' + compendiumSearch);
           const apiData = await res.json();
           if (apiData.count === 0) {
-              alert("No monsters found in the SRD with that name.");
+              toast("No monsters found in the SRD with that name.", "error");
               setCompendiumResults([]);
           } else {
               setCompendiumResults(apiData.results.slice(0, 20));
           }
       } catch (e) {
           console.error(e);
-          alert("Could not connect to D&D 5e API.");
+          toast("Could not connect to D&D 5e API.", "error");
       }
       setIsLoadingCompendium(false);
   };
@@ -1590,10 +2087,10 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
               setShowModelPicker(true);
               setMiniSearchQuery(finalNpc.name);
               handleMiniSearch(finalNpc.name, finalNpc.race);
-          } else { alert("The Forge failed."); }
+          } else { toast("The Forge failed.", "error"); }
       } catch (e) {
           console.error(e);
-          alert("The Forge encountered an error: " + e.message);
+          toast("The Forge encountered an error: " + e.message, "error");
       }
       setIsForging(false);
   };
@@ -1643,7 +2140,7 @@ ${pasteTextContent}`;
           handleMiniSearch(finalNpc.name, finalNpc.race);
       } catch(e) {
           console.error(e);
-          alert("Failed to parse text. Make sure it's a valid 5e statblock.");
+          toast("Failed to parse text. Make sure it's a valid 5e statblock.", "error");
       }
       setIsParsingText(false);
   };
@@ -1739,7 +2236,7 @@ ${pasteTextContent}`;
           handleMiniSearch(m.name, m.type);
       } catch (e) {
           console.error(e);
-          alert("Failed to import monster details.");
+          toast("Failed to import monster details.", "error");
       }
       setIsLoadingCompendium(false);
   };
@@ -1756,7 +2253,7 @@ ${pasteTextContent}`;
           let imageBlob = null;
           let imageUrl = npcForModel.image;
           if (!imageUrl) {
-              alert("No image available to forge a 3D mini.");
+              toast("No image available to forge a 3D mini.", "error");
               setIsForging3D(false);
               return;
           }
@@ -1854,7 +2351,7 @@ ${pasteTextContent}`;
           
       } catch (e) {
           console.error(e);
-          alert("3D Forge Failed: " + e.message);
+          toast("3D Forge Failed: " + e.message, "error");
       } finally {
           setIsForging3D(false);
       }
@@ -2161,8 +2658,13 @@ ${pasteTextContent}`;
     if (!payload) {
         const assetDataStr = e.dataTransfer.getData('application/dungeonmind-asset');
         const characterDataStr = e.dataTransfer.getData('application/dungeonmind-character');
+        const activeTokenDataStr = e.dataTransfer.getData('application/dungeonmind-active-token');
         
-        if (assetDataStr) {
+        if (activeTokenDataStr) {
+            try {
+                payload = { format: 'dungeonmind-active-token', ...JSON.parse(activeTokenDataStr) };
+            } catch(err) {  }
+        } else if (assetDataStr) {
             try {
                 payload = { format: 'dungeonmind-asset', ...JSON.parse(assetDataStr) };
             } catch(err) {  }
@@ -2208,6 +2710,21 @@ ${pasteTextContent}`;
         return;
     }
 
+    if (payload.format === 'dungeonmind-active-token' || payload.tokenId) {
+        const targetTokenId = payload.tokenId;
+        const existingToken = (mapData?.tokens && mapData.tokens[targetTokenId]) || latestTokensRef.current?.[targetTokenId] || (tokensList || []).find(t => t?.id === targetTokenId);
+        if (existingToken) {
+            const tokenElevationOffset = mapData?.tokenElevationOffset ?? ((isCastMode || !mapData?.heightmapUrl) ? 0.04 : -0.12);
+            await updateMap(campaignCode, activeMapId, {
+                [`tokens.${targetTokenId}.x`]: dropX,
+                [`tokens.${targetTokenId}.y`]: terrainY + tokenElevationOffset,
+                [`tokens.${targetTokenId}.z`]: dropZ
+            });
+            setSelectedTokenIds([targetTokenId]);
+            return;
+        }
+    }
+
     const newTokenId = `token_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     let tokenData;
 
@@ -2222,6 +2739,9 @@ ${pasteTextContent}`;
             isHidden: false
         };
     } else if (payload.format === 'dungeonmind-character' || payload.characterId || payload.id) {
+        const sourceChar = allCharacters.find(c => String(c.id) === String(payload.id || payload.characterId));
+        const resolvedOwnerId = payload.ownerId || sourceChar?.ownerId || (payload.type === 'pc' ? data?.players?.find(p => String(p.id) === String(payload.id))?.ownerId : null);
+
         tokenData = {
             id: newTokenId,
             characterId: payload.id || null, 
@@ -2230,6 +2750,8 @@ ${pasteTextContent}`;
             x: dropX, y: terrainY + (mapData?.tokenElevationOffset ?? ((isCastMode || !mapData?.heightmapUrl) ? 0.04 : -0.12)), z: dropZ,
             image: payload.image || '',
             size: payload.size || 1,
+            ownerId: resolvedOwnerId || null,
+            isHidden: resolvedOwnerId ? false : (sourceChar?.isHidden ?? false)
         };
         
         if (payload.hp !== undefined) {
@@ -2329,7 +2851,7 @@ ${pasteTextContent}`;
   const handleNewBlankMap = async (skipConfirm = false) => {
       if (effectiveRole !== 'dm') return;
       if (!skipConfirm) {
-          if (!window.confirm("Create a new blank map? This will navigate away from the current map.")) return;
+          if (!(await dialog.confirm("Create a new blank map? This will navigate away from the current map."))) return;
       }
 
       const newMapId = doc(collection(db, 'a')).id;
@@ -2576,7 +3098,11 @@ ${pasteTextContent}`;
                       alwaysVisible={(effectiveRole === 'dm' && !isCastMode) || (isCastMode && type === 'pc') || (canControl && !isCastMode)}
                       hideBaseIf3D={mapData?.hide3DTokenBases !== false}
                       isGlobalHovered={topHoveredTokenId === token.id}
+                      isSpaceDown={isSpaceDown}
                       setIsDraggingToken={setIsDraggingToken}
+                      manualFogAlphaRef={manualFogAlphaRef}
+                      aspect={aspect}
+                      mapScale={mapData?.scale || 20}
                   />
               </ErrorBoundary>
           );
@@ -2586,7 +3112,8 @@ ${pasteTextContent}`;
       handleUpdateTokenPosition, gridSize, mapData?.gridOffsetX, mapData?.gridOffsetY, selectedTokenIds,
       handleSelectToken, handleContextMenu, getTerrainHeight, isSnapToGrid, draggedTokenId, viewMode, showNameplates,
       activeCombatantId, mapData?.tokenElevationOffset, groupDragData, handleGroupDragEnd, shiftHeldRef,
-          mapData?.orientation, isCastMode, activeTool, isDrawingFreehand, topHoveredTokenId, setIsDraggingToken
+          mapData?.orientation, isCastMode, activeTool, isDrawingFreehand, topHoveredTokenId, isSpaceDown, setIsDraggingToken,
+          manualFogAlphaRef, aspect, mapData?.scale
   ]);
 
 
@@ -2598,7 +3125,7 @@ ${pasteTextContent}`;
     <div 
       ref={containerRef}
       className="w-full h-full relative bg-slate-950 select-none [-webkit-touch-callout:none]" 
-      style={{ display: 'block', touchAction: 'none' }}
+      style={{ display: 'block', touchAction: 'none', cursor: activeCursor }}
       onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; }}
       onDrop={(e) => e.preventDefault()}
       onMouseMove={handleMouseMove}
@@ -2616,9 +3143,10 @@ ${pasteTextContent}`;
         </div>
       )}
       <Canvas 
+        eventPrefix="client"
         frameloop="always"
         camera={{ position: [0, 8, 8], fov: 50 }} 
-        style={{ width: '100%', height: '100%', touchAction: 'none' }}
+        style={{ width: '100%', height: '100%', touchAction: 'none', cursor: activeCursor }}
         shadows={!isLowPerformance}
         dpr={dpr}
         onCreated={({ gl }) => {
@@ -2706,6 +3234,7 @@ ${pasteTextContent}`;
         <Suspense fallback={null}>
             <MeasurementTools 
                 activeTool={activeTool} 
+                isSpaceDown={isSpaceDown}
                 getTerrainHeight={getTerrainHeight} 
                 gridSize={gridSize} 
                 tokens={tokensList}
@@ -2713,13 +3242,15 @@ ${pasteTextContent}`;
                 activeStyle={activeMeasurementStyle}
                 userRole={effectiveRole}
                 playerSenses={playerSenses}
+                currentUserId={user?.uid}
                 onSaveMeasurement={(m) => {
                     const id = Date.now().toString();
-                    updateMap(campaignCode, activeMapId, { [`measurements.${id}`]: { ...m, style: activeMeasurementStyle } });
+                    updateMap(campaignCode, activeMapId, { [`measurements.${id}`]: { ...m, style: activeMeasurementStyle, ownerId: user?.uid } });
                 }}
-                onDeleteMeasurement={effectiveRole === 'dm' && !isCastMode ? (id) => {
+                onDeleteMeasurement={!isCastMode ? (id) => {
                     updateMap(campaignCode, activeMapId, { [`measurements.${id}`]: null });
                 } : null}
+                onCancelTool={() => setActiveTool(null)}
                 onCompleteSelection={(ids) => {
                     setSelectedTokenIds(ids);
                     setActiveTool(null);
@@ -3015,7 +3546,47 @@ ${pasteTextContent}`;
                 />
             </Suspense>
         )}
-        
+
+        {/* Manual Fog Overlay Mesh — renders on top, DM sees 50% opacity, players see full */}
+        {manualFogTexture && (
+            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.016, 0]} renderOrder={101} raycast={() => null}>
+                <planeGeometry args={[mapData ? (mapData.scale || 20) * aspect : 20, mapData?.scale || 20]} />
+                <meshBasicMaterial
+                    map={manualFogTexture}
+                    transparent
+                    opacity={effectiveRole === 'dm' ? 0.5 : 0.98}
+                    depthWrite={false}
+                    side={THREE.DoubleSide}
+                />
+            </mesh>
+        )}
+
+        {/* Fog Painter Controller */}
+        {isFogPainting && manualFogCanvasRef.current && (
+            <Suspense fallback={null}>
+                <FogPainterController
+                    isEnabled={isFogPainting}
+                    mode={fogBrushMode}
+                    fogData={manualFogCanvasRef.current}
+                    mapData={mapData}
+                    aspect={aspect}
+                    brushSize={fogBrushSize}
+                    brushShape={fogBrushShape}
+                    brushSoftness={fogBrushSoftness}
+                    getTerrainHeight={getTerrainHeight}
+                    onPaintEnd={async () => {
+                        if (!manualFogCanvasRef.current?.canvas) return;
+                        updateManualFogAlpha();
+                        try {
+                            const base64 = manualFogCanvasRef.current.canvas.toDataURL('image/png');
+                            const url = await storeChunkedMap(base64, `manual_fog_${Date.now()}.png`);
+                            updateMap(campaignCode, activeMapId, { manualFogUrl: url });
+                        } catch (err) { console.error('Failed to save manual fog:', err); }
+                    }}
+                />
+            </Suspense>
+        )}
+
         {activeStampingAsset && (
             <Suspense fallback={null}>
                 <StampingController 
@@ -3047,6 +3618,8 @@ ${pasteTextContent}`;
             </Suspense>
         )}
 
+
+
         {/* MapControls maps left-click to pan, right-click to rotate, scroll to zoom */}
         <MapControls 
           makeDefault 
@@ -3057,11 +3630,12 @@ ${pasteTextContent}`;
           enableRotate={false}
           enabled={!isDraggingToken}
           mouseButtons={{
-            LEFT: THREE.MOUSE.PAN,
+            LEFT: ((!!activeTool || isDrawingWalls || isArchitectMode || isDeleting || isPlacingLights || isDrawingFreehand || !!activeStampingAsset || isFogPainting) && !isSpaceDown) ? 0 : THREE.MOUSE.PAN,
             MIDDLE: THREE.MOUSE.DOLLY,
             RIGHT: THREE.MOUSE.PAN
           }}
         />
+        <MapControlsCursorHandler />
         <CameraController ref={cameraControllerRef} view={viewMode} />
         <Suspense fallback={null}>
             <ZoomHandler zoomRef={zoomRef} />
@@ -3101,9 +3675,9 @@ ${pasteTextContent}`;
 
       {/* Top-Left: Connection & Camera Controls */}
       {!isCastMode && (
-          <div className={`absolute top-4 left-4 vtt-safe-top vtt-safe-left z-[70] flex flex-col gap-2 items-start ${uiOpacityClass}`}>
+          <div className={`absolute top-4 left-4 vtt-safe-top vtt-safe-left z-[70] flex ${wrapperFlexClass} flex-wrap gap-2 items-start pointer-events-none max-w-[calc(100vw-250px)] transition-all duration-300 ${uiOpacityClass}`}>
               {/* Row 1: Connection Status & Navigation */}
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 pointer-events-auto">
                   {onBack && (
                       <button 
                           onClick={onBack} 
@@ -3113,73 +3687,92 @@ ${pasteTextContent}`;
                           <Icon name="arrow-left" size={18} />
                       </button>
                   )}
-              <div className="h-10 px-3 bg-slate-900/80 backdrop-blur border border-slate-700 rounded-xl shadow-2xl flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full shadow-[0_0_10px_rgba(34,197,94,0.5)] bg-green-500"></div>
-                  <span className="text-sm font-bold text-amber-500 fantasy-font tracking-widest truncate max-w-[200px]">{mapData?.name || 'Loading Map...'}</span>
-              </div>
+                  <button 
+                      onClick={() => setIsTopMenuCollapsed(!isTopMenuCollapsed)}
+                      className={`h-10 px-3 bg-slate-900/80 backdrop-blur border rounded-xl shadow-2xl flex items-center justify-center transition-colors ${isTopMenuCollapsed ? 'border-indigo-500 text-indigo-400' : 'border-slate-700 text-slate-300 hover:text-white'}`}
+                      title={isTopMenuCollapsed ? "Expand Tools" : "Collapse Tools"}
+                  >
+                      <Icon name="menu" size={18} />
+                  </button>
+                  {!isCombatActive && (
+                      <div className="h-10 px-3 bg-slate-900/80 backdrop-blur border border-slate-700 rounded-xl shadow-2xl flex items-center gap-2">
+                          <div className="w-2 h-2 rounded-full shadow-[0_0_10px_rgba(34,197,94,0.5)] bg-green-500"></div>
+                          <span className="text-sm font-bold text-amber-500 fantasy-font tracking-widest truncate max-w-[200px]">{mapData?.name || 'Loading Map...'}</span>
+                      </div>
+                  )}
               </div>
               
               {/* Row 2: Camera & Display Controls */}
-              <div className="flex items-center gap-1 bg-slate-900/80 backdrop-blur-md border border-slate-700 p-1 rounded-xl shadow-2xl h-10">
-                  <ToolButton name="Reset View" icon="camera" onClick={() => { cameraControllerRef.current?.reset(); }} title="Reset Camera" />
-                  <ToolButton name={viewMode === 'isometric' ? 'Switch to Top-Down (V)' : 'Switch to Isometric (V)'} icon={viewMode === 'isometric' ? 'layout-grid' : 'box'} onClick={() => setViewMode(prev => prev === 'isometric' ? 'top-down' : 'isometric')} title={viewMode === 'isometric' ? 'Switch to Top-Down (V)' : 'Switch to Isometric (V)'} />
+              <div className={`flex items-center gap-2 flex-wrap pointer-events-auto transition-all duration-300 ${iconsMarginClass} ${isTopMenuCollapsed ? 'hidden' : 'flex'}`}>
                   
-                  <div className="w-px h-5 bg-slate-700 mx-1"></div>
+                  {/* Camera Perspective Group */}
+                  <div className="flex items-center gap-1 bg-slate-900/80 backdrop-blur-md border border-slate-700 p-1 rounded-xl shadow-2xl h-10">
+                      <ToolButton name="Reset View" icon="camera" onClick={() => { cameraControllerRef.current?.reset(); }} title="Reset Camera" />
+                      <ToolButton name={viewMode === 'isometric' ? 'Switch to Top-Down (V)' : 'Switch to Isometric (V)'} icon={viewMode === 'isometric' ? 'layout-grid' : 'box'} onClick={() => setViewMode(prev => prev === 'isometric' ? 'top-down' : 'isometric')} title={viewMode === 'isometric' ? 'Switch to Top-Down (V)' : 'Switch to Isometric (V)'} />
+                  </div>
                   
-                  <ToolButton name="Zoom Out" icon="zoom-out" onClick={() => zoomRef.current?.zoomOut()} title="Zoom Out" />
-                  <ToolButton name="Zoom In" icon="zoom-in" onClick={() => zoomRef.current?.zoomIn()} title="Zoom In" />
-                  <ToolButton name="Fit to Screen" icon="expand" onClick={() => setFitTrigger(p => p + 1)} title="Fit Map to Screen" />
-                  <ToolButton 
-                      name="Rotate View" 
-                      icon="rotate-cw" 
-                      onClick={() => updateMap(campaignCode, activeMapId, { 'orientation': ((mapData?.orientation || 0) + 1) % 4 })} 
-                      title="Rotate Map Orientation" 
-                  />
-                  
-                  <div className="w-px h-5 bg-slate-700 mx-1"></div>
+                  {/* Navigation Group */}
+                  <div className="flex items-center gap-1 bg-slate-900/80 backdrop-blur-md border border-slate-700 p-1 rounded-xl shadow-2xl h-10">
+                      <ToolButton name="Zoom Out" icon="zoom-out" onClick={() => zoomRef.current?.zoomOut()} title="Zoom Out" />
+                      <ToolButton name="Zoom In" icon="zoom-in" onClick={() => zoomRef.current?.zoomIn()} title="Zoom In" />
+                      <ToolButton name="Fit to Screen" icon="expand" onClick={() => setFitTrigger(p => p + 1)} title="Fit Map to Screen" />
+                      <ToolButton 
+                          name="Rotate View" 
+                          icon="rotate-cw" 
+                          onClick={() => updateMap(campaignCode, activeMapId, { 'orientation': ((mapData?.orientation || 0) + 1) % 4 })} 
+                          title="Rotate Map Orientation" 
+                      />
+                  </div>
 
-                  <ToolButton name="Toggle Fullscreen" icon={isFullscreen ? "minimize" : "maximize"} onClick={toggleFullscreen} title="Toggle Fullscreen" />
-                  
-                  {effectiveRole === 'dm' && (
-                      <>
-                          <ToolButton 
-                              name="Cast to TV" 
-                              icon="monitor" 
-                              onClick={() => {
-                                  if (onOpenCast) onOpenCast();
-                                  else {
-                                      const url = new URL(window.location.href);
-                                      url.searchParams.set('cast', 'true');
-                                      if (campaignCode) url.searchParams.set('join', campaignCode);
-                                      if (url.hash && !url.hash.includes('cast=true')) {
-                                          url.hash += url.hash.includes('?') ? '&cast=true' : '?cast=true';
+                  {/* Display Group */}
+                  <div className="flex items-center gap-1 bg-slate-900/80 backdrop-blur-md border border-slate-700 p-1 rounded-xl shadow-2xl h-10">
+                      <ToolButton name="Toggle Fullscreen" icon={isFullscreen ? "minimize" : "maximize"} onClick={toggleFullscreen} title="Toggle Fullscreen" />
+                      
+                      {effectiveRole === 'dm' && (
+                          <>
+                              <ToolButton 
+                                  name="Cast to TV" 
+                                  icon="monitor" 
+                                  onClick={() => {
+                                      if (onOpenCast) onOpenCast();
+                                      else {
+                                          const url = new URL(window.location.href);
+                                          url.searchParams.set('cast', 'true');
+                                          if (campaignCode) url.searchParams.set('join', campaignCode);
+                                          if (url.hash && !url.hash.includes('cast=true')) {
+                                              url.hash += url.hash.includes('?') ? '&cast=true' : '?cast=true';
+                                          }
+                                          window.open(url.toString(), 'DungeonMindCast');
                                       }
-                                      window.open(url.toString(), 'DungeonMindCast');
-                                  }
-                              }} 
-                              title="Cast to Player Screen"
-                          />
-                          <ToolButton 
-                              name="Preview Player View" 
-                              icon="eye" 
-                              onClick={() => setPreviewPlayerView(true)} 
-                              title="Preview Player View"
-                          />
-                      </>
-                  )}
+                                  }} 
+                                  title="Cast to Player Screen"
+                              />
+                              <ToolButton 
+                                  name="Preview Player View" 
+                                  icon="eye" 
+                                  onClick={() => setPreviewPlayerView(true)} 
+                                  title="Preview Player View"
+                              />
+                          </>
+                      )}
+                  </div>
               </div>
+
+              {/* Initiative Tracker inside the flex container so it flows below the buttons */}
+              {showInitiativeTracker && !isCastMode && (
+                <div className="w-full mt-2">
+                    <Suspense fallback={null}>
+                      <CombatTrackerSidebar combat={data?.campaign?.combat} updateCampaign={updateCampaign} tokens={tokensList} role={effectiveRole} campaignCode={campaignCode} activeMapId={activeMapId} campaignData={data?.campaign} allCharacters={allCharacters} data={data} onOpenSheet={onOpenSheet} className={uiOpacityClass} onClose={() => setShowInitiativeTracker(false)} onDiceRoll={onDiceRoll} />
+                    </Suspense>
+                </div>
+              )}
           </div>
       )}
 
       <Suspense fallback={null}>
         {!isCastMode && <CombatRibbon combat={data?.campaign?.combat} updateCampaign={updateCampaign} tokens={tokensList} role={effectiveRole} campaignData={data?.campaign} className={uiOpacityClass} />}
+        {!isCastMode && <InitiativePrompt combat={data?.campaign?.combat} updateCampaign={updateCampaign} tokens={tokensList} role={effectiveRole} campaignData={data?.campaign} allCharacters={allCharacters} user={user} assignments={stableAssignments} sendMessage={sendMessage} campaignCode={campaignCode} onDiceRoll={onDiceRoll} />}
       </Suspense>
-
-      {showInitiativeTracker && !isCastMode && (
-        <Suspense fallback={null}>
-          <CombatTrackerSidebar combat={data?.campaign?.combat} updateCampaign={updateCampaign} tokens={tokensList} role={effectiveRole} campaignCode={campaignCode} activeMapId={activeMapId} campaignData={data?.campaign} allCharacters={allCharacters} data={data} onOpenSheet={onOpenSheet} className={uiOpacityClass} onClose={() => setShowInitiativeTracker(false)} />
-        </Suspense>
-      )}
 
       {/* Primary Right Dock */}
       {!isCastMode && (
@@ -3197,7 +3790,7 @@ ${pasteTextContent}`;
                           isActive={showInitiativeTracker} 
                           onClick={() => {
                               if (!data?.campaign?.combat?.active) {
-                                  updateCampaign({ 'campaign.combat.active': true });
+                                  updateCampaign({ campaign: { ...(data?.campaign || {}), combat: { ...(data?.campaign?.combat || {}), active: true } } });
                               }
                               setShowInitiativeTracker(p => !p);
                           }} 
@@ -3228,18 +3821,18 @@ ${pasteTextContent}`;
                       isStandalone={true} 
                   />
                   {isToolbarOpen === 'measure' && (
-                      <div className="absolute top-1/2 right-[110%] -translate-y-1/2 flex items-center gap-2">
+                      <ToolSubmenu>
                           {isDrawingFreehand && (
-                              <div className="flex items-center gap-2 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-2 rounded-full shadow-2xl animate-in slide-in-from-right-2">
+                              <div className="flex flex-col items-center gap-2 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-2 rounded-full shadow-2xl animate-in slide-in-from-right-2">
                                   <input type="color" value={drawingColor} onChange={e => setDrawingColor(e.target.value)} className="w-6 h-6 rounded cursor-pointer bg-transparent border-0 p-0" title="Color" />
                                   <input type="range" min="1" max="20" value={drawingLineWidth} onChange={e => setDrawingLineWidth(Number(e.target.value))} className="w-24 accent-amber-500" title="Line Width" />
-                                  <div className="w-px h-4 bg-slate-700"></div>
-                                  <ToolButton name="clear-drawings" icon="trash-2" onClick={() => { if (window.confirm("Clear all map drawings?")) { updateMap(campaignCode, activeMapId, { drawings: {} }); } }} title="Clear All Drawings" />
+                                  <div className="h-px w-4 bg-slate-700 my-1 mx-auto"></div>
+                                  <ToolButton name="clear-drawings" icon="trash-2" onClick={async () => { if (await dialog.confirm("Clear all map drawings?")) { updateMap(campaignCode, activeMapId, { drawings: {} }); } }} title="Clear All Drawings" />
                               </div>
                           )}
 
-                          {activeTool && activeTool.includes('-linger') && activeTool !== 'ruler-linger' && (
-                              <div className="flex gap-1 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-1 rounded-full shadow-2xl animate-in slide-in-from-right-2">
+                          {isStampMode && activeTool !== 'ruler' && activeTool !== 'ruler-linger' && activeTool !== 'ping' && (
+                              <div className="flex flex-col items-center gap-1 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-1 rounded-full shadow-2xl animate-in slide-in-from-right-2">
                                   <ToolButton name="style-default" icon="mouse-pointer-2" isActive={activeMeasurementStyle === 'default'} onClick={() => setActiveMeasurementStyle('default')} title="Standard" />
                                   <ToolButton name="style-fire" icon="flame" isActive={activeMeasurementStyle === 'fire'} onClick={() => setActiveMeasurementStyle('fire')} title="Fire" />
                                   <ToolButton name="style-ice" icon="snowflake" isActive={activeMeasurementStyle === 'ice'} onClick={() => setActiveMeasurementStyle('ice')} title="Ice" />
@@ -3249,31 +3842,35 @@ ${pasteTextContent}`;
                               </div>
                           )}
 
-                          <div className="flex gap-1 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-1 rounded-full shadow-2xl animate-in slide-in-from-right-2">
+                          <div className="flex flex-col items-center gap-1 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-1 rounded-full shadow-2xl animate-in slide-in-from-right-2">
                               <ToolButton 
                                   name="Stamp Measurement" 
                                   icon="stamp" 
-                                  isActive={activeTool && activeTool.includes('-linger')} 
+                                  isActive={isStampMode} 
                                   onClick={() => {
-                                      setActiveTool(prev => {
-                                          if (!prev || prev === 'ping') return prev;
-                                          return prev.includes('-linger') ? prev.replace('-linger', '') : `${prev}-linger`;
+                                      setIsStampMode(p => {
+                                          const next = !p;
+                                          setActiveTool(currentTool => {
+                                              if (!currentTool || currentTool === 'ping') return currentTool;
+                                              return next ? (currentTool.includes('-linger') ? currentTool : `${currentTool}-linger`) : currentTool.replace('-linger', '');
+                                          });
+                                          return next;
                                       });
                                   }} 
                                   title="Leave Measurements on Map (Toggle Stamp)" 
                               />
 
-                              <div className="w-px h-6 bg-slate-700 self-center mx-1"></div>
+                              <div className="h-px w-6 bg-slate-700 my-1 mx-auto"></div>
 
                               <ToolButton name="Live Ping" icon="radio" isActive={activeTool === 'ping'} onClick={() => { if (effectiveRole === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => p === 'ping' ? null : 'ping'); }} title="Live Ping" />
-                              <ToolButton name="freehand" icon="pen-tool" isActive={activeTool === 'freehand' || activeTool === 'freehand-linger'} onClick={() => { if (effectiveRole === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => (p === 'freehand' || p === 'freehand-linger') ? null : (p?.includes('-linger') ? 'freehand-linger' : 'freehand')); }} title="Measure Freehand" />
-                              <ToolButton name="ruler" icon="ruler" isActive={activeTool === 'ruler' || activeTool === 'ruler-linger'} onClick={() => { if (effectiveRole === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => (p === 'ruler' || p === 'ruler-linger') ? null : (p?.includes('-linger') ? 'ruler-linger' : 'ruler')); }} />
-                              <ToolButton name="cone" icon="triangle" isActive={activeTool === 'cone' || activeTool === 'cone-linger'} onClick={() => { if (effectiveRole === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => (p === 'cone' || p === 'cone-linger') ? null : (p?.includes('-linger') ? 'cone-linger' : 'cone')); }} />
-                              <ToolButton name="circle" icon="circle" isActive={activeTool === 'circle' || activeTool === 'circle-linger'} onClick={() => { if (effectiveRole === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => (p === 'circle' || p === 'circle-linger') ? null : (p?.includes('-linger') ? 'circle-linger' : 'circle')); }} />
-                              <ToolButton name="box" icon="square" isActive={activeTool === 'box' || activeTool === 'box-linger'} onClick={() => { if (effectiveRole === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => (p === 'box' || p === 'box-linger') ? null : (p?.includes('-linger') ? 'box-linger' : 'box')); }} />
-                              <ToolButton name="darkness" icon="moon" isActive={activeTool === 'darkness' || activeTool === 'darkness-linger'} onClick={() => { if (effectiveRole === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => (p === 'darkness' || p === 'darkness-linger') ? null : (p?.includes('-linger') ? 'darkness-linger' : 'darkness')); }} />
-                          </div>
-                      </div>
+                              <ToolButton name="freehand" icon="pen-tool" isActive={activeTool === 'freehand' || activeTool === 'freehand-linger'} onClick={() => { if (effectiveRole === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => (p === 'freehand' || p === 'freehand-linger') ? null : (isStampMode ? 'freehand-linger' : 'freehand')); }} title="Measure Freehand" />
+                              <ToolButton name="ruler" icon="ruler" isActive={activeTool === 'ruler' || activeTool === 'ruler-linger'} onClick={() => { if (effectiveRole === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => (p === 'ruler' || p === 'ruler-linger') ? null : (isStampMode ? 'ruler-linger' : 'ruler')); }} />
+                              <ToolButton name="cone" icon="triangle" isActive={activeTool === 'cone' || activeTool === 'cone-linger'} onClick={() => { if (effectiveRole === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => (p === 'cone' || p === 'cone-linger') ? null : (isStampMode ? 'cone-linger' : 'cone')); }} />
+                              <ToolButton name="circle" icon="circle" isActive={activeTool === 'circle' || activeTool === 'circle-linger'} onClick={() => { if (effectiveRole === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => (p === 'circle' || p === 'circle-linger') ? null : (isStampMode ? 'circle-linger' : 'circle')); }} />
+                              <ToolButton name="box" icon="square" isActive={activeTool === 'box' || activeTool === 'box-linger'} onClick={() => { if (effectiveRole === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => (p === 'box' || p === 'box-linger') ? null : (isStampMode ? 'box-linger' : 'box')); }} />
+                              <ToolButton name="darkness" icon="moon" isActive={activeTool === 'darkness' || activeTool === 'darkness-linger'} onClick={() => { if (effectiveRole === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => (p === 'darkness' || p === 'darkness-linger') ? null : (isStampMode ? 'darkness-linger' : 'darkness')); }} />
+                                                    </div>
+                      </ToolSubmenu>
                   )}
               </div>
               
@@ -3293,15 +3890,17 @@ ${pasteTextContent}`;
                           }}
                       />
                       {isToolbarOpen === 'sculpt' && (
-                          <div className="absolute top-1/2 right-[110%] -translate-y-1/2 flex items-center gap-2 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-2 rounded-full shadow-2xl animate-in slide-in-from-right-2">
+                          <ToolSubmenu>
+                          <div className="flex flex-col items-center gap-2 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-2 rounded-full shadow-2xl animate-in slide-in-from-right-2">
                               <ToolButton name="Raise" icon="arrow-up" isActive={sculptBrushType === 'raise'} onClick={() => setSculptBrushType('raise')} title="Raise" />
                               <ToolButton name="Lower" icon="arrow-down" isActive={sculptBrushType === 'lower'} onClick={() => setSculptBrushType('lower')} title="Lower" />
                               <ToolButton name="Flatten" icon="minus" isActive={sculptBrushType === 'flatten'} onClick={() => setSculptBrushType('flatten')} title="Flatten" />
                               <ToolButton name="Smooth" icon="waves" isActive={sculptBrushType === 'smooth'} onClick={() => setSculptBrushType('smooth')} title="Smooth" />
-                              <div className="w-px h-6 bg-slate-700 mx-1"></div>
+                              <div className="h-px w-6 bg-slate-700 my-1 mx-auto"></div>
                               <input type="range" min="0.5" max="10" step="0.5" value={sculptBrushSize} onChange={e => setSculptBrushSize(Number(e.target.value))} className="w-20 accent-amber-500" title="Brush Size" />
                               <input type="range" min="0.01" max="0.2" step="0.01" value={sculptBrushStrength} onChange={e => setSculptBrushStrength(Number(e.target.value))} className="w-20 accent-blue-500" title="Brush Strength" />
                           </div>
+                      </ToolSubmenu>
                       )}
                   </div>
               )}
@@ -3322,22 +3921,74 @@ ${pasteTextContent}`;
                           }}
                       />
                       {isToolbarOpen === 'paintMaterial' && (
-                          <div className="absolute top-1/2 right-[110%] -translate-y-1/2 flex items-center gap-2 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-2 rounded-full shadow-2xl animate-in slide-in-from-right-2">
+                          <ToolSubmenu>
+                          <div className="flex flex-col items-center gap-2 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-2 rounded-full shadow-2xl animate-in slide-in-from-right-2">
                               <ToolButton name="Grass" icon="leaf" isActive={materialBrushType === '#00FF00'} onClick={() => setMaterialBrushType('#00FF00')} title="Grass (Green)" />
                               <ToolButton name="Trees" icon="tree-pine" isActive={materialBrushType === '#FF00FF'} onClick={() => setMaterialBrushType('#FF00FF')} title="Trees (Magenta)" />
                               <ToolButton name="Water" icon="droplets" isActive={materialBrushType === '#0000FF'} onClick={() => setMaterialBrushType('#0000FF')} title="Water (Blue)" />
                               <ToolButton name="Lava" icon="flame" isActive={materialBrushType === '#FF0000'} onClick={() => setMaterialBrushType('#FF0000')} title="Lava (Red)" />
                               <ToolButton name="Ice" icon="snowflake" isActive={materialBrushType === '#FFFF00'} onClick={() => setMaterialBrushType('#FFFF00')} title="Ice (Yellow)" />
-                              <div className="w-px h-6 bg-slate-700 mx-1"></div>
+                              <div className="h-px w-6 bg-slate-700 my-1 mx-auto"></div>
                               <ToolButton name="Erase" icon="eraser" isActive={materialBrushType === '#000000'} onClick={() => setMaterialBrushType('#000000')} title="Erase (Black)" />
-                              <div className="w-px h-6 bg-slate-700 mx-1"></div>
+                              <div className="h-px w-6 bg-slate-700 my-1 mx-auto"></div>
                               <ToolButton name="Circle Brush" icon="circle" isActive={materialBrushShape === 'circle'} onClick={() => setMaterialBrushShape('circle')} title="Circle Brush" />
                               <ToolButton name="Square Brush" icon="square" isActive={materialBrushShape === 'square'} onClick={() => setMaterialBrushShape('square')} title="Square Brush" />
                               <ToolButton name="Ground Only" icon="mountain" isActive={materialLimitToGround} onClick={() => setMaterialLimitToGround(p => !p)} title="Limit to Ground (Don't paint walls)" />
-                              <div className="w-px h-6 bg-slate-700 mx-1"></div>
+                              <div className="h-px w-6 bg-slate-700 my-1 mx-auto"></div>
                               <input type="range" min="2" max="100" step="2" value={materialBrushSize} onChange={e => setMaterialBrushSize(Number(e.target.value))} className="w-20 accent-amber-500" title="Brush Size" />
                               <input type="range" min="0" max="1" step="0.1" value={materialBrushSoftness} onChange={e => setMaterialBrushSoftness(Number(e.target.value))} className="w-20 accent-blue-500" title="Brush Softness" />
                           </div>
+                      </ToolSubmenu>
+                      )}
+                  </div>
+              )}
+
+              {effectiveRole === 'dm' && (
+                  <div className="relative group flex justify-center">
+                      <ToolButton
+                          name="Fog Painter" icon="cloud-fog" isActive={isFogPainting} isStandalone={true}
+                          onClick={() => {
+                              if (isToolbarOpen !== 'fogPaint') {
+                                  resetAllTools();
+                                  setIsFogPainting(true);
+                                  setIsToolbarOpen('fogPaint');
+                              } else {
+                                  setIsFogPainting(false);
+                                  setIsToolbarOpen(null);
+                              }
+                          }}
+                      />
+                      {isToolbarOpen === 'fogPaint' && (
+                          <ToolSubmenu>
+                              <div className="flex flex-col items-center gap-2 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-2 rounded-full shadow-2xl animate-in slide-in-from-right-2">
+                                  <ToolButton name="Paint Fog" icon="cloud" isActive={fogBrushMode === 'paint'} onClick={() => setFogBrushMode('paint')} title="Paint Fog (Hides area)" />
+                                  <ToolButton name="Erase Fog" icon="eraser" isActive={fogBrushMode === 'erase'} onClick={() => setFogBrushMode('erase')} title="Erase Fog (Reveals area)" />
+                                  <div className="h-px w-6 bg-slate-700 my-1 mx-auto"></div>
+                                  <ToolButton name="Circle Brush" icon="circle" isActive={fogBrushShape === 'circle'} onClick={() => setFogBrushShape('circle')} title="Circle Brush" />
+                                  <ToolButton name="Square Brush" icon="square" isActive={fogBrushShape === 'square'} onClick={() => setFogBrushShape('square')} title="Square Brush" />
+                                  <div className="h-px w-6 bg-slate-700 my-1 mx-auto"></div>
+                                  <input type="range" min="10" max="200" step="5" value={fogBrushSize} onChange={e => setFogBrushSize(Number(e.target.value))} className="w-20 accent-slate-400" title="Brush Size" />
+                                  <input type="range" min="0" max="1" step="0.05" value={fogBrushSoftness} onChange={e => setFogBrushSoftness(Number(e.target.value))} className="w-20 accent-blue-500" title="Brush Softness" />
+                                  <div className="h-px w-6 bg-slate-700 my-1 mx-auto"></div>
+                                  <ToolButton
+                                      name="Clear All Fog" icon="trash-2" isActive={false}
+                                      title="Clear all manual fog"
+                                      onClick={async () => {
+                                          if (!manualFogCanvasRef.current) return;
+                                          const { ctx, canvas, texture } = manualFogCanvasRef.current;
+                                          ctx.clearRect(0, 0, canvas.width, canvas.height);
+                                          manualFogAlphaRef.current = new Uint8ClampedArray(1024 * 1024 * 4);
+                                          if (texture) texture.needsUpdate = true;
+                                          setManualFogRevision(r => r + 1);
+                                          try {
+                                              const base64 = canvas.toDataURL('image/png');
+                                              const url = await storeChunkedMap(base64, `manual_fog_clear_${Date.now()}.png`);
+                                              updateMap(campaignCode, activeMapId, { manualFogUrl: url });
+                                          } catch (err) { console.error('Failed to clear fog:', err); }
+                                      }}
+                                  />
+                              </div>
+                          </ToolSubmenu>
                       )}
                   </div>
               )}
@@ -3355,15 +4006,15 @@ ${pasteTextContent}`;
                           isStandalone={true} 
                       />
                       {isToolbarOpen === 'architect' && (
-                          <div className="absolute top-1/2 right-[110%] -translate-y-1/2 flex items-center gap-2">
+                          <ToolSubmenu>
                               {isDrawingWalls && (
-                                  <div className="flex gap-1 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-1 rounded-full shadow-2xl animate-in slide-in-from-right-2">
+                                  <div className="flex flex-col items-center gap-1 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-1 rounded-full shadow-2xl animate-in slide-in-from-right-2">
                                       <ToolButton name="wall" icon="square" isActive={drawingWallType === 'wall'} onClick={() => setDrawingWallType('wall')} title="Wall" />
                                       <ToolButton name="door" icon="door-closed" isActive={drawingWallType === 'door'} onClick={() => setDrawingWallType('door')} title="Door" />
                                       <ToolButton name="window" icon="layout" isActive={drawingWallType === 'window'} onClick={() => setDrawingWallType('window')} title="Window" />
                                   </div>
                               )}
-                              <div className="flex gap-1 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-1 rounded-full shadow-2xl animate-in slide-in-from-right-2">
+                              <div className="flex flex-col items-center gap-1 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-1 rounded-full shadow-2xl animate-in slide-in-from-right-2">
                                   <ToolButton name="architect" icon="pen-tool" isActive={isArchitectMode} onClick={() => { setActiveTool(null); setIsDrawingWalls(false); setIsPlacingLights(false); setIsArchitectMode(p => !p); }} />
                                   <ToolButton name="draw" icon="pencil" isActive={isDrawingWalls} onClick={() => { setActiveTool(null); setIsArchitectMode(false); setIsPlacingLights(false); setIsDrawingWalls(p => !p); }} />
                                   <ToolButton name="light" icon="lightbulb" isActive={isPlacingLights} onClick={() => { setActiveTool(null); setIsArchitectMode(false); setIsDrawingWalls(false); setIsPlacingLights(p => !p); }} />
@@ -3401,7 +4052,7 @@ ${pasteTextContent}`;
                                       }
                                   }} />
                               </div>
-                          </div>
+                          </ToolSubmenu>
                       )}
                   </div>
               )}
@@ -3431,14 +4082,110 @@ ${pasteTextContent}`;
             </div>
             
             <div className="flex-1 min-h-0 overflow-y-auto custom-scroll p-4 space-y-6">
+                {/* Active On Map Tokens Section */}
+                {(tokensList || []).length > 0 && (
+                  <div>
+                    <div className="flex justify-between items-center mb-3">
+                      <h4 className="text-xs uppercase font-bold text-amber-500 tracking-wider flex items-center gap-1.5">
+                        <Icon name="map-pin" size={13} /> Active on Map ({(tokensList || []).length})
+                      </h4>
+                      <button 
+                        onClick={async () => {
+                          if (await dialog.confirm("Remove ALL tokens from current map?")) {
+                            const updates = {};
+                            (tokensList || []).forEach(t => { if (t?.id) updates[`tokens.${t.id}`] = null; });
+                            updateMap(campaignCode, activeMapId, updates);
+                            setSelectedTokenIds([]);
+                          }
+                        }}
+                        className="text-[10px] text-red-400 hover:text-red-300 hover:bg-red-950/50 px-2 py-0.5 rounded border border-red-900/50 transition-colors"
+                        title="Clear all tokens from map"
+                      >
+                        Clear Map
+                      </button>
+                    </div>
+                    <div className="flex flex-col gap-1.5 max-h-44 overflow-y-auto custom-scroll pr-1">
+                      {(tokensList || []).map((t) => {
+                        if (!t || !t.id) return null;
+                        const tokenId = t.id;
+                        const isSelected = selectedTokenIds.includes(tokenId);
+                        const ownerName = t.ownerId ? getPlayerDisplayName(t.ownerId) : null;
+                        return (
+                          <div 
+                            key={`active-token-${tokenId}`}
+                            draggable
+                            onDragStart={(e) => {
+                              const payload = JSON.stringify({
+                                format: 'dungeonmind-active-token',
+                                tokenId: tokenId,
+                                name: t.name,
+                                size: t.size || 1,
+                                image: t.image
+                              });
+                              e.dataTransfer.setData('application/dungeonmind-active-token', payload);
+                              e.dataTransfer.setData('text/plain', payload);
+                            }}
+                            onClick={() => {
+                              setSelectedTokenIds([tokenId]);
+                              if (controlsRef.current && t.x !== undefined && t.z !== undefined) {
+                                controlsRef.current.target.set(t.x, t.y || 0, t.z);
+                              }
+                            }}
+                            className={`flex items-center justify-between gap-2 p-2 rounded-lg border transition-all cursor-grab active:cursor-grabbing hover:border-amber-500/80 group ${
+                              isSelected ? 'bg-amber-950/60 border-amber-500/80 text-white' : 'bg-slate-800/80 border-slate-700/60 text-slate-300'
+                            }`}
+                            title="Click to focus camera • Drag onto map to reposition/teleport"
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0 flex-1 pointer-events-none">
+                              <div className="w-7 h-7 rounded bg-slate-700 shrink-0 overflow-hidden relative border border-slate-600">
+                                {t.image ? (
+                                  <img src={getProxiedImageUrl(t.image)} className="w-full h-full object-cover" alt={t.name} referrerPolicy="no-referrer" draggable={false} />
+                                ) : (
+                                  <div className="w-full h-full flex items-center justify-center font-bold text-xs text-slate-400">{t.name?.[0] || '?'}</div>
+                                )}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="font-bold text-xs truncate flex items-center gap-1.5">
+                                  <span>{t.name || 'Token'}</span>
+                                  <span className="text-[9px] text-slate-500 font-normal group-hover:text-amber-400/90 transition-colors">⇄ drag to teleport</span>
+                                </div>
+                                <div className="text-[10px] text-slate-400 flex items-center gap-1.5 truncate">
+                                  {ownerName && <span className="text-indigo-400 font-medium">({ownerName})</span>}
+                                  <span>({Math.round(t.x || 0)}, {Math.round(t.z || 0)})</span>
+                                </div>
+                              </div>
+                            </div>
+                            <button 
+                              onClick={(e) => handleDeleteMapToken(tokenId, e)}
+                              className="p-1 text-slate-400 hover:text-red-400 hover:bg-red-950/60 rounded transition-colors shrink-0"
+                              title="Delete token from map"
+                            >
+                              <Icon name="trash-2" size={13} />
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Party Section */}
                 <div>
-                  <h4 className="text-xs uppercase font-bold text-slate-500 mb-3 tracking-wider">Party</h4>
+                  <div className="flex justify-between items-center mb-3">
+                    <h4 className="text-xs uppercase font-bold text-slate-500 tracking-wider">Party ({data?.players?.length || 0})</h4>
+                    <button 
+                      onClick={() => setShowHeroCreationMenu(true)} 
+                      className="text-[10px] bg-gradient-to-r from-amber-800 to-amber-600 hover:from-amber-700 hover:to-amber-500 text-white px-2.5 py-1 rounded-md flex items-center gap-1.5 transition-all shadow-md font-bold"
+                    >
+                      <Icon name="plus-circle" size={12}/> Summon Hero
+                    </button>
+                  </div>
                   <div className={actorViewMode === 'grid' ? "grid grid-cols-2 gap-3" : "flex flex-col gap-2"}>
                       {data?.players?.map((p, i) => (
                           actorViewMode === 'grid' ? (
                               <div key={`pc-${i}`} draggable 
                                   onDragStart={(e) => {
-                                      const payload = JSON.stringify({ format: 'dungeonmind-character', id: p.id, name: p.name, type: 'pc', image: p.image });
+                                      const payload = JSON.stringify({ format: 'dungeonmind-character', id: p.id, name: p.name, type: 'pc', image: p.image, ownerId: p.ownerId, isSimple: p.isSimple, size: p.size || 1 });
                                       e.dataTransfer.setData('application/dungeonmind-character', payload);
                                       e.dataTransfer.setData('text/plain', payload);
                                   }}
@@ -3449,13 +4196,42 @@ ${pasteTextContent}`;
                                   ) : (
                                     <div className="w-full h-full flex items-center justify-center font-bold text-3xl text-slate-600 bg-slate-700 opacity-80 group-hover:opacity-100 transition-opacity">{p.name?.[0] || '?'}</div>
                                   )}
-                                  <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 to-transparent pt-4 pb-1 px-2 text-[10px] font-bold text-white truncate pointer-events-none text-center shadow-black drop-shadow-md">{p.name}</div>
-                                  {/* <button onClick={(e) => { e.stopPropagation(); handleAddActorToCombat(p, false); }} className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 p-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-md shadow-lg transition-all z-10" title="Add to Initiative Tracker"><Icon name="plus" size={14}/></button> */}
+                                  <div className="absolute top-1 left-1 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                                      <button 
+                                          onClick={(e) => {
+                                              e.stopPropagation();
+                                              setQuickActorModal({
+                                                  isOpen: true,
+                                                  category: 'pc',
+                                                  editId: p.id,
+                                                  name: p.name,
+                                                  image: p.image,
+                                                  size: p.size || 1,
+                                                  ownerId: p.ownerId || null
+                                              });
+                                          }} 
+                                          className="p-1 bg-slate-800/90 hover:bg-amber-600 text-amber-300 hover:text-white rounded shadow-md transition-colors" 
+                                          title="Edit Hero / Photo"
+                                      >
+                                          <Icon name="edit-2" size={11}/>
+                                      </button>
+                                      <button 
+                                          onClick={(e) => handleDeletePlayerActor(p, e)} 
+                                          className="p-1 bg-red-900/90 hover:bg-red-700 text-white rounded shadow-md transition-colors" 
+                                          title="Delete Hero from Party"
+                                      >
+                                          <Icon name="trash-2" size={11}/>
+                                      </button>
+                                  </div>
+                                  <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 to-transparent pt-4 pb-1 px-2 text-[10px] font-bold text-white truncate pointer-events-none text-center shadow-black drop-shadow-md flex items-center justify-center gap-1">
+                                      {p.isSimple && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0"></span>}
+                                      <span className="truncate">{p.name}</span>
+                                  </div>
                               </div>
                           ) : (
                               <div key={`pc-${i}`} draggable 
                                   onDragStart={(e) => {
-                                      const payload = JSON.stringify({ format: 'dungeonmind-character', id: p.id, name: p.name, type: 'pc', image: p.image });
+                                      const payload = JSON.stringify({ format: 'dungeonmind-character', id: p.id, name: p.name, type: 'pc', image: p.image, ownerId: p.ownerId, isSimple: p.isSimple, size: p.size || 1 });
                                       e.dataTransfer.setData('application/dungeonmind-character', payload);
                                       e.dataTransfer.setData('text/plain', payload);
                                   }}
@@ -3464,8 +4240,37 @@ ${pasteTextContent}`;
                                   <div className="w-10 h-10 rounded bg-slate-700 shrink-0 overflow-hidden relative">
                                       {p.image ? <img src={getProxiedImageUrl(p.image)} className="w-full h-full object-cover" draggable={false} referrerPolicy="no-referrer" /> : <div className="w-full h-full flex items-center justify-center font-bold text-slate-500">{p.name?.[0] || '?'}</div>}
                                   </div>
-                                  <div className="flex-1 min-w-0 font-bold text-sm text-slate-200 truncate">{p.name}</div>
-                                  {/* <button onClick={(e) => { e.stopPropagation(); handleAddActorToCombat(p, false); }} className="opacity-0 group-hover:opacity-100 p-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded shadow-lg transition-all" title="Add to Initiative Tracker"><Icon name="plus" size={14}/></button> */}
+                                  <div className="flex-1 min-w-0 font-bold text-sm text-slate-200 truncate flex items-center gap-1.5">
+                                      <span>{p.name}</span>
+                                      {p.isSimple && <span className="text-[9px] bg-emerald-950/80 text-emerald-400 border border-emerald-800 px-1 py-0.2 rounded font-normal">Quick</span>}
+                                  </div>
+                                  <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                                      <button 
+                                          onClick={(e) => {
+                                              e.stopPropagation();
+                                              setQuickActorModal({
+                                                  isOpen: true,
+                                                  category: 'pc',
+                                                  editId: p.id,
+                                                  name: p.name,
+                                                  image: p.image,
+                                                  size: p.size || 1,
+                                                  ownerId: p.ownerId || null
+                                              });
+                                          }} 
+                                          className="p-1.5 text-slate-400 hover:text-amber-400 hover:bg-amber-950/60 rounded transition-colors" 
+                                          title="Edit Hero / Photo"
+                                      >
+                                          <Icon name="edit-2" size={13}/>
+                                      </button>
+                                      <button 
+                                          onClick={(e) => handleDeletePlayerActor(p, e)} 
+                                          className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-950/60 rounded transition-colors" 
+                                          title="Delete Hero from Party"
+                                      >
+                                          <Icon name="trash-2" size={13}/>
+                                      </button>
+                                  </div>
                               </div>
                           )
                       ))}
@@ -3473,19 +4278,159 @@ ${pasteTextContent}`;
                   </div>
                 </div>
 
+                {/* Companions & Assigned NPCs Section */}
+                {data?.npcs?.some(n => n && n.ownerId) && (
+                  <div>
+                    <div className="flex justify-between items-center mb-3">
+                      <h4 className="text-xs uppercase font-bold text-indigo-400 tracking-wider flex items-center gap-1.5">
+                        <Icon name="shield" size={13} /> Companions ({data?.npcs?.filter(n => n && n.ownerId)?.length || 0})
+                      </h4>
+                      <button 
+                        onClick={() => setShowCreationMenu(true)} 
+                        className="text-[10px] bg-gradient-to-r from-indigo-800 to-indigo-600 hover:from-indigo-700 hover:to-indigo-500 text-white px-2.5 py-1 rounded-md flex items-center gap-1.5 transition-all shadow-md font-bold"
+                      >
+                        <Icon name="plus-circle" size={12}/> Summon
+                      </button>
+                    </div>
+                    <div className={actorViewMode === 'grid' ? "grid grid-cols-2 gap-3" : "flex flex-col gap-2"}>
+                      {data?.npcs?.filter(n => n && n.ownerId)?.map((n, i) => {
+                        const assignedName = getPlayerDisplayName(n.ownerId);
+                        return actorViewMode === 'grid' ? (
+                          <div key={`assigned-npc-${i}`} draggable 
+                              onDragStart={(e) => {
+                                  const payload = JSON.stringify({ format: 'dungeonmind-character', id: n.id, name: n.name, type: 'npc', image: n.image, size: n.size || 1, hp: n.hp, ownerId: n.ownerId, isSimple: n.isSimple });
+                                  e.dataTransfer.setData('application/dungeonmind-character', payload);
+                                  e.dataTransfer.setData('text/plain', payload);
+                              }}
+                              className="aspect-square bg-slate-800 rounded-lg border border-indigo-500/60 overflow-hidden cursor-grab active:cursor-grabbing hover:border-indigo-400 transition-colors relative group shadow-lg"
+                          >
+                              {n.image ? (
+                                <img src={getProxiedImageUrl(n.image)} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" alt={n.name} draggable={false} referrerPolicy="no-referrer" />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center font-bold text-3xl text-slate-600 bg-slate-700 opacity-80 group-hover:opacity-100 transition-opacity">{n.name?.[0] || '?'}</div>
+                              )}
+                              <div className="absolute top-1 left-1 bg-indigo-950/95 text-indigo-300 text-[9px] font-bold px-1.5 py-0.5 rounded border border-indigo-500/40 shadow truncate max-w-[90%] flex items-center gap-1">
+                                  <div className="w-1.5 h-1.5 rounded-full bg-indigo-400"></div>
+                                  <span className="truncate">{assignedName}</span>
+                              </div>
+                              <div className="absolute top-1 right-1 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                                  <button 
+                                      onClick={(e) => {
+                                          e.stopPropagation();
+                                          setQuickActorModal({
+                                              isOpen: true,
+                                              category: 'companion',
+                                              editId: n.id,
+                                              name: n.name,
+                                              image: n.image,
+                                              size: n.size || 1,
+                                              ownerId: n.ownerId || null
+                                          });
+                                      }} 
+                                      className="p-1 bg-slate-800/90 hover:bg-amber-600 text-amber-300 hover:text-white rounded shadow-md transition-colors" 
+                                      title="Edit Companion / Photo"
+                                  >
+                                      <Icon name="edit-2" size={11}/>
+                                  </button>
+                                  <button 
+                                      onClick={(e) => handleUnassignNpcActor(n, e)} 
+                                      className="p-1 bg-slate-800/90 hover:bg-amber-600 text-amber-300 hover:text-white rounded shadow-md transition-colors" 
+                                      title="Unassign from Player"
+                                  >
+                                      <Icon name="user-x" size={11}/>
+                                  </button>
+                                  <button 
+                                      onClick={(e) => handleDeleteNpcActor(n, e)} 
+                                      className="p-1 bg-red-900/90 hover:bg-red-700 text-white rounded shadow-md transition-colors" 
+                                      title="Delete Companion"
+                                  >
+                                      <Icon name="trash-2" size={11}/>
+                                  </button>
+                              </div>
+                              <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 to-transparent pt-4 pb-1 px-2 text-[10px] font-bold text-white truncate pointer-events-none text-center shadow-black drop-shadow-md">{n.name}</div>
+                          </div>
+                        ) : (
+                          <div key={`assigned-npc-${i}`} draggable 
+                              onDragStart={(e) => {
+                                  const payload = JSON.stringify({ format: 'dungeonmind-character', id: n.id, name: n.name, type: 'npc', image: n.image, size: n.size || 1, hp: n.hp, ownerId: n.ownerId, isSimple: n.isSimple });
+                                  e.dataTransfer.setData('application/dungeonmind-character', payload);
+                                  e.dataTransfer.setData('text/plain', payload);
+                              }}
+                              className="flex items-center gap-3 bg-slate-800 rounded-lg border border-indigo-500/60 p-2 cursor-grab active:cursor-grabbing hover:border-indigo-400 transition-colors group shadow-lg"
+                          >
+                              <div className="w-10 h-10 rounded bg-slate-700 shrink-0 overflow-hidden relative">
+                                  {n.image ? <img src={getProxiedImageUrl(n.image)} className="w-full h-full object-cover" draggable={false} referrerPolicy="no-referrer" /> : <div className="w-full h-full flex items-center justify-center font-bold text-slate-500">{n.name?.[0] || '?'}</div>}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                  <div className="font-bold text-sm text-slate-200 truncate flex items-center gap-1.5">
+                                      <span>{n.name}</span>
+                                      {n.isSimple && <span className="text-[9px] bg-indigo-950/80 text-indigo-300 border border-indigo-800 px-1 py-0.2 rounded font-normal">Quick</span>}
+                                  </div>
+                                  <div className="text-[10px] text-indigo-300 font-semibold truncate flex items-center gap-1 mt-0.5">
+                                      <Icon name="user" size={10} className="text-indigo-400 shrink-0" />
+                                      <span className="truncate">Assigned to <strong className="text-indigo-200">{assignedName}</strong></span>
+                                  </div>
+                              </div>
+                              <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <button 
+                                      onClick={(e) => {
+                                          e.stopPropagation();
+                                          setQuickActorModal({
+                                              isOpen: true,
+                                              category: 'companion',
+                                              editId: n.id,
+                                              name: n.name,
+                                              image: n.image,
+                                              size: n.size || 1,
+                                              ownerId: n.ownerId || null
+                                          });
+                                      }} 
+                                      className="p-1.5 text-slate-400 hover:text-amber-400 hover:bg-amber-950/60 rounded transition-colors" 
+                                      title="Edit Companion / Photo"
+                                  >
+                                      <Icon name="edit-2" size={13}/>
+                                  </button>
+                                  <button 
+                                      onClick={(e) => handleUnassignNpcActor(n, e)} 
+                                      className="p-1.5 text-slate-400 hover:text-amber-400 hover:bg-amber-950/60 rounded transition-colors" 
+                                      title="Unassign from Player"
+                                  >
+                                      <Icon name="user-x" size={13}/>
+                                  </button>
+                                  <button 
+                                      onClick={(e) => handleDeleteNpcActor(n, e)} 
+                                      className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-950/60 rounded transition-colors" 
+                                      title="Delete Companion"
+                                  >
+                                      <Icon name="trash-2" size={13}/>
+                                  </button>
+                              </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Bestiary Section (Unassigned Monsters & NPCs) */}
                 <div>
                   <div className="flex justify-between items-center mb-3">
-                      <h4 className="text-xs uppercase font-bold text-slate-500 tracking-wider">Bestiary</h4>
-                      <button onClick={() => setShowCreationMenu(true)} className="text-[10px] bg-gradient-to-r from-red-800 to-red-600 hover:from-red-700 hover:to-red-500 text-white px-2 py-0.5 rounded flex items-center gap-1 transition-colors shadow-lg">
-                          <Icon name="plus-circle" size={12}/> Summon Entity
+                      <h4 className="text-xs uppercase font-bold text-slate-500 tracking-wider">
+                        Bestiary ({data?.npcs?.filter(n => !n?.ownerId)?.length || 0})
+                      </h4>
+                      <button 
+                        onClick={() => setShowCreationMenu(true)} 
+                        className="text-[10px] bg-gradient-to-r from-red-800 to-red-600 hover:from-red-700 hover:to-red-500 text-white px-2.5 py-1 rounded-md flex items-center gap-1.5 transition-all shadow-md font-bold"
+                      >
+                        <Icon name="plus-circle" size={12}/> Summon Entity
                       </button>
                   </div>
                   <div className={actorViewMode === 'grid' ? "grid grid-cols-2 gap-3" : "flex flex-col gap-2"}>
-                      {data?.npcs?.map((n, i) => (
+                      {data?.npcs?.filter(n => !n?.ownerId)?.map((n, i) => (
                           actorViewMode === 'grid' ? (
                               <div key={`npc-${i}`} draggable 
                                   onDragStart={(e) => {
-                                      const payload = JSON.stringify({ format: 'dungeonmind-character', id: n.id, name: n.name, type: 'npc', image: n.image, size: n.size || 1, hp: n.hp });
+                                      const payload = JSON.stringify({ format: 'dungeonmind-character', id: n.id, name: n.name, type: 'npc', image: n.image, size: n.size || 1, hp: n.hp, isSimple: n.isSimple });
                                       e.dataTransfer.setData('application/dungeonmind-character', payload);
                                       e.dataTransfer.setData('text/plain', payload);
                                   }}
@@ -3496,13 +4441,42 @@ ${pasteTextContent}`;
                                   ) : (
                                     <div className="w-full h-full flex items-center justify-center font-bold text-3xl text-slate-600 bg-slate-700 opacity-80 group-hover:opacity-100 transition-opacity">{n.name?.[0] || '?'}</div>
                                   )}
-                                  <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 to-transparent pt-4 pb-1 px-2 text-[10px] font-bold text-white truncate pointer-events-none text-center shadow-black drop-shadow-md">{n.name}</div>
-                                  {/* <button onClick={(e) => { e.stopPropagation(); handleAddActorToCombat(n, true); }} className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 p-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-md shadow-lg transition-all z-10" title="Add to Initiative Tracker"><Icon name="plus" size={14}/></button> */}
+                                  <div className="absolute top-1 left-1 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                                      <button 
+                                          onClick={(e) => {
+                                              e.stopPropagation();
+                                              setQuickActorModal({
+                                                  isOpen: true,
+                                                  category: 'npc',
+                                                  editId: n.id,
+                                                  name: n.name,
+                                                  image: n.image,
+                                                  size: n.size || 1,
+                                                  ownerId: null
+                                              });
+                                          }} 
+                                          className="p-1 bg-slate-800/90 hover:bg-amber-600 text-amber-300 hover:text-white rounded shadow-md transition-colors" 
+                                          title="Edit Entity / Photo"
+                                      >
+                                          <Icon name="edit-2" size={11}/>
+                                      </button>
+                                      <button 
+                                          onClick={(e) => handleDeleteNpcActor(n, e)} 
+                                          className="p-1 bg-red-900/90 hover:bg-red-700 text-white rounded shadow-md transition-colors" 
+                                          title="Delete Entity"
+                                      >
+                                          <Icon name="trash-2" size={12}/>
+                                      </button>
+                                  </div>
+                                  <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 to-transparent pt-4 pb-1 px-2 text-[10px] font-bold text-white truncate pointer-events-none text-center shadow-black drop-shadow-md flex items-center justify-center gap-1">
+                                      {n.isSimple && <span className="w-1.5 h-1.5 rounded-full bg-red-400 shrink-0"></span>}
+                                      <span className="truncate">{n.name}</span>
+                                  </div>
                               </div>
                           ) : (
                               <div key={`npc-${i}`} draggable 
                                   onDragStart={(e) => {
-                                      const payload = JSON.stringify({ format: 'dungeonmind-character', id: n.id, name: n.name, type: 'npc', image: n.image, size: n.size || 1, hp: n.hp });
+                                      const payload = JSON.stringify({ format: 'dungeonmind-character', id: n.id, name: n.name, type: 'npc', image: n.image, size: n.size || 1, hp: n.hp, isSimple: n.isSimple });
                                       e.dataTransfer.setData('application/dungeonmind-character', payload);
                                       e.dataTransfer.setData('text/plain', payload);
                                   }}
@@ -3511,12 +4485,41 @@ ${pasteTextContent}`;
                                   <div className="w-10 h-10 rounded bg-slate-700 shrink-0 overflow-hidden relative">
                                       {n.image ? <img src={getProxiedImageUrl(n.image)} className="w-full h-full object-cover" draggable={false} referrerPolicy="no-referrer" /> : <div className="w-full h-full flex items-center justify-center font-bold text-slate-500">{n.name?.[0] || '?'}</div>}
                                   </div>
-                                  <div className="flex-1 min-w-0 font-bold text-sm text-slate-200 truncate">{n.name}</div>
-                                  {/* <button onClick={(e) => { e.stopPropagation(); handleAddActorToCombat(n, true); }} className="opacity-0 group-hover:opacity-100 p-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded shadow-lg transition-all" title="Add to Initiative Tracker"><Icon name="plus" size={14}/></button> */}
+                                  <div className="flex-1 min-w-0 font-bold text-sm text-slate-200 truncate flex items-center gap-1.5">
+                                      <span>{n.name}</span>
+                                      {n.isSimple && <span className="text-[9px] bg-red-950/80 text-red-300 border border-red-800 px-1 py-0.2 rounded font-normal">Quick</span>}
+                                  </div>
+                                  <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                                      <button 
+                                          onClick={(e) => {
+                                              e.stopPropagation();
+                                              setQuickActorModal({
+                                                  isOpen: true,
+                                                  category: 'npc',
+                                                  editId: n.id,
+                                                  name: n.name,
+                                                  image: n.image,
+                                                  size: n.size || 1,
+                                                  ownerId: null
+                                              });
+                                          }} 
+                                          className="p-1.5 text-slate-400 hover:text-amber-400 hover:bg-amber-950/60 rounded transition-colors" 
+                                          title="Edit Entity / Photo"
+                                      >
+                                          <Icon name="edit-2" size={13}/>
+                                      </button>
+                                      <button 
+                                          onClick={(e) => handleDeleteNpcActor(n, e)} 
+                                          className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-950/60 rounded transition-colors" 
+                                          title="Delete Entity"
+                                      >
+                                          <Icon name="trash-2" size={13}/>
+                                      </button>
+                                  </div>
                               </div>
                           )
                       ))}
-                      {(!data?.npcs || data.npcs.length === 0) && <div className="col-span-2 text-slate-500 text-xs text-center italic">No enemies found.</div>}
+                      {(!data?.npcs || data.npcs.filter(n => !n?.ownerId).length === 0) && <div className="col-span-2 text-slate-500 text-xs text-center italic">No unassigned entities found.</div>}
                   </div>
                 </div>
             </div>
@@ -3573,41 +4576,108 @@ ${pasteTextContent}`;
             style={{ top: tokenMenuDisplayPosition.y, left: tokenMenuDisplayPosition.x, maxHeight: 'calc(100vh - 20px)', overflowY: 'auto' }}
             onContextMenu={(e) => e.preventDefault()}
           >
-            {contextMenu.characterId && onOpenSheet && (
-              <button 
-                className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors"
-                onClick={() => {
-                  if (onOpenSheet) {
-                      const token = tokensList.find(t => t.id === contextMenu.tokenId);
-                      const char = allCharacters.find(c => String(c.id) === String(contextMenu.characterId));
-                      const hp = token?.hp?.current ?? char?.hp?.current ?? null;
-                      const maxHp = token?.hp?.max ?? char?.hp?.max ?? null;
-                      onOpenSheet({ isToken: true, tokenId: contextMenu.tokenId, characterId: contextMenu.characterId, hp, maxHp });
-                  }
-                  setContextMenu(null);
-                }}
-              >
-                Open Sheet
-              </button>
-            )}
+            {(() => {
+              const token = (tokensList || []).find(t => t?.id === contextMenu.tokenId);
+              const char = allCharacters.find(c => String(c.id) === String(contextMenu.characterId));
+              const isSimpleActor = Boolean(char?.isSimple || char?.noSheet || token?.isSimple || (!contextMenu.characterId && !char));
+              const isPc = (data?.players || []).some(p => String(p.id) === String(contextMenu.characterId));
 
-            {contextMenu.characterId && onOpenSheet && (
-              <button 
-                className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors flex items-center gap-2"
-                onClick={() => {
-                  if (onOpenSheet) {
-                      const token = tokensList.find(t => t.id === contextMenu.tokenId);
-                      const char = allCharacters.find(c => String(c.id) === String(contextMenu.characterId));
-                      const hp = token?.hp?.current ?? char?.hp?.current ?? null;
-                      const maxHp = token?.hp?.max ?? char?.hp?.max ?? null;
-                      onOpenSheet({ isToken: true, tokenId: contextMenu.tokenId, characterId: contextMenu.characterId, hp, maxHp, initialTab: 'bio' });
-                  }
-                  setContextMenu(null);
-                }}
-              >
-                <Icon name="box" size={14} className="text-amber-400" /> Model Editor
-              </button>
-            )}
+              return (
+                <>
+                  {isSimpleActor ? (
+                    <>
+                      <button 
+                        className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors flex items-center gap-2 text-sky-400 font-bold"
+                        onClick={() => {
+                          setPhotoEditModal({
+                            isOpen: true,
+                            tokenId: contextMenu.tokenId,
+                            characterId: contextMenu.characterId,
+                            name: token?.name || contextMenu.name || 'Token',
+                            image: token?.image || contextMenu.image || ''
+                          });
+                          setContextMenu(null);
+                        }}
+                      >
+                        <Icon name="image" size={14} /> Change Photo
+                      </button>
+                      {effectiveRole === 'dm' && (
+                        <button 
+                          className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors flex items-center gap-2 text-amber-300"
+                          onClick={() => {
+                            setQuickActorModal({
+                              isOpen: true,
+                              category: isPc ? 'pc' : 'npc',
+                              editId: contextMenu.characterId || null,
+                              tokenId: contextMenu.tokenId,
+                              name: token?.name || char?.name || contextMenu.name || '',
+                              image: token?.image || char?.image || '',
+                              size: token?.size || char?.size || 1,
+                              ownerId: token?.ownerId || char?.ownerId || null
+                            });
+                            setContextMenu(null);
+                          }}
+                        >
+                          <Icon name="edit-2" size={14} /> Edit Token
+                        </button>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      {contextMenu.characterId && onOpenSheet && (
+                        <button 
+                          className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors flex items-center gap-2"
+                          onClick={() => {
+                            if (onOpenSheet) {
+                                const hp = token?.hp?.current ?? char?.hp?.current ?? null;
+                                const maxHp = token?.hp?.max ?? char?.hp?.max ?? null;
+                                onOpenSheet({ isToken: true, tokenId: contextMenu.tokenId, characterId: contextMenu.characterId, hp, maxHp });
+                            }
+                            setContextMenu(null);
+                          }}
+                        >
+                          <Icon name="file-text" size={14} className="text-indigo-400" /> Open Sheet
+                        </button>
+                      )}
+
+                      {contextMenu.characterId && onOpenSheet && (
+                        <button 
+                          className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors flex items-center gap-2"
+                          onClick={() => {
+                            if (onOpenSheet) {
+                                const hp = token?.hp?.current ?? char?.hp?.current ?? null;
+                                const maxHp = token?.hp?.max ?? char?.hp?.max ?? null;
+                                onOpenSheet({ isToken: true, tokenId: contextMenu.tokenId, characterId: contextMenu.characterId, hp, maxHp, initialTab: 'bio' });
+                            }
+                            setContextMenu(null);
+                          }}
+                        >
+                          <Icon name="box" size={14} className="text-amber-400" /> Model Editor
+                        </button>
+                      )}
+
+                      {effectiveRole === 'dm' && (
+                        <button 
+                          className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors flex items-center gap-2 text-sky-400"
+                          onClick={() => {
+                            setPhotoEditModal({
+                              isOpen: true,
+                              tokenId: contextMenu.tokenId,
+                              characterId: contextMenu.characterId,
+                              name: token?.name || contextMenu.name || 'Token',
+                              image: token?.image || contextMenu.image || ''
+                            });
+                            setContextMenu(null);
+                          }}
+                        >
+                          <Icon name="image" size={14} /> Change Photo
+                        </button>
+                      )}
+                    </>
+                  )}
+                </>
+              );
+            })()}
             
             {/* Reset Elevation is only visible if the token is currently flying */}
             {Math.abs(contextMenu.elevationOffset || 0) > 0.01 && (
@@ -3672,6 +4742,105 @@ ${pasteTextContent}`;
                   <Icon name="unlock" size={14} className="inline mr-2"/>
                   {contextMenu.isSharedControl ? "Revoke Shared Control" : "Allow Shared Control"}
                 </button>
+
+                {/* Assign to Player */}
+                <div className="border-t border-slate-700 my-1"></div>
+                <div className="px-4 py-1 text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center justify-between">
+                    <span>Assign To Player</span>
+                </div>
+                {(() => {
+                    const currentToken = mapData?.tokens?.[contextMenu.tokenId];
+                    const currentTokenChar = allCharacters.find(c => String(c.id) === String(contextMenu.characterId));
+                    const currentOwnerId = currentToken?.ownerId || currentTokenChar?.ownerId;
+
+                    return (
+                        <>
+                            {Object.entries(data?.activeUsers || {}).map(([uid, rawName]) => {
+                                const isAssigned = String(uid) === String(currentOwnerId);
+                                const displayName = typeof rawName === 'object' ? rawName?.displayName : rawName;
+                                const cleanName = displayName?.includes('@') ? displayName.split('@')[0] : (displayName || 'Player');
+
+                                return (
+                                    <button 
+                                        key={uid}
+                                        className={`w-full text-left px-4 py-2 transition-colors text-sm flex items-center justify-between gap-2 ${
+                                            isAssigned 
+                                                ? 'bg-indigo-950/80 border-l-4 border-indigo-500 text-indigo-100 font-bold hover:bg-indigo-900/80' 
+                                                : 'hover:bg-slate-700 text-slate-300'
+                                        }`}
+                                        onClick={() => {
+                                            const idsToUpdate = selectedTokenIds.includes(contextMenu.tokenId) && selectedTokenIds.length > 1 ? selectedTokenIds : [contextMenu.tokenId];
+                                            const updates = {};
+                                            const npcUpdates = [];
+                                            
+                                            idsToUpdate.forEach(id => {
+                                                updates[`tokens.${id}.ownerId`] = uid;
+                                                
+                                                // Also update the NPC character if it exists and make it visible
+                                                const token = mapData.tokens[id];
+                                                if (token?.characterId && (data?.npcs || []).some(n => String(n.id) === String(token.characterId))) {
+                                                    npcUpdates.push({ id: token.characterId, ownerId: uid });
+                                                }
+                                            });
+                                            
+                                            updateMap(campaignCode, activeMapId, updates);
+                                            
+                                            if (npcUpdates.length > 0) {
+                                                const newNpcs = (data?.npcs || []).map(npc => {
+                                                    const update = npcUpdates.find(u => String(u.id) === String(npc.id));
+                                                    return update ? { ...npc, ownerId: update.ownerId, isHidden: false } : npc;
+                                                });
+                                                updateCampaign({ npcs: newNpcs });
+                                            }
+                                            
+                                            setContextMenu(null);
+                                        }}
+                                    >
+                                        <div className="flex items-center gap-2 min-w-0">
+                                            <div className={`w-2 h-2 rounded-full shrink-0 ${isAssigned ? 'bg-indigo-400 shadow-[0_0_8px_#818cf8]' : 'bg-green-500 shadow-[0_0_8px_#22c55e]'}`}></div>
+                                            <span className="truncate">{cleanName}</span>
+                                        </div>
+                                        {isAssigned && (
+                                            <span className="text-[10px] bg-indigo-500/30 text-indigo-300 px-1.5 py-0.5 rounded border border-indigo-500/40 uppercase font-mono tracking-wider shrink-0">
+                                                Assigned
+                                            </span>
+                                        )}
+                                    </button>
+                                );
+                            })}
+                            {currentOwnerId && (
+                                <button 
+                                    className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors text-sm text-red-400 font-bold flex items-center gap-2"
+                                    onClick={() => {
+                                        const idsToUpdate = selectedTokenIds.includes(contextMenu.tokenId) && selectedTokenIds.length > 1 ? selectedTokenIds : [contextMenu.tokenId];
+                                        const updates = {};
+                                        const npcUpdates = [];
+                                        
+                                        idsToUpdate.forEach(id => {
+                                            updates[`tokens.${id}.ownerId`] = null;
+                                            const token = mapData.tokens[id];
+                                            if (token?.characterId && (data?.npcs || []).some(n => String(n.id) === String(token.characterId))) {
+                                                npcUpdates.push({ id: token.characterId, ownerId: null });
+                                            }
+                                        });
+                                        
+                                        updateMap(campaignCode, activeMapId, updates);
+                                        if (npcUpdates.length > 0) {
+                                            const newNpcs = (data?.npcs || []).map(npc => {
+                                                const update = npcUpdates.find(u => String(u.id) === String(npc.id));
+                                                return update ? { ...npc, ownerId: null } : npc;
+                                            });
+                                            updateCampaign({ npcs: newNpcs });
+                                        }
+                                        setContextMenu(null);
+                                    }}
+                                >
+                                    <Icon name="x-circle" size={14} /> Clear Assignment
+                                </button>
+                            )}
+                        </>
+                    );
+                })()}
                 <div className="border-t border-slate-700 my-1"></div>
                 <button 
                   className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors text-amber-400 font-bold"
@@ -4143,7 +5312,12 @@ ${pasteTextContent}`;
                   <div className="p-8 text-center">
                       <h2 className="text-3xl fantasy-font text-amber-500 mb-2">Summon an Entity</h2>
                       <p className="text-slate-400 mb-8">How shall this creature arrive?</p>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                          <div onClick={() => { setShowCreationMenu(false); setQuickActorModal({ isOpen: true, category: 'npc' }); }} className="bg-slate-800 border-2 border-slate-700 hover:border-emerald-500 rounded-xl p-4 cursor-pointer group transition-all hover:-translate-y-1">
+                              <div className="w-12 h-12 bg-emerald-900/30 text-emerald-400 rounded-full flex items-center justify-center mx-auto mb-2"><Icon name="image" size={24}/></div>
+                              <h3 className="font-bold text-white">Quick Token</h3>
+                              <p className="text-[10px] text-slate-400">Name & Photo only.</p>
+                          </div>
                           <div onClick={() => { setShowCreationMenu(false); setShowCompendium(true); }} className="bg-slate-800 border-2 border-slate-700 hover:border-blue-500 rounded-xl p-4 cursor-pointer group transition-all hover:-translate-y-1">
                               <div className="w-12 h-12 bg-blue-900/30 text-blue-500 rounded-full flex items-center justify-center mx-auto mb-2"><Icon name="book" size={24}/></div>
                               <h3 className="font-bold text-white">5e API</h3>
@@ -4158,6 +5332,63 @@ ${pasteTextContent}`;
                               <div className="w-12 h-12 bg-purple-900/30 text-purple-500 rounded-full flex items-center justify-center mx-auto mb-2"><Icon name="sparkles" size={24}/></div>
                               <h3 className="font-bold text-white">AI Forge</h3>
                               <p className="text-[10px] text-slate-400">Generative NPC.</p>
+                          </div>
+                      </div>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {showHeroCreationMenu && (
+          <div className="fixed inset-0 z-[100] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
+              <div className="max-w-2xl w-full bg-slate-900 rounded-xl overflow-hidden shadow-2xl relative border border-slate-700">
+                  <button onClick={() => setShowHeroCreationMenu(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white"><Icon name="x" size={24}/></button>
+                  <div className="p-8 text-center">
+                      <h2 className="text-3xl fantasy-font text-amber-500 mb-2">Summon a Hero</h2>
+                      <p className="text-slate-400 mb-8">How shall this adventurer join the party?</p>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                          <div 
+                              onClick={() => { 
+                                  setShowHeroCreationMenu(false); 
+                                  setQuickActorModal({ isOpen: true, category: 'pc' }); 
+                              }} 
+                              className="bg-slate-800 border-2 border-slate-700 hover:border-amber-500 rounded-xl p-5 cursor-pointer group transition-all hover:-translate-y-1 text-center"
+                          >
+                              <div className="w-12 h-12 bg-amber-900/30 text-amber-400 rounded-full flex items-center justify-center mx-auto mb-3"><Icon name="zap" size={24}/></div>
+                              <h3 className="font-bold text-white text-base group-hover:text-amber-400 transition-colors">Quick Hero</h3>
+                              <p className="text-xs text-slate-400 mt-1">Name & Photo only (No Sheet)</p>
+                          </div>
+
+                          <div 
+                              onClick={() => { 
+                                  setShowHeroCreationMenu(false); 
+                                  if (onNavigate) {
+                                      onNavigate('party', 'dndbeyond');
+                                  } else if (setView) {
+                                      setView('party');
+                                  }
+                              }} 
+                              className="bg-slate-800 border-2 border-slate-700 hover:border-indigo-500 rounded-xl p-5 cursor-pointer group transition-all hover:-translate-y-1 text-center"
+                          >
+                              <div className="w-12 h-12 bg-indigo-900/30 text-indigo-400 rounded-full flex items-center justify-center mx-auto mb-3"><Icon name="download" size={24}/></div>
+                              <h3 className="font-bold text-white text-base group-hover:text-indigo-400 transition-colors">D&D Beyond</h3>
+                              <p className="text-xs text-slate-400 mt-1">Import Character from URL</p>
+                          </div>
+
+                          <div 
+                              onClick={() => { 
+                                  setShowHeroCreationMenu(false); 
+                                  if (onNavigate) {
+                                      onNavigate('party', 'builder');
+                                  } else if (setView) {
+                                      setView('party');
+                                  }
+                              }} 
+                              className="bg-slate-800 border-2 border-slate-700 hover:border-emerald-500 rounded-xl p-5 cursor-pointer group transition-all hover:-translate-y-1 text-center"
+                          >
+                              <div className="w-12 h-12 bg-emerald-900/30 text-emerald-400 rounded-full flex items-center justify-center mx-auto mb-3"><Icon name="user-plus" size={24}/></div>
+                              <h3 className="font-bold text-white text-base group-hover:text-emerald-400 transition-colors">Create Character</h3>
+                              <p className="text-xs text-slate-400 mt-1">Full 5e Character Builder</p>
                           </div>
                       </div>
                   </div>
@@ -4365,8 +5596,8 @@ ${pasteTextContent}`;
                         }} className="px-3 py-1.5 text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded font-bold shadow transition-colors flex items-center gap-1">
                             <Icon name="move" size={12}/> Move
                         </button>
-                        <button onClick={() => {
-                            if (confirm("Are you sure you want to delete this Lore Pin?")) {
+                        <button onClick={async () => {
+                            if (await dialog.confirm("Are you sure you want to delete this Lore Pin?")) {
                                 updateMap(campaignCode, activeMapId, { [`pings.${activeLorePin.id}`]: null });
                                 setActiveLorePin(null);
                             }
@@ -4421,6 +5652,293 @@ ${pasteTextContent}`;
             </div>
         </div>
     )}
+
+      {/* Quick Actor Modal (Name & Photo Only) */}
+      {quickActorModal && (
+          <div className="fixed inset-0 z-[110] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
+              <div className="max-w-md w-full bg-slate-900 border border-slate-700 rounded-xl shadow-2xl overflow-hidden flex flex-col">
+                  <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-950">
+                      <div className="flex items-center gap-2">
+                          <div className="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold">
+                              <Icon name="image" size={18} />
+                          </div>
+                          <div>
+                              <h3 className="font-bold text-white text-base">{quickActorModal.editId ? 'Edit Token / Actor' : 'Create Quick Actor'}</h3>
+                              <p className="text-[11px] text-slate-400">Name & photo only • No character sheet</p>
+                          </div>
+                      </div>
+                      <button onClick={() => setQuickActorModal(null)} className="text-slate-400 hover:text-white p-1"><Icon name="x" size={20}/></button>
+                  </div>
+
+                  <div className="p-5 space-y-4 max-h-[75vh] overflow-y-auto custom-scroll">
+                      {/* Category Selector (if new) */}
+                      {!quickActorModal.editId && (
+                          <div>
+                              <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block mb-1.5">Category</label>
+                              <div className="grid grid-cols-3 gap-2">
+                                  <button
+                                      type="button"
+                                      onClick={() => setQuickActorModal(prev => ({ ...prev, category: 'pc' }))}
+                                      className={`py-2 px-3 rounded-lg text-xs font-bold border flex items-center justify-center gap-1.5 transition-all ${
+                                          quickActorModal.category === 'pc' ? 'bg-emerald-950/80 border-emerald-500 text-emerald-200 shadow-md' : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-slate-200'
+                                      }`}
+                                  >
+                                      <Icon name="shield" size={13} /> Party Hero
+                                  </button>
+                                  <button
+                                      type="button"
+                                      onClick={() => setQuickActorModal(prev => ({ ...prev, category: 'npc' }))}
+                                      className={`py-2 px-3 rounded-lg text-xs font-bold border flex items-center justify-center gap-1.5 transition-all ${
+                                          quickActorModal.category === 'npc' ? 'bg-red-950/80 border-red-500 text-red-200 shadow-md' : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-slate-200'
+                                      }`}
+                                  >
+                                      <Icon name="skull" size={13} /> Monster/NPC
+                                  </button>
+                                  <button
+                                      type="button"
+                                      onClick={() => setQuickActorModal(prev => ({ ...prev, category: 'companion' }))}
+                                      className={`py-2 px-3 rounded-lg text-xs font-bold border flex items-center justify-center gap-1.5 transition-all ${
+                                          quickActorModal.category === 'companion' ? 'bg-indigo-950/80 border-indigo-500 text-indigo-200 shadow-md' : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-slate-200'
+                                      }`}
+                                  >
+                                      <Icon name="heart" size={13} /> Companion
+                                  </button>
+                              </div>
+                          </div>
+                      )}
+
+                      {/* Name Input */}
+                      <div>
+                          <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block mb-1">Actor Name</label>
+                          <input 
+                              type="text"
+                              value={quickActorModal.name || ''}
+                              onChange={(e) => setQuickActorModal(prev => ({ ...prev, name: e.target.value }))}
+                              placeholder={quickActorModal.category === 'pc' ? "e.g. Valerius the Rogue" : "e.g. Goblin Scout"}
+                              autoFocus
+                              className="w-full bg-slate-800 border border-slate-700 focus:border-amber-500 rounded-lg px-3 py-2 text-white text-sm outline-none transition-colors font-medium"
+                          />
+                      </div>
+
+                      {/* Photo & Avatar Preview */}
+                      <div>
+                          <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block mb-1">Token Photo</label>
+                          <div className="flex gap-3 items-center">
+                              <div className="w-16 h-16 rounded-full bg-slate-800 border-2 border-slate-700 overflow-hidden shrink-0 flex items-center justify-center relative shadow-inner">
+                                  {quickActorModal.image ? (
+                                      <img src={getProxiedImageUrl(quickActorModal.image)} className="w-full h-full object-cover" alt="Preview" referrerPolicy="no-referrer" />
+                                  ) : (
+                                      <div className="font-bold text-2xl text-slate-500 uppercase">{quickActorModal.name?.[0] || '?'}</div>
+                                  )}
+                              </div>
+                              <div className="flex-1 space-y-2">
+                                  <input 
+                                      type="text"
+                                      value={quickActorModal.image || ''}
+                                      onChange={(e) => setQuickActorModal(prev => ({ ...prev, image: e.target.value }))}
+                                      placeholder="Paste Image URL (https://...)"
+                                      className="w-full bg-slate-800 border border-slate-700 focus:border-amber-500 rounded-lg px-3 py-1.5 text-xs text-white outline-none transition-colors"
+                                  />
+                                  <div className="flex items-center gap-2">
+                                      <label className="cursor-pointer text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1 rounded border border-slate-700 flex items-center gap-1.5 transition-colors">
+                                          <Icon name="upload" size={13} /> Upload File
+                                          <input 
+                                              type="file" 
+                                              onChange={async (e) => {
+                                                  const file = e.target.files?.[0];
+                                                  if (!file) return;
+                                                  try {
+                                                      const b64 = await fileToBase64(file);
+                                                      const chunkedUrl = await storeChunkedMap(b64, file.name);
+                                                      setQuickActorModal(prev => ({ ...prev, image: chunkedUrl }));
+                                                  } catch(err) {
+                                                      alert("Failed to upload image: " + err.message);
+                                                  }
+                                              }} 
+                                              accept="image/*" 
+                                              className="hidden" 
+                                          />
+                                      </label>
+                                      {quickActorModal.image && (
+                                          <button
+                                              type="button"
+                                              onClick={() => setQuickActorModal(prev => ({ ...prev, image: '' }))}
+                                              className="text-xs text-slate-400 hover:text-red-400 transition-colors"
+                                          >
+                                              Clear
+                                          </button>
+                                      )}
+                                  </div>
+                              </div>
+                          </div>
+                      </div>
+
+                      {/* Size Selector */}
+                      <div>
+                          <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block mb-1">Grid Size</label>
+                          <div className="grid grid-cols-4 gap-2">
+                              {[
+                                  { val: 1, label: '1x1 (Med)' },
+                                  { val: 2, label: '2x2 (Lrg)' },
+                                  { val: 3, label: '3x3 (Huge)' },
+                                  { val: 4, label: '4x4 (Garg)' },
+                              ].map(s => (
+                                  <button
+                                      key={s.val}
+                                      type="button"
+                                      onClick={() => setQuickActorModal(prev => ({ ...prev, size: s.val }))}
+                                      className={`py-1.5 text-xs font-semibold rounded border transition-all ${
+                                          Number(quickActorModal.size || 1) === s.val ? 'bg-amber-950/80 border-amber-500 text-amber-200' : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-slate-200'
+                                      }`}
+                                  >
+                                      {s.label}
+                                  </button>
+                              ))}
+                          </div>
+                      </div>
+
+                      {/* Player Assignment */}
+                      {(quickActorModal.category === 'companion' || quickActorModal.category === 'pc' || quickActorModal.editId) && (
+                          <div>
+                              <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block mb-1">Player Assignment (Optional)</label>
+                              <select
+                                  value={quickActorModal.ownerId || ''}
+                                  onChange={(e) => setQuickActorModal(prev => ({ ...prev, ownerId: e.target.value || null }))}
+                                  className="w-full bg-slate-800 border border-slate-700 focus:border-amber-500 rounded-lg px-3 py-2 text-xs text-white outline-none"
+                              >
+                                  <option value="">-- No Player Assigned --</option>
+                                  {Object.entries(data?.activeUsers || {}).map(([uid, rawName]) => {
+                                      const displayName = typeof rawName === 'object' ? rawName?.displayName : rawName;
+                                      const clean = displayName?.includes('@') ? displayName.split('@')[0] : (displayName || 'Player');
+                                      return <option key={uid} value={uid}>{clean}</option>;
+                                  })}
+                              </select>
+                          </div>
+                      )}
+                  </div>
+
+                  <div className="p-4 border-t border-slate-800 bg-slate-950/60 flex items-center justify-between">
+                      <div>
+                          {quickActorModal.editId && (
+                              <button
+                                  type="button"
+                                  onClick={() => handleDeleteQuickActor(quickActorModal)}
+                                  className="text-xs text-red-400 hover:text-red-300 hover:bg-red-950/50 px-2.5 py-1.5 rounded border border-red-900/50 flex items-center gap-1 transition-colors"
+                              >
+                                  <Icon name="trash-2" size={13} /> Delete
+                              </button>
+                          )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                          <button
+                              type="button"
+                              onClick={() => setQuickActorModal(null)}
+                              className="px-4 py-1.5 text-xs text-slate-400 hover:text-white transition-colors"
+                          >
+                              Cancel
+                          </button>
+                          <button
+                              type="button"
+                              onClick={() => handleSaveQuickActor(quickActorModal)}
+                              className="px-5 py-1.5 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-white font-bold text-xs rounded-lg shadow-lg transition-all"
+                          >
+                              {quickActorModal.editId ? 'Save Changes' : 'Create Actor'}
+                          </button>
+                      </div>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {/* Photo Edit Modal (Fast photo changer from context menu) */}
+      {photoEditModal && (
+          <div className="fixed inset-0 z-[110] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
+              <div className="max-w-sm w-full bg-slate-900 border border-slate-700 rounded-xl shadow-2xl overflow-hidden flex flex-col">
+                  <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-950">
+                      <div className="flex items-center gap-2">
+                          <div className="w-8 h-8 rounded-lg bg-sky-500/20 text-sky-400 flex items-center justify-center font-bold">
+                              <Icon name="image" size={18} />
+                          </div>
+                          <div>
+                              <h3 className="font-bold text-white text-sm">Change Photo</h3>
+                              <p className="text-[11px] text-slate-400 truncate max-w-[200px]">{photoEditModal.name || 'Token'}</p>
+                          </div>
+                      </div>
+                      <button onClick={() => setPhotoEditModal(null)} className="text-slate-400 hover:text-white p-1"><Icon name="x" size={18}/></button>
+                  </div>
+
+                  <div className="p-5 space-y-4">
+                      <div className="flex flex-col items-center gap-3">
+                          <div className="w-24 h-24 rounded-full bg-slate-800 border-2 border-slate-700 overflow-hidden shrink-0 flex items-center justify-center relative shadow-inner">
+                              {photoEditModal.image ? (
+                                  <img src={getProxiedImageUrl(photoEditModal.image)} className="w-full h-full object-cover" alt="Preview" referrerPolicy="no-referrer" />
+                              ) : (
+                                  <div className="font-bold text-3xl text-slate-500 uppercase">{photoEditModal.name?.[0] || '?'}</div>
+                              )}
+                          </div>
+
+                          <div className="w-full space-y-2">
+                              <input 
+                                  type="text"
+                                  value={photoEditModal.image || ''}
+                                  onChange={(e) => setPhotoEditModal(prev => ({ ...prev, image: e.target.value }))}
+                                  placeholder="Paste Image URL (https://...)"
+                                  autoFocus
+                                  className="w-full bg-slate-800 border border-slate-700 focus:border-sky-500 rounded-lg px-3 py-2 text-xs text-white outline-none transition-colors"
+                              />
+                              <div className="flex items-center justify-center gap-2">
+                                  <label className="cursor-pointer text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded border border-slate-700 flex items-center gap-1.5 transition-colors">
+                                      <Icon name="upload" size={13} /> Upload File
+                                      <input 
+                                          type="file" 
+                                          onChange={async (e) => {
+                                              const file = e.target.files?.[0];
+                                              if (!file) return;
+                                              try {
+                                                  const b64 = await fileToBase64(file);
+                                                  const chunkedUrl = await storeChunkedMap(b64, file.name);
+                                                  setPhotoEditModal(prev => ({ ...prev, image: chunkedUrl }));
+                                              } catch(err) {
+                                                  alert("Failed to upload image: " + err.message);
+                                              }
+                                          }} 
+                                          accept="image/*" 
+                                          className="hidden" 
+                                      />
+                                  </label>
+                                  {photoEditModal.image && (
+                                      <button
+                                          type="button"
+                                          onClick={() => setPhotoEditModal(prev => ({ ...prev, image: '' }))}
+                                          className="text-xs text-slate-400 hover:text-red-400 transition-colors"
+                                      >
+                                          Clear
+                                      </button>
+                                  )}
+                              </div>
+                          </div>
+                      </div>
+                  </div>
+
+                  <div className="p-4 border-t border-slate-800 bg-slate-950/60 flex items-center justify-end gap-2">
+                      <button
+                          type="button"
+                          onClick={() => setPhotoEditModal(null)}
+                          className="px-4 py-1.5 text-xs text-slate-400 hover:text-white transition-colors"
+                      >
+                          Cancel
+                      </button>
+                      <button
+                          type="button"
+                          onClick={() => handleSaveTokenPhoto(photoEditModal)}
+                          className="px-5 py-1.5 bg-gradient-to-r from-sky-600 to-sky-500 hover:from-sky-500 hover:to-sky-400 text-white font-bold text-xs rounded-lg shadow-lg transition-all"
+                      >
+                          Save Photo
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
 
     </div>
     );

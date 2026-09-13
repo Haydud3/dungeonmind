@@ -4,9 +4,12 @@ import { useCharacterStore } from '../stores/useCharacterStore';
 import { useNewCampaign } from '../contexts/NewCampaignProvider';
 import { searchGithubModels } from '../utils/miniManifest';
 import Icon from './Icon';
+import { useToast } from './ToastProvider';
+import { useDialog } from './DialogProvider';
 import { subscribeToMap, updateMap } from '../utils/mapService';
 import { parseDndBeyondJson } from './character-sheet/dndBeyondParser.js';
 import { enrichCharacter } from '../utils/srdEnricher.js';
+import { fetchDndBeyondCharacter } from '../utils/dndBeyondService.js';
 
 const SideSheet = ({ characterId, onClose, role, onDiceRoll, onOpenDiceTray }) => {
     const { campaign: data, user, updateCampaign, gameParams } = useNewCampaign();
@@ -137,17 +140,7 @@ const SideSheet = ({ characterId, onClose, role, onDiceRoll, onOpenDiceTray }) =
         if (!character?.dndBeyondId) return;
         setIsRefreshing(true);
         try {
-            const dndBeyondRaw = String(character.dndBeyondId);
-            const dndBeyondCharId = dndBeyondRaw.match(/\/characters\/(\d+)/)?.[1] || dndBeyondRaw.match(/^\d+$/)?.[0] || dndBeyondRaw;
-            const encodedUrl = encodeURIComponent(`https://character-service.dndbeyond.com/character/v5/character/${dndBeyondCharId}`);
-            let response = await fetch(`https://corsproxy.io/?url=${encodedUrl}`).catch(() => null);
-
-            if (!response || !response.ok) {
-                response = await fetch(`https://api.allorigins.win/raw?url=${encodedUrl}`).catch(() => null);
-            }
-
-            if (!response || !response.ok) throw new Error(`Fetch failed. D&D Beyond's security might be blocking the request.`);
-            const jsonData = await response.json();
+            const jsonData = await fetchDndBeyondCharacter(character.dndBeyondId);
             const parsedData = parseDndBeyondJson(jsonData);
             const enrichedChar = await enrichCharacter(parsedData);
             
@@ -168,8 +161,8 @@ const SideSheet = ({ characterId, onClose, role, onDiceRoll, onOpenDiceTray }) =
             }
             
             handleSave(cleanChar);
-            alert(mode === 'combine' ? `Combined updates for ${cleanChar.name}` : `Overwrote ${cleanChar.name} with fresh D&D Beyond data.`);
-        } catch(err) { alert("Refresh failed: " + err.message); }
+            toast(mode === "combine" ? `Combined updates for ${cleanChar.name}` : `Overwrote ${cleanChar.name} with fresh D&D Beyond data.`, "success");
+        } catch(err) { toast("Refresh failed: " + err.message, "error"); }
         setShowRefreshModal(false);
         setIsRefreshing(false);
     };

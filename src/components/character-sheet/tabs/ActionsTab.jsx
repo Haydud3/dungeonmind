@@ -290,10 +290,10 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
                 
                 {/* Normal View */}
                 {editingId !== action.id && (
-                    <div className="p-3 flex justify-between items-center hover:border-indigo-500 border border-transparent rounded-lg">
+                    <div className="p-3 flex flex-wrap justify-between items-center gap-2 hover:border-indigo-500 border border-transparent rounded-lg">
                         
                         {/* LEFT: Info */}
-                        <div className="overflow-hidden flex-1 cursor-pointer" onClick={() => hasText && setIsExpanded(!isExpanded)}>
+                        <div className="overflow-hidden flex-1 min-w-[150px] cursor-pointer" onClick={() => hasText && setIsExpanded(!isExpanded)}>
                             <div className={`font-bold ${isCore ? 'text-slate-400' : 'text-slate-200'} truncate flex items-center gap-2`}>
                                 {action.name}
                                 {action.isItem && <Icon name="backpack" size={12} className="text-slate-500"/>}
@@ -318,7 +318,7 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
                         </div>
                         
                         {/* RIGHT: Buttons */}
-                        <div className="flex gap-2 items-center">
+                        <div className="flex gap-2 items-center flex-wrap justify-end shrink-0">
                             
                             {/* Uses Tracker */}
                             {action.uses && (

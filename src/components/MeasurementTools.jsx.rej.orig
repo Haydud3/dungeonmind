@@ -1,0 +1,17 @@
+@@ -578,6 +578,16 @@
+         if (e.button !== 0 || !isDrawing) return;
+         e.stopPropagation();
+         
++        if (points.length > 0) {
++            const dist = points[0].distanceTo(e.point);
++            if (dist < 0.2 && onCancelTool && points.length < 5) {
++                setIsDrawing(false);
++                setPoints([]);
++                onCancelTool();
++                return;
++            }
++        }
++
+         setIsDrawing(false);
+ 
+         if (isLingering && onSaveMeasurement && points.length > 1) {

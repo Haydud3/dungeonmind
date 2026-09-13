@@ -3,6 +3,7 @@ import * as fb from './firebase';
 import Icon from './components/Icon';
 import Sidebar from './components/Sidebar';
 import { ToastProvider, useToast } from './components/ToastProvider';
+import { DialogProvider } from './components/DialogProvider';
 import MobileNav from './components/MobileNav';
 import Lobby from './components/Lobby';
 import JournalView from './components/JournalView';
@@ -125,6 +126,7 @@ function DungeonMindApp() {
 
   const [currentView, setCurrentView] = useState(getInitialView);
   const [previousView, setPreviousView] = useState('session');
+  const [partyInitialAction, setPartyInitialAction] = useState(null);
 
   // Track previous view for VTT Back button
   useEffect(() => {
@@ -837,12 +839,18 @@ function DungeonMindApp() {
                       isDiceTrayOpen={showTools}
                       onSidebarOpen={closeAllSidebars}
                       onBack={() => setCurrentView(previousView)}
+                      setView={setCurrentView}
+                      onNavigate={(view, action) => {
+                          if (action) setPartyInitialAction(action);
+                          setCurrentView(view);
+                      }}
                       rightOffset={rightOffset}
                       aiHelper={queryAiService}
                       generateNpc={generateNpc}
                       hideInviteCode={hideInviteCode}
                       setHideInviteCode={setHideInviteCode}
                       onSendMessage={sendChatMessage}
+                      onDiceRoll={handleDiceRoll}
                   />
               )}
               
@@ -852,6 +860,8 @@ function DungeonMindApp() {
                   user={user}
                   role={effectiveRole}
                   setView={setCurrentView} 
+                  initialAction={partyInitialAction}
+                  onClearInitialAction={() => setPartyInitialAction(null)}
                   aiHelper={queryAiService} 
                   onDiceRoll={handleDiceRoll} 
                   diceLog={diceLog} 
@@ -1097,11 +1107,13 @@ import { NewCampaignProvider } from './contexts/NewCampaignProvider';
 
 function App() {
     return (
+        <DialogProvider>
         <NewCampaignProvider>
             <ToastProvider>
                 <DungeonMindApp />
             </ToastProvider>
         </NewCampaignProvider>
+        </DialogProvider>
     );
 }
 

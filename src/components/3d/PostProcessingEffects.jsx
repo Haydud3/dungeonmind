@@ -3,6 +3,10 @@ import { EffectComposer, Bloom, HueSaturation, BrightnessContrast } from '@react
 import { ENV_SETTINGS } from '../../constants/environment';
 
 export const PostProcessingEffects = ({ environment, lightingMultiplier }) => {
+    const isLowPerf = typeof window !== 'undefined' && localStorage.getItem('vtt_low_performance') === 'true';
+    const isTouchDevice = typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+    if (isLowPerf || isTouchDevice) return null;
+
     const envSetting = ENV_SETTINGS[environment || 'day'] || ENV_SETTINGS.day;
     if (!envSetting.effects) return null;
 

@@ -1,0 +1,17 @@
+@@ -755,11 +759,11 @@
+     let activeToolElement = null;
+     if (activeTool && !activeTool.startsWith('ping')) {
+         switch (activeTool.replace('-linger', '')) {
+-            case 'freehand': activeToolElement = <FreehandTool getTerrainHeight={getTerrainHeight} isLingering={isLingering} onSaveMeasurement={onSaveMeasurement} activeStyle={activeStyle} />; break;
+-            case 'circle': activeToolElement = <CircleTool gridSize={gridSize} tokens={tokens} onCompleteSelection={onCompleteSelection} isLingering={isLingering} onSaveMeasurement={onSaveMeasurement} activeStyle={activeStyle} getTerrainHeight={getTerrainHeight} />; break;
+-            case 'cone': activeToolElement = <ConeTool gridSize={gridSize} tokens={tokens} onCompleteSelection={onCompleteSelection} isLingering={isLingering} onSaveMeasurement={onSaveMeasurement} activeStyle={activeStyle} getTerrainHeight={getTerrainHeight} />; break;
+-            case 'box': activeToolElement = <BoxTool gridSize={gridSize} tokens={tokens} onCompleteSelection={onCompleteSelection} isLingering={isLingering} onSaveMeasurement={onSaveMeasurement} activeStyle={activeStyle} />; break;
+-            case 'darkness': activeToolElement = <DarknessTool gridSize={gridSize} tokens={tokens} onCompleteSelection={onCompleteSelection} isLingering={isLingering} onSaveMeasurement={onSaveMeasurement} activeStyle={activeStyle} getTerrainHeight={getTerrainHeight} userRole={userRole} playerSenses={playerSenses} />; break;
++            case 'freehand': activeToolElement = <FreehandTool getTerrainHeight={getTerrainHeight} isLingering={isLingering} onSaveMeasurement={onSaveMeasurement} activeStyle={activeStyle} onCancelTool={onCancelTool} />; break;
++            case 'circle': activeToolElement = <CircleTool gridSize={gridSize} tokens={tokens} onCompleteSelection={onCompleteSelection} isLingering={isLingering} onSaveMeasurement={onSaveMeasurement} activeStyle={activeStyle} getTerrainHeight={getTerrainHeight} onCancelTool={onCancelTool} />; break;
++            case 'cone': activeToolElement = <ConeTool gridSize={gridSize} tokens={tokens} onCompleteSelection={onCompleteSelection} isLingering={isLingering} onSaveMeasurement={onSaveMeasurement} activeStyle={activeStyle} getTerrainHeight={getTerrainHeight} onCancelTool={onCancelTool} />; break;
++            case 'box': activeToolElement = <BoxTool gridSize={gridSize} tokens={tokens} onCompleteSelection={onCompleteSelection} isLingering={isLingering} onSaveMeasurement={onSaveMeasurement} activeStyle={activeStyle} onCancelTool={onCancelTool} />; break;
++            case 'darkness': activeToolElement = <DarknessTool gridSize={gridSize} tokens={tokens} onCompleteSelection={onCompleteSelection} isLingering={isLingering} onSaveMeasurement={onSaveMeasurement} activeStyle={activeStyle} getTerrainHeight={getTerrainHeight} userRole={userRole} playerSenses={playerSenses} onCancelTool={onCancelTool} />; break;
+             default: break;
+         }
+     }

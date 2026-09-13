@@ -1,12 +1,12 @@
-import React, { useRef, useState, useMemo, lazy, Suspense } from 'react';
+import React, { useRef, useState, useEffect, useMemo, lazy, Suspense } from 'react';
 import * as THREE from 'three';
+import { safeDisposeTexture } from '../../utils/threeDisposalUtils';
 const CharacterModel = lazy(() => import('../CharacterModel').then(m => ({ default: m.default })));
 import { useResolvedUrl } from '../../utils/useResolvedUrl';
-import { DragControls } from '@react-three/drei';
+import { DragControls, useCursor } from '@react-three/drei';
 
 const Prop2DMesh = ({ url, w, h, isSelected, hovered, onSelect, onContextMenu, onPointerOver, onPointerOut }) => {
     const meshRef = useRef();
-    
     const [aspect, setAspect] = useState(1);
 
     const texture = useMemo(() => {
@@ -28,6 +28,12 @@ const Prop2DMesh = ({ url, w, h, isSelected, hovered, onSelect, onContextMenu, o
             }
         );
     }, [url]);
+
+    useEffect(() => {
+        return () => {
+            if (texture) safeDisposeTexture(texture);
+        };
+    }, [texture]);
 
     // Scale down instead of up to ensure the max dimension perfectly matches the grid cell (w/h)
     const finalW = w * (aspect > 1 ? 1 : aspect);
@@ -67,6 +73,7 @@ const Prop2DMesh = ({ url, w, h, isSelected, hovered, onSelect, onContextMenu, o
 
 export const MapProp = ({ propData, isSelected, onSelect, onContextMenu, getTerrainHeight, updatePropPosition, gridSize = 1 }) => {
     const [hovered, setHovered] = useState(false);
+    useCursor(hovered, 'pointer', 'auto');
     const groupRef = useRef();
     const dragControlsRef = useRef();
 

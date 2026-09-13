@@ -158,8 +158,8 @@ const InventoryTab = ({ onDiceRoll, onLogAction, isOwner }) => {
                     </div>
                 ) : (
                     character.inventory.map((item, i) => (
-                        <div key={i} className={`border p-3 rounded flex justify-between items-center transition-colors ${item.equipped ? 'bg-indigo-900/20 border-indigo-500/50' : 'bg-slate-800 border-slate-700'}`}>
-                            <div className="flex items-center gap-3 overflow-hidden flex-1">
+                        <div key={i} className={`border p-3 rounded flex flex-wrap justify-between items-center gap-2 transition-colors ${item.equipped ? 'bg-indigo-900/20 border-indigo-500/50' : 'bg-slate-800 border-slate-700'}`}>
+                            <div className="flex items-center gap-3 overflow-hidden flex-1 min-w-[150px]">
                                 {/* START CHANGE: Use store's toggleEquip and verify owner */}
                                 <div onClick={() => isOwner && toggleEquip(i)} className={`w-8 h-8 shrink-0 rounded flex items-center justify-center transition-all ${item.equipped ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/50' : 'bg-slate-900 text-slate-600'} ${isOwner ? 'cursor-pointer hover:text-indigo-400' : 'opacity-50 cursor-default'}`}>
                                     <Icon name={item.combat ? "sword" : "backpack"} size={16}/>

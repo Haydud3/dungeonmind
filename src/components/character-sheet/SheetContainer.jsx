@@ -139,7 +139,7 @@ function SheetContainer({ character, onSave, onDiceRoll, diceLog, onLogAction, o
 
       {/* Tabs Navigation */}
       <div className="flex-none bg-slate-900 border-t border-b border-slate-800 shadow-inner z-20">
-        <div className="flex justify-around text-sm font-bold text-slate-400">
+        <div className="flex overflow-x-auto no-scrollbar snap-x text-sm font-bold text-slate-400 justify-start md:justify-around">
           <TabButton name="actions" activeTab={activeTab} setActiveTab={setActiveTab} icon="sword" label="Actions" />
           <TabButton name="spells" activeTab={activeTab} setActiveTab={setActiveTab} icon="sparkles" label="Spells" />
           <TabButton name="skills" activeTab={activeTab} setActiveTab={setActiveTab} icon="target" label="Skills" />
@@ -170,7 +170,7 @@ export default SheetContainer;
 const TabButton = ({ name, activeTab, setActiveTab, icon, label }) => (
   <button
     onClick={() => setActiveTab(name)}
-    className={`flex-1 py-3 px-2 flex items-center justify-center gap-2 transition-colors relative group
+    className={`flex-1 shrink-0 min-w-[60px] md:min-w-0 snap-center py-3 px-2 flex items-center justify-center gap-2 transition-colors relative group
       ${activeTab === name ? 'text-amber-500 bg-slate-800/50 border-b-2 border-amber-500' : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800/20'}`}
   >
     <Icon name={icon} size={18} />

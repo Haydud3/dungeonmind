@@ -15,13 +15,9 @@ export const WallDrawingController = ({ isEnabled, onDrawEnd, getTerrainHeight }
             if (isEnabled) {
                 // Save original mapping to restore later if needed, though they are usually PAN and ROTATE
                 // We'll just force the mappings while the tool is active
-                controls.mouseButtons.LEFT = 0; // Disable left click pan
-                controls.mouseButtons.RIGHT = 2; // THREE.MOUSE.PAN is 2
             } else {
                 // Restore defaults for MapControls (LEFT: PAN(2), RIGHT: ROTATE(0))
                 // Note: enableRotate={false} is set on MapControls so rotate doesn't actually rotate
-                controls.mouseButtons.LEFT = 2; // THREE.MOUSE.PAN
-                controls.mouseButtons.RIGHT = 0; // THREE.MOUSE.ROTATE
             }
         }
     }, [isEnabled, controls]);

@@ -12,11 +12,7 @@ export const StampingController = ({ asset, isEnabled, onStamp, getTerrainHeight
     useEffect(() => {
         if (controls) {
             if (isEnabled) {
-                controls.mouseButtons.LEFT = 0;
-                controls.mouseButtons.RIGHT = 2; // THREE.MOUSE.PAN
             } else {
-                controls.mouseButtons.LEFT = 2; // THREE.MOUSE.PAN
-                controls.mouseButtons.RIGHT = 0; // THREE.MOUSE.ROTATE
             }
         }
         if (!isEnabled) setCursorPos(null);
