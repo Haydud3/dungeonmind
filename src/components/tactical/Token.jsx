@@ -93,7 +93,8 @@ const Token3D = ({
   isInteractive = true, orientation = 0, rtdbDragsRef, broadcastDrag,
   clearBroadcast, myUid, myClientId, baseVisibility, playerVisionSources,
   wallsArray, combinedLights, fowEnabled, alwaysVisible, hideBaseIf3D,
-  isGlobalHovered, isSpaceDown = false, manualFogAlphaRef, aspect = 1, mapScale = 20
+  isGlobalHovered, isSpaceDown = false, manualFogAlphaRef, aspect = 1, mapScale = 20,
+  setIsDraggingToken
 }) => {
   const meshRef    = useRef();
   const visualsRef = useRef();
@@ -195,18 +196,23 @@ const Token3D = ({
 
   const ndcFromEvent = (nativeEvent) => {
     const rect = gl.domElement.getBoundingClientRect();
+    const clientX = nativeEvent?.clientX ?? (nativeEvent?.touches && nativeEvent.touches[0]?.clientX) ?? (nativeEvent?.changedTouches && nativeEvent.changedTouches[0]?.clientX) ?? 0;
+    const clientY = nativeEvent?.clientY ?? (nativeEvent?.touches && nativeEvent.touches[0]?.clientY) ?? (nativeEvent?.changedTouches && nativeEvent.changedTouches[0]?.clientY) ?? 0;
     return {
-      x:  ((nativeEvent.clientX - rect.left) / rect.width)  *  2 - 1,
-      y: -((nativeEvent.clientY - rect.top)  / rect.height) *  2 + 1,
+      x:  ((clientX - rect.left) / rect.width)  *  2 - 1,
+      y: -((clientY - rect.top)  / rect.height) *  2 + 1,
     };
   };
 
   // ── beginDrag ─────────────────────────────────────────────────────────────
   const beginDrag = (nativeEvent) => {
-    if (nativeEvent.button !== 0) return;
+    if (!nativeEvent) return;
+    if (nativeEvent.button !== undefined && nativeEvent.button !== 0 && nativeEvent.button !== -1) return;
     if (!canControl || activeTool || isSpaceDown || !isTerrainReady) return;
-    if (!isGlobalHovered) return;                               // only topmost token
-    if (draggedTokenId && draggedTokenId !== token.id) return;  // another token owns this drag
+    
+    // For mouse, only initiate drag if hovered topmost; for touch, we are already interacting with the target
+    if (nativeEvent.pointerType === 'mouse' && !isGlobalHovered) return;
+    if (draggedTokenId && draggedTokenId !== token.id) return; // another token owns this drag
 
     const worldPos = new THREE.Vector3();
     if (!meshRef.current) return;
@@ -234,6 +240,7 @@ const Token3D = ({
     totalWaypointDistRef.current = 0;
 
     setDraggedTokenId(token.id);
+    setIsDraggingToken?.(true);
     if (controls) controls.enabled = false;
 
     // Group drag: set this token as leader so follower tokens know to move with it
@@ -244,17 +251,37 @@ const Token3D = ({
     }
 
     // Capture pointer so all events go to the canvas even when cursor leaves the token
-    gl.domElement.setPointerCapture(nativeEvent.pointerId);
+    const pointerId = nativeEvent.pointerId;
+    if (pointerId !== undefined && gl?.domElement?.setPointerCapture) {
+      try {
+        gl.domElement.setPointerCapture(pointerId);
+      } catch (err) {}
+    }
 
     const onMove = (e) => moveDrag(e);
     const onUp   = (e) => {
       endDrag(e);
-      gl.domElement.removeEventListener('pointermove', onMove);
-      gl.domElement.removeEventListener('pointerup', dragCleanup.current?.up);
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+      window.removeEventListener('touchmove', onMove);
+      window.removeEventListener('touchend', onUp);
+      window.removeEventListener('touchcancel', onUp);
+      if (pointerId !== undefined && gl?.domElement?.releasePointerCapture) {
+        try {
+          if (gl.domElement.hasPointerCapture && gl.domElement.hasPointerCapture(pointerId)) {
+            gl.domElement.releasePointerCapture(pointerId);
+          }
+        } catch (err) {}
+      }
     };
     dragCleanup.current = { move: onMove, up: onUp };
-    gl.domElement.addEventListener('pointermove', onMove);
-    gl.domElement.addEventListener('pointerup', onUp);
+    window.addEventListener('pointermove', onMove, { passive: true });
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+    window.addEventListener('touchmove', onMove, { passive: true });
+    window.addEventListener('touchend', onUp);
+    window.addEventListener('touchcancel', onUp);
   };
 
   // ── moveDrag ──────────────────────────────────────────────────────────────
@@ -329,6 +356,7 @@ const Token3D = ({
     isLeftDragging.current = false;
 
     if (controls) controls.enabled = true;
+    setIsDraggingToken?.(false);
     document.body.style.cursor = 'auto';
 
     // Hide ruler
@@ -607,12 +635,13 @@ const Token3D = ({
   // ── Nameplate rotation handlers ────────────────────────────────────────────
   const handleNameplatePointerDown = (e) => {
     if (!canControl || activeTool) return;
-    if (e.button !== 0) return;
+    if (e.button !== undefined && e.button !== 0) return;
     e.stopPropagation();
     if (e.nativeEvent) e.nativeEvent.stopPropagation();
 
     isRotatingToken.current = true;
-    lastPointerX.current = e.clientX;
+    const clientX = e.clientX ?? (e.nativeEvent?.touches && e.nativeEvent.touches[0]?.clientX) ?? 0;
+    lastPointerX.current = clientX;
     document.body.style.cursor = 'ew-resize';
     if (controls) controls.enabled = false;
 
@@ -627,8 +656,9 @@ const Token3D = ({
 
     const onMove = (moveEv) => {
       if (!isRotatingToken.current || !meshRef.current) return;
-      const deltaX = moveEv.clientX - lastPointerX.current;
-      lastPointerX.current = moveEv.clientX;
+      const currentX = moveEv.clientX ?? (moveEv.touches && moveEv.touches[0]?.clientX) ?? lastPointerX.current;
+      const deltaX = currentX - lastPointerX.current;
+      lastPointerX.current = currentX;
       targetRotationY.current += deltaX * 0.05;
       if (broadcastDrag) {
         const wp = new THREE.Vector3();
@@ -643,6 +673,10 @@ const Token3D = ({
     const onUp = () => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+      window.removeEventListener('touchmove', onMove);
+      window.removeEventListener('touchend', onUp);
+      window.removeEventListener('touchcancel', onUp);
 
       if (gl?.domElement && pointerId !== undefined) {
         try {
@@ -663,8 +697,12 @@ const Token3D = ({
       });
     };
 
-    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointermove', onMove, { passive: true });
     window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+    window.addEventListener('touchmove', onMove, { passive: true });
+    window.addEventListener('touchend', onUp);
+    window.addEventListener('touchcancel', onUp);
   };
 
   // ── Touch / long-press helpers ─────────────────────────────────────────────
@@ -756,15 +794,22 @@ const Token3D = ({
         onPointerDown={(!isInteractive || activeTool || isSpaceDown) ? undefined : (e) => {
           if (e.button === 1 || e.button === 2) { e.stopPropagation(); return; }
           e.stopPropagation();
-          // Touch / pen: kick off long-press timer; actual drag starts in beginDrag
-          handleTouchStart(e);
-          // Mouse: begin drag immediately (only fires for topmost hovered token)
-          if (e.pointerType === 'mouse') {
-            beginDrag(e.nativeEvent);
-          } else if (isGlobalHovered) {
-            // Touch drag — same entry point
-            beginDrag(e.nativeEvent);
+          const isTouch = e.pointerType === 'touch' || e.pointerType === 'pen';
+          if (isTouch) {
+            const tokenHits = (e.intersections || [])
+              .map(h => {
+                let curr = h.object;
+                while (curr) {
+                  if (curr.userData?.tokenId) return curr.userData.tokenId;
+                  curr = curr.parent;
+                }
+                return null;
+              })
+              .filter(Boolean);
+            if (tokenHits.length > 0 && tokenHits[0] !== token.id) return;
           }
+          handleTouchStart(e);
+          beginDrag(e.nativeEvent);
         }}
         onPointerMove={(!isInteractive || activeTool || isSpaceDown) ? undefined : handlePointerMoveForLongPress}
         onPointerUp={(!isInteractive || activeTool || isSpaceDown) ? undefined : cancelLongPress}
@@ -778,8 +823,17 @@ const Token3D = ({
           if (!isGlobalHovered) {
             // Touch fallback: check intersections
             if (e.pointerType === 'touch' || e.pointerType === 'pen') {
-              const frontHit = e.intersections.find(h => h.eventObject?.userData?.tokenId);
-              if (!(frontHit && frontHit.eventObject === e.eventObject)) return;
+              const tokenHits = (e.intersections || [])
+                .map(h => {
+                  let curr = h.object;
+                  while (curr) {
+                    if (curr.userData?.tokenId) return curr.userData.tokenId;
+                    curr = curr.parent;
+                  }
+                  return null;
+                })
+                .filter(Boolean);
+              if (tokenHits.length > 0 && tokenHits[0] !== token.id) return;
             } else {
               return;
             }
