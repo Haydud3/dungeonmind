@@ -23,6 +23,8 @@ h1, h2, h3, .fantasy-font { font-family: 'Cinzel', serif; }
 .custom-scroll::-webkit-scrollbar-track { background: #0f172a; }
 .custom-scroll::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
 .custom-scroll::-webkit-scrollbar-thumb:hover { background: #475569; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 .animate-in { animation: fadeIn 0.3s ease-out; }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 

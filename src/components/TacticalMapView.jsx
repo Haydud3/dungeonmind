@@ -1,4 +1,4 @@
-import React, { useState, useEffect, Suspense, useRef, useCallback, useMemo, lazy } from 'react';
+import React, { useState, useEffect, useLayoutEffect, Suspense, useRef, useCallback, useMemo, lazy } from 'react';
 import { Canvas, useThree, useFrame } from '@react-three/fiber';
 import { MapControls, Grid, useTexture, DragControls, Html, useCursor, Line, Text, RoundedBox, Billboard, useProgress, PerformanceMonitor } from '@react-three/drei';
 import * as THREE from 'three';
@@ -220,22 +220,46 @@ const LoadingOverlay = ({ activeMapId, isMapDataReady }) => {
 };
 
 const ToolSubmenu = ({ children }) => {
-    const [expandUp, setExpandUp] = useState(false);
     const menuRef = useRef(null);
+    const [coords, setCoords] = useState(null);
 
-    useEffect(() => {
-        if (!menuRef.current) return;
-        const rect = menuRef.current.getBoundingClientRect();
-        // If bottom of menu goes below window height (with some padding), expand up instead
-        if (rect.bottom > window.innerHeight - 20) {
-            setExpandUp(true);
-        }
+    useLayoutEffect(() => {
+        const updatePosition = () => {
+            if (!menuRef.current) return;
+            const parent = menuRef.current.parentElement;
+            if (!parent) return;
+            const parentRect = parent.getBoundingClientRect();
+            const menuHeight = menuRef.current.offsetHeight || 200;
+            
+            // Calculate top position, clamping between top UI allowance (70px) and bottom boundary
+            let top = parentRect.top;
+            if (top + menuHeight > window.innerHeight - 20) {
+                top = Math.max(70, window.innerHeight - 20 - menuHeight);
+            }
+            if (top < 70) {
+                top = 70;
+            }
+            
+            // Calculate right position (to the left of the parent dock button)
+            const right = Math.max(10, window.innerWidth - parentRect.left + 8);
+            
+            setCoords({ top, right });
+        };
+
+        updatePosition();
+        window.addEventListener('resize', updatePosition);
+        window.addEventListener('scroll', updatePosition, true);
+        return () => {
+            window.removeEventListener('resize', updatePosition);
+            window.removeEventListener('scroll', updatePosition, true);
+        };
     }, [children]);
 
     return (
         <div 
             ref={menuRef} 
-            className={`absolute right-[110%] flex flex-row justify-end gap-2 z-[100] ${expandUp ? 'bottom-0 items-end' : 'top-0 items-start'}`}
+            className="fixed flex flex-row justify-end gap-2 z-[100] max-h-[calc(100dvh-90px)] overflow-y-auto no-scrollbar pointer-events-auto"
+            style={coords ? { top: `${coords.top}px`, right: `${coords.right}px` } : { visibility: 'hidden' }}
         >
             {children}
         </div>
@@ -2416,31 +2440,57 @@ ${pasteTextContent}`;
     setShowModelPicker(false);
   };
 
-  const [tokenMenuDisplayPosition, setTokenMenuDisplayPosition] = useState({ x: 0, y: 0 });
-  const [wallMenuDisplayPosition, setWallMenuDisplayPosition] = useState({ x: 0, y: 0 });
-  const [lightMenuDisplayPosition, setLightMenuDisplayPosition] = useState({ x: 0, y: 0 });
-  const [propMenuDisplayPosition, setPropMenuDisplayPosition] = useState({ x: 0, y: 0 });
+  const [tokenMenuDisplayPosition, setTokenMenuDisplayPosition] = useState({ x: 0, y: 0, maxHeight: 400 });
+  const [wallMenuDisplayPosition, setWallMenuDisplayPosition] = useState({ x: 0, y: 0, maxHeight: 400 });
+  const [lightMenuDisplayPosition, setLightMenuDisplayPosition] = useState({ x: 0, y: 0, maxHeight: 400 });
+  const [propMenuDisplayPosition, setPropMenuDisplayPosition] = useState({ x: 0, y: 0, maxHeight: 400 });
+
+  // Helper to safely clamp context menu position inside viewport and avoid top bar / bottom bar
+  const calculateMenuPosition = (rawX, rawY, menuEl) => {
+    if (!menuEl) return { x: rawX, y: rawY, maxHeight: 400 };
+    const menuWidth = menuEl.offsetWidth || 200;
+    const menuHeight = menuEl.offsetHeight || 300;
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+
+    // Top inset to avoid top navigation / combat tracker / exit button
+    const topInset = 70;
+    // Bottom inset to avoid bottom navigation / safe area
+    const bottomInset = 24;
+    const maxAvailableHeight = Math.max(160, viewportHeight - topInset - bottomInset);
+    const effectiveMenuHeight = Math.min(menuHeight, maxAvailableHeight);
+
+    let newX = rawX;
+    let newY = rawY;
+
+    // Horizontal clamping (keep 10px from edges)
+    if (newX + menuWidth > viewportWidth - 10) {
+      newX = viewportWidth - menuWidth - 10;
+    }
+    if (newX < 10) {
+      newX = 10;
+    }
+
+    // Vertical clamping
+    if (newY + effectiveMenuHeight > viewportHeight - bottomInset) {
+      newY = viewportHeight - bottomInset - effectiveMenuHeight;
+    }
+    if (newY < topInset) {
+      newY = topInset;
+    }
+
+    return {
+      x: Math.round(newX),
+      y: Math.round(newY),
+      maxHeight: Math.round(maxAvailableHeight)
+    };
+  };
 
   // Effect for token context menu positioning
   useEffect(() => {
     if (contextMenu && tokenMenuRef.current) {
-      // Use requestAnimationFrame to ensure DOM is rendered before measuring
       requestAnimationFrame(() => {
-        const menuWidth = tokenMenuRef.current.offsetWidth;
-        const menuHeight = tokenMenuRef.current.offsetHeight;
-        const viewportWidth = window.innerWidth;
-        const viewportHeight = window.innerHeight;
-
-        let newX = contextMenu.x;
-        let newY = contextMenu.y;
-
-        if (newX + menuWidth > viewportWidth) {
-          newX = viewportWidth - menuWidth - 10; // 10px padding from right edge
-        }
-        if (newY + menuHeight > viewportHeight) {
-          newY = viewportHeight - menuHeight - 10; // 10px padding from bottom edge
-        }
-        setTokenMenuDisplayPosition({ x: Math.max(0, newX), y: Math.max(0, newY) });
+        setTokenMenuDisplayPosition(calculateMenuPosition(contextMenu.x, contextMenu.y, tokenMenuRef.current));
       });
     }
   }, [contextMenu]);
@@ -2449,21 +2499,7 @@ ${pasteTextContent}`;
   useEffect(() => {
     if (wallContextMenu && wallMenuRef.current) {
       requestAnimationFrame(() => {
-        const menuWidth = wallMenuRef.current.offsetWidth;
-        const menuHeight = wallMenuRef.current.offsetHeight;
-        const viewportWidth = window.innerWidth;
-        const viewportHeight = window.innerHeight;
-
-        let newX = wallContextMenu.x;
-        let newY = wallContextMenu.y;
-
-        if (newX + menuWidth > viewportWidth) {
-          newX = viewportWidth - menuWidth - 10;
-        }
-        if (newY + menuHeight > viewportHeight) {
-          newY = viewportHeight - menuHeight - 10;
-        }
-        setWallMenuDisplayPosition({ x: Math.max(0, newX), y: Math.max(0, newY) });
+        setWallMenuDisplayPosition(calculateMenuPosition(wallContextMenu.x, wallContextMenu.y, wallMenuRef.current));
       });
     }
   }, [wallContextMenu]);
@@ -2472,21 +2508,7 @@ ${pasteTextContent}`;
   useEffect(() => {
     if (lightContextMenu && lightMenuRef.current) {
       requestAnimationFrame(() => {
-        const menuWidth = lightMenuRef.current.offsetWidth;
-        const menuHeight = lightMenuRef.current.offsetHeight;
-        const viewportWidth = window.innerWidth;
-        const viewportHeight = window.innerHeight;
-
-        let newX = lightContextMenu.x;
-        let newY = lightContextMenu.y;
-
-        if (newX + menuWidth > viewportWidth) {
-          newX = viewportWidth - menuWidth - 10;
-        }
-        if (newY + menuHeight > viewportHeight) {
-          newY = viewportHeight - menuHeight - 10;
-        }
-        setLightMenuDisplayPosition({ x: Math.max(0, newX), y: Math.max(0, newY) });
+        setLightMenuDisplayPosition(calculateMenuPosition(lightContextMenu.x, lightContextMenu.y, lightMenuRef.current));
       });
     }
   }, [lightContextMenu]);
@@ -2495,21 +2517,7 @@ ${pasteTextContent}`;
   useEffect(() => {
     if (propContextMenu && propMenuRef.current) {
       requestAnimationFrame(() => {
-        const menuWidth = propMenuRef.current.offsetWidth;
-        const menuHeight = propMenuRef.current.offsetHeight;
-        const viewportWidth = window.innerWidth;
-        const viewportHeight = window.innerHeight;
-
-        let newX = propContextMenu.x;
-        let newY = propContextMenu.y;
-
-        if (newX + menuWidth > viewportWidth) {
-          newX = viewportWidth - menuWidth - 10;
-        }
-        if (newY + menuHeight > viewportHeight) {
-          newY = viewportHeight - menuHeight - 10;
-        }
-        setPropMenuDisplayPosition({ x: Math.max(0, newX), y: Math.max(0, newY) });
+        setPropMenuDisplayPosition(calculateMenuPosition(propContextMenu.x, propContextMenu.y, propMenuRef.current));
       });
     }
   }, [propContextMenu]);
@@ -3944,7 +3952,7 @@ ${pasteTextContent}`;
       {/* Primary Right Dock */}
       {!isCastMode && (
           <div 
-              className={`absolute top-4 right-4 vtt-safe-right z-[70] flex flex-col gap-2 max-h-[calc(100vh-2rem)] pb-4 ${uiOpacityClass} custom-scrollbar-hide`}
+              className={`absolute top-4 right-4 vtt-safe-top vtt-safe-right z-[70] flex flex-col gap-2 max-h-[calc(100dvh-2rem)] overflow-y-auto overflow-x-hidden no-scrollbar pb-8 overscroll-contain touch-pan-y ${uiOpacityClass}`}
               style={{ transform: `translateX(-${Math.max(sideSheetWidth > 0 ? sideSheetWidth : (rightOffset || 0), showTokenManager ? tokenManagerWidth : (showAssetManager ? 320 : 0))}px)`, transition: 'transform 0.3s ease-in-out' }}
           >
                   {effectiveRole === 'dm' && (
@@ -4739,8 +4747,12 @@ ${pasteTextContent}`;
           
           <div 
             ref={tokenMenuRef}
-            className="fixed z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-2xl py-1 text-sm text-slate-200 min-w-[150px] overflow-hidden"
-            style={{ top: tokenMenuDisplayPosition.y, left: tokenMenuDisplayPosition.x, maxHeight: 'calc(100vh - 20px)', overflowY: 'auto' }}
+            className="fixed z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-2xl py-1 text-sm text-slate-200 min-w-[160px] max-w-[calc(100vw-20px)] overflow-y-auto custom-scroll overscroll-contain"
+            style={{ 
+              top: `${tokenMenuDisplayPosition.y}px`, 
+              left: `${tokenMenuDisplayPosition.x}px`, 
+              maxHeight: `${tokenMenuDisplayPosition.maxHeight || 400}px` 
+            }}
             onContextMenu={(e) => e.preventDefault()}
           >
             {(() => {
@@ -5221,8 +5233,12 @@ ${pasteTextContent}`;
             ></div>
             <div 
                 ref={wallMenuRef}
-                className="fixed z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-2xl py-1 text-sm text-slate-200 min-w-[150px] overflow-hidden"
-                style={{ top: wallMenuDisplayPosition.y, left: wallMenuDisplayPosition.x, maxHeight: 'calc(100vh - 20px)', overflowY: 'auto' }}
+                className="fixed z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-2xl py-1 text-sm text-slate-200 min-w-[160px] max-w-[calc(100vw-20px)] overflow-y-auto custom-scroll overscroll-contain"
+                style={{ 
+                  top: `${wallMenuDisplayPosition.y}px`, 
+                  left: `${wallMenuDisplayPosition.x}px`, 
+                  maxHeight: `${wallMenuDisplayPosition.maxHeight || 400}px` 
+                }}
                 onContextMenu={(e) => e.preventDefault()}
             >
                 <div className="text-xs uppercase font-bold text-slate-500 px-4 py-1">Set Type</div>
@@ -5287,8 +5303,12 @@ ${pasteTextContent}`;
             ></div>
             <div 
                 ref={lightMenuRef}
-                className="fixed z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-2xl py-1 text-sm text-slate-200 min-w-[200px] overflow-hidden"
-                style={{ top: lightMenuDisplayPosition.y, left: lightMenuDisplayPosition.x, maxHeight: 'calc(100vh - 20px)', overflowY: 'auto' }}
+                className="fixed z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-2xl py-1 text-sm text-slate-200 min-w-[200px] max-w-[calc(100vw-20px)] overflow-y-auto custom-scroll overscroll-contain"
+                style={{ 
+                  top: `${lightMenuDisplayPosition.y}px`, 
+                  left: `${lightMenuDisplayPosition.x}px`, 
+                  maxHeight: `${lightMenuDisplayPosition.maxHeight || 400}px` 
+                }}
                 onContextMenu={(e) => e.preventDefault()}
             >
                 <div className="text-xs uppercase font-bold text-slate-500 px-4 py-1 flex justify-between items-center">
@@ -5350,8 +5370,12 @@ ${pasteTextContent}`;
             ></div>
             <div 
                 ref={propMenuRef}
-                className="fixed z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-2xl py-1 text-sm text-slate-200 min-w-[220px] overflow-hidden"
-                style={{ top: propMenuDisplayPosition.y, left: propMenuDisplayPosition.x, maxHeight: 'calc(100vh - 20px)', overflowY: 'auto' }}
+                className="fixed z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-2xl py-1 text-sm text-slate-200 min-w-[220px] max-w-[calc(100vw-20px)] overflow-y-auto custom-scroll overscroll-contain"
+                style={{ 
+                  top: `${propMenuDisplayPosition.y}px`, 
+                  left: `${propMenuDisplayPosition.x}px`, 
+                  maxHeight: `${propMenuDisplayPosition.maxHeight || 400}px` 
+                }}
                 onContextMenu={(e) => e.preventDefault()}
             >
                 <div className="text-xs uppercase font-bold text-slate-500 px-4 py-1 flex justify-between items-center">
