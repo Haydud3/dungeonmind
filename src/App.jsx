@@ -712,7 +712,7 @@ function DungeonMindApp() {
   else if (!isCastMode && showTools) rightOffset = 320;
 
   return (
-    <div className="fixed inset-0 w-full h-full flex flex-col md:flex-row bg-slate-900 text-slate-200 font-sans overflow-hidden pt-safe pb-safe pl-safe pr-safe">
+    <div className={`fixed inset-0 w-full h-full flex flex-col md:flex-row bg-slate-900 text-slate-200 font-sans overflow-hidden ${currentView === 'map' || isCastMode ? '' : 'pt-safe pb-safe pl-safe pr-safe'}`}>
        {!isCastMode && currentView !== 'map' && <Sidebar view={currentView} setView={setCurrentView} onExit={leaveCampaign} />}
        <main className="flex-1 flex flex-col overflow-hidden relative w-full h-full">
            {currentView !== 'map' && !isCastMode && (

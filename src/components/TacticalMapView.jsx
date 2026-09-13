@@ -960,15 +960,26 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       return () => document.body.classList.remove('pseudo-fullscreen');
   }, [isFullscreen]);
 
+  const isSafariOrMobile = useMemo(() => {
+      if (typeof navigator === 'undefined') return false;
+      const ua = navigator.userAgent || '';
+      const isSafari = /^((?!chrome|android).)*safari/i.test(ua) || 
+                       (/iPad|iPhone|iPod/.test(ua) && !window.MSStream) ||
+                       (navigator.maxTouchPoints && navigator.maxTouchPoints > 2 && /Macintosh/.test(ua));
+      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua) || 
+                       (navigator.maxTouchPoints && navigator.maxTouchPoints > 1);
+      return isSafari || isMobile;
+  }, []);
+
   useEffect(() => {
       const handleFullscreenChange = () => {
-          if (!document.fullscreenElement) {
+          if (!document.fullscreenElement && !isSafariOrMobile) {
               setIsFullscreen(false);
           }
       };
       document.addEventListener('fullscreenchange', handleFullscreenChange);
       return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
-  }, []);
+  }, [isSafariOrMobile]);
 
   useEffect(() => {
       isAnyMenuOpenRef.current = showAssetManager || showTokenManager || !!contextMenu || !!wallContextMenu || !!lightContextMenu || !!propContextMenu || showCompendium || showModelPicker;
@@ -992,7 +1003,9 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
   const toggleFullscreen = () => {
       if (!isFullscreen) {
           setIsFullscreen(true);
-          if (document.documentElement.requestFullscreen) {
+          // On Safari and mobile devices, avoid glitchy browser native fullscreen mode
+          // Pseudo-fullscreen handles immersion cleanly without gesture conflicts
+          if (!isSafariOrMobile && document.documentElement.requestFullscreen) {
               document.documentElement.requestFullscreen().catch(err => {
                   console.warn(`Native fullscreen not supported: ${err.message}`);
               });
@@ -3289,6 +3302,7 @@ ${pasteTextContent}`;
         shadows={!isLowPerformance}
         dpr={dpr}
         onCreated={({ gl }) => {
+            if (gl?.domElement) gl.domElement.style.touchAction = 'none';
             gl.domElement.addEventListener('webglcontextlost', (event) => {
                 event.preventDefault(); // Prevent the default action which might be to simply lose the context
                 console.warn('WebGL context lost. Attempting to restore...');

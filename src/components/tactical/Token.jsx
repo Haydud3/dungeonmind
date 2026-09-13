@@ -198,22 +198,27 @@ const Token3D = ({
     const rect = gl.domElement.getBoundingClientRect();
     const touch = (nativeEvent?.touches && nativeEvent.touches[0]) ||
                   (nativeEvent?.changedTouches && nativeEvent.changedTouches[0]);
-    const clientX = nativeEvent?.clientX ?? touch?.clientX ?? 0;
-    const clientY = nativeEvent?.clientY ?? touch?.clientY ?? 0;
+    const clientX = (nativeEvent?.clientX !== undefined) ? nativeEvent.clientX : (touch?.clientX ?? 0);
+    const clientY = (nativeEvent?.clientY !== undefined) ? nativeEvent.clientY : (touch?.clientY ?? 0);
+    const width = rect.width || window.innerWidth || 1;
+    const height = rect.height || window.innerHeight || 1;
     return {
-      x:  ((clientX - rect.left) / rect.width)  *  2 - 1,
-      y: -((clientY - rect.top)  / rect.height) *  2 + 1,
+      x:  ((clientX - rect.left) / width)  *  2 - 1,
+      y: -((clientY - rect.top)  / height) *  2 + 1,
     };
   };
 
   // ── beginDrag ─────────────────────────────────────────────────────────────
-  const beginDrag = (nativeEvent) => {
+  const beginDrag = (nativeEvent, isTouchInput = false) => {
     if (!nativeEvent) return;
     if (nativeEvent.button !== undefined && nativeEvent.button !== 0 && nativeEvent.button !== -1) return;
     if (!canControl || activeTool || isSpaceDown || !isTerrainReady) return;
     
+    const pType = nativeEvent.pointerType || (nativeEvent.touches ? 'touch' : (isTouchInput ? 'touch' : 'mouse'));
+    const isTouch = pType === 'touch' || pType === 'pen';
+
     // For mouse, only initiate drag if hovered topmost; for touch, we are already interacting with the target
-    if (nativeEvent.pointerType === 'mouse' && !isGlobalHovered) return;
+    if (!isTouch && !isGlobalHovered) return;
     if (draggedTokenId && draggedTokenId !== token.id) return; // another token owns this drag
 
     const worldPos = new THREE.Vector3();
@@ -243,7 +248,11 @@ const Token3D = ({
 
     setDraggedTokenId(token.id);
     setIsDraggingToken?.(true);
-    if (controls) controls.enabled = false;
+    if (controls) {
+      controls.enabled = false;
+      if (typeof controls.stopListen === 'function') controls.stopListen();
+      if (controls.state !== undefined) controls.state = -1;
+    }
 
     // Group drag: set this token as leader so follower tokens know to move with it
     const isGroupDrag = selectedTokenIds?.includes(token.id) && selectedTokenIds.length > 1;
@@ -274,6 +283,14 @@ const Token3D = ({
       window.removeEventListener('touchmove', onMove);
       window.removeEventListener('touchend', onUp);
       window.removeEventListener('touchcancel', onUp);
+      if (gl?.domElement) {
+        gl.domElement.removeEventListener('pointermove', onMove);
+        gl.domElement.removeEventListener('pointerup', onUp);
+        gl.domElement.removeEventListener('pointercancel', onUp);
+        gl.domElement.removeEventListener('touchmove', onMove);
+        gl.domElement.removeEventListener('touchend', onUp);
+        gl.domElement.removeEventListener('touchcancel', onUp);
+      }
       if (pointerId !== undefined && gl?.domElement?.releasePointerCapture) {
         try {
           if (gl.domElement.hasPointerCapture && gl.domElement.hasPointerCapture(pointerId)) {
@@ -289,6 +306,14 @@ const Token3D = ({
     window.addEventListener('touchmove', onMove, { passive: false });
     window.addEventListener('touchend', onUp);
     window.addEventListener('touchcancel', onUp);
+    if (gl?.domElement) {
+      gl.domElement.addEventListener('pointermove', onMove, { passive: false });
+      gl.domElement.addEventListener('pointerup', onUp);
+      gl.domElement.addEventListener('pointercancel', onUp);
+      gl.domElement.addEventListener('touchmove', onMove, { passive: false });
+      gl.domElement.addEventListener('touchend', onUp);
+      gl.domElement.addEventListener('touchcancel', onUp);
+    }
   };
 
   // ── moveDrag ──────────────────────────────────────────────────────────────
@@ -654,9 +679,13 @@ const Token3D = ({
     const clientX = e.clientX ?? (e.nativeEvent?.touches && e.nativeEvent.touches[0]?.clientX) ?? 0;
     lastPointerX.current = clientX;
     document.body.style.cursor = 'ew-resize';
-    if (controls) controls.enabled = false;
+    if (controls) {
+      controls.enabled = false;
+      if (typeof controls.stopListen === 'function') controls.stopListen();
+      if (controls.state !== undefined) controls.state = -1;
+    }
 
-    const nativeEvent = e.nativeEvent;
+    const nativeEvent = e.nativeEvent || e;
     const pointerId = nativeEvent?.pointerId;
 
     if (gl?.domElement && pointerId !== undefined) {
@@ -688,10 +717,18 @@ const Token3D = ({
       window.removeEventListener('touchmove', onMove);
       window.removeEventListener('touchend', onUp);
       window.removeEventListener('touchcancel', onUp);
+      if (gl?.domElement) {
+        gl.domElement.removeEventListener('pointermove', onMove);
+        gl.domElement.removeEventListener('pointerup', onUp);
+        gl.domElement.removeEventListener('pointercancel', onUp);
+        gl.domElement.removeEventListener('touchmove', onMove);
+        gl.domElement.removeEventListener('touchend', onUp);
+        gl.domElement.removeEventListener('touchcancel', onUp);
+      }
 
       if (gl?.domElement && pointerId !== undefined) {
         try {
-          if (gl.domElement.hasPointerCapture(pointerId)) {
+          if (gl.domElement.hasPointerCapture && gl.domElement.hasPointerCapture(pointerId)) {
             gl.domElement.releasePointerCapture(pointerId);
           }
         } catch (err) {}
@@ -714,6 +751,14 @@ const Token3D = ({
     window.addEventListener('touchmove', onMove, { passive: true });
     window.addEventListener('touchend', onUp);
     window.addEventListener('touchcancel', onUp);
+    if (gl?.domElement) {
+      gl.domElement.addEventListener('pointermove', onMove, { passive: true });
+      gl.domElement.addEventListener('pointerup', onUp);
+      gl.domElement.addEventListener('pointercancel', onUp);
+      gl.domElement.addEventListener('touchmove', onMove, { passive: true });
+      gl.domElement.addEventListener('touchend', onUp);
+      gl.domElement.addEventListener('touchcancel', onUp);
+    }
   };
 
   // ── Touch / long-press helpers ─────────────────────────────────────────────
@@ -805,7 +850,9 @@ const Token3D = ({
         onPointerDown={(!isInteractive || activeTool || isSpaceDown) ? undefined : (e) => {
           if (e.button === 1 || e.button === 2) { e.stopPropagation(); return; }
           e.stopPropagation();
-          const isTouch = e.pointerType === 'touch' || e.pointerType === 'pen';
+          const nativeEv = e.nativeEvent || e;
+          const pType = nativeEv.pointerType || (nativeEv.touches ? 'touch' : 'mouse');
+          const isTouch = pType === 'touch' || pType === 'pen';
           if (isTouch) {
             const tokenHits = (e.intersections || [])
               .map(h => {
@@ -830,7 +877,7 @@ const Token3D = ({
           }
 
           handleTouchStart(e);
-          beginDrag(e.nativeEvent);
+          beginDrag(nativeEv, isTouch);
         }}
         onPointerMove={(!isInteractive || activeTool || isSpaceDown) ? undefined : handlePointerMoveForLongPress}
         onPointerUp={(!isInteractive || activeTool || isSpaceDown) ? undefined : cancelLongPress}
