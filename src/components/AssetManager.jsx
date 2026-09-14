@@ -13,6 +13,7 @@ import ResolvedImage from './ResolvedImage'; // Add this import
 import { useResolvedUrl } from '../utils/useResolvedUrl';
 import { fulfillMapData } from '../utils/moduleFulfillment';
 import { subscribeToMap } from '../utils/mapService';
+import { searchBattlemaps, getProxiedImageUrl } from '../utils/mapSearchService';
 
 // Helper to generate a lightweight thumbnail so the gallery loads instantly
 const generateThumbnail = (dataUrl) => {
@@ -329,45 +330,16 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
     }, []);
 
     const handleRedditSearch = async (queryToSearch = redditQuery) => {
-        if (!queryToSearch) return;
+        if (!queryToSearch || !queryToSearch.trim()) return;
         setIsSourcing(true);
         setRedditResults([]);
         try {
-            const query = encodeURIComponent(queryToSearch);
-            const urls = [
-                `https://corsproxy.io/?https://www.reddit.com/r/battlemaps/search.json?q=${query}&restrict_sr=1&limit=15`,
-                `https://corsproxy.io/?https://www.reddit.com/r/dndmaps/search.json?q=${query}&restrict_sr=1&limit=15`
-            ];
-            
-            let maps = [];
-            for (const url of urls) {
-                try {
-                    const res = await fetch(url);
-                    if (!res.ok) continue;
-                    
-                    const data = await res.json();
-                    const posts = data?.data?.children || [];
-                    
-                    posts.forEach(post => {
-                        const d = post.data;
-                        if (d.url && (d.url.match(/\.(jpeg|jpg|gif|png|webp)$/i))) {
-                            maps.push({ title: d.title, url: d.url, author: d.author });
-                        } else if (d.media_metadata) {
-                            Object.values(d.media_metadata).forEach(media => {
-                                if (media.s && media.s.u) {
-                                    maps.push({ title: d.title, url: media.s.u.replace(/&amp;/g, '&'), author: d.author });
-                                }
-                            });
-                        }
-                    });
-                } catch(e) { console.warn("Reddit search sub-query failed", e); }
-            }
-
-            setRedditResults(maps);
+            const results = await searchBattlemaps(queryToSearch);
+            setRedditResults(results);
             setCurrentImageIndex(0);
         } catch (e) {
-            console.error("Reddit search failed", e);
-            toast("Failed to search Reddit. Check console.", "error");
+            console.error("Battlemap search failed", e);
+            toast("Search failed. Check console.", "error");
         }
         setIsSourcing(false);
     };
@@ -1043,28 +1015,69 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
             
             {activeTab === 'web' && (
                 <div className="flex-1 min-h-0 flex flex-col bg-slate-900">
-                    <div className="p-4 border-b border-slate-800 bg-slate-950 flex gap-2 shrink-0">
-                        <input 
-                            value={redditQuery} 
-                            onChange={(e) => setRedditQuery(e.target.value)} 
-                            onKeyDown={(e) => e.key === 'Enter' && handleRedditSearch()}
-                            placeholder="Search r/battlemaps..." 
-                            className="flex-1 bg-slate-900 border border-slate-700 rounded px-3 py-2 text-white outline-none focus:border-amber-500"
-                        />
-                        <button onClick={() => handleRedditSearch()} disabled={isSourcing} className="bg-amber-600 hover:bg-amber-500 px-4 rounded text-white font-bold flex items-center justify-center">
-                            {isSourcing ? <Icon name="loader" className="animate-spin" /> : <Icon name="search" />}
-                        </button>
+                    <div className="p-3 border-b border-slate-800 bg-slate-950 flex flex-col gap-2 shrink-0">
+                        <div className="flex gap-2">
+                            <input 
+                                value={redditQuery} 
+                                onChange={(e) => setRedditQuery(e.target.value)} 
+                                onKeyDown={(e) => e.key === 'Enter' && handleRedditSearch()}
+                                placeholder="Search battlemaps (e.g. Tavern, Dungeon, Forest)..." 
+                                className="flex-1 bg-slate-900 border border-slate-700 rounded px-3 py-2 text-white outline-none focus:border-amber-500 text-sm"
+                            />
+                            <button onClick={() => handleRedditSearch()} disabled={isSourcing} className="bg-amber-600 hover:bg-amber-500 px-4 rounded text-white font-bold flex items-center justify-center transition-colors">
+                                {isSourcing ? <Icon name="loader" className="animate-spin" /> : <Icon name="search" />}
+                            </button>
+                        </div>
+                        {/* Quick Suggestion Tags */}
+                        <div className="flex flex-wrap gap-1.5 items-center">
+                            <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Quick:</span>
+                            {['Tavern', 'Dungeon', 'Forest', 'Cave', 'Crypt', 'Castle', 'Temple', 'Swamp', 'Ship', 'Snow', 'Desert', 'City', 'Volcano', 'Dragon', 'Tower', 'Sewers'].map(tag => (
+                                <button
+                                    key={tag}
+                                    type="button"
+                                    onClick={() => { setRedditQuery(tag); handleRedditSearch(tag); }}
+                                    className="text-[11px] px-2 py-0.5 rounded-full bg-slate-800 hover:bg-amber-600/30 text-slate-300 hover:text-amber-300 border border-slate-700 transition-colors"
+                                >
+                                    {tag}
+                                </button>
+                            ))}
+                        </div>
+                        {/* External Web Search Quick Links */}
+                        <div className="flex items-center gap-2 pt-1 border-t border-slate-800/60 text-xs text-slate-400">
+                            <span>Find more:</span>
+                            <button
+                                type="button"
+                                onClick={() => window.open(`https://www.google.com/search?tbm=isch&q=${encodeURIComponent((redditQuery || 'fantasy') + ' dnd battlemap top down grid')}`, '_blank')}
+                                className="text-blue-400 hover:text-blue-300 hover:underline flex items-center gap-1"
+                            >
+                                <Icon name="external-link" size={12} /> Google Images
+                            </button>
+                            <span>•</span>
+                            <button
+                                type="button"
+                                onClick={() => window.open(`https://www.reddit.com/r/battlemaps/search/?q=${encodeURIComponent(redditQuery || '')}&restrict_sr=1`, '_blank')}
+                                className="text-orange-400 hover:text-orange-300 hover:underline flex items-center gap-1"
+                            >
+                                <Icon name="external-link" size={12} /> Reddit /r/battlemaps
+                            </button>
+                            <span className="text-[10px] text-slate-500 ml-auto hidden sm:inline">(Paste any image link into search bar)</span>
+                        </div>
                     </div>
                     <div className="flex-1 relative flex items-center justify-center overflow-hidden">
                         {isSourcing ? (
                             <div className="text-center animate-pulse">
                                 <Icon name="loader" size={48} className="animate-spin text-amber-500 mx-auto mb-4" />
-                                <div className="text-slate-300 font-bold">Scouring the internet...</div>
+                                <div className="text-slate-300 font-bold">Searching battlemap archives...</div>
                             </div>
                         ) : redditResults.length > 0 ? (
                             <>
                                 <div className="absolute inset-0 flex items-center justify-center p-4">
-                                    <img src={`https://wsrv.nl/?url=${encodeURIComponent(redditResults[currentImageIndex].url)}&cors=1&w=800`} className="max-h-full max-w-full object-contain shadow-2xl rounded" alt="Map Preview" />
+                                    <img 
+                                        src={getProxiedImageUrl(redditResults[currentImageIndex].url, 1200)} 
+                                        referrerPolicy="no-referrer"
+                                        className="max-h-full max-w-full object-contain shadow-2xl rounded" 
+                                        alt="Map Preview" 
+                                    />
                                 </div>
                                 
                                 <button 
@@ -1083,7 +1096,11 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
                                 <div className="absolute bottom-4 left-0 right-0 text-center flex flex-col items-center">
                                     <div className="inline-block bg-black/70 backdrop-blur px-4 py-2 rounded-lg border border-slate-700 shadow-xl max-w-[80%] mb-2">
                                         <p className="text-white font-bold text-sm truncate">{redditResults[currentImageIndex].title}</p>
-                                        <p className="text-slate-400 text-xs mt-1">by u/{redditResults[currentImageIndex].author} • Result {currentImageIndex + 1} of {redditResults.length}</p>
+                                        <p className="text-slate-400 text-xs mt-1">
+                                            {redditResults[currentImageIndex].source ? `${redditResults[currentImageIndex].source} • ` : ''}
+                                            {redditResults[currentImageIndex].author ? `by ${redditResults[currentImageIndex].author} • ` : ''}
+                                            Result {currentImageIndex + 1} of {redditResults.length}
+                                        </p>
                                     </div>
                                     <div className="flex gap-2">
                                         <button 

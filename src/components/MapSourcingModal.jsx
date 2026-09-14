@@ -3,13 +3,17 @@ import Icon from './Icon';
 import { useToast } from './ToastProvider';
 import { useDialog } from './DialogProvider';
 import { fulfillMapData } from '../utils/moduleFulfillment';
+import { searchBattlemaps, getProxiedImageUrl } from '../utils/mapSearchService';
 
 const MapSourcingModal = ({ sourcingMap, onClose, campaignCode, skeleton, updateCampaign, data, aiHelper, generateNpc }) => {
+    const toast = useToast();
+    const dialog = useDialog();
     const [redditResults, setRedditResults] = useState([]);
     const [isSourcing, setIsSourcing] = useState(false);
     const [currentImageIndex, setCurrentImageIndex] = useState(0);
     const [isProcessingMap, setIsProcessingMap] = useState(false);
     const [processingStep, setProcessingStep] = useState('');
+    const [customUrlInput, setCustomUrlInput] = useState('');
     const fileInputRef = React.useRef(null);
 
     React.useEffect(() => {
@@ -17,6 +21,27 @@ const MapSourcingModal = ({ sourcingMap, onClose, campaignCode, skeleton, update
             fetchRedditMaps(sourcingMap);
         }
     }, [sourcingMap]);
+
+    // Handle global paste for image URLs or files inside modal
+    React.useEffect(() => {
+        const handlePaste = (e) => {
+            const pastedText = e.clipboardData?.getData('text');
+            if (pastedText && (pastedText.startsWith('http://') || pastedText.startsWith('https://') || pastedText.startsWith('data:image/'))) {
+                acceptMap(pastedText);
+                return;
+            }
+            const files = e.clipboardData?.files;
+            if (files && files.length > 0) {
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                    acceptMap(reader.result);
+                };
+                reader.readAsDataURL(files[0]);
+            }
+        };
+        window.addEventListener('paste', handlePaste);
+        return () => window.removeEventListener('paste', handlePaste);
+    }, [sourcingMap, campaignCode]);
 
     const handleMapUpload = (e) => {
         const file = e.target.files?.[0];
@@ -146,39 +171,11 @@ const MapSourcingModal = ({ sourcingMap, onClose, campaignCode, skeleton, update
         setRedditResults([]);
         setCurrentImageIndex(0);
         try {
-            const query = encodeURIComponent(mapObj.name);
-            const urls = [
-                `https://corsproxy.io/?https://www.reddit.com/r/battlemaps/search.json?q=${query}&restrict_sr=1&limit=10`,
-                `https://corsproxy.io/?https://www.reddit.com/r/dndmaps/search.json?q=${query}&restrict_sr=1&limit=10`
-            ];
-            
-            let hits = [];
-            for (const url of urls) {
-                try {
-                    const res = await fetch(url);
-                    if (!res.ok) continue;
-                    
-                    const json = await res.json();
-                    
-                    if (json?.data?.children) {
-                        json.data.children.forEach(child => {
-                            const post = child.data;
-                            if (post.url && post.url.match(/\.(jpeg|jpg|gif|png|webp)$/i)) {
-                                hits.push({
-                                    title: post.title,
-                                    url: post.url,
-                                    author: post.author,
-                                    permalink: `https://reddit.com${post.permalink}`
-                                });
-                            }
-                        });
-                    }
-                } catch(e) { console.error(e) }
-            }
-            setRedditResults(hits);
+            const results = await searchBattlemaps(mapObj?.name || 'battlemap');
+            setRedditResults(results);
         } catch (e) {
-            console.error("Reddit fetch failed", e);
-            toast("Failed to find maps. CORS or network error.", "error");
+            console.error("Battlemap fetch failed", e);
+            toast("Failed to find maps. Network error.", "error");
         }
         setIsSourcing(false);
     };
@@ -228,15 +225,31 @@ const MapSourcingModal = ({ sourcingMap, onClose, campaignCode, skeleton, update
             <div className="max-w-4xl w-full bg-slate-900 border border-slate-700 rounded-2xl overflow-hidden shadow-2xl flex flex-col max-h-full relative">
                 
                 {/* Header */}
-                <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-800/50 shrink-0">
+                <div className="p-4 border-b border-slate-800 flex flex-col sm:flex-row justify-between sm:items-center gap-2 bg-slate-800/50 shrink-0">
                     <div>
-                        <h3 className="font-bold text-white flex items-center gap-2">
-                            <Icon name="search" size={16} className="text-amber-500" />
-                            Sourcing Map: {sourcingMap.name}
+                        <h3 className="font-bold text-white flex items-center gap-2 text-base">
+                            <Icon name="search" size={18} className="text-amber-500" />
+                            Sourcing Map: <span className="text-amber-400">{sourcingMap.name}</span>
                         </h3>
-                        <p className="text-slate-400 text-sm">Searching Reddit (/r/battlemaps, /r/dndmaps)</p>
+                        <div className="flex items-center gap-2 mt-1 text-xs text-slate-400">
+                            <span>Web & Cartography Archives</span>
+                            <span>•</span>
+                            <button 
+                                onClick={() => window.open(`https://www.google.com/search?tbm=isch&q=${encodeURIComponent(sourcingMap.name + ' dnd battlemap top down')}`, '_blank')}
+                                className="text-blue-400 hover:text-blue-300 hover:underline flex items-center gap-1 font-medium"
+                            >
+                                <Icon name="external-link" size={12} /> Google Images
+                            </button>
+                            <span>•</span>
+                            <button 
+                                onClick={() => window.open(`https://www.reddit.com/r/battlemaps/search/?q=${encodeURIComponent(sourcingMap.name)}&restrict_sr=1`, '_blank')}
+                                className="text-orange-400 hover:text-orange-300 hover:underline flex items-center gap-1 font-medium"
+                            >
+                                <Icon name="external-link" size={12} /> Reddit
+                            </button>
+                        </div>
                     </div>
-                    <button onClick={onClose} disabled={isProcessingMap} className="text-slate-400 hover:text-white transition-colors p-2 disabled:opacity-50">
+                    <button onClick={onClose} disabled={isProcessingMap} className="text-slate-400 hover:text-white transition-colors p-2 disabled:opacity-50 self-end sm:self-auto">
                         <Icon name="x" size={20} />
                     </button>
                 </div>
@@ -252,11 +265,16 @@ const MapSourcingModal = ({ sourcingMap, onClose, campaignCode, skeleton, update
                     ) : isSourcing ? (
                         <div className="flex-1 flex flex-col items-center justify-center">
                             <Icon name="loader" size={32} className="animate-spin text-amber-500 mb-4" />
-                            <p className="text-slate-300 animate-pulse">Scouring the archives...</p>
+                            <p className="text-slate-300 animate-pulse">Scouring the battlemap archives...</p>
                         </div>
                     ) : redditResults.length > 0 ? (
                         <div className="flex-1 flex items-center justify-center p-4 relative overflow-hidden group">
-                            <img src={`https://wsrv.nl/?url=${encodeURIComponent(redditResults[currentImageIndex].url)}&cors=1&w=1024`} className="max-h-full max-w-full object-contain shadow-2xl rounded" alt="Map Preview" />
+                            <img 
+                                src={getProxiedImageUrl(redditResults[currentImageIndex].url, 1200)} 
+                                referrerPolicy="no-referrer"
+                                className="max-h-full max-w-full object-contain shadow-2xl rounded" 
+                                alt="Map Preview" 
+                            />
                             
                             {/* Controls */}
                             <div className="absolute inset-y-0 left-0 flex items-center p-4 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -278,58 +296,98 @@ const MapSourcingModal = ({ sourcingMap, onClose, campaignCode, skeleton, update
 
                             {/* Caption */}
                             <div className="absolute bottom-4 left-4 right-4 text-center">
-                                <div className="inline-block bg-black/80 border border-slate-700 backdrop-blur-md rounded-lg p-3 shadow-2xl">
+                                <div className="inline-block bg-black/80 border border-slate-700 backdrop-blur-md rounded-lg p-3 shadow-2xl max-w-[85%]">
                                     <p className="text-white font-bold text-sm truncate">{redditResults[currentImageIndex].title}</p>
-                                    <p className="text-slate-400 text-xs mt-1">by u/{redditResults[currentImageIndex].author} • Result {currentImageIndex + 1} of {redditResults.length}</p>
+                                    <p className="text-slate-400 text-xs mt-1 truncate">
+                                        {redditResults[currentImageIndex].source ? `${redditResults[currentImageIndex].source} • ` : ''}
+                                        {redditResults[currentImageIndex].author ? `by ${redditResults[currentImageIndex].author} • ` : ''}
+                                        Result {currentImageIndex + 1} of {redditResults.length}
+                                    </p>
                                 </div>
                             </div>
                         </div>
                     ) : (
                         <div className="flex-1 flex flex-col items-center justify-center text-center text-slate-500 p-6">
                             <Icon name="search-x" size={48} className="mx-auto mb-4 opacity-50" />
-                            <p>No suitable maps found.</p>
-                            <button 
-                                 onClick={() => window.open(`https://www.google.com/search?tbm=isch&q=${encodeURIComponent(searchQuery + ' dnd battlemap')}`, '_blank')}
-                                 className="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded font-bold transition-colors shadow-lg flex items-center justify-center gap-2 mx-auto"
-                            >
-                                 <Icon name="external-link" size={16} /> Search Google Images
-                            </button>
-                            <p className="text-xs mt-4">Or try a manual upload below.</p>
+                            <p className="text-slate-300 font-bold mb-1">No exact map pre-loaded.</p>
+                            <p className="text-xs text-slate-400 max-w-sm mb-4">You can search Google Images with one click, or paste any image URL below:</p>
+                            <div className="flex gap-2 justify-center">
+                                <button 
+                                     onClick={() => window.open(`https://www.google.com/search?tbm=isch&q=${encodeURIComponent((sourcingMap?.name || '') + ' dnd battlemap top down')}`, '_blank')}
+                                     className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded font-bold transition-colors shadow-lg flex items-center justify-center gap-2"
+                                >
+                                     <Icon name="external-link" size={16} /> Search Google Images
+                                </button>
+                                <button 
+                                     onClick={() => window.open(`https://www.reddit.com/r/battlemaps/search/?q=${encodeURIComponent(sourcingMap?.name || '')}&restrict_sr=1`, '_blank')}
+                                     className="px-4 py-2 bg-orange-600 hover:bg-orange-500 text-white rounded font-bold transition-colors shadow-lg flex items-center justify-center gap-2"
+                                >
+                                     <Icon name="external-link" size={16} /> Search Reddit
+                                </button>
+                            </div>
                         </div>
                     )}
                 </div>
 
-                {/* Footer Controls */}
-                <div className="p-4 border-t border-slate-800 bg-slate-900 shrink-0 flex flex-col sm:flex-row justify-between items-center gap-4">
-                    <div className="flex items-center gap-4 w-full sm:w-auto">
-                        <input 
-                            type="file" 
-                            ref={fileInputRef} 
-                            onChange={handleMapUpload} 
-                            accept="image/*, video/mp4, video/webm" 
-                            className="hidden" 
+                {/* Footer Controls & Direct URL Paste */}
+                <div className="p-4 border-t border-slate-800 bg-slate-900 shrink-0 flex flex-col gap-3">
+                    {/* URL Paste Bar */}
+                    <div className="flex items-center gap-2">
+                        <input
+                            type="text"
+                            placeholder="Paste image URL (from Google / Reddit / Discord / Pinterest) or press Cmd+V..."
+                            value={customUrlInput}
+                            onChange={(e) => setCustomUrlInput(e.target.value)}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter' && customUrlInput.trim()) {
+                                    acceptMap(customUrlInput.trim());
+                                }
+                            }}
+                            className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white text-xs outline-none focus:border-amber-500"
                         />
-                        <button 
-                            onClick={() => fileInputRef.current?.click()}
-                            disabled={isProcessingMap}
-                            className="px-4 py-2.5 bg-slate-800 border border-slate-700 hover:border-amber-500 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg transition-colors flex items-center gap-2 text-sm w-full sm:w-auto justify-center disabled:opacity-50"
+                        <button
+                            onClick={() => {
+                                if (customUrlInput.trim()) {
+                                    acceptMap(customUrlInput.trim());
+                                }
+                            }}
+                            disabled={isProcessingMap || !customUrlInput.trim()}
+                            className="px-3 py-2 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-300 hover:text-white rounded-lg text-xs font-bold transition-colors border border-slate-700"
                         >
-                            <Icon name="upload" size={16} /> Upload Custom
+                            Import URL
                         </button>
                     </div>
 
-                    <div className="flex items-center gap-4 w-full sm:w-auto justify-between sm:justify-end">
-                        <span className="text-[10px] text-slate-500 font-mono hidden sm:inline-block">Powered by Reddit API & wsrv.nl proxy</span>
-                        {redditResults.length > 0 && !isSourcing && (
-                            <button
-                                onClick={() => acceptMap(redditResults[currentImageIndex].url)}
+                    <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
+                        <div className="flex items-center gap-4 w-full sm:w-auto">
+                            <input 
+                                type="file" 
+                                ref={fileInputRef} 
+                                onChange={handleMapUpload} 
+                                accept="image/*, video/mp4, video/webm" 
+                                className="hidden" 
+                            />
+                            <button 
+                                onClick={() => fileInputRef.current?.click()}
                                 disabled={isProcessingMap}
-                                className="px-6 py-2.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white font-bold rounded-lg shadow-lg transition-colors flex items-center gap-2 w-full sm:w-auto justify-center"
+                                className="px-4 py-2.5 bg-slate-800 border border-slate-700 hover:border-amber-500 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg transition-colors flex items-center gap-2 text-sm w-full sm:w-auto justify-center disabled:opacity-50"
                             >
-                                {isProcessingMap ? <Icon name="loader" size={16} className="animate-spin" /> : <Icon name="download" size={16} />}
-                                {isProcessingMap ? 'Importing Scene...' : 'Accept & Import Map'}
+                                <Icon name="upload" size={16} /> Upload File
                             </button>
-                        )}
+                        </div>
+
+                        <div className="flex items-center gap-4 w-full sm:w-auto justify-between sm:justify-end">
+                            {redditResults.length > 0 && !isSourcing && (
+                                <button
+                                    onClick={() => acceptMap(redditResults[currentImageIndex].url)}
+                                    disabled={isProcessingMap}
+                                    className="px-6 py-2.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white font-bold rounded-lg shadow-lg transition-colors flex items-center gap-2 w-full sm:w-auto justify-center"
+                                >
+                                    {isProcessingMap ? <Icon name="loader" size={16} className="animate-spin" /> : <Icon name="download" size={16} />}
+                                    {isProcessingMap ? 'Importing Scene...' : 'Accept & Import Map'}
+                                </button>
+                            )}
+                        </div>
                     </div>
                 </div>
             </div>
