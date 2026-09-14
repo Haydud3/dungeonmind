@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useLayoutEffect, Suspense, useRef, useCallback, useMemo, lazy } from 'react';
+import { createPortal } from 'react-dom';
 import { Canvas, useThree, useFrame } from '@react-three/fiber';
 import { MapControls, Grid, useTexture, DragControls, Html, useCursor, Line, Text, RoundedBox, Billboard, useProgress, PerformanceMonitor } from '@react-three/drei';
 import * as THREE from 'three';
@@ -220,16 +221,17 @@ const LoadingOverlay = ({ activeMapId, isMapDataReady }) => {
 };
 
 const ToolSubmenu = ({ children }) => {
+    const anchorRef = useRef(null);
     const menuRef = useRef(null);
     const [coords, setCoords] = useState(null);
 
     useLayoutEffect(() => {
         const updatePosition = () => {
-            if (!menuRef.current) return;
-            const parent = menuRef.current.parentElement;
+            if (!anchorRef.current) return;
+            const parent = anchorRef.current.parentElement;
             if (!parent) return;
             const parentRect = parent.getBoundingClientRect();
-            const menuHeight = menuRef.current.offsetHeight || 200;
+            const menuHeight = menuRef.current?.offsetHeight || 200;
             
             // Calculate top position, clamping between top UI allowance (70px) and bottom boundary
             let top = parentRect.top;
@@ -256,13 +258,19 @@ const ToolSubmenu = ({ children }) => {
     }, [children]);
 
     return (
-        <div 
-            ref={menuRef} 
-            className="fixed flex flex-row justify-end gap-2 z-[100] max-h-[calc(100dvh-90px)] overflow-y-auto no-scrollbar pointer-events-auto"
-            style={coords ? { top: `${coords.top}px`, right: `${coords.right}px` } : { visibility: 'hidden' }}
-        >
-            {children}
-        </div>
+        <>
+            <span ref={anchorRef} className="hidden" />
+            {typeof document !== 'undefined' && createPortal(
+                <div 
+                    ref={menuRef} 
+                    className="fixed flex flex-row justify-end gap-2 z-[100] max-h-[calc(100dvh-90px)] overflow-y-auto no-scrollbar pointer-events-auto"
+                    style={coords ? { top: `${coords.top}px`, right: `${coords.right}px` } : { visibility: 'hidden' }}
+                >
+                    {children}
+                </div>,
+                document.body
+            )}
+        </>
     );
 };
 
