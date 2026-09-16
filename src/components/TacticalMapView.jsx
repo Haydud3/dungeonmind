@@ -59,6 +59,7 @@ const AmbientEcosystem = lazy(() => import('./3d/AmbientEcosystem').then(m => ({
 const PostProcessingEffects = lazy(() => import('./3d/PostProcessingEffects').then(m => ({ default: m.PostProcessingEffects })));
 import { DropZone } from './ui/DropZone';
 const DisplacedGrid = lazy(() => import('./3d/DisplacedGrid').then(m => ({ default: m.DisplacedGrid })));
+const ArrowMoveRuler = lazy(() => import('./3d/ArrowMoveRuler').then(m => ({ default: m.ArrowMoveRuler })));
 import { ToolButton } from './ui/ToolButton';
 
 const LivePingNode = React.memo(({ x, z, color, getTerrainHeight }) => {
@@ -526,6 +527,37 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
 
   const [isDraggingToken, setIsDraggingToken] = useState(false);
   const [draggedTokenId, setDraggedTokenId] = useState(null);
+
+  // Arrow key movement measurement state and streak tracking
+  const [arrowMoveMeasurement, setArrowMoveMeasurement] = useState(null);
+  const arrowMoveStreakRef = useRef(null);
+  const arrowMoveTimerRef = useRef(null);
+
+  // Clear arrow movement measurement when selection changes or drag starts
+  useEffect(() => {
+      if (arrowMoveStreakRef.current) {
+          const primaryId = selectedTokenIds?.[0];
+          if (arrowMoveStreakRef.current.tokenId !== primaryId) {
+              setArrowMoveMeasurement(null);
+              arrowMoveStreakRef.current = null;
+              if (arrowMoveTimerRef.current) clearTimeout(arrowMoveTimerRef.current);
+          }
+      }
+  }, [selectedTokenIds]);
+
+  useEffect(() => {
+      if (isDraggingToken) {
+          setArrowMoveMeasurement(null);
+          arrowMoveStreakRef.current = null;
+          if (arrowMoveTimerRef.current) clearTimeout(arrowMoveTimerRef.current);
+      }
+  }, [isDraggingToken]);
+
+  useEffect(() => {
+      return () => {
+          if (arrowMoveTimerRef.current) clearTimeout(arrowMoveTimerRef.current);
+      };
+  }, []);
 
   const getPlayerDisplayName = useCallback((uid) => {
       if (!uid) return 'Unassigned';
@@ -2934,6 +2966,8 @@ ${pasteTextContent}`;
           const gridOffsetX = mapData?.gridOffsetX || 0;
           const gridOffsetY = mapData?.gridOffsetY || 0;
           const updates = {};
+          let primaryMoveData = null;
+          const primaryTokenId = currentSelectedTokenIds[0];
 
           currentSelectedTokenIds.forEach(id => {
               const baseToken = (latestTokensRef.current && latestTokensRef.current[id]) || (tokensList || []).find(tok => tok?.id === id) || (mapData?.tokens && mapData.tokens[id]);
@@ -2973,6 +3007,19 @@ ${pasteTextContent}`;
 
               const targetRotationY = Math.atan2(worldDx, worldDz);
 
+              // Capture movement for the primary token to measure distance
+              if (id === primaryTokenId) {
+                  primaryMoveData = {
+                      startX: currentX,
+                      startY: cachedPos?.y !== undefined ? cachedPos.y : (baseToken.y || 0),
+                      startZ: currentZ,
+                      finalX,
+                      finalY,
+                      finalZ,
+                      tokenSize,
+                  };
+              }
+
               // Update optimistic cache so subsequent rapid keypresses calculate from the new position
               optimisticTokenPositionsRef.current[id] = {
                   x: finalX,
@@ -3000,6 +3047,87 @@ ${pasteTextContent}`;
 
           if (Object.keys(updates).length > 0) {
               updateMap(campaignCode, activeMapId, updates);
+          }
+
+          // Update distance ruler for arrow-key token movement
+          if (primaryMoveData) {
+              const now = Date.now();
+              const TIMEFRAME_MS = 2500;
+              const streak = arrowMoveStreakRef.current;
+
+              let origin = null;
+              let waypoints = [];
+
+              if (
+                  streak && 
+                  streak.tokenId === primaryTokenId && 
+                  (now - streak.lastKeyTime) <= TIMEFRAME_MS
+              ) {
+                  origin = streak.origin;
+                  waypoints = [...streak.waypoints];
+              } else {
+                  origin = {
+                      x: primaryMoveData.startX,
+                      y: primaryMoveData.startY,
+                      z: primaryMoveData.startZ
+                  };
+                  waypoints = [{ ...origin }];
+              }
+
+              const newPos = {
+                  x: primaryMoveData.finalX,
+                  y: primaryMoveData.finalY,
+                  z: primaryMoveData.finalZ
+              };
+
+              // Backtracking check: if stepping back to previous waypoint, pop last
+              if (
+                  waypoints.length >= 2 && 
+                  Math.hypot(waypoints[waypoints.length - 2].x - newPos.x, waypoints[waypoints.length - 2].z - newPos.z) < 0.05
+              ) {
+                  waypoints.pop();
+              } else {
+                  waypoints.push(newPos);
+              }
+
+              const straightDist = Math.hypot(newPos.x - origin.x, newPos.z - origin.z);
+              const straightFeet = Math.round((straightDist / step) * 5);
+
+              let pathDist = 0;
+              for (let i = 0; i < waypoints.length - 1; i++) {
+                  pathDist += Math.hypot(waypoints[i+1].x - waypoints[i].x, waypoints[i+1].z - waypoints[i].z);
+              }
+              const pathFeet = Math.round((pathDist / step) * 5);
+
+              arrowMoveStreakRef.current = {
+                  tokenId: primaryTokenId,
+                  origin,
+                  current: newPos,
+                  waypoints,
+                  lastKeyTime: now,
+                  tokenSize: primaryMoveData.tokenSize,
+              };
+
+              setArrowMoveMeasurement({
+                  tokenId: primaryTokenId,
+                  origin,
+                  current: newPos,
+                  waypoints,
+                  straightFeet,
+                  pathFeet,
+                  tokenSize: primaryMoveData.tokenSize,
+                  gridSize: step,
+                  isFading: false,
+              });
+
+              if (arrowMoveTimerRef.current) {
+                  clearTimeout(arrowMoveTimerRef.current);
+              }
+
+              arrowMoveTimerRef.current = setTimeout(() => {
+                  setArrowMoveMeasurement(prev => prev ? { ...prev, isFading: true } : null);
+                  arrowMoveStreakRef.current = null;
+              }, TIMEFRAME_MS);
           }
           return;
       }
@@ -3033,6 +3161,9 @@ ${pasteTextContent}`;
 
       if (e.key === 'Escape') {
           setSelectedTokenIds([]); setContextMenu(null); setWallContextMenu(null); setLightContextMenu(null);
+          setArrowMoveMeasurement(null);
+          arrowMoveStreakRef.current = null;
+          if (arrowMoveTimerRef.current) clearTimeout(arrowMoveTimerRef.current);
           if (effectiveRole === 'dm') { 
               setIsDrawingWalls(false); 
               setIsArchitectMode(false); 
@@ -3586,6 +3717,15 @@ ${pasteTextContent}`;
                 {tokensJSX}
             </group>
         </Suspense>
+
+        {arrowMoveMeasurement && (
+            <Suspense fallback={null}>
+                <ArrowMoveRuler 
+                    measurement={arrowMoveMeasurement} 
+                    onFadeComplete={() => setArrowMoveMeasurement(null)} 
+                />
+            </Suspense>
+        )}
 
         <Suspense fallback={null}>
             <Walls 
