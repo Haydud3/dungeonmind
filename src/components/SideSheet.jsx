@@ -240,15 +240,15 @@ const SideSheet = ({ characterId, onClose, role, onDiceRoll, onOpenDiceTray }) =
 
     return (
         <div 
-            className="absolute top-0 right-0 bottom-0 bg-slate-900 border-l border-slate-700 shadow-2xl z-[80] flex flex-col animate-in slide-in-from-right duration-300"
-            style={{ width: `${sheetWidth}px` }}
+            className="absolute top-0 right-0 bottom-0 w-full sm:w-auto max-w-full bg-slate-900 border-l border-slate-700 shadow-2xl z-[80] flex flex-col animate-in slide-in-from-right duration-300 pb-safe"
+            style={{ width: typeof window !== 'undefined' && window.innerWidth < 640 ? '100vw' : `${sheetWidth}px` }}
         >
             <div 
                 className="absolute left-0 top-0 bottom-0 w-4 cursor-col-resize hover:bg-amber-500/50 z-10 touch-none"
                 onMouseDown={handleMouseDown}
                 onTouchStart={handleMouseDown}
             />
-            <div className="p-4 border-b border-slate-700 flex items-center gap-4 shrink-0">
+            <div className="p-4 pt-safe-min pr-safe-min pl-safe-min border-b border-slate-700 flex items-center gap-4 shrink-0">
                 <input 
                     type="text"
                     value={editableName}

@@ -23,9 +23,9 @@ export const CombatRibbon = ({ combat, tokens, role, className = "" }) => {
     ];
 
     return (
-        <div className={`absolute top-4 vtt-safe-top left-1/2 -translate-x-1/2 z-[60] flex items-center gap-4 bg-slate-900/90 backdrop-blur border border-slate-700 p-2 rounded-2xl shadow-2xl ${className}`}>
+        <div className={`absolute top-4 vtt-safe-top left-1/2 -translate-x-1/2 z-[60] flex items-center gap-2 sm:gap-4 bg-slate-900/90 backdrop-blur border border-slate-700 p-1.5 sm:p-2 rounded-2xl shadow-2xl max-w-[calc(100vw-2rem)] ${className}`}>
 
-            <div className="flex items-center gap-2 overflow-x-auto overflow-y-hidden custom-scroll max-w-[60vw] pb-1 px-1">
+            <div className="flex items-center gap-2 overflow-x-auto overflow-y-hidden custom-scroll max-w-[85vw] sm:max-w-[60vw] pb-1 px-1">
                 {displayOrder.map((c, i) => {
                     const t = tokens.find(t => t.id === c.tokenId);
                     const isActive = i === 0;
@@ -489,7 +489,7 @@ export const CombatTrackerSidebar = ({ combat, updateCampaign, tokens, role, cam
 
     return (
         <div 
-            className={`relative pointer-events-auto max-h-[calc(100vh-8rem)] bg-slate-900/95 backdrop-blur border border-slate-700 shadow-2xl rounded-xl z-[60] flex flex-col overflow-hidden transition-all ${className} ${combat.active ? 'border-amber-500/30' : 'border-slate-700'}`}
+            className={`relative pointer-events-auto max-w-[calc(100vw-2rem)] max-h-[calc(100vh-8rem)] bg-slate-900/95 backdrop-blur border border-slate-700 shadow-2xl rounded-xl z-[60] flex flex-col overflow-hidden transition-all ${className} ${combat.active ? 'border-amber-500/30' : 'border-slate-700'}`}
             style={{ width: `${sidebarWidth}px` }}
         >
             <div 

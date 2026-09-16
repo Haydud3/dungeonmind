@@ -25,6 +25,7 @@ import { segmentsIntersect } from '../utils/mathUtils';
 import { checkLineOfSight, isPointInManualFog, isSegmentBlockedByManualFog } from '../utils/losUtils';
 import { useResolvedUrl } from '../utils/useResolvedUrl';
 import { safeDisposeTexture } from '../utils/threeDisposalUtils';
+import { useDeviceLayout } from '../utils/useDeviceLayout';
 
 const MapPlane = lazy(() => import('./3d/MapPlane').then(m => ({ default: m.MapPlane })));
 
@@ -227,33 +228,74 @@ const ToolSubmenu = ({ children }) => {
 
     useLayoutEffect(() => {
         const updatePosition = () => {
+            if (typeof window === 'undefined') return;
+            const mobilePortrait = window.innerWidth < 640 && window.innerHeight > window.innerWidth;
+
+            if (mobilePortrait) {
+                // On mobile portrait, dock horizontally above the home indicator
+                setCoords({ isBottomDock: true });
+                return;
+            }
+
             if (!anchorRef.current) return;
             const parent = anchorRef.current.parentElement;
             if (!parent) return;
             const parentRect = parent.getBoundingClientRect();
+            const menuWidth = menuRef.current?.offsetWidth || 180;
             const menuHeight = menuRef.current?.offsetHeight || 200;
             
-            // Calculate top position, clamping between top UI allowance (70px) and bottom boundary
+            // Read safe area insets
+            let safeLeft = 12;
+            let safeRight = 12;
+            let safeTop = 64;
+            let safeBottom = 20;
+            const style = window.getComputedStyle(document.documentElement);
+            const sal = parseFloat(style.getPropertyValue('--sal')) || 0;
+            const sar = parseFloat(style.getPropertyValue('--sar')) || 0;
+            const sat = parseFloat(style.getPropertyValue('--sat')) || 0;
+            const sab = parseFloat(style.getPropertyValue('--sab')) || 0;
+            safeLeft = Math.max(12, sal + 4);
+            safeRight = Math.max(12, sar + 4);
+            safeTop = Math.max(64, sat + 12);
+            safeBottom = Math.max(20, sab + 8);
+
+            // Available vertical space clamped to safe boundaries
+            const maxAvailableHeight = Math.max(120, window.innerHeight - safeTop - safeBottom);
+            
+            // Calculate top position, clamping between top UI safe zone and bottom safe boundary
             let top = parentRect.top;
-            if (top + menuHeight > window.innerHeight - 20) {
-                top = Math.max(70, window.innerHeight - 20 - menuHeight);
+            if (top + menuHeight > window.innerHeight - safeBottom) {
+                top = Math.max(safeTop, window.innerHeight - safeBottom - menuHeight);
             }
-            if (top < 70) {
-                top = 70;
+            if (top < safeTop) {
+                top = safeTop;
             }
             
             // Calculate right position (to the left of the parent dock button)
-            const right = Math.max(10, window.innerWidth - parentRect.left + 8);
+            let right = Math.max(safeRight, window.innerWidth - parentRect.left + 8);
+
+            // Ensure the left edge doesn't spill off-screen into the left safe area
+            const leftEdge = window.innerWidth - right - menuWidth;
+            if (leftEdge < safeLeft) {
+                right = Math.max(safeRight, window.innerWidth - safeLeft - menuWidth);
+            }
             
-            setCoords({ top, right });
+            setCoords({ 
+                isBottomDock: false, 
+                top, 
+                right, 
+                maxHeight: maxAvailableHeight 
+            });
         };
 
         updatePosition();
         window.addEventListener('resize', updatePosition);
         window.addEventListener('scroll', updatePosition, true);
+        window.addEventListener('orientationchange', updatePosition);
         return () => {
             window.removeEventListener('resize', updatePosition);
             window.removeEventListener('scroll', updatePosition, true);
+            window.removeEventListener('orientationchange', updatePosition);
         };
     }, [children]);
 
@@ -263,8 +305,15 @@ const ToolSubmenu = ({ children }) => {
             {typeof document !== 'undefined' && createPortal(
                 <div 
                     ref={menuRef} 
-                    className="fixed flex flex-row justify-end gap-2 z-[100] max-h-[calc(100dvh-90px)] overflow-y-auto no-scrollbar pointer-events-auto"
-                    style={coords ? { top: `${coords.top}px`, right: `${coords.right}px` } : { visibility: 'hidden' }}
+                    className={coords?.isBottomDock 
+                        ? "fixed bottom-safe left-1/2 -translate-x-1/2 z-[100] flex flex-row flex-wrap items-center justify-center gap-2 max-w-[calc(100vw-1.5rem)] max-h-[45vh] overflow-y-auto overflow-x-auto no-scrollbar pointer-events-auto p-2 bg-slate-900/95 backdrop-blur-md border border-slate-700/80 rounded-2xl shadow-2xl animate-in slide-in-from-bottom-2 duration-200"
+                        : "fixed flex flex-row justify-end gap-2 z-[100] overflow-y-auto no-scrollbar pointer-events-auto animate-in slide-in-from-right-2 duration-150"
+                    }
+                    style={coords ? (coords.isBottomDock ? {} : { 
+                        top: `${coords.top}px`, 
+                        right: `${coords.right}px`, 
+                        maxHeight: `${coords.maxHeight}px` 
+                    }) : { visibility: 'hidden' }}
                 >
                     {children}
                 </div>,
@@ -355,7 +404,9 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
   const cameraControllerRef = useRef();
   const zoomRef = useRef();
   const [mapData, setMapData] = useState(null);
-  const [isTopMenuCollapsed, setIsTopMenuCollapsed] = useState(false);
+  const { isMobile, isLandscape, isPortrait } = useDeviceLayout();
+  const [isTopMenuCollapsed, setIsTopMenuCollapsed] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768);
+  const [isRightDockCollapsed, setIsRightDockCollapsed] = useState(false);
   const isCombatActive = data?.campaign?.combat?.active;
 
   const fowRef = useRef();
@@ -613,8 +664,9 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           setShowAssetManager(false);
           setShowTokenManager(false);
           setIsToolbarOpen(false);
+          if (isMobile) setIsRightDockCollapsed(true);
       }
-  }, [rightOffset, sideSheetWidth]);
+  }, [rightOffset, sideSheetWidth, isMobile]);
 
   // Auto-select token when a character is loaded into the store (e.g. from Party or NPC view)
   useEffect(() => {
@@ -2466,7 +2518,7 @@ ${pasteTextContent}`;
   const [lightMenuDisplayPosition, setLightMenuDisplayPosition] = useState({ x: 0, y: 0, maxHeight: 400 });
   const [propMenuDisplayPosition, setPropMenuDisplayPosition] = useState({ x: 0, y: 0, maxHeight: 400 });
 
-  // Helper to safely clamp context menu position inside viewport and avoid top bar / bottom bar
+  // Helper to safely clamp context menu position inside viewport and avoid top bar / bottom bar / safe areas
   const calculateMenuPosition = (rawX, rawY, menuEl) => {
     if (!menuEl) return { x: rawX, y: rawY, maxHeight: 400 };
     const menuWidth = menuEl.offsetWidth || 200;
@@ -2474,30 +2526,42 @@ ${pasteTextContent}`;
     const viewportWidth = window.innerWidth;
     const viewportHeight = window.innerHeight;
 
-    // Top inset to avoid top navigation / combat tracker / exit button
-    const topInset = 70;
-    // Bottom inset to avoid bottom navigation / safe area
-    const bottomInset = 24;
-    const maxAvailableHeight = Math.max(160, viewportHeight - topInset - bottomInset);
+    let safeLeft = 12;
+    let safeRight = 12;
+    let safeTop = 70;
+    let safeBottom = 24;
+    if (typeof window !== 'undefined') {
+      const style = window.getComputedStyle(document.documentElement);
+      const sal = parseFloat(style.getPropertyValue('--sal')) || 0;
+      const sar = parseFloat(style.getPropertyValue('--sar')) || 0;
+      const sat = parseFloat(style.getPropertyValue('--sat')) || 0;
+      const sab = parseFloat(style.getPropertyValue('--sab')) || 0;
+      safeLeft = Math.max(12, sal + 4);
+      safeRight = Math.max(12, sar + 4);
+      safeTop = Math.max(70, sat + 16);
+      safeBottom = Math.max(24, sab + 8);
+    }
+
+    const maxAvailableHeight = Math.max(160, viewportHeight - safeTop - safeBottom);
     const effectiveMenuHeight = Math.min(menuHeight, maxAvailableHeight);
 
     let newX = rawX;
     let newY = rawY;
 
-    // Horizontal clamping (keep 10px from edges)
-    if (newX + menuWidth > viewportWidth - 10) {
-      newX = viewportWidth - menuWidth - 10;
+    // Horizontal clamping (keep within safe bounds)
+    if (newX + menuWidth > viewportWidth - safeRight) {
+      newX = viewportWidth - menuWidth - safeRight;
     }
-    if (newX < 10) {
-      newX = 10;
+    if (newX < safeLeft) {
+      newX = safeLeft;
     }
 
-    // Vertical clamping
-    if (newY + effectiveMenuHeight > viewportHeight - bottomInset) {
-      newY = viewportHeight - bottomInset - effectiveMenuHeight;
+    // Vertical clamping (keep within safe bounds)
+    if (newY + effectiveMenuHeight > viewportHeight - safeBottom) {
+      newY = viewportHeight - safeBottom - effectiveMenuHeight;
     }
-    if (newY < topInset) {
-      newY = topInset;
+    if (newY < safeTop) {
+      newY = safeTop;
     }
 
     return {
@@ -3291,7 +3355,7 @@ ${pasteTextContent}`;
     >
       <LoadingOverlay activeMapId={activeMapId} isMapDataReady={!!mapData && isAspectReady && (!mapData.heightmapUrl || !!terrainData)} />
       {role === 'dm' && previewPlayerView && (
-        <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 z-[100] pointer-events-auto animate-in slide-in-from-bottom-4 duration-300">
+        <div className="absolute bottom-safe left-1/2 transform -translate-x-1/2 z-[100] pointer-events-auto animate-in slide-in-from-bottom-4 duration-300 mb-2">
           <button 
             onClick={() => setPreviewPlayerView(false)}
             className="bg-red-600/95 hover:bg-red-500 text-white px-5 py-2.5 rounded-full font-bold shadow-2xl border-2 border-red-400/40 flex items-center gap-2 backdrop-blur-md transition-all hover:scale-105 active:scale-95 text-sm tracking-wide"
@@ -3811,7 +3875,7 @@ ${pasteTextContent}`;
 
       {/* Floating Action Button for active stamp tool */}
       {activeStampingAsset && !isCastMode && (
-          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[70]">
+          <div className="absolute top-4 vtt-safe-top left-1/2 -translate-x-1/2 z-[70]">
               <button 
                   onClick={() => setActiveStampingAsset(null)}
                   className="bg-red-600 hover:bg-red-500 text-white px-4 py-2 rounded-full font-bold shadow-xl flex items-center gap-2 transition-colors border border-red-800"
@@ -3821,7 +3885,7 @@ ${pasteTextContent}`;
           </div>
       )}
     {isMovingLorePin && !isCastMode && (
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[70] flex flex-col items-center">
+        <div className="absolute top-4 vtt-safe-top left-1/2 -translate-x-1/2 z-[70] flex flex-col items-center">
             <div className="bg-indigo-900/90 text-white px-4 py-2 rounded-full font-bold shadow-xl flex items-center gap-2 border border-indigo-500 animate-pulse text-sm">
                 <Icon name="mouse-pointer-2" size={16}/> Click anywhere to move "{isMovingLorePin.label}"
             </div>
@@ -3975,8 +4039,20 @@ ${pasteTextContent}`;
       {!isCastMode && (
           <div 
               className={`absolute top-4 right-4 vtt-safe-top vtt-safe-right z-[70] flex flex-col gap-2 max-h-[calc(100dvh-2rem)] overflow-y-auto overflow-x-hidden no-scrollbar pb-8 overscroll-contain touch-pan-y ${uiOpacityClass}`}
-              style={{ transform: `translateX(-${Math.max(sideSheetWidth > 0 ? sideSheetWidth : (rightOffset || 0), showTokenManager ? tokenManagerWidth : (showAssetManager ? 320 : 0))}px)`, transition: 'transform 0.3s ease-in-out' }}
+              style={{ transform: `translateX(-${Math.max(sideSheetWidth > 0 ? sideSheetWidth : (rightOffset || 0), showTokenManager ? (isMobile ? (typeof window !== 'undefined' ? window.innerWidth : 380) : tokenManagerWidth) : (showAssetManager ? (isMobile ? (typeof window !== 'undefined' ? window.innerWidth : 320) : 320) : 0))}px)`, transition: 'transform 0.3s ease-in-out' }}
           >
+              {/* Mobile Collapse/Expand Trigger */}
+              {isMobile && (
+                  <button
+                      onClick={() => setIsRightDockCollapsed(p => !p)}
+                      className="w-10 h-10 flex-shrink-0 backdrop-blur rounded-xl border shadow-2xl flex items-center justify-center transition-all bg-slate-900/90 border-slate-700 text-slate-300 hover:text-white hover:border-amber-500 pointer-events-auto active:scale-95"
+                      title={isRightDockCollapsed ? "Show Tools" : "Hide Tools"}
+                  >
+                      <Icon name={isRightDockCollapsed ? "wrench" : "chevron-right"} size={18} className={isRightDockCollapsed ? "text-amber-500" : ""} />
+                  </button>
+              )}
+              {(!isMobile || !isRightDockCollapsed) && (
+                  <>
                   {effectiveRole === 'dm' && (
                       <>
                       <ToolButton name="Tokens" icon="users" isActive={showTokenManager} onClick={() => { setActiveTool(null); setShowAssetManager(false); setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); if (!showTokenManager && onSidebarOpen) onSidebarOpen(); setShowTokenManager(!showTokenManager); }} isStandalone={true} />
@@ -4253,21 +4329,25 @@ ${pasteTextContent}`;
                       )}
                   </div>
               )}
-          </div>
+              </>
+          )}
+      </div>
       )}
 
       {/* Actors Manager Drawer */}
       {showTokenManager && effectiveRole === 'dm' && (
         <div 
-            className="absolute top-0 right-0 bottom-0 bg-slate-900 border-l border-slate-700 shadow-2xl z-[80] flex flex-col animate-in slide-in-from-right duration-300"
-            style={{ width: `${tokenManagerWidth}px` }}
+            className="absolute top-0 right-0 bottom-0 w-full sm:w-[380px] max-w-full bg-slate-900 border-l border-slate-700 shadow-2xl z-[80] flex flex-col animate-in slide-in-from-right duration-300 pb-safe"
+            style={{ width: isMobile ? '100vw' : `${tokenManagerWidth}px` }}
         >
-            <div 
-                className="absolute left-0 top-0 bottom-0 w-4 cursor-col-resize hover:bg-amber-500/50 z-10 touch-none"
-                onMouseDown={handleTokenManagerMouseDown}
-                onTouchStart={handleTokenManagerMouseDown}
-            />
-            <div className="flex-none p-4 border-b border-slate-800 flex justify-between items-center bg-slate-950">
+            {!isMobile && (
+                <div 
+                    className="absolute left-0 top-0 bottom-0 w-4 cursor-col-resize hover:bg-amber-500/50 z-10 touch-none"
+                    onMouseDown={handleTokenManagerMouseDown}
+                    onTouchStart={handleTokenManagerMouseDown}
+                />
+            )}
+            <div className="flex-none p-4 pt-safe-min pr-safe-min pl-safe-min border-b border-slate-800 flex justify-between items-center bg-slate-950">
                 <h3 className="font-bold text-indigo-500 flex items-center gap-2"><Icon name="users" size={18} /> Actors</h3>
                 <div className="flex items-center gap-2">
                     <div className="flex bg-slate-800 rounded p-1 border border-slate-700">
@@ -4278,7 +4358,7 @@ ${pasteTextContent}`;
                 </div>
             </div>
             
-            <div className="flex-1 min-h-0 overflow-y-auto custom-scroll p-4 space-y-6">
+            <div className="flex-1 min-h-0 overflow-y-auto custom-scroll p-4 pb-safe-min pr-safe-min pl-safe-min space-y-6">
                 {/* Active On Map Tokens Section */}
                 {(tokensList || []).length > 0 && (
                   <div>

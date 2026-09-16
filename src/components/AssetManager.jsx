@@ -910,7 +910,7 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
     const activeScaleData = useRef(null);
 
     return (
-        <div className="absolute top-0 right-0 bottom-0 w-80 bg-slate-900 border-l border-slate-700 shadow-2xl z-[80] flex flex-col animate-in slide-in-from-right duration-300">
+        <div className="absolute top-0 right-0 bottom-0 w-full sm:w-80 max-w-full bg-slate-900 border-l border-slate-700 shadow-2xl z-[80] flex flex-col animate-in slide-in-from-right duration-300 pb-safe">
             
             {/* Loading Overlay */}
             {(isDetectingGrid || isImporting || isProcessingMap) && (
@@ -933,7 +933,7 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
 
             {/* Verification UI Overlay */}
             {gridDetectionResult && (
-                <div className="absolute bottom-4 left-4 right-4 bg-slate-800 border border-amber-500 rounded-xl p-4 shadow-2xl z-[100] animate-in slide-in-from-bottom">
+                <div className="absolute bottom-4 left-4 right-4 bg-slate-800 border border-amber-500 rounded-xl p-4 shadow-2xl z-[100] animate-in slide-in-from-bottom mb-safe mr-safe ml-safe">
                     <div className="flex justify-between items-center mb-4">
                         <h3 className="font-bold text-amber-500 flex items-center gap-2">
                             <Icon name="check-circle" size={18} /> Grid Detected
@@ -995,7 +995,7 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
                 </div>
             )}
 
-            <div className="flex-none p-4 border-b border-slate-800 flex justify-between items-center bg-slate-950">
+            <div className="flex-none p-4 pt-safe-min pr-safe-min pl-safe-min border-b border-slate-800 flex justify-between items-center bg-slate-950">
                 <h3 className="font-bold text-amber-500 flex items-center gap-2"><Icon name="map" size={18} /> Map Editor</h3>
                 <div className="flex items-center">
                     <button onClick={() => onNewBlankMap()} className="text-slate-400 hover:text-white p-1" title="New Blank Map">

@@ -756,225 +756,210 @@ function DungeonMindApp() {
            )}
 
            {/* UPDATED: Changed compact padding from 50px to 52px to match the new MobileNav height exactly */}
-           <div className={`flex-1 overflow-hidden relative p-0 md:pb-0 ${isCastMode || currentView === 'map' ? 'pb-0' : (data.config?.mobileCompact ? 'pb-[52px]' : 'pb-[70px]')}`}>
-             {/* 1. CHAT (Session) */}
-              {currentView === 'session' && (
-                  <SessionView 
-                      inputText={inputText} 
-                      setInputText={setInputText} 
-                      onSendMessage={sendChatMessage} 
-                      onEditMessage={editMessage}
-                      onDeleteMessage={deleteMessage}
-                      isLoading={isLoading} 
-                      showTools={showTools} 
-                      setShowTools={setShowTools} 
-                      diceLog={diceLog} 
-                      handleDiceRoll={handleDiceRoll} 
-                      aiHelper={queryAiService}
-                      role={effectiveRole}
-                  />
-              )}
-              
-              {/* 2. JOURNAL */}
-              {currentView === 'journal' && (
-                  <JournalView 
-                      role={effectiveRole}
-                      userId={user?.uid}
-                      aiHelper={queryAiService} 
-                  />
-              )}
-              
-              {/* 3. TACTICAL MAP */}
-              {currentView === 'map' && (
-                  <TacticalMapView 
-                      campaignCode={gameParams?.code} 
-                      activeMapId={data.activeMapId || 'test-map'} 
-                      onOpenSheet={handleOpenSheet} 
-                      role={effectiveRole} 
-                      onOpenHandouts={() => {
-                          if (showHandoutCreator) {
-                              setShowHandoutCreator(false);
-                          } else {
-                              closeAllSidebars();
-                              setShowHandoutCreator(true);
-                          }
-                      }}
-                      onOpenChat={() => {
-                          if (vttSidebar === 'chat') {
-                              setVttSidebar(null);
-                          } else {
-                              closeAllSidebars();
-                              setVttSidebar('chat');
-                          }
-                      }}
-                      onOpenJournal={() => {
-                          if (vttSidebar === 'journal') {
-                              setVttSidebar(null);
-                          } else {
-                              closeAllSidebars();
-                              setVttSidebar('journal');
-                          }
-                      }}
-                      onOpenDiceTray={() => {
-                          if (showTools) {
-                              setShowTools(false);
-                          } else {
-                              closeAllSidebars();
-                              setShowTools(true);
-                          }
-                      }}
-                      isChatOpen={vttSidebar === 'chat'}
-                      isJournalOpen={vttSidebar === 'journal'}
-                      isHandoutsOpen={showHandoutCreator}
-                      isDiceTrayOpen={showTools}
-                      onSidebarOpen={closeAllSidebars}
-                      onBack={() => setCurrentView(previousView)}
-                      setView={setCurrentView}
-                      onNavigate={(view, action) => {
-                          if (action) setPartyInitialAction(action);
-                          setCurrentView(view);
-                      }}
-                      rightOffset={rightOffset}
-                      aiHelper={queryAiService}
-                      generateNpc={generateNpc}
-                      hideInviteCode={hideInviteCode}
-                      setHideInviteCode={setHideInviteCode}
-                      onSendMessage={sendChatMessage}
-                      onDiceRoll={handleDiceRoll}
-                  />
-              )}
-              
-              {/* 4. PARTY (PCs) */}
-              {currentView === 'party' && <PartyView 
-                  data={data}
-                  user={user}
-                  role={effectiveRole}
-                  setView={setCurrentView} 
-                  initialAction={partyInitialAction}
-                  onClearInitialAction={() => setPartyInitialAction(null)}
-                  aiHelper={queryAiService} 
-                  onDiceRoll={handleDiceRoll} 
-                  diceLog={diceLog} 
-                  apiKey={apiKey} 
-                  edition={data.config?.edition} 
-                  onInitiative={handleInitiative} 
-                  generatePlayer={generatePlayer} 
-                  onOpenDiceTray={() => setShowTools(p => !p)}
-                  onLogAction={(msg) => {
-                      if (effectiveRole !== 'dm') {
-                          sendChatMessage(msg, 'chat-public');
-                      }
-                  }}
-              />}
+            <div 
+                className={`flex-1 overflow-hidden relative p-0 md:pb-0 ${isCastMode || currentView === 'map' ? 'pb-0' : ''}`}
+                style={!isCastMode && currentView !== 'map' ? {
+                    paddingBottom: data.config?.mobileCompact 
+                        ? 'calc(52px + env(safe-area-inset-bottom, 0px))' 
+                        : 'calc(60px + env(safe-area-inset-bottom, 0px))'
+                } : {}}
+            >
+              {/* 1. CHAT (Session) */}
+               {currentView === 'session' && (
+                   <SessionView 
+                       inputText={inputText} 
+                       setInputText={setInputText} 
+                       onSendMessage={sendChatMessage} 
+                       onEditMessage={editMessage}
+                       onDeleteMessage={deleteMessage}
+                       isLoading={isLoading} 
+                       showTools={showTools} 
+                       setShowTools={setShowTools} 
+                       diceLog={diceLog} 
+                       handleDiceRoll={handleDiceRoll} 
+                       aiHelper={queryAiService}
+                       role={effectiveRole}
+                   />
+               )}
+               
+               {/* 2. JOURNAL */}
+               {currentView === 'journal' && (
+                   <JournalView 
+                       role={effectiveRole}
+                       userId={user?.uid}
+                       aiHelper={queryAiService} 
+                   />
+               )}
+               
+               {/* 3. TACTICAL MAP */}
+               {currentView === 'map' && (
+                   <TacticalMapView 
+                       campaignCode={gameParams?.code} 
+                       activeMapId={data.activeMapId || 'test-map'} 
+                       onOpenSheet={handleOpenSheet} 
+                       role={effectiveRole} 
+                       onOpenHandouts={() => {
+                           if (showHandoutCreator) {
+                               setShowHandoutCreator(false);
+                           } else {
+                               closeAllSidebars();
+                               setShowHandoutCreator(true);
+                           }
+                       }}
+                       onOpenChat={() => {
+                           if (vttSidebar === 'chat') {
+                               setVttSidebar(null);
+                           } else {
+                               closeAllSidebars();
+                               setVttSidebar('chat');
+                           }
+                       }}
+                       onOpenJournal={() => {
+                           if (vttSidebar === 'journal') {
+                               setVttSidebar(null);
+                           } else {
+                               closeAllSidebars();
+                               setVttSidebar('journal');
+                           }
+                       }}
+                       onOpenDiceTray={() => {
+                           if (showTools) {
+                               setShowTools(false);
+                           } else {
+                               closeAllSidebars();
+                               setShowTools(true);
+                           }
+                       }}
+                       isChatOpen={vttSidebar === 'chat'}
+                       isJournalOpen={vttSidebar === 'journal'}
+                       isHandoutsOpen={showHandoutCreator}
+                       isDiceTrayOpen={showTools}
+                       onSidebarOpen={closeAllSidebars}
+                       onBack={() => setCurrentView(previousView)}
+                       setView={setCurrentView}
+                       onNavigate={(view, action) => {
+                           if (action) setPartyInitialAction(action);
+                           setCurrentView(view);
+                       }}
+                       rightOffset={rightOffset}
+                       aiHelper={queryAiService}
+                       generateNpc={generateNpc}
+                       hideInviteCode={hideInviteCode}
+                       setHideInviteCode={setHideInviteCode}
+                       onSendMessage={sendChatMessage}
+                       onDiceRoll={handleDiceRoll}
+                   />
+               )}
+               
+               {/* 4. PARTY (PCs) */}
+               {currentView === 'party' && <PartyView 
+                   data={data}
+                   user={user}
+                   role={effectiveRole}
+                   updateCampaign={updateCampaign}
+                   onDiceRoll={handleDiceRoll}
+                   onOpenSheet={handleOpenSheet}
+                   onOpenDiceTray={() => setShowTools(p => !p)}
+                   initialAction={partyInitialAction}
+                   onClearInitialAction={() => setPartyInitialAction(null)}
+               />}
 
-              {/* 5. BESTIARY (NPCs) */}
-              {currentView === 'npcs' && <NpcView 
-                  data={data}
-                  role={effectiveRole}
-                  generateNpc={generateNpc} 
-                  setChatInput={setInputText} 
-                  setView={setCurrentView} 
-                  aiHelper={queryAiService} 
-                  apiKey={apiKey} 
-                  edition={data.config?.edition} 
-                  onDiceRoll={handleDiceRoll} 
-                  diceLog={diceLog} 
-                  onInitiative={handleInitiative} 
-              />}
-              
-              {currentView === 'sheet' && (
-                  <div className="flex-1 h-full overflow-hidden">
-                      <SheetContainer 
-                          character={data.players?.find(p => String(p.id) === String(data.assignments?.[user?.uid])) || data.players?.find(p => p.ownerId === user?.uid)} 
-                          onSave={savePlayer} 
-                          onDiceRoll={handleDiceRoll} 
-                          diceLog={diceLog}
-                          // --- FIX: PASS ROLE HERE ---
-                          role={effectiveRole}
-                          // ---------------------------
-                          isOwner={true}
-                          onLogAction={(msg) => addLogEntry({ message: msg, id: Date.now() })}
-                          onOpenDiceTray={() => setShowTools(p => !p)}
-                      />
-                  </div>
-              )}
+               {/* 5. MONSTERS / NPCS */}
+               {currentView === 'npcs' && (
+                   <div className="w-full h-full relative overflow-hidden">
+                       <NpcView 
+                           data={data} 
+                           updateCampaign={updateCampaign} 
+                           user={user} 
+                           onOpenSheet={handleOpenSheet} 
+                           onDiceRoll={handleDiceRoll} 
+                           diceLog={diceLog}
+                           // --- FIX: PASS ROLE HERE ---
+                           role={effectiveRole}
+                           // ---------------------------
+                           isOwner={true}
+                           onLogAction={(msg) => addLogEntry({ message: msg, id: Date.now() })}
+                           onOpenDiceTray={() => setShowTools(p => !p)}
+                       />
+                   </div>
+               )}
 
-              {/* 6. LORE (Bible) */}
-              {currentView === 'lore' && <LoreView aiHelper={queryAiService} />}
+               {/* 6. LORE (Bible) */}
+               {currentView === 'lore' && <LoreView aiHelper={queryAiService} />}
 
-              {/* MODULE HUB */}
-              {currentView === 'module' && <ModuleHub data={data} updateCampaign={updateCampaign} aiHelper={queryAiService} loreChunks={context.loreChunks} campaignCode={gameParams?.code} generateNpc={generateNpc} />}
-              
-              {/* 7. SETTINGS */}
-              {currentView === 'settings' && <SettingsView 
-                  apiKey={apiKey} setApiKey={setApiKey} 
-                  role={effectiveRole}
-                  user={user}
-                  code={gameParams.code} 
-                  onExit={leaveCampaign} 
-                  aiProvider={aiProvider} setAiProvider={setAiProvider} 
-                  openAiModel={openAiModel} setOpenAiModel={setOpenAiModel} 
-                  puterModel={puterModel} setPuterModel={setPuterModel} 
-                  hideInviteCode={hideInviteCode}
-                  setHideInviteCode={setHideInviteCode}
-                  joinRequests={joinRequests}
-              />}
+               {/* MODULE HUB */}
+               {currentView === 'module' && <ModuleHub data={data} updateCampaign={updateCampaign} aiHelper={queryAiService} loreChunks={context.loreChunks} campaignCode={gameParams?.code} generateNpc={generateNpc} />}
+               
+               {/* 7. SETTINGS */}
+               {currentView === 'settings' && <SettingsView 
+                   apiKey={apiKey} setApiKey={setApiKey} 
+                   role={effectiveRole}
+                   user={user}
+                   code={gameParams.code} 
+                   onExit={leaveCampaign} 
+                   aiProvider={aiProvider} setAiProvider={setAiProvider} 
+                   openAiModel={openAiModel} setOpenAiModel={setOpenAiModel} 
+                   puterModel={puterModel} setPuterModel={setPuterModel} 
+                   hideInviteCode={hideInviteCode}
+                   setHideInviteCode={setHideInviteCode}
+                   joinRequests={joinRequests}
+               />}
 
-              {/* SIDE PANELS */}
-              {rightPanel.mode === 'sheet' && rightPanel.data && (
-                  <SideSheet 
-                      characterId={rightPanel.data} 
-                      data={data} 
-                      onClose={handleClosePanel} 
-                      onSave={(char) => {
-                          // Determine if it is a PC or NPC to route the save properly
-                          const isPc = data.players?.some(p => String(p.id) === String(char.id));
-                          if (isPc) {
-                              savePlayer(char);
-                          } else {
-                              const newNpcs = (data.npcs || []).map(n => String(n.id) === String(char.id) ? char : n);
-                              updateCloud({ ...data, npcs: newNpcs }, true);
-                          }
-                      }}
-                      role={effectiveRole}
-                      onDiceRoll={handleDiceRoll}
-                      user={user}
-                      onOpenDiceTray={() => setShowTools(p => !p)}
-                  />
-              )}
+               {/* SIDE PANELS */}
+               {rightPanel.mode === 'sheet' && rightPanel.data && (
+                   <SideSheet 
+                       characterId={rightPanel.data} 
+                       data={data} 
+                       onClose={handleClosePanel} 
+                       onSave={(char) => {
+                           // Determine if it is a PC or NPC to route the save properly
+                           const isPc = data.players?.some(p => String(p.id) === String(char.id));
+                           if (isPc) {
+                               savePlayer(char);
+                           } else {
+                               const newNpcs = (data.npcs || []).map(n => String(n.id) === String(char.id) ? char : n);
+                               updateCloud({ ...data, npcs: newNpcs }, true);
+                           }
+                       }}
+                       role={effectiveRole}
+                       onDiceRoll={handleDiceRoll}
+                       user={user}
+                       onOpenDiceTray={() => setShowTools(p => !p)}
+                   />
+               )}
 
-              {/* VTT SIDEBARS */}
-              {!isCastMode && vttSidebar === 'chat' && currentView === 'map' && (
-                  <div className="absolute top-0 right-0 bottom-0 w-[350px] bg-slate-900 border-l border-slate-700 shadow-2xl z-[80] flex flex-col animate-in slide-in-from-right duration-300">
-                      <div className="p-3 border-b border-slate-800 flex justify-between items-center bg-slate-950 shrink-0">
-                          <h3 className="font-bold text-indigo-500 flex items-center gap-2"><Icon name="message-circle" size={18}/> Chat</h3>
-                          <button onClick={() => setVttSidebar(null)} className="text-slate-400 hover:text-white"><Icon name="x" size={20}/></button>
-                      </div>
-                      <div className="flex-1 relative overflow-hidden">
-                          <SessionView 
-                              inputText={inputText} 
-                              setInputText={setInputText} 
-                              onSendMessage={sendChatMessage} 
-                              onEditMessage={editMessage}
-                              onDeleteMessage={deleteMessage}
-                              isLoading={isLoading} 
-                              showTools={showTools} 
-                              setShowTools={setShowTools} 
-                              diceLog={diceLog} 
-                              handleDiceRoll={handleDiceRoll} 
-                              aiHelper={queryAiService}
-                              role={effectiveRole}
-                              compact={true}
-                          />
-                      </div>
-                  </div>
-              )}
+               {/* VTT SIDEBARS */}
+               {!isCastMode && vttSidebar === 'chat' && currentView === 'map' && (
+                   <div className="absolute top-0 right-0 bottom-0 w-full sm:w-[350px] max-w-full bg-slate-900 border-l border-slate-700 shadow-2xl z-[80] flex flex-col animate-in slide-in-from-right duration-300 pb-safe">
+                       <div className="p-3 pt-safe-min pr-safe-min pl-safe-min border-b border-slate-800 flex justify-between items-center bg-slate-950 shrink-0">
+                           <h3 className="font-bold text-indigo-500 flex items-center gap-2"><Icon name="message-circle" size={18}/> Chat</h3>
+                           <button onClick={() => setVttSidebar(null)} className="text-slate-400 hover:text-white"><Icon name="x" size={20}/></button>
+                       </div>
+                       <div className="flex-1 relative overflow-hidden">
+                           <SessionView 
+                               inputText={inputText} 
+                               setInputText={setInputText} 
+                               onSendMessage={sendChatMessage} 
+                               onEditMessage={editMessage}
+                               onDeleteMessage={deleteMessage}
+                               isLoading={isLoading} 
+                               showTools={showTools} 
+                               setShowTools={setShowTools} 
+                               diceLog={diceLog} 
+                               handleDiceRoll={handleDiceRoll} 
+                               aiHelper={queryAiService}
+                               role={effectiveRole}
+                               compact={true}
+                           />
+                       </div>
+                   </div>
+               )}
 
-              {!isCastMode && vttSidebar === 'journal' && currentView === 'map' && (
-                  <div className="absolute top-0 right-0 bottom-0 w-[500px] max-w-full bg-slate-900 border-l border-slate-700 shadow-2xl z-[80] flex flex-col animate-in slide-in-from-right duration-300">
-                      <JournalView role={effectiveRole} userId={user?.uid} aiHelper={queryAiService} onClose={() => setVttSidebar(null)} />
-                  </div>
-              )}
+               {!isCastMode && vttSidebar === 'journal' && currentView === 'map' && (
+                   <div className="absolute top-0 right-0 bottom-0 w-full sm:w-[500px] max-w-full bg-slate-900 border-l border-slate-700 shadow-2xl z-[80] flex flex-col animate-in slide-in-from-right duration-300 pb-safe">
+                       <JournalView role={effectiveRole} userId={user?.uid} aiHelper={queryAiService} onClose={() => setVttSidebar(null)} />
+                   </div>
+               )}
             </div>
        </main>
        
@@ -1028,7 +1013,7 @@ function DungeonMindApp() {
                            </div>
                        )}
                    </div>
-                   <button onClick={() => { setShowHandout(false); setLocalHandout(null); setIsFullscreenImage(false); }} className="absolute top-4 right-4 z-20 bg-black/50 hover:bg-black/80 text-white rounded-full p-2 transition-colors"><Icon name="x" size={24}/></button>
+                   <button onClick={() => { setShowHandout(false); setLocalHandout(null); setIsFullscreenImage(false); }} className="absolute top-4 right-4 top-safe right-safe z-20 bg-black/50 hover:bg-black/80 text-white rounded-full p-2 transition-colors"><Icon name="x" size={24}/></button>
                </div>
                
                {/* Fullscreen Image Overlay */}
@@ -1044,7 +1029,7 @@ function DungeonMindApp() {
                        />
                        <button 
                            onClick={(e) => { e.stopPropagation(); setIsFullscreenImage(false); }} 
-                           className="absolute top-6 right-6 bg-black/50 hover:bg-white/20 text-white rounded-full p-3 transition-colors border border-white/20"
+                           className="absolute top-6 right-6 top-safe right-safe bg-black/50 hover:bg-white/20 text-white rounded-full p-3 transition-colors border border-white/20"
                        >
                            <Icon name="x" size={28}/>
                        </button>
@@ -1056,7 +1041,7 @@ function DungeonMindApp() {
        
        {/* Global Dice Tray Sidebar */}
        {!isCastMode && showTools && (
-           <div className="fixed top-0 right-0 bottom-0 w-80 max-w-full bg-slate-900 border-l border-slate-700 shadow-2xl z-[100] flex flex-col animate-in slide-in-from-right duration-300">
+           <div className="fixed top-0 right-0 bottom-0 w-full sm:w-80 max-w-full bg-slate-900 border-l border-slate-700 shadow-2xl z-[100] flex flex-col animate-in slide-in-from-right duration-300 pb-safe">
                <DiceTray 
                    diceLog={diceLog} 
                    handleDiceRoll={handleDiceRoll} 

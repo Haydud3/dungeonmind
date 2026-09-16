@@ -2,7 +2,15 @@
 @tailwind components;
 @tailwind utilities;
 
-:root { --bg-dark: #0f172a; --bg-panel: #1e293b; --accent: #d97706; }
+:root { 
+    --bg-dark: #0f172a; 
+    --bg-panel: #1e293b; 
+    --accent: #d97706; 
+    --sat: env(safe-area-inset-top, 0px);
+    --sab: env(safe-area-inset-bottom, 0px);
+    --sal: env(safe-area-inset-left, 0px);
+    --sar: env(safe-area-inset-right, 0px);
+}
 
 html, body, #root { height: 100dvh; width: 100%; overflow: hidden; overscroll-behavior-y: none; -webkit-tap-highlight-color: transparent; }
 
@@ -28,24 +36,41 @@ h1, h2, h3, .fantasy-font { font-family: 'Cinzel', serif; }
 .animate-in { animation: fadeIn 0.3s ease-out; }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
-/* --- MOBILE FIXES --- */
+/* --- MOBILE & SAFE AREA UTILITIES --- */
 .h-dvh { height: 100vh; height: 100dvh; }
 
-.pt-safe {
-    padding-top: env(safe-area-inset-top, 0px);
+.pt-safe { padding-top: env(safe-area-inset-top, 0px); }
+.pb-safe { padding-bottom: env(safe-area-inset-bottom, 0px); }
+.pl-safe { padding-left: env(safe-area-inset-left, 0px); }
+.pr-safe { padding-right: env(safe-area-inset-right, 0px); }
+
+.pt-safe-min { padding-top: max(0.75rem, env(safe-area-inset-top, 0px)); }
+.pb-safe-min { padding-bottom: max(0.75rem, env(safe-area-inset-bottom, 0px)); }
+.pl-safe-min { padding-left: max(0.75rem, env(safe-area-inset-left, 0px)); }
+.pr-safe-min { padding-right: max(0.75rem, env(safe-area-inset-right, 0px)); }
+
+.p-safe {
+    padding-top: max(0.75rem, env(safe-area-inset-top, 0px));
+    padding-bottom: max(0.75rem, env(safe-area-inset-bottom, 0px));
+    padding-left: max(0.75rem, env(safe-area-inset-left, 0px));
+    padding-right: max(0.75rem, env(safe-area-inset-right, 0px));
 }
 
-.pb-safe {
-    padding-bottom: env(safe-area-inset-bottom, 0px);
-}
+.top-safe { top: max(0.75rem, env(safe-area-inset-top, 0px)); }
+.bottom-safe { bottom: max(0.75rem, env(safe-area-inset-bottom, 0px)); }
+.left-safe { left: max(0.75rem, env(safe-area-inset-left, 0px)); }
+.right-safe { right: max(0.75rem, env(safe-area-inset-right, 0px)); }
 
-.pl-safe {
-    padding-left: env(safe-area-inset-left, 0px);
-}
+.mt-safe { margin-top: max(0.75rem, env(safe-area-inset-top, 0px)); }
+.mb-safe { margin-bottom: max(0.75rem, env(safe-area-inset-bottom, 0px)); }
+.ml-safe { margin-left: max(0.75rem, env(safe-area-inset-left, 0px)); }
+.mr-safe { margin-right: max(0.75rem, env(safe-area-inset-right, 0px)); }
 
-.pr-safe {
-    padding-right: env(safe-area-inset-right, 0px);
-}
+/* VTT safe positioning that works universally (normal & pseudo-fullscreen) */
+.vtt-safe-top { top: max(1rem, calc(0.5rem + env(safe-area-inset-top, 0px))) !important; }
+.vtt-safe-bottom { bottom: max(1rem, calc(0.5rem + env(safe-area-inset-bottom, 0px))) !important; }
+.vtt-safe-left { left: max(1rem, calc(0.5rem + env(safe-area-inset-left, 0px))) !important; }
+.vtt-safe-right { right: max(1rem, calc(0.5rem + env(safe-area-inset-right, 0px))) !important; }
 
 /* --- QUILL EDITOR MOBILE OVERRIDES --- */
 .ql-toolbar {
@@ -503,9 +528,4 @@ h1, h2, h3, .fantasy-font { font-family: 'Cinzel', serif; }
 .pseudo-fullscreen .pb-safe { padding-bottom: 0 !important; }
 .pseudo-fullscreen .pl-safe { padding-left: 0 !important; }
 .pseudo-fullscreen .pr-safe { padding-right: 0 !important; }
-
-/* When fullscreen removes root padding, UI elements need their own safe area offsets */
-.pseudo-fullscreen .vtt-safe-top { top: calc(1rem + env(safe-area-inset-top, 0px)) !important; }
-.pseudo-fullscreen .vtt-safe-bottom { bottom: calc(1rem + env(safe-area-inset-bottom, 0px)) !important; }
-.pseudo-fullscreen .vtt-safe-left { left: calc(1rem + env(safe-area-inset-left, 0px)) !important; }
-.pseudo-fullscreen .vtt-safe-right { right: calc(1rem + env(safe-area-inset-right, 0px)) !important; }
+/* In pseudo-fullscreen, keep safe-area padding 0 on root container for edge-to-edge canvas */

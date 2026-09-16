@@ -16,17 +16,19 @@ const MobileNav = ({ view, setView, compact, className = "" }) => {
     return (
         <nav 
             id="mobile-nav"
-            // UPDATED: 
-            // 1. Compact: Fixed height 'h-[52px]', aligned 'items-center', and 'pb-0' to touch the bottom edge.
-            // 2. Normal: Dynamic height via style, aligned 'items-start', with safe-area padding.
-            className={`md:hidden fixed bottom-0 left-0 right-0 bg-slate-900/95 backdrop-blur-md border-t border-slate-800 flex justify-between px-1 z-50 transition-all duration-300
+            className={`md:hidden fixed bottom-0 left-0 right-0 bg-slate-900/95 backdrop-blur-md border-t border-slate-800 flex justify-between z-50 transition-all duration-300
                 ${compact 
-                    ? 'h-[52px] items-center pb-0' 
-                    : 'items-start pt-2 pb-[env(safe-area-inset-bottom,4px)]'
+                    ? 'items-center' 
+                    : 'items-start pt-1.5'
                 } ${className}`}
-            
-            // Only apply dynamic calc height if NOT compact. Compact uses the class h-[52px].
-            style={!compact ? { height: 'calc(60px + env(safe-area-inset-bottom, 0px))' } : {}}
+            style={{ 
+                height: compact 
+                    ? 'calc(52px + env(safe-area-inset-bottom, 0px))' 
+                    : 'calc(60px + env(safe-area-inset-bottom, 0px))',
+                paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+                paddingLeft: 'max(0.5rem, env(safe-area-inset-left, 0px))',
+                paddingRight: 'max(0.5rem, env(safe-area-inset-right, 0px))'
+            }}
         >
             {navItems.map(item => (
                 <button 
