@@ -1,4 +1,4 @@
-import React, { useRef, useMemo, Suspense, useState, useEffect } from 'react';
+import React, { useRef, useMemo, Suspense, useState, useEffect, useCallback } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Text, ContactShadows, Edges } from '@react-three/drei';
 import * as THREE from 'three';
@@ -8,6 +8,11 @@ import { ref, onValue, set, remove } from 'firebase/database';
 
 // --- CONFIGURATION ---
 const ANIM_DURATION = 3.0;
+
+// --- COIN GEOMETRY GENERATOR (D2) ---
+const createCoinGeometry = (radius = 1.1, height = 0.16, segments = 36) => {
+    return new THREE.CylinderGeometry(radius, radius, height, segments);
+};
 
 // --- D10 GEOMETRY GENERATOR ---
 const createD10Geometry = (radius = 1, height = 1.3) => {
@@ -126,6 +131,12 @@ const calculateFaces = (type) => {
             faces.push({ pos: center, normal: center.clone().normalize() });
         }
     }
+    else if (type === 2) {
+        faces = [
+            { pos: new THREE.Vector3(0, 0.08, 0), normal: new THREE.Vector3(0, 1, 0) },
+            { pos: new THREE.Vector3(0, -0.08, 0), normal: new THREE.Vector3(0, -1, 0) }
+        ];
+    }
 
     return faces;
 };
@@ -134,6 +145,7 @@ const calculateFaces = (type) => {
 // --- CONFIGURATION ---
 const DICE_SCALE = 0.6; // Scale down dice to fit more on screen
 const CONFIG = {
+    2:  { scale: 1.25 * DICE_SCALE, offset: 1.05, color: "#f59e0b", geo: () => createCoinGeometry() },
     4:  { scale: 1.5 * DICE_SCALE, offset: 1.05,  color: "#be123c", geo: () => new THREE.TetrahedronGeometry(1) },
     6:  { scale: 0.9 * DICE_SCALE, offset: 1.05, color: "#4338ca", geo: () => new THREE.BoxGeometry(1, 1, 1) },
     8:  { scale: 0.9 * DICE_SCALE, offset: 1.05, color: "#047857", geo: () => new THREE.OctahedronGeometry(1) },
@@ -212,6 +224,17 @@ const DieMesh = ({ id, dieType, result, actionType, index = 0, total = 1, isRemo
         // END CHANGE
         
         // --- FACE SELECTION ---
+        if (safeType === 2) {
+            const isHeads = safeResult === 1;
+            const targetQ = new THREE.Quaternion();
+            if (isHeads) {
+                targetQ.set(0, 0, 0, 1);
+            } else {
+                targetQ.setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI);
+            }
+            return { faceData: [], targetQuat: targetQ, d4GroupRot: [0, 0, 0] };
+        }
+
         rawFaces.sort((a, b) => b.pos.y - a.pos.y);
         const winnerFace = rawFaces[0];
 
@@ -311,14 +334,24 @@ const DieMesh = ({ id, dieType, result, actionType, index = 0, total = 1, isRemo
             rz = (Math.random() - 0.5) * 60;
         }
 
+        const rotVel = safeType === 2
+            ? new THREE.Vector3(
+                (Math.random() > 0.5 ? 1 : -1) * (45 + Math.random() * 25),
+                (Math.random() - 0.5) * 12,
+                (Math.random() - 0.5) * 15
+            )
+            : new THREE.Vector3(rx, ry, rz);
+
+        const yOffset = safeType === 4 ? 0.0 : (safeType === 2 ? 0.12 : cfg.scale * 0.7);
+
         physicsRef.current = {
             id,
             radius: cfg.scale * 0.8, // Approximate sphere radius for collisions
             pos: new THREE.Vector3(spawnX, 8 + (index * 2), spawnZ + (index * 1.5)),
             vel: new THREE.Vector3(vx, -5 - (index * 2), vz),
-            rotVel: new THREE.Vector3(rx, ry, rz),
+            rotVel,
             time: 0,
-            yOffset: safeType === 4 ? 0.0 : cfg.scale * 0.7
+            yOffset
         };
     }
 
@@ -427,6 +460,88 @@ const DieMesh = ({ id, dieType, result, actionType, index = 0, total = 1, isRemo
         }
     });
 
+    if (safeType === 2) {
+        return (
+            <group ref={meshRef}>
+                {/* Main Gold Coin Body */}
+                <mesh geometry={geometry} scale={[cfg.scale, cfg.scale, cfg.scale]}>
+                    <meshStandardMaterial 
+                        color={isRemote ? '#06b6d4' : '#f59e0b'} 
+                        roughness={0.25} 
+                        metalness={0.85} 
+                        transparent={isRemote}
+                        opacity={isRemote ? 0.8 : 1}
+                        emissive={isRemote ? '#06b6d4' : '#78350f'}
+                        emissiveIntensity={isRemote ? 0.5 : 0.15}
+                    />
+                    <Edges threshold={20} color={isRemote ? "#67e8f9" : "#fef08a"} />
+                </mesh>
+
+                {/* Coin Inner Embossed Rings */}
+                <mesh position={[0, 0.084 * cfg.scale, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+                    <ringGeometry args={[0.74 * cfg.scale, 0.82 * cfg.scale, 36]} />
+                    <meshStandardMaterial color="#fef08a" metalness={0.9} roughness={0.2} />
+                </mesh>
+                <mesh position={[0, -0.084 * cfg.scale, 0]} rotation={[Math.PI / 2, 0, 0]}>
+                    <ringGeometry args={[0.74 * cfg.scale, 0.82 * cfg.scale, 36]} />
+                    <meshStandardMaterial color="#fef08a" metalness={0.9} roughness={0.2} />
+                </mesh>
+
+                {/* Heads Face (Top, normal 0, 1, 0) */}
+                <group position={[0, 0.088 * cfg.scale, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+                    <Text
+                        position={[0, 0.38 * cfg.scale, 0]}
+                        fontSize={0.20 * DICE_SCALE}
+                        color="#ffffff"
+                        anchorX="center"
+                        anchorY="middle"
+                        outlineWidth={0.03 * DICE_SCALE}
+                        outlineColor="#78350f"
+                    >
+                        HEADS
+                    </Text>
+                    <Text
+                        position={[0, -0.08 * cfg.scale, 0]}
+                        fontSize={0.52 * DICE_SCALE}
+                        color="#fef08a"
+                        anchorX="center"
+                        anchorY="middle"
+                        outlineWidth={0.04 * DICE_SCALE}
+                        outlineColor="#78350f"
+                    >
+                        I
+                    </Text>
+                </group>
+
+                {/* Tails Face (Bottom, normal 0, -1, 0) */}
+                <group position={[0, -0.088 * cfg.scale, 0]} rotation={[Math.PI / 2, 0, 0]}>
+                    <Text
+                        position={[0, 0.38 * cfg.scale, 0]}
+                        fontSize={0.20 * DICE_SCALE}
+                        color="#ffffff"
+                        anchorX="center"
+                        anchorY="middle"
+                        outlineWidth={0.03 * DICE_SCALE}
+                        outlineColor="#78350f"
+                    >
+                        TAILS
+                    </Text>
+                    <Text
+                        position={[0, -0.08 * cfg.scale, 0]}
+                        fontSize={0.52 * DICE_SCALE}
+                        color="#fef08a"
+                        anchorX="center"
+                        anchorY="middle"
+                        outlineWidth={0.04 * DICE_SCALE}
+                        outlineColor="#78350f"
+                    >
+                        II
+                    </Text>
+                </group>
+            </group>
+        );
+    }
+
     return (
         <group rotation={d4GroupRot}>
             <group ref={meshRef}>
@@ -530,6 +645,22 @@ const RollHUD = ({ roll, isStacked }) => {
         return { rollsNode, finalTotal };
     }, [roll]);
 
+    const isCoin = useMemo(() => {
+        const formulaStr = String(roll.formulaDisplay || '') + ' ' + String(roll.formula || '') + ' ' + String(roll.die || '');
+        const lowerAlias = String(roll.alias || '').toLowerCase();
+        // Strictly match d2 or 1d2 as an isolated token (not d20, 2d20, etc.)
+        const isD2Formula = /\b(?:1)?d2(?!\d)/i.test(formulaStr) || roll.die === 2 || roll.die === '2' || roll.die === '1d2' || roll.die === 'd2';
+        const isCoinAlias = lowerAlias.includes('coin') || lowerAlias.includes('heads or tails') || lowerAlias === 'coin flip';
+        return isD2Formula || isCoinAlias;
+    }, [roll]);
+
+    const coinOutcome = useMemo(() => {
+        if (!isCoin) return null;
+        const raw = roll.natural ?? roll.naturalRoll ?? roll.rolls?.[0] ?? roll.total ?? roll.result ?? roll.value;
+        const num = typeof raw === 'object' ? Number(raw.value ?? raw.total ?? raw.result ?? 1) : Number(raw);
+        return num === 1 ? 'HEADS' : 'TAILS';
+    }, [isCoin, roll]);
+
     if (!show) return null;
 
     return (
@@ -544,7 +675,14 @@ const RollHUD = ({ roll, isStacked }) => {
                             ([{rollsNode}] {(roll.modifier ?? roll.mod) >= 0 ? '+' : ''}{(roll.modifier ?? roll.mod)})
                         </span>
                     )}
-                    <span className="text-3xl font-black text-amber-500 drop-shadow-md">{finalTotal}</span>
+                    {isCoin ? (
+                        <span className="text-2xl font-black text-amber-400 drop-shadow-md flex items-center gap-1.5">
+                            <span>🪙</span>
+                            <span>{coinOutcome}</span>
+                        </span>
+                    ) : (
+                        <span className="text-3xl font-black text-amber-500 drop-shadow-md">{finalTotal}</span>
+                    )}
                 </div>
             </div>
             {roll.saveDc !== undefined && (
@@ -556,10 +694,131 @@ const RollHUD = ({ roll, isStacked }) => {
     );
 };
 
+// Procedural Web Audio API Coin Flip Ring & Clink Synthesizer
+const playCoinFlipSFX = () => {
+    try {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContextClass) return;
+        if (!diceAudioContext) {
+            diceAudioContext = new AudioContextClass();
+        }
+        if (diceAudioContext.state === 'suspended') {
+            diceAudioContext.resume().catch(() => {});
+        }
+
+        const now = diceAudioContext.currentTime;
+        // Ringing frequencies of a flipped gold coin
+        const freqs = [2800, 3400, 5600];
+        freqs.forEach((freq, idx) => {
+            const osc = diceAudioContext.createOscillator();
+            const gain = diceAudioContext.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(freq, now);
+            osc.frequency.exponentialRampToValueAtTime(freq * 0.98, now + 1.2);
+
+            const vol = 0.08 / (idx + 1);
+            gain.gain.setValueAtTime(vol, now);
+            gain.gain.exponentialRampToValueAtTime(0.0001, now + 1.2);
+
+            osc.connect(gain);
+            gain.connect(diceAudioContext.destination);
+            osc.start(now);
+            osc.stop(now + 1.2);
+        });
+
+        // Gentle metallic clinks as it lands
+        const clinkTimes = [0.45, 0.65, 0.82];
+        clinkTimes.forEach((t, i) => {
+            const clinkOsc = diceAudioContext.createOscillator();
+            const clinkGain = diceAudioContext.createGain();
+            clinkOsc.type = 'triangle';
+            clinkOsc.frequency.setValueAtTime(3200 + i * 400, now + t);
+
+            clinkGain.gain.setValueAtTime(0.05 / (i + 1), now + t);
+            clinkGain.gain.exponentialRampToValueAtTime(0.001, now + t + 0.08);
+
+            clinkOsc.connect(clinkGain);
+            clinkGain.connect(diceAudioContext.destination);
+            clinkOsc.start(now + t);
+            clinkOsc.stop(now + t + 0.08);
+        });
+    } catch (e) {
+        // Safe failover
+    }
+};
+
+// Procedural Web Audio API Dice Clatter Sound Synthesizer (Zero external dependencies)
+let diceAudioContext = null;
+const playDiceClatterSFX = () => {
+    if (localStorage.getItem('dm_sfx_dice') === 'false') return;
+    try {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContextClass) return;
+        if (!diceAudioContext) {
+            diceAudioContext = new AudioContextClass();
+        }
+        if (diceAudioContext.state === 'suspended') {
+            diceAudioContext.resume().catch(() => {});
+        }
+
+        const now = diceAudioContext.currentTime;
+        const numClatters = 4 + Math.floor(Math.random() * 3); // 4-6 random clatters
+
+        for (let i = 0; i < numClatters; i++) {
+            const impactTime = now + (i * 0.055) + (Math.random() * 0.035);
+            const bufferDuration = 0.045;
+            const bufferSize = Math.floor(diceAudioContext.sampleRate * bufferDuration);
+            const buffer = diceAudioContext.createBuffer(1, bufferSize, diceAudioContext.sampleRate);
+            const data = buffer.getChannelData(0);
+            for (let j = 0; j < bufferSize; j++) {
+                data[j] = (Math.random() * 2 - 1) * (1 - j / bufferSize);
+            }
+
+            const noiseSource = diceAudioContext.createBufferSource();
+            noiseSource.buffer = buffer;
+
+            // Resin / plastic dice impact resonance
+            const filter = diceAudioContext.createBiquadFilter();
+            filter.type = 'bandpass';
+            filter.frequency.setValueAtTime(1600 + Math.random() * 1400, impactTime);
+            filter.Q.setValueAtTime(3.5, impactTime);
+
+            const gain = diceAudioContext.createGain();
+            const volume = (0.10 + Math.random() * 0.06) * Math.pow(0.72, i);
+            gain.gain.setValueAtTime(volume, impactTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, impactTime + bufferDuration);
+
+            noiseSource.connect(filter);
+            filter.connect(gain);
+            gain.connect(diceAudioContext.destination);
+
+            noiseSource.start(impactTime);
+            noiseSource.stop(impactTime + bufferDuration);
+        }
+    } catch (e) {
+        // Safe failover for restricted media environments
+    }
+};
+
 const DiceOverlay = ({ roll }) => {
     const [activeRolls, setActiveRolls] = useState([]);
     const [activeDice, setActiveDice] = useState([]);
     const lastProcessedRoll = useRef(null);
+
+    const dismissRolls = useCallback(() => {
+        setActiveRolls([]);
+        setActiveDice([]);
+    }, []);
+
+    useEffect(() => {
+        const handleKeyDown = (e) => {
+            if (e.key === 'Escape' && activeRolls.length > 0) {
+                dismissRolls();
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [activeRolls.length, dismissRolls]);
 
     // --- NEW MULTIPLAYER SYNC ---
     const context = useNewCampaign();
@@ -628,6 +887,12 @@ const DiceOverlay = ({ roll }) => {
 
                 setActiveRolls(prev => [...prev, ...incomingRolls]);
                 setActiveDice(prev => [...prev, ...newActiveDice]);
+                const isIncomingCoin = incomingRolls.some(r => r.die === 2 || r.die === '1d2' || r.die === 'd2' || /\b(?:1)?d2(?!\d)/i.test(String(r.die || '')) || (r.diceAnimations || []).some(a => a.die === 2 || a.side === 2) || (typeof r.alias === 'string' && r.alias.toLowerCase().includes('coin')));
+                if (isIncomingCoin) {
+                    playCoinFlipSFX();
+                } else {
+                    playDiceClatterSFX();
+                }
                 
                 setTimeout(() => {
                     setActiveRolls(prev => prev.filter(p => !incomingRolls.some(n => n._rtId === p._rtId)));
@@ -708,6 +973,12 @@ const DiceOverlay = ({ roll }) => {
             }));
             
             setActiveDice(prev => [...prev, ...newActiveDice]);
+            const isLocalCoin = processedAnimations.some(a => a.die === 2 || a.side === 2) || roll.die === 2 || roll.die === '1d2' || roll.die === 'd2' || /\b(?:1)?d2(?!\d)/i.test(String(roll.die || '')) || (typeof roll.alias === 'string' && roll.alias.toLowerCase().includes('coin'));
+            if (isLocalCoin) {
+                playCoinFlipSFX();
+            } else {
+                playDiceClatterSFX();
+            }
             
             if (campaignCode) {
                 const rollRef = ref(rtdb, `live_drags/rolls_${campaignCode}/${rtId}`);
@@ -725,6 +996,13 @@ const DiceOverlay = ({ roll }) => {
 
     return (
         <div className={`fixed inset-0 z-[99999] pointer-events-none flex items-center justify-center w-screen h-screen transition-opacity duration-500 ${activeRolls.length > 0 ? 'opacity-100' : 'opacity-0'}`}>
+            {activeRolls.length > 0 && (
+                <div 
+                    onClick={dismissRolls}
+                    className="absolute inset-0 pointer-events-auto cursor-pointer"
+                    title="Click anywhere to dismiss dice"
+                />
+            )}
             <div className="w-full h-full relative z-10 pointer-events-none">
                 <Canvas style={{ pointerEvents: 'none' }} dpr={[1, 1.5]} camera={{ position: [0, 10, 0], fov: 40 }} gl={{ antialias: false, powerPreference: "high-performance" }}>
                     <ambientLight intensity={3} />
@@ -743,11 +1021,22 @@ const DiceOverlay = ({ roll }) => {
                 </Canvas>
                 
                 {activeRolls.length > 0 && (
-                    <div className="absolute bottom-6 right-6 flex flex-col items-end pointer-events-none z-50">
+                    <>
+                        <button
+                            type="button"
+                            onClick={dismissRolls}
+                            className="absolute top-5 right-5 pointer-events-auto bg-slate-950/85 hover:bg-slate-900 border border-slate-700/80 hover:border-amber-500/60 text-slate-300 hover:text-white px-3 py-1.5 rounded-full text-xs font-mono flex items-center gap-2 transition-all shadow-xl backdrop-blur-md cursor-pointer z-50 group"
+                        >
+                            <span className="text-[11px] group-hover:text-amber-400">Dismiss</span>
+                            <kbd className="bg-slate-800 px-1.5 py-0.5 rounded text-[10px] text-slate-400 border border-slate-700 font-sans">Esc</kbd>
+                        </button>
+
+                        <div className="absolute bottom-6 right-6 flex flex-col items-end pointer-events-none z-50">
                             {activeRolls.map(r => (
                                 <RollHUD key={r._rtId} roll={r} isStacked={activeRolls.length > 1} />
                             ))}
-                    </div>
+                        </div>
+                    </>
                 )}
             </div>
         </div>

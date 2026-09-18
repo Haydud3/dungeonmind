@@ -31,6 +31,7 @@ export const NewCampaignProvider = ({ children }) => {
     }, []);
 
     const [loreChunks, setLoreChunks] = useState([]);
+    const [loreVolumes, setLoreVolumes] = useState([]);
 
     useEffect(() => {
         if (!gameParams || gameParams.isOffline) {
@@ -109,8 +110,14 @@ export const NewCampaignProvider = ({ children }) => {
         const loreRef = collection(campaignRef, 'lore');
         const unsubLore = onSnapshot(loreRef, (snap) => {
             let allChunks = [];
-            snap.docs.forEach(doc => { const v = doc.data(); if(v.chunks) allChunks = [...allChunks, ...v.chunks]; });
+            let allVols = [];
+            snap.docs.forEach(doc => { 
+                const v = { ...doc.data(), id: doc.id };
+                allVols.push(v);
+                if (v.chunks) allChunks = [...allChunks, ...v.chunks]; 
+            });
             setLoreChunks(allChunks);
+            setLoreVolumes(allVols);
         });
 
         return () => {
@@ -245,8 +252,13 @@ export const NewCampaignProvider = ({ children }) => {
     const editMessage = async (messageId, newContent, newType = null) => {
         if (!gameParams?.code) return;
         const messageRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'chat', messageId);
-        const updates = { content: newContent };
-        if (newType) updates.type = newType;
+        let updates = {};
+        if (typeof newContent === 'object' && newContent !== null) {
+            updates = { ...newContent };
+        } else {
+            updates = { content: newContent };
+            if (newType) updates.type = newType;
+        }
         await updateDoc(messageRef, updates);
     };
 
@@ -353,13 +365,26 @@ export const NewCampaignProvider = ({ children }) => {
 
     const saveJournalPage = async (pageId, pageData) => {
         if (!gameParams?.code) return;
-        const pageRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'journal', pageId);
+        let actualId = pageId;
+        let actualData = pageData;
+        if (typeof pageId === 'object' && !pageData) {
+            actualData = pageId;
+            actualId = pageId.id || pageId.pageId || `page_${Date.now()}`;
+        }
+        if (!actualId || typeof actualId !== 'string') {
+            actualId = `page_${Date.now()}`;
+        }
+        if (actualData && !actualData.id) {
+            actualData.id = actualId;
+        }
+        const pageRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'journal', actualId);
         
         try {
-            await setDoc(pageRef, sanitize(pageData), { merge: true });
-            console.log("Journal Page Saved!");
+            await setDoc(pageRef, sanitize(actualData), { merge: true });
+            console.log("Journal Page Saved:", actualId);
         } catch (err) {
             console.error("Error saving journal page:", err);
+            throw err;
         }
     };
 
@@ -369,7 +394,7 @@ export const NewCampaignProvider = ({ children }) => {
         await deleteDoc(pageRef);
     };
 
-    const uploadLore = async (volumes) => {
+    const uploadLore = async (volumes, docMetadata = null) => {
         if (!gameParams?.code) return;
         
         try {
@@ -377,17 +402,85 @@ export const NewCampaignProvider = ({ children }) => {
             for (let i = 0; i < volumes.length; i++) {
                 const volId = `vol_${Date.now()}_${i}`;
                 const ref = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'lore', volId);
-                await setDoc(ref, {
+                const payload = {
                     id: volId,
                     chunks: volumes[i],
                     timestamp: Date.now(),
-                    type: 'pdf_volume'
-                });
+                    type: docMetadata?.type || 'pdf_volume',
+                    docId: docMetadata?.docId || `doc_${Date.now()}`,
+                    docTitle: docMetadata?.title || docMetadata?.fileName || (volumes[i]?.[0]?.source) || 'Campaign Tome',
+                    totalPages: docMetadata?.totalPages || volumes[i]?.[0]?.totalPages || volumes[i]?.length || 1
+                };
+                if (docMetadata?.category) payload.category = docMetadata.category;
+                await setDoc(ref, payload);
             }
         } catch (e) {
             console.error("Error uploading lore:", e);
             dialog.alert("Failed to save to cloud. Check console.");
         }
+    };
+
+    const deleteLoreDoc = async (docIdentifier) => {
+        if (!gameParams?.code) return;
+        try {
+            const loreRef = collection(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'lore');
+            const snap = await getDocs(loreRef);
+            const toDelete = [];
+            snap.docs.forEach(d => {
+                const data = d.data();
+                const matchesDocId = data.docId === docIdentifier || data.id === docIdentifier;
+                const matchesTitle = data.docTitle === docIdentifier;
+                const matchesSource = data.chunks?.some(c => c.source === docIdentifier || c.docId === docIdentifier || c.docTitle === docIdentifier);
+                if (matchesDocId || matchesTitle || matchesSource) {
+                    toDelete.push(d.id);
+                }
+            });
+            for (const id of toDelete) {
+                const dRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'lore', id);
+                await deleteDoc(dRef);
+            }
+        } catch (e) {
+            console.error("Error deleting lore document:", e);
+            dialog.alert("Failed to remove tome from the archives.");
+        }
+    };
+
+    const clearAllLore = async () => {
+        if (!gameParams?.code) return;
+        if (!(await dialog.confirm("Are you sure you want to clear all books from the High Archives? This cannot be undone."))) return;
+        try {
+            const loreRef = collection(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'lore');
+            const snap = await getDocs(loreRef);
+            for (const d of snap.docs) {
+                await deleteDoc(doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'lore', d.id));
+            }
+        } catch (e) {
+            console.error("Error clearing lore:", e);
+            dialog.alert("Failed to clear archives.");
+        }
+    };
+
+    const addCustomLoreEntry = async ({ title, content, category = 'Custom Codex', tags = [] }) => {
+        if (!gameParams?.code || !title?.trim()) return;
+        const docId = `custom_${Date.now()}`;
+        const chunk = {
+            id: `chunk_${Date.now()}`,
+            docId: docId,
+            docTitle: title.trim(),
+            source: title.trim(),
+            category: category,
+            tags: tags,
+            page: 1,
+            totalPages: 1,
+            content: content.trim()
+        };
+        await uploadLore([[chunk]], {
+            docId: docId,
+            title: title.trim(),
+            totalPages: 1,
+            type: 'custom_codex',
+            category: category
+        });
     };
 
     const deleteHandout = async (handoutId) => {
@@ -397,7 +490,7 @@ export const NewCampaignProvider = ({ children }) => {
     };
 
     return (
-        <NewCampaignContext.Provider value={{ user, campaign, chatLog, journal_pages, loreChunks, error, gameParams, joinCampaign, leaveCampaign, updateCampaign, kickPlayer, banPlayer, unbanPlayer, sendMessage, editMessage, deleteMessage, clearChat, saveJournalPage, deleteJournalPage, uploadLore, deleteHandout }}>
+        <NewCampaignContext.Provider value={{ user, campaign, chatLog, journal_pages, loreChunks, loreVolumes, error, gameParams, joinCampaign, leaveCampaign, updateCampaign, kickPlayer, banPlayer, unbanPlayer, sendMessage, editMessage, deleteMessage, clearChat, saveJournalPage, deleteJournalPage, uploadLore, deleteLoreDoc, clearAllLore, addCustomLoreEntry, deleteHandout }}>
             {children}
         </NewCampaignContext.Provider>
     );

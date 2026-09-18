@@ -8,47 +8,168 @@ import { useCharacterStore } from '../../stores/useCharacterStore';
 import { rtdb } from '../../firebase';
 import { ref, set, remove } from 'firebase/database';
 
-export const CombatRibbon = ({ combat, tokens, role, className = "" }) => {
+const ALL_CONDITIONS = [
+    "Blinded", "Charmed", "Deafened", "Frightened", "Grappled", 
+    "Incapacitated", "Invisible", "Paralyzed", "Petrified", 
+    "Poisoned", "Prone", "Restrained", "Stunned", "Unconscious", "Exhaustion"
+];
+
+/* -------------------------------------------------------------------------- */
+/*                                COMBAT RIBBON                               */
+/* -------------------------------------------------------------------------- */
+export const CombatRibbon = ({ 
+    combat, 
+    tokens = [], 
+    role, 
+    className = "", 
+    allCharacters = [], 
+    user, 
+    assignments = {}, 
+    onOpenSheet 
+}) => {
     if (role === 'dm' || !combat?.active || !combat?.combatants?.length) return null;
 
     const combatants = combat.combatants;
     const turn = combat.turn || 0;
     const activeIndex = turn % combatants.length;
+    const roundNumber = combat.round || (combatants.length > 0 ? Math.floor(turn / combatants.length) + 1 : 1);
     
-    // Build the display order (Active first, then the rest wrapping around)
+    // Active combatant first, then the remaining in order
     const displayOrder = [
         combatants[activeIndex],
         ...combatants.slice(activeIndex + 1),
         ...combatants.slice(0, activeIndex)
-    ];
+    ].filter(Boolean);
+
+    const checkIsMyToken = (combatant) => {
+        if (!user) return false;
+        const t = tokens.find(tok => tok.id === combatant.tokenId);
+        const char = allCharacters.find(c => String(c.id) === String(t?.characterId || combatant.characterId));
+        const isOwner = (char?.ownerId && String(char.ownerId) === String(user.uid)) || (t?.ownerId && String(t.ownerId) === String(user.uid));
+        const myCharAssigned = assignments?.[user.uid] && String(t?.characterId || combatant.characterId) === String(assignments[user.uid]);
+        return Boolean(isOwner || myCharAssigned);
+    };
+
+    const checkCanOpen = (combatant, isMyChar) => {
+        if (role === 'dm') return true;
+        const t = tokens.find(tok => tok.id === combatant.tokenId);
+        const isNpc = combatant.isNpc ?? !allCharacters.some(ch => String(ch.id) === String(t?.characterId || combatant.characterId) && !ch.isNpc);
+        if (isNpc) {
+            // Monsters and NPCs can ONLY be viewed if given shared control or owned by this player
+            return Boolean(isMyChar || t?.isSharedControl || combatant.isSharedControl);
+        }
+        // Player characters in the party can be viewed
+        return true;
+    };
 
     return (
-        <div className={`absolute top-4 vtt-safe-top left-1/2 -translate-x-1/2 z-[60] flex items-center gap-2 sm:gap-4 bg-slate-900/90 backdrop-blur border border-slate-700 p-1.5 sm:p-2 rounded-2xl shadow-2xl max-w-[calc(100vw-2rem)] ${className}`}>
+        <div className={`absolute top-4 vtt-safe-top left-1/2 -translate-x-1/2 z-[60] flex items-center gap-2 sm:gap-3 bg-slate-950/85 backdrop-blur-xl border border-slate-800/90 p-2 sm:p-2.5 rounded-2xl shadow-[0_12px_40px_rgba(0,0,0,0.7)] max-w-[calc(100vw-2rem)] pointer-events-auto transition-all ${className}`}>
+            
+            {/* Round Badge */}
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500/20 via-amber-500/10 to-transparent border border-amber-500/40 text-amber-300 font-black text-xs tracking-wider uppercase shrink-0 shadow-sm">
+                <Icon name="swords" size={14} className="text-amber-400" />
+                <span>Rnd {roundNumber}</span>
+            </div>
 
-            <div className="flex items-center gap-2 overflow-x-auto overflow-y-hidden custom-scroll max-w-[85vw] sm:max-w-[60vw] pb-1 px-1">
+            {/* Combatant Carousel */}
+            <div className="flex items-center gap-2 overflow-x-auto overflow-y-hidden custom-scroll max-w-[85vw] sm:max-w-[62vw] py-0.5 px-1">
                 {displayOrder.map((c, i) => {
-                    const t = tokens.find(t => t.id === c.tokenId);
+                    const t = tokens.find(tok => tok.id === c.tokenId);
+                    const char = allCharacters.find(ch => String(ch.id) === String(t?.characterId || c.characterId || c.tokenId));
                     const isActive = i === 0;
-                    
+                    const isMyChar = checkIsMyToken(c);
+                    const canOpen = checkCanOpen(c, isMyChar);
+                    const displayName = t?.name || char?.name || c.name || 'Unknown';
+                    const displayImage = t?.image || t?.img || char?.image;
+                    const charIdForSheet = t?.characterId || char?.id;
+                    const tokenHp = t?.hp?.current ?? char?.hp?.current;
+                    const tokenMaxHp = t?.hp?.max ?? char?.hp?.max;
+                    const isNpc = c.isNpc ?? !allCharacters.some(ch => String(ch.id) === String(charIdForSheet) && !ch.isNpc);
+
+                    const handleOpenSheet = () => {
+                        if (!canOpen || !charIdForSheet || !onOpenSheet) return;
+                        onOpenSheet({
+                            isToken: true,
+                            tokenId: c.tokenId,
+                            characterId: charIdForSheet,
+                            hp: tokenHp,
+                            maxHp: tokenMaxHp,
+                            isPc: !isNpc,
+                            defaultMode: isNpc ? 'statblock' : 'sheet'
+                        });
+                    };
+
+                    if (isActive) {
+                        return (
+                            <div 
+                                key={c.tokenId + i}
+                                onClick={handleOpenSheet}
+                                className={`relative flex items-center gap-2.5 rounded-xl border-2 border-amber-400/90 bg-gradient-to-r from-amber-950/70 via-slate-900/95 to-slate-900 p-1.5 pr-3.5 transition-all shrink-0 shadow-[0_0_25px_rgba(245,158,11,0.35)] ring-2 ring-amber-400/20 ${canOpen ? 'cursor-pointer group' : 'cursor-default'}`}
+                                title={canOpen ? `${displayName} (Current Turn - Click to view)` : `${displayName} (Current Turn)`}
+                            >
+                                <div className="w-10 h-10 rounded-lg overflow-hidden bg-slate-950 border border-amber-400/80 shrink-0 relative shadow">
+                                    {displayImage ? (
+                                        <img src={displayImage} className="w-full h-full object-cover" referrerPolicy="no-referrer" alt={displayName} />
+                                    ) : (
+                                        <div className="w-full h-full flex items-center justify-center font-black text-amber-400 text-sm bg-amber-950/40">
+                                            {displayName[0] || '?'}
+                                        </div>
+                                    )}
+                                    <div className="absolute inset-0 ring-1 ring-inset ring-white/20 rounded-lg pointer-events-none" />
+                                </div>
+                                <div className="flex flex-col min-w-0">
+                                    <div className="flex items-center gap-1.5">
+                                        <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.2 rounded ${
+                                            isMyChar 
+                                                ? 'bg-amber-400 text-slate-950 animate-pulse' 
+                                                : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                                        }`}>
+                                            {isMyChar ? 'Your Turn' : 'Active'}
+                                        </span>
+                                        <span className="text-[10px] text-amber-400 font-bold uppercase tracking-wider flex items-center gap-0.5">
+                                            <Icon name="clock" size={10} /> {c.initiative}
+                                        </span>
+                                    </div>
+                                    <span className={`text-xs sm:text-sm font-bold text-white whitespace-nowrap truncate max-w-[130px] transition-colors ${canOpen ? 'group-hover:text-amber-300' : ''}`}>
+                                        {displayName}
+                                    </span>
+                                </div>
+                            </div>
+                        );
+                    }
+
                     return (
                         <div 
-                            key={c.tokenId + i} 
-                            className={`relative flex items-center gap-2 rounded-xl border p-1 transition-all shrink-0 ${isActive ? 'bg-slate-800 border-amber-500 scale-100 shadow-[0_0_15px_rgba(245,158,11,0.3)]' : 'bg-slate-800 border-slate-600 scale-90 opacity-80 hover:opacity-100'}`}
+                            key={c.tokenId + i}
+                            onClick={handleOpenSheet}
+                            className={`relative flex items-center gap-2 rounded-xl border border-slate-700/80 bg-slate-900/80 p-1.5 transition-all shrink-0 ${canOpen ? 'cursor-pointer group hover:bg-slate-800 hover:border-slate-500' : 'cursor-default opacity-85'}`}
+                            title={canOpen ? `${displayName} (Init: ${c.initiative} - Click to view)` : `${displayName} (Init: ${c.initiative})`}
                         >
-                            <div className="w-10 h-10 rounded-lg overflow-hidden bg-slate-900 border border-slate-700 shrink-0">
-                                {t?.image || t?.img ? <img src={t.image || t.img} className="w-full h-full object-cover"/> : <div className="w-full h-full flex items-center justify-center font-bold text-slate-500">{t?.name?.[0] || c.name[0] || '?'}</div>}
+                            <div className="w-8 h-8 rounded-lg overflow-hidden bg-slate-950 border border-slate-700 shrink-0 relative">
+                                {displayImage ? (
+                                    <img src={displayImage} className="w-full h-full object-cover" referrerPolicy="no-referrer" alt={displayName} />
+                                ) : (
+                                    <div className="w-full h-full flex items-center justify-center font-bold text-slate-400 text-xs">
+                                        {displayName[0] || '?'}
+                                    </div>
+                                )}
                             </div>
-                            {isActive && (
-                                <div className="flex flex-col pr-3">
-                                    <span className="text-sm font-bold text-white whitespace-nowrap">{t?.name || c.name}</span>
-                                    <span className="text-[10px] text-amber-500 font-bold uppercase tracking-wider">Init: {c.initiative}</span>
+                            <div className="flex flex-col hidden sm:flex pr-1 min-w-0">
+                                <span className={`text-xs font-semibold text-slate-200 whitespace-nowrap truncate max-w-[90px] transition-colors ${canOpen ? 'group-hover:text-white' : ''}`}>
+                                    {displayName}
+                                </span>
+                                <div className="flex items-center gap-1.5">
+                                    <span className="text-[9px] text-slate-400 font-bold">Init {c.initiative}</span>
+                                    {isMyChar && (
+                                        <span className="text-[8px] font-black uppercase text-emerald-400 bg-emerald-950/60 px-1 rounded border border-emerald-500/30">
+                                            You
+                                        </span>
+                                    )}
                                 </div>
-                            )}
-                            {!isActive && (
-                                <div className="absolute -top-2 -right-2 bg-slate-700 text-white text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center border border-slate-500 shadow-md">
-                                    {c.initiative}
-                                </div>
-                            )}
+                            </div>
+                            <div className="sm:hidden absolute -top-1.5 -right-1.5 bg-slate-800 text-slate-300 text-[9px] font-bold w-4 h-4 rounded-full flex items-center justify-center border border-slate-600 shadow-sm">
+                                {c.initiative}
+                            </div>
                         </div>
                     );
                 })}
@@ -57,30 +178,84 @@ export const CombatRibbon = ({ combat, tokens, role, className = "" }) => {
     );
 };
 
+/* -------------------------------------------------------------------------- */
+/*                                 EDITABLE HP                                */
+/* -------------------------------------------------------------------------- */
 export const EditableHP = ({ currentHp, maxHp, onSave }) => {
-    const [val, setVal] = useState(currentHp);
-    useEffect(() => setVal(currentHp), [currentHp]);
-    
+    const [val, setVal] = useState(currentHp ?? '');
+    useEffect(() => setVal(currentHp ?? ''), [currentHp]);
+
+    const numericHp = typeof currentHp === 'number' ? currentHp : parseInt(currentHp, 10) || 0;
+    const numericMax = typeof maxHp === 'number' ? maxHp : parseInt(maxHp, 10) || 0;
+    const pct = numericMax > 0 ? Math.max(0, Math.min(100, Math.round((numericHp / numericMax) * 100))) : 100;
+
+    let colorClass = 'text-emerald-400';
+    if (pct <= 20) colorClass = 'text-rose-400';
+    else if (pct <= 50) colorClass = 'text-amber-400';
+
+    const commitChange = () => {
+        const str = String(val).trim();
+        if (!str) {
+            setVal(currentHp ?? '');
+            return;
+        }
+
+        // Support delta notation: "+5" or "-10"
+        if (str.startsWith('+') || str.startsWith('-')) {
+            const delta = parseInt(str, 10);
+            if (!isNaN(delta)) {
+                const nextVal = Math.max(0, numericHp + delta);
+                onSave(nextVal);
+                return;
+            }
+        }
+
+        const num = parseInt(str, 10);
+        if (!isNaN(num) && num !== currentHp) {
+            onSave(Math.max(0, num));
+        } else {
+            setVal(currentHp ?? '');
+        }
+    };
+
     return (
-        <div className="flex items-center bg-slate-900 border border-slate-600 rounded overflow-hidden" onClick={e => e.stopPropagation()}>
+        <div 
+            className="flex items-center bg-slate-950/80 border border-slate-700/80 rounded-lg overflow-hidden shadow-inner focus-within:border-amber-500/80 transition-colors" 
+            onClick={e => e.stopPropagation()}
+            title="Edit HP (supports direct numbers or +/- delta)"
+        >
             <input 
-                className="w-10 bg-transparent text-center text-xs font-bold text-green-400 outline-none py-1"
+                className={`w-11 bg-transparent text-center text-xs font-black ${colorClass} outline-none py-1 focus:bg-slate-800/80`}
                 value={val}
                 onChange={(e) => setVal(e.target.value)}
-                onBlur={() => {
-                    const num = parseInt(val, 10);
-                    if (!isNaN(num) && num !== currentHp) onSave(num);
-                    else setVal(currentHp);
-                }}
+                onBlur={commitChange}
                 onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); }}
                 onFocus={(e) => e.target.select()}
+                placeholder="HP"
             />
-            <span className="text-[10px] text-slate-500 px-1.5 border-l border-slate-700 bg-slate-800 leading-none flex items-center h-full">/ {maxHp}</span>
+            <span className="text-[10px] text-slate-400 px-1.5 border-l border-slate-800 bg-slate-900/90 leading-none flex items-center h-full select-none font-bold">
+                / {maxHp ?? '-'}
+            </span>
         </div>
     );
 };
 
-export const InitiativePrompt = ({ combat, tokens, allCharacters, user, assignments, updateCampaign, campaignData, role, sendMessage, campaignCode, onDiceRoll }) => {
+/* -------------------------------------------------------------------------- */
+/*                              INITIATIVE PROMPT                             */
+/* -------------------------------------------------------------------------- */
+export const InitiativePrompt = ({ 
+    combat, 
+    tokens = [], 
+    allCharacters = [], 
+    user, 
+    assignments = {}, 
+    updateCampaign, 
+    campaignData, 
+    role, 
+    sendMessage, 
+    campaignCode, 
+    onDiceRoll 
+}) => {
     const [dismissedForCombat, setDismissedForCombat] = useState(false);
     const [manualRolls, setManualRolls] = useState({});
     
@@ -92,19 +267,16 @@ export const InitiativePrompt = ({ combat, tokens, allCharacters, user, assignme
         }
     }, [combat?.active]);
 
-    if (!combat?.active || dismissedForCombat) return null;
+    if (!combat?.active || dismissedForCombat || role === 'dm') return null;
 
     // Find all tokens controlled by this user
     const controlledTokens = tokens.filter(t => {
         const character = allCharacters.find(c => String(c.id) === String(t.characterId));
         const isOwner = (character?.ownerId && String(character.ownerId) === String(user?.uid)) || (t.ownerId && String(t.ownerId) === String(user?.uid));
         const myCharAssigned = assignments?.[user?.uid] && String(t.characterId) === String(assignments[user?.uid]);
-        return isOwner || myCharAssigned; // Exclude DM unlinked tokens to prevent spam
+        return isOwner || myCharAssigned;
     });
-    
-    if (role === 'dm') return null; // DM rolls directly from sidebar or context menu
 
-    // Filter out tokens that already have an active or pending initiative
     const combatants = combat.combatants || [];
     const pending = combat.pendingInitiatives || {};
     
@@ -121,7 +293,7 @@ export const InitiativePrompt = ({ combat, tokens, allCharacters, user, assignme
         
         tokensToRoll.forEach(t => {
             const char = allCharacters.find(c => String(c.id) === String(t.characterId));
-            const dex = char?.stats?.dex || 10;
+            const dex = t.stats?.dex || char?.stats?.dex || 10;
             const mod = Math.floor((dex - 10) / 2);
             const name = t.name || char?.name || 'Unknown';
             
@@ -139,7 +311,6 @@ export const InitiativePrompt = ({ combat, tokens, allCharacters, user, assignme
                 const roll = Math.floor(Math.random() * 20) + 1;
                 total = roll + mod;
                 
-                // Fallback chat payload
                 const payload = {
                     formula: '1d20',
                     naturalRoll: roll,
@@ -198,81 +369,144 @@ export const InitiativePrompt = ({ combat, tokens, allCharacters, user, assignme
     };
 
     return (
-        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[100] bg-slate-900/95 backdrop-blur-md border-2 border-amber-500/50 shadow-[0_0_30px_rgba(245,158,11,0.2)] rounded-xl p-4 w-[350px] animate-in zoom-in-95 fade-in duration-200 pointer-events-auto">
-            <div className="flex justify-between items-center mb-4 pb-2 border-b border-slate-700">
-                <h3 className="text-lg font-bold text-amber-500 flex items-center gap-2"><Icon name="swords" size={18}/> Roll Initiative</h3>
-                <button onClick={() => setDismissedForCombat(true)} className="text-slate-400 hover:text-white p-1 bg-slate-800 rounded"><Icon name="x" size={16}/></button>
-            </div>
-            
-            <div className="space-y-3 max-h-[40vh] overflow-y-auto custom-scroll pr-1">
-                {needsInitiative.map(t => {
-                    const char = allCharacters.find(c => String(c.id) === String(t.characterId));
-                    const img = t.image || t.img || char?.image;
-                    const name = t.name || char?.name || 'Unknown';
-                    
-                    return (
-                        <div key={t.id} className="bg-slate-800 rounded-lg p-2 border border-slate-700 flex items-center gap-3">
-                            <div className="w-10 h-10 rounded bg-slate-900 shrink-0 border border-slate-600 overflow-hidden">
-                                {img ? <img src={img} className="w-full h-full object-cover"/> : <div className="w-full h-full flex items-center justify-center font-bold text-slate-500">{name[0]}</div>}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                                <div className="font-bold text-white text-sm truncate">{name}</div>
-                                <div className="flex items-center gap-2 mt-1">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-md p-4 animate-in fade-in duration-200 pointer-events-auto">
+            <div className="bg-gradient-to-b from-slate-900 via-slate-900 to-slate-950 border-2 border-amber-500/40 shadow-[0_0_50px_rgba(245,158,11,0.25)] rounded-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[85vh] animate-in zoom-in-95 duration-200">
+                
+                {/* Modal Header */}
+                <div className="p-4 border-b border-amber-500/20 bg-gradient-to-r from-amber-950/50 via-slate-900 to-amber-950/30 flex justify-between items-center shrink-0">
+                    <div className="flex items-center gap-2.5">
+                        <div className="w-8 h-8 rounded-lg bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 shadow-inner">
+                            <Icon name="swords" size={18} />
+                        </div>
+                        <div>
+                            <h3 className="text-base font-black text-white fantasy-font tracking-wide">
+                                Roll for Initiative
+                            </h3>
+                            <p className="text-[11px] text-amber-300/80">Combat has begun! Roll to join the turn order.</p>
+                        </div>
+                    </div>
+                    <button 
+                        onClick={() => setDismissedForCombat(true)} 
+                        className="text-slate-400 hover:text-white p-1.5 bg-slate-800/80 hover:bg-slate-700 rounded-lg border border-slate-700/80 transition-colors"
+                        title="Dismiss for now"
+                    >
+                        <Icon name="x" size={16} />
+                    </button>
+                </div>
+                
+                {/* Modal Body */}
+                <div className="p-4 space-y-3 overflow-y-auto custom-scroll flex-1 min-h-0">
+                    {needsInitiative.map(t => {
+                        const char = allCharacters.find(c => String(c.id) === String(t.characterId));
+                        const img = t.image || t.img || char?.image;
+                        const name = t.name || char?.name || 'Unknown';
+                        const dex = t.stats?.dex || char?.stats?.dex || 10;
+                        const mod = Math.floor((dex - 10) / 2);
+                        const modStr = mod >= 0 ? `+${mod}` : `${mod}`;
+                        
+                        return (
+                            <div 
+                                key={t.id} 
+                                className="bg-slate-900/90 rounded-xl p-3 border border-slate-700/80 flex flex-col gap-3 shadow-md hover:border-amber-500/40 transition-all"
+                            >
+                                <div className="flex items-center gap-3">
+                                    <div className="w-11 h-11 rounded-xl bg-slate-950 shrink-0 border border-slate-700 overflow-hidden shadow">
+                                        {img ? (
+                                            <img src={img} className="w-full h-full object-cover" referrerPolicy="no-referrer" alt={name} />
+                                        ) : (
+                                            <div className="w-full h-full flex items-center justify-center font-black text-amber-400 text-sm bg-amber-950/30">
+                                                {name[0] || '?'}
+                                            </div>
+                                        )}
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                        <div className="font-bold text-white text-sm truncate">{name}</div>
+                                        <div className="text-[11px] text-amber-400/90 font-semibold flex items-center gap-1 mt-0.5">
+                                            <span>DEX Modifier:</span>
+                                            <span className="bg-amber-950/60 px-1.5 py-0.2 rounded border border-amber-500/30 font-black">{modStr}</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="flex items-center gap-2 pt-2 border-t border-slate-800/80">
                                     <button 
                                         onClick={() => submitDigital([t])}
-                                        className="text-[10px] uppercase font-bold bg-indigo-600 hover:bg-indigo-500 text-white px-2 py-1 rounded shadow flex items-center gap-1"
+                                        className="flex-1 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-white text-xs font-black py-2 px-3 rounded-lg shadow-md shadow-amber-950/40 flex items-center justify-center gap-1.5 transition-all active:scale-95"
                                     >
-                                        <Icon name="dices" size={12}/>
-                                        {(() => {
-                                            const dex = char?.stats?.dex || 10;
-                                            const mod = Math.floor((dex - 10) / 2);
-                                            return mod >= 0 ? `+${mod}` : mod;
-                                        })()}
+                                        <Icon name="dice" size={14} />
+                                        <span>Roll ({modStr})</span>
                                     </button>
-                                    <div className="text-slate-500 text-[10px] uppercase font-bold">or</div>
-                                    <div className="flex items-center gap-1 bg-slate-900 rounded border border-slate-600 focus-within:border-amber-500 overflow-hidden px-1 h-6">
+
+                                    <div className="text-slate-600 text-[10px] uppercase font-bold px-1 select-none">or</div>
+
+                                    <div className="flex items-center gap-1 bg-slate-950 rounded-lg border border-slate-700/80 focus-within:border-amber-500 overflow-hidden px-1.5 py-1">
                                         <input 
                                             type="number"
                                             value={manualRolls[t.id] || ''}
                                             onChange={(e) => setManualRolls(p => ({...p, [t.id]: e.target.value}))}
                                             onKeyDown={e => { if (e.key === 'Enter') submitManual(t); }}
-                                            placeholder="Manual"
-                                            className="w-14 bg-transparent text-xs text-white text-center py-1 outline-none no-spinner"
+                                            placeholder="Nat #"
+                                            className="w-14 bg-transparent text-xs text-white text-center outline-none no-spinner font-bold placeholder-slate-600"
                                         />
-                                        <button onClick={() => submitManual(t)} className="text-amber-500 hover:text-amber-400 p-0.5" disabled={!manualRolls[t.id]}>
-                                            <Icon name="check" size={14}/>
+                                        <button 
+                                            onClick={() => submitManual(t)} 
+                                            className="text-amber-400 hover:text-amber-300 disabled:opacity-30 p-1 rounded hover:bg-slate-800 transition-colors" 
+                                            disabled={!manualRolls[t.id]}
+                                            title="Confirm Manual Roll"
+                                        >
+                                            <Icon name="check" size={14} />
                                         </button>
                                     </div>
                                 </div>
                             </div>
-                        </div>
-                    );
-                })}
-            </div>
-            
-            {needsInitiative.length > 1 && (
-                <div className="mt-4 pt-3 border-t border-slate-700">
-                    <button 
-                        onClick={() => submitDigital(needsInitiative)}
-                        className="w-full bg-amber-600 hover:bg-amber-500 text-white font-bold py-2 rounded-lg shadow-lg flex items-center justify-center gap-2"
-                    >
-                        <Icon name="dices" size={16}/> Roll All Digitally
-                    </button>
+                        );
+                    })}
                 </div>
-            )}
+                
+                {/* Modal Footer */}
+                {needsInitiative.length > 1 && (
+                    <div className="p-4 border-t border-slate-800/90 bg-slate-950/80 shrink-0">
+                        <button 
+                            onClick={() => submitDigital(needsInitiative)}
+                            className="w-full bg-gradient-to-r from-amber-600 via-amber-500 to-amber-600 hover:from-amber-500 hover:to-amber-400 text-white font-black py-2.5 rounded-xl shadow-lg shadow-amber-950/50 flex items-center justify-center gap-2 transition-all active:scale-98 text-sm"
+                        >
+                            <Icon name="dice" size={16} /> Roll All ({needsInitiative.length}) Digitally
+                        </button>
+                    </div>
+                )}
+            </div>
         </div>
     );
 };
 
-export const CombatTrackerSidebar = ({ combat, updateCampaign, tokens, role, campaignData, allCharacters, onOpenSheet, data, campaignCode, activeMapId, className = "", onClose, onDiceRoll }) => {
+/* -------------------------------------------------------------------------- */
+/*                            COMBAT TRACKER SIDEBAR                          */
+/* -------------------------------------------------------------------------- */
+export const CombatTrackerSidebar = ({ 
+    combat, 
+    updateCampaign, 
+    tokens = [], 
+    role, 
+    campaignData, 
+    allCharacters = [], 
+    onOpenSheet, 
+    data, 
+    campaignCode, 
+    activeMapId, 
+    className = "", 
+    onClose, 
+    onDiceRoll 
+}) => {
     const [showAddModal, setShowAddModal] = useState(false);
     const [addModalSearch, setAddModalSearch] = useState('');
+    const [conditionMenuTokenId, setConditionMenuTokenId] = useState(null);
+
     const dialog = useDialog();
     const toast = useToast();
     const selectedTokenIds = useCharacterStore(state => state.selectedTokenIds);
     const setSelectedTokenIds = useCharacterStore(state => state.setSelectedTokenIds);
     const scrollContainerRef = useRef(null);
-    const [sidebarWidth, setSidebarWidth] = useState(288);
+    const [sidebarWidth, setSidebarWidth] = useState(320);
 
     const handleResizeMouseDown = useCallback((e) => {
         if (e.cancelable) e.preventDefault();
@@ -282,7 +516,7 @@ export const CombatTrackerSidebar = ({ combat, updateCampaign, tokens, role, cam
         const handleMouseMove = (moveEvent) => {
             const clientX = moveEvent.clientX || (moveEvent.touches && moveEvent.touches[0].clientX) || 0;
             const deltaX = clientX - startX;
-            const newWidth = Math.max(250, Math.min(800, startWidth + deltaX));
+            const newWidth = Math.max(280, Math.min(750, startWidth + deltaX));
             setSidebarWidth(newWidth);
         };
 
@@ -299,7 +533,7 @@ export const CombatTrackerSidebar = ({ combat, updateCampaign, tokens, role, cam
         document.addEventListener('touchend', handleMouseUp);
     }, [sidebarWidth]);
 
-    // Auto-scroll to selected token in the initiative list
+    // Auto-scroll to selected token in initiative list
     useEffect(() => {
         if (selectedTokenIds.length > 0 && scrollContainerRef.current) {
             const selectedEl = scrollContainerRef.current.querySelector(`[data-token-id="${selectedTokenIds[0]}"]`);
@@ -309,7 +543,6 @@ export const CombatTrackerSidebar = ({ combat, updateCampaign, tokens, role, cam
         }
     }, [selectedTokenIds]);
 
-    // The initiative tracker is a DM-only tool. Players see the top ribbon instead.
     if (role !== 'dm') return null;
 
     const handleAddTokenToCombat = (token) => {
@@ -401,7 +634,6 @@ export const CombatTrackerSidebar = ({ combat, updateCampaign, tokens, role, cam
         const currentCombat = combat || { active: false, round: 1, turn: 0, combatants: [] };
         const combatants = currentCombat.combatants || [];
         
-        // Find if this actor has a token on the map that isn't already added
         const mapToken = (tokens || []).find(t => String(t.characterId) === String(actor.id) && !combatants.some(c => c.tokenId === t.id));
         const targetTokenId = mapToken ? mapToken.id : `tracker_${actor.id}_${Date.now()}`;
 
@@ -448,18 +680,28 @@ export const CombatTrackerSidebar = ({ combat, updateCampaign, tokens, role, cam
     const activeIndex = combatants.length > 0 ? turn % combatants.length : 0;
     const sortedCombatants = [...combatants].sort((a,b) => b.initiative - a.initiative);
     const activeCombatant = combatants.length > 0 ? combatants[activeIndex] : null;
+    const currentRound = combat.round || (combatants.length > 0 ? Math.floor(turn / combatants.length) + 1 : 1);
 
-    const handleNext = () => updateCampaign({ campaign: { ...campaignData, combat: { ...combat, turn: turn + 1 } } });
-    const handlePrev = () => updateCampaign({ campaign: { ...campaignData, combat: { ...combat, turn: Math.max(0, turn - 1) } } });
+    const handleNext = () => {
+        const nextTurn = turn + 1;
+        const nextRound = combatants.length > 0 ? Math.floor(nextTurn / combatants.length) + 1 : (combat.round || 1);
+        updateCampaign({ campaign: { ...campaignData, combat: { ...combat, turn: nextTurn, round: nextRound } } });
+    };
+
+    const handlePrev = () => {
+        const prevTurn = Math.max(0, turn - 1);
+        const prevRound = combatants.length > 0 ? Math.floor(prevTurn / combatants.length) + 1 : (combat.round || 1);
+        updateCampaign({ campaign: { ...campaignData, combat: { ...combat, turn: prevTurn, round: prevRound } } });
+    };
+
     const handleEnd = async () => {
         if (await dialog.confirm("End combat and clear initiative tracker?")) {
-            updateCampaign({ campaign: { ...campaignData, combat: { ...combat, active: false, combatants: [], turn: 0 } } });
+            updateCampaign({ campaign: { ...campaignData, combat: { ...combat, active: false, combatants: [], turn: 0, round: 1 } } });
             if (onClose) onClose();
         }
     };
 
     const editInit = async (tokenId, currentInit) => {
-        if (role !== 'dm') return;
         const newVal = await dialog.prompt("Set new initiative:", currentInit);
         if (!newVal || isNaN(newVal)) return;
         
@@ -487,120 +729,232 @@ export const CombatTrackerSidebar = ({ combat, updateCampaign, tokens, role, cam
         }
     };
 
+    const handleToggleCondition = (tokenId, charId, isNpc, condName) => {
+        const targetCombatant = combatants.find(c => c.tokenId === tokenId);
+        const token = tokens.find(t => t.id === tokenId);
+        const char = allCharacters.find(ch => String(ch.id) === String(charId));
+        const currentConditions = targetCombatant?.conditions || token?.conditions || char?.conditions || [];
+        
+        const exists = currentConditions.some(c => (typeof c === 'string' ? c : c?.name)?.toLowerCase() === condName.toLowerCase());
+        const nextConditions = exists 
+            ? currentConditions.filter(c => (typeof c === 'string' ? c : c?.name)?.toLowerCase() !== condName.toLowerCase())
+            : [...currentConditions, condName];
+            
+        const newCombatants = combatants.map(c => c.tokenId === tokenId ? { ...c, conditions: nextConditions } : c);
+        updateCampaign({ campaign: { ...campaignData, combat: { ...combat, combatants: newCombatants } } });
+        
+        if (token && campaignCode && activeMapId) {
+            updateMap(campaignCode, activeMapId, { [`tokens.${tokenId}.conditions`]: nextConditions });
+        }
+    };
+
     return (
         <div 
-            className={`relative pointer-events-auto max-w-[calc(100vw-2rem)] max-h-[calc(100vh-8rem)] bg-slate-900/95 backdrop-blur border border-slate-700 shadow-2xl rounded-xl z-[60] flex flex-col overflow-hidden transition-all ${className} ${combat.active ? 'border-amber-500/30' : 'border-slate-700'}`}
+            className={`relative pointer-events-auto max-w-[calc(100vw-2rem)] max-h-[calc(100vh-8rem)] bg-slate-950/95 backdrop-blur-2xl border border-slate-800/90 shadow-[0_12px_40px_rgba(0,0,0,0.8)] rounded-2xl z-[60] flex flex-col overflow-hidden transition-all ${className} ${combat.active ? 'border-amber-500/40 shadow-amber-950/20' : 'border-slate-800'}`}
             style={{ width: `${sidebarWidth}px` }}
         >
+            {/* Resize Handle */}
             <div 
-                className="absolute right-0 top-0 bottom-0 w-4 cursor-col-resize hover:bg-amber-500/50 z-[100] touch-none"
+                className="absolute right-0 top-0 bottom-0 w-3 cursor-col-resize hover:bg-amber-500/40 z-[100] touch-none transition-colors"
                 onMouseDown={handleResizeMouseDown}
                 onTouchStart={handleResizeMouseDown}
+                title="Drag to resize tracker"
             />
-            <div className="p-2 sm:p-2.5 bg-slate-800 border-b border-slate-700 flex justify-between items-center shrink-0 gap-1 overflow-hidden">
-                <h3 className="text-base sm:text-lg fantasy-font text-amber-500 flex items-center gap-1.5 truncate shrink min-w-0"><Icon name="sword" size={16}/> Initiative</h3>
-                {role === 'dm' && (
-                    <div className="flex gap-0.5 shrink-0 ml-auto items-center">
-                        <button onClick={() => setShowAddModal(true)} className="p-1 hover:bg-slate-600 rounded text-slate-400 hover:text-white" title="Add Combatant">
-                            <Icon name="plus" size={14}/>
-                        </button>
-                        <button onClick={handlePrev} disabled={!combat.active} className="p-1 hover:bg-slate-600 rounded text-slate-400 hover:text-white disabled:text-slate-600 disabled:hover:bg-transparent" title="Previous Turn"><Icon name="chevron-left" size={14}/></button>
-                        <button onClick={handleNext} disabled={!combat.active} className="p-1 hover:bg-slate-600 rounded text-slate-400 hover:text-white disabled:text-slate-600 disabled:hover:bg-transparent" title="Next Turn"><Icon name="chevron-right" size={14}/></button>
-                        <div className="w-px h-4 bg-slate-700 my-auto mx-0.5"></div>
-                        <button onClick={handleEnd} disabled={!combat.active} className="p-1 hover:bg-red-900/50 rounded text-red-500 hover:text-red-400 disabled:text-slate-600 disabled:hover:bg-transparent" title="End Combat"><Icon name="trash-2" size={14}/></button>
-                        <button onClick={onClose} className="p-1 hover:bg-slate-600 rounded text-slate-400 hover:text-white" title="Close Tracker"><Icon name="x" size={14}/></button>
+
+            {/* DM Header */}
+            <div className="p-3 bg-gradient-to-r from-slate-900 via-slate-900 to-slate-950 border-b border-slate-800/90 flex justify-between items-center shrink-0 gap-2 overflow-hidden">
+                <div className="flex items-center gap-2 min-w-0">
+                    <div className="w-7 h-7 rounded-lg bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 shrink-0">
+                        <Icon name="swords" size={15} />
                     </div>
-                )}
+                    <h3 className="text-sm sm:text-base fantasy-font font-black text-white tracking-wide truncate">
+                        Initiative
+                    </h3>
+                    <div className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-amber-950/60 border border-amber-500/30 text-amber-400 text-[10px] font-black uppercase tracking-wider shrink-0">
+                        <span>Rnd {currentRound}</span>
+                    </div>
+                </div>
+
+                {/* Toolbar buttons */}
+                <div className="flex items-center gap-1 shrink-0">
+                    <button 
+                        onClick={() => setShowAddModal(true)} 
+                        className="p-1.5 hover:bg-slate-800 rounded-lg text-amber-400 hover:text-amber-300 border border-transparent hover:border-slate-700 transition-all" 
+                        title="Add Combatant"
+                    >
+                        <Icon name="plus" size={15} />
+                    </button>
+                    <button 
+                        onClick={handlePrev} 
+                        disabled={!combat.active} 
+                        className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white disabled:opacity-30 disabled:hover:bg-transparent transition-all" 
+                        title="Previous Turn"
+                    >
+                        <Icon name="chevron-left" size={15} />
+                    </button>
+                    <button 
+                        onClick={handleNext} 
+                        disabled={!combat.active} 
+                        className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white disabled:opacity-30 disabled:hover:bg-transparent transition-all" 
+                        title="Next Turn"
+                    >
+                        <Icon name="chevron-right" size={15} />
+                    </button>
+                    <div className="w-px h-4 bg-slate-800 my-auto mx-0.5" />
+                    <button 
+                        onClick={handleEnd} 
+                        disabled={!combat.active} 
+                        className="p-1.5 hover:bg-rose-950/50 rounded-lg text-rose-500 hover:text-rose-400 disabled:opacity-30 disabled:hover:bg-transparent transition-all" 
+                        title="End Combat"
+                    >
+                        <Icon name="trash-2" size={15} />
+                    </button>
+                    <button 
+                        onClick={onClose} 
+                        className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white border border-transparent hover:border-slate-700 transition-all" 
+                        title="Close Tracker"
+                    >
+                        <Icon name="x" size={15} />
+                    </button>
+                </div>
             </div>
             
-            {role === 'dm' && combat.active && Object.keys(combat.pendingInitiatives || {}).length > 0 && (
-                <div className="bg-slate-800/50 px-3 py-2 border-b border-slate-700 flex justify-end items-center shrink-0">
+            {/* Pending Player Rolls Banner */}
+            {combat.active && Object.keys(combat.pendingInitiatives || {}).length > 0 && (
+                <div className="bg-gradient-to-r from-amber-950/40 via-slate-900 to-amber-950/40 px-3 py-2 border-b border-amber-500/30 flex justify-between items-center shrink-0">
+                    <span className="text-[11px] font-bold text-amber-300 flex items-center gap-1.5">
+                        <Icon name="clock" size={13} className="text-amber-400 animate-pulse" />
+                        <span>Pending ({Object.keys(combat.pendingInitiatives).length})</span>
+                    </span>
                     <button 
                         onClick={() => {
                             const newCombatants = [...(combat.combatants || [])];
-                            Object.entries(combat.pendingInitiatives || {}).forEach(([tokenId, data]) => {
+                            Object.entries(combat.pendingInitiatives || {}).forEach(([tokenId, pendingData]) => {
                                 const idx = newCombatants.findIndex(c => c.tokenId === tokenId);
                                 if (idx !== -1) {
-                                    newCombatants[idx].initiative = data.initiative;
+                                    newCombatants[idx].initiative = pendingData.initiative;
                                 } else {
                                     newCombatants.push({
                                         tokenId,
-                                        characterId: data.characterId,
-                                        initiative: data.initiative,
-                                        name: data.name,
-                                        isNpc: data.isNpc
+                                        characterId: pendingData.characterId,
+                                        initiative: pendingData.initiative,
+                                        name: pendingData.name,
+                                        isNpc: pendingData.isNpc
                                     });
                                 }
                             });
-                            updateCampaign({ campaign: { ...campaignData, combat: { ...combat, combatants: newCombatants.sort((a,b) => b.initiative - a.initiative), pendingInitiatives: {} } } });
+                            updateCampaign({ 
+                                campaign: { 
+                                    ...campaignData, 
+                                    combat: { 
+                                        ...combat, 
+                                        combatants: newCombatants.sort((a,b) => b.initiative - a.initiative), 
+                                        pendingInitiatives: {} 
+                                    } 
+                                } 
+                            });
                         }}
-                        className="bg-green-600 hover:bg-green-500 text-white text-xs font-bold px-3 py-1.5 rounded flex items-center gap-1 shadow-md transition-colors"
+                        className="bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-black px-2.5 py-1 rounded-lg flex items-center gap-1 shadow-md transition-all active:scale-95"
                     >
-                        <Icon name="check-check" size={14}/> Accept All Pending
+                        <Icon name="check" size={13} /> Accept All
                     </button>
                 </div>
             )}
             
-            <div className="flex-1 overflow-y-auto custom-scroll p-2 space-y-2" ref={scrollContainerRef}>
-                {role === 'dm' && Object.entries(combat.pendingInitiatives || {}).map(([tokenId, data]) => {
+            {/* Combatant List Container */}
+            <div className="flex-1 overflow-y-auto custom-scroll p-2.5 space-y-2" ref={scrollContainerRef}>
+                
+                {/* Render Pending Roll Cards */}
+                {Object.entries(combat.pendingInitiatives || {}).map(([tokenId, pendingData]) => {
                     const t = tokens.find(tok => tok.id === tokenId);
-                    const char = allCharacters.find(ch => String(ch.id) === String(t?.characterId || data.characterId));
+                    const char = allCharacters.find(ch => String(ch.id) === String(t?.characterId || pendingData.characterId));
                     const img = t?.image || t?.img || char?.image;
-                    const name = data.name;
+                    const name = pendingData.name;
                     
                     return (
-                        <div key={`pending-${tokenId}`} className="relative flex flex-col rounded-lg border border-amber-500/50 bg-amber-900/20 p-2">
-                            <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 rounded bg-slate-900 border border-slate-600 shrink-0 overflow-hidden">
-                                    {img ? <img src={img} className="w-full h-full object-cover"/> : <div className="w-full h-full flex items-center justify-center font-bold text-slate-500">{name[0]}</div>}
+                        <div 
+                            key={`pending-${tokenId}`} 
+                            className="relative flex items-center gap-3 rounded-xl border border-amber-500/50 bg-gradient-to-r from-amber-950/40 to-slate-900/90 p-2.5 shadow-md animate-in fade-in"
+                        >
+                            <div className="w-10 h-10 rounded-xl bg-slate-950 border border-amber-500/50 shrink-0 overflow-hidden shadow">
+                                {img ? (
+                                    <img src={img} className="w-full h-full object-cover" referrerPolicy="no-referrer" alt={name} />
+                                ) : (
+                                    <div className="w-full h-full flex items-center justify-center font-black text-amber-400 text-sm">
+                                        {name[0] || '?'}
+                                    </div>
+                                )}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                                <div className="font-bold text-xs text-white truncate flex items-center gap-1.5">
+                                    <span>{name}</span>
+                                    <span className="text-amber-400 text-[9px] uppercase font-bold bg-amber-950/60 px-1 rounded border border-amber-500/30">
+                                        {pendingData.method}
+                                    </span>
                                 </div>
-                                <div className="flex-1 min-w-0">
-                                    <div className="font-bold text-sm text-white truncate">{name} <span className="text-amber-500 text-[10px] uppercase ml-1">({data.method})</span></div>
-                                    <div className="text-xl font-bold text-amber-400 mt-1">{data.initiative}</div>
+                                <div className="text-lg font-black text-amber-400 mt-0.5 leading-none">
+                                    {pendingData.initiative} <span className="text-[10px] text-slate-400 font-normal">Init</span>
                                 </div>
-                                <div className="flex flex-col gap-1 shrink-0">
-                                    <button 
-                                        onClick={() => {
-                                            const newCombatants = [...(combat.combatants || [])];
-                                            if (!newCombatants.some(c => c.tokenId === tokenId)) {
-                                                newCombatants.push({
-                                                    tokenId,
-                                                    characterId: data.characterId,
-                                                    initiative: data.initiative,
-                                                    name: data.name,
-                                                    isNpc: data.isNpc
-                                                });
-                                            } else {
-                                                // Update existing initiative
-                                                const idx = newCombatants.findIndex(c => c.tokenId === tokenId);
-                                                newCombatants[idx].initiative = data.initiative;
-                                            }
-                                            const newPending = { ...combat.pendingInitiatives };
-                                            delete newPending[tokenId];
-                                            updateCampaign({ campaign: { ...campaignData, combat: { ...combat, combatants: newCombatants.sort((a,b) => b.initiative - a.initiative), pendingInitiatives: newPending } } });
-                                        }}
-                                        className="bg-green-600 hover:bg-green-500 text-white rounded p-1"
-                                        title="Accept Roll"
-                                    >
-                                        <Icon name="check" size={14}/>
-                                    </button>
-                                    <button 
-                                        onClick={() => {
-                                            const newPending = { ...combat.pendingInitiatives };
-                                            delete newPending[tokenId];
-                                            updateCampaign({ campaign: { ...campaignData, combat: { ...combat, pendingInitiatives: newPending } } });
-                                        }}
-                                        className="bg-red-600 hover:bg-red-500 text-white rounded p-1"
-                                        title="Deny Roll"
-                                    >
-                                        <Icon name="x" size={14}/>
-                                    </button>
-                                </div>
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                                <button 
+                                    onClick={() => {
+                                        const newCombatants = [...(combat.combatants || [])];
+                                        const idx = newCombatants.findIndex(c => c.tokenId === tokenId);
+                                        if (idx !== -1) {
+                                            newCombatants[idx].initiative = pendingData.initiative;
+                                        } else {
+                                            newCombatants.push({
+                                                tokenId,
+                                                characterId: pendingData.characterId,
+                                                initiative: pendingData.initiative,
+                                                name: pendingData.name,
+                                                isNpc: pendingData.isNpc
+                                            });
+                                        }
+                                        const newPending = { ...combat.pendingInitiatives };
+                                        delete newPending[tokenId];
+                                        updateCampaign({ 
+                                            campaign: { 
+                                                ...campaignData, 
+                                                combat: { 
+                                                    ...combat, 
+                                                    combatants: newCombatants.sort((a,b) => b.initiative - a.initiative), 
+                                                    pendingInitiatives: newPending 
+                                                } 
+                                            } 
+                                        });
+                                    }}
+                                    className="bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg p-1.5 shadow transition-colors"
+                                    title="Accept Roll"
+                                >
+                                    <Icon name="check" size={14} />
+                                </button>
+                                <button 
+                                    onClick={() => {
+                                        const newPending = { ...combat.pendingInitiatives };
+                                        delete newPending[tokenId];
+                                        updateCampaign({ 
+                                            campaign: { 
+                                                ...campaignData, 
+                                                combat: { 
+                                                    ...combat, 
+                                                    pendingInitiatives: newPending 
+                                                } 
+                                            } 
+                                        });
+                                    }}
+                                    className="bg-rose-600 hover:bg-rose-500 text-white rounded-lg p-1.5 shadow transition-colors"
+                                    title="Deny Roll"
+                                >
+                                    <Icon name="x" size={14} />
+                                </button>
                             </div>
                         </div>
                     );
                 })}
 
+                {/* Render Combatants */}
                 {sortedCombatants.length > 0 ? sortedCombatants.map((c, i) => {
                     const t = tokens.find(tok => tok.id === c.tokenId);
                     const char = allCharacters.find(ch => String(ch.id) === String(t?.characterId || c.characterId || c.tokenId));
@@ -610,104 +964,248 @@ export const CombatTrackerSidebar = ({ combat, updateCampaign, tokens, role, cam
                     const isNpc = c.isNpc;
                     const hp = isNpc ? (t?.hp?.current ?? char?.hp?.current ?? '-') : (char?.hp?.current ?? '-');
                     const maxHp = isNpc ? (t?.hp?.max ?? char?.hp?.max ?? '-') : (char?.hp?.max ?? '-');
-                    const ac = char?.ac ?? '-';
+                    const ac = char?.ac ?? t?.ac ?? '-';
                     
-                    const displayName = t?.name || char?.name || c.name;
+                    const displayName = t?.name || char?.name || c.name || 'Unknown';
                     const displayImage = t?.image || t?.img || char?.image;
                     const charIdForSheet = t?.characterId || char?.id;
+
+                    const tokenHpNum = typeof hp === 'number' ? hp : parseInt(hp, 10) || 0;
+                    const tokenMaxHpNum = typeof maxHp === 'number' ? maxHp : parseInt(maxHp, 10) || 0;
+                    const hpPct = tokenMaxHpNum > 0 ? Math.max(0, Math.min(100, Math.round((tokenHpNum / tokenMaxHpNum) * 100))) : 100;
+
+                    let hpBarColor = 'bg-emerald-500';
+                    if (hpPct <= 20) hpBarColor = 'bg-rose-500';
+                    else if (hpPct <= 50) hpBarColor = 'bg-amber-500';
+
+                    const conditions = c.conditions || t?.conditions || char?.conditions || [];
                     
                     return (
                         <div 
                             key={c.tokenId} 
                             data-token-id={c.tokenId}
                             onClick={() => setSelectedTokenIds([c.tokenId])}
-                            className={`relative flex flex-col rounded-lg border p-2 transition-all cursor-pointer ${
-                                isActive ? 'bg-slate-800 border-amber-500 shadow-[0_0_10px_rgba(245,158,11,0.2)]' : 
-                                isSelected ? 'bg-indigo-900/40 border-indigo-500 shadow-[0_0_10px_rgba(99,102,241,0.2)]' : 
-                                'bg-slate-800/50 border-slate-700 hover:border-slate-500'
+                            className={`relative flex flex-col rounded-xl border transition-all cursor-pointer overflow-hidden ${
+                                isActive 
+                                    ? 'bg-gradient-to-r from-amber-950/60 via-slate-900 to-slate-900 border-amber-500/80 shadow-[0_0_20px_rgba(245,158,11,0.25)] ring-1 ring-amber-400/40' 
+                                    : isSelected 
+                                        ? 'bg-gradient-to-r from-indigo-950/60 via-slate-900 to-slate-900 border-indigo-500/80 shadow-[0_0_15px_rgba(99,102,241,0.2)]' 
+                                        : 'bg-slate-900/70 border-slate-800/80 hover:border-slate-700 hover:bg-slate-900/90'
                             }`}
                         >
-                            <div className="flex items-center gap-3">
-                                {/* Avatar (Click to open sheet) */}
-                                <div 
-                                    className="w-10 h-10 rounded bg-slate-900 border border-slate-600 shrink-0 overflow-hidden cursor-pointer hover:border-amber-400 transition-colors"
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        setSelectedTokenIds([c.tokenId]);
-                                        if (charIdForSheet && onOpenSheet) {
-                                            const tokenHp = t?.hp?.current ?? char?.hp?.current;
-                                            const tokenMaxHp = t?.hp?.max ?? char?.hp?.max;
-                                            onOpenSheet({ isToken: true, tokenId: c.tokenId, characterId: charIdForSheet, hp: tokenHp, maxHp: tokenMaxHp });
-                                        }
-                                    }}
-                                    title={`Open ${displayName}'s Sheet`}
-                                >
-                                    {displayImage ? <img src={displayImage} className="w-full h-full object-cover"/> : <div className="w-full h-full flex items-center justify-center font-bold text-slate-500 text-lg">{displayName?.[0] || '?'}</div>}
+                            {/* Left Accent Bar */}
+                            <div className={`absolute left-0 top-0 bottom-0 w-1 ${
+                                isActive ? 'bg-amber-400' : isSelected ? 'bg-indigo-400' : 'bg-transparent'
+                            }`} />
+
+                            <div className="p-2.5 pl-3.5 flex items-center gap-2.5">
+                                {/* Order Number & Avatar */}
+                                <div className="flex items-center gap-2 shrink-0">
+                                    <span className="text-[10px] font-bold text-slate-500 w-3 text-right">
+                                        {i + 1}
+                                    </span>
+                                    <div 
+                                        className={`w-10 h-10 rounded-xl bg-slate-950 overflow-hidden cursor-pointer transition-all shrink-0 border relative shadow ${
+                                            isActive 
+                                                ? 'border-amber-400 ring-2 ring-amber-400/30' 
+                                                : isNpc ? 'border-rose-500/50 hover:border-rose-400' : 'border-indigo-500/50 hover:border-indigo-400'
+                                        }`}
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            setSelectedTokenIds([c.tokenId]);
+                                            if (charIdForSheet && onOpenSheet) {
+                                                onOpenSheet({ 
+                                                    isToken: true, 
+                                                    tokenId: c.tokenId, 
+                                                    characterId: charIdForSheet, 
+                                                    hp: tokenHpNum, 
+                                                    maxHp: tokenMaxHpNum,
+                                                    isPc: !isNpc,
+                                                    defaultMode: isNpc ? 'statblock' : 'sheet'
+                                                });
+                                            }
+                                        }}
+                                        title={`Open ${displayName}'s ${isNpc ? 'Statblock' : 'Character Sheet'}`}
+                                    >
+                                        {displayImage ? (
+                                            <img src={displayImage} className="w-full h-full object-cover" referrerPolicy="no-referrer" alt={displayName} />
+                                        ) : (
+                                            <div className="w-full h-full flex items-center justify-center font-black text-slate-400 text-xs bg-slate-900">
+                                                {displayName[0] || '?'}
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
                                 
                                 {/* Info */}
-                                <div className="flex-1 min-w-0 flex flex-col">
-                                    <div className="font-bold text-sm text-white truncate pr-5">{displayName}</div>
-                                    <div className="flex items-center gap-3 mt-1">
-                                        {/* Init */}
-                                        <div 
-                                            className={`flex items-center gap-1 text-[10px] uppercase font-bold cursor-pointer hover:text-amber-400 ${isActive ? 'text-amber-500' : 'text-slate-400'}`}
+                                <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-1.5">
+                                        <span className="font-bold text-xs sm:text-sm text-white truncate max-w-[130px]">
+                                            {displayName}
+                                        </span>
+                                        {isActive && (
+                                            <span className="text-[9px] font-black uppercase tracking-wider text-amber-300 bg-amber-950/80 px-1 rounded border border-amber-500/40">
+                                                Turn
+                                            </span>
+                                        )}
+                                    </div>
+                                    <div className="flex items-center gap-2 mt-1">
+                                        {/* Initiative */}
+                                        <button 
+                                            type="button"
+                                            className={`flex items-center gap-1 text-[10px] uppercase font-bold hover:text-amber-300 px-1 py-0.2 rounded transition-colors ${
+                                                isActive ? 'text-amber-400 bg-amber-950/40' : 'text-slate-400 bg-slate-800/60'
+                                            }`}
                                             onClick={(e) => {
                                                 e.stopPropagation();
                                                 editInit(c.tokenId, c.initiative);
                                             }}
-                                            title="Edit Initiative"
+                                            title="Click to edit initiative"
                                         >
-                                            <Icon name="clock" size={10}/> {c.initiative}
-                                        </div>
+                                            <Icon name="clock" size={10} /> {c.initiative}
+                                        </button>
+
                                         {/* AC */}
-                                        <div className="flex items-center gap-1 text-[10px] uppercase font-bold text-blue-400" title="Armor Class">
-                                            <Icon name="shield" size={10}/> {ac}
+                                        <div className="flex items-center gap-1 text-[10px] uppercase font-bold text-sky-400 bg-sky-950/40 px-1 py-0.2 rounded border border-sky-500/20" title="Armor Class">
+                                            <Icon name="shield" size={10} /> {ac}
                                         </div>
+
+                                        {/* Condition Toggle Icon */}
+                                        <button 
+                                            type="button"
+                                            className="text-[10px] text-slate-400 hover:text-amber-400 hover:bg-slate-800 p-0.5 rounded transition-colors"
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                setConditionMenuTokenId(conditionMenuTokenId === c.tokenId ? null : c.tokenId);
+                                            }}
+                                            title="Toggle conditions"
+                                        >
+                                            <Icon name="activity" size={11} />
+                                        </button>
                                     </div>
                                 </div>
 
-                                {/* HP (Editable) */}
-                                {char && (role === 'dm' || !isNpc) && (
-                                    <div className="shrink-0 flex flex-col items-end">
-                                        <div className="text-[9px] text-slate-500 font-bold uppercase mb-0.5">HP</div>
-                                        {role === 'dm' ? (
-                                            <EditableHP currentHp={hp} maxHp={maxHp} onSave={(val) => updateCharHp(c.tokenId, charIdForSheet, isNpc, val)} />
-                                        ) : (
-                                            <div className="text-xs font-bold text-green-400">{hp} <span className="text-slate-500 text-[10px]">/ {maxHp}</span></div>
+                                {/* HP & Action controls */}
+                                <div className="shrink-0 flex items-center gap-2">
+                                    <div className="flex flex-col items-end">
+                                        <EditableHP 
+                                            currentHp={hp} 
+                                            maxHp={maxHp} 
+                                            onSave={(val) => updateCharHp(c.tokenId, charIdForSheet, isNpc, val)} 
+                                        />
+                                        {/* Mini HP bar */}
+                                        {tokenMaxHpNum > 0 && (
+                                            <div className="w-full h-1 bg-slate-800 rounded-full mt-1 overflow-hidden">
+                                                <div 
+                                                    className={`h-full transition-all duration-300 ${hpBarColor}`}
+                                                    style={{ width: `${hpPct}%` }}
+                                                />
+                                            </div>
                                         )}
                                     </div>
-                                )}
+
+                                    {/* Remove from Combat */}
+                                    <button 
+                                        type="button"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            const newCombatants = combatants.filter(x => x.tokenId !== c.tokenId);
+                                            updateCampaign({ campaign: { ...campaignData, combat: { ...combat, combatants: newCombatants, active: newCombatants.length > 0 } } });
+                                        }}
+                                        className="text-slate-500 hover:text-rose-400 p-1 rounded hover:bg-slate-800/80 transition-colors"
+                                        title="Remove from Combat"
+                                    >
+                                        <Icon name="x" size={13} />
+                                    </button>
+                                </div>
                             </div>
-                            
-                            {role === 'dm' && (
-                                <button 
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        const newCombatants = combatants.filter(x => x.tokenId !== c.tokenId);
-                                        updateCampaign({ campaign: { ...campaignData, combat: { ...combat, combatants: newCombatants, active: newCombatants.length > 0 } } });
-                                    }}
-                                    className="absolute top-1 right-1 text-slate-600 hover:text-red-500 transition-colors p-1"
-                                    title="Remove from Combat"
+
+                            {/* Condition Chips List */}
+                            {conditions.length > 0 && (
+                                <div className="px-3 pb-2 flex flex-wrap gap-1">
+                                    {conditions.map(cond => {
+                                        const cName = typeof cond === 'string' ? cond : cond.name;
+                                        return (
+                                            <span 
+                                                key={cName}
+                                                className="inline-flex items-center gap-1 text-[9px] font-bold bg-amber-950/70 text-amber-300 border border-amber-500/40 px-1.5 py-0.2 rounded-md"
+                                            >
+                                                <span>{cName}</span>
+                                                <button 
+                                                    type="button"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handleToggleCondition(c.tokenId, charIdForSheet, isNpc, cName);
+                                                    }}
+                                                    className="hover:text-rose-400 transition-colors"
+                                                    title={`Remove ${cName}`}
+                                                >
+                                                    <Icon name="x" size={9} />
+                                                </button>
+                                            </span>
+                                        );
+                                    })}
+                                </div>
+                            )}
+
+                            {/* Conditions Selector Popover */}
+                            {conditionMenuTokenId === c.tokenId && (
+                                <div 
+                                    className="p-2 border-t border-slate-800 bg-slate-950/95 flex flex-wrap gap-1 animate-in fade-in"
+                                    onClick={(e) => e.stopPropagation()}
                                 >
-                                    <Icon name="x" size={12} />
-                                </button>
+                                    <div className="w-full flex justify-between items-center mb-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                                        <span>Conditions</span>
+                                        <button 
+                                            onClick={() => setConditionMenuTokenId(null)}
+                                            className="text-slate-400 hover:text-white"
+                                        >
+                                            <Icon name="x" size={12} />
+                                        </button>
+                                    </div>
+                                    {ALL_CONDITIONS.map(condName => {
+                                        const isActiveCond = conditions.some(co => (typeof co === 'string' ? co : co?.name)?.toLowerCase() === condName.toLowerCase());
+                                        return (
+                                            <button 
+                                                key={condName}
+                                                type="button"
+                                                onClick={() => handleToggleCondition(c.tokenId, charIdForSheet, isNpc, condName)}
+                                                className={`text-[9px] font-bold px-1.5 py-0.5 rounded transition-all ${
+                                                    isActiveCond 
+                                                        ? 'bg-amber-500 text-slate-950 font-black shadow-sm' 
+                                                        : 'bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700'
+                                                }`}
+                                            >
+                                                {condName}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
                             )}
                         </div>
                     );
                 }) : (
-                    <div className="text-center p-6 text-xs text-slate-500 italic">
-                        <Icon name="swords" size={24} className="mx-auto text-slate-600 mb-2" />
-                        No one is in combat yet.
-                        <br/>
-                        Roll initiative from a token's context menu or add actors manually via the <Icon name="plus" size={12} className="inline"/> button above.
+                    <div className="text-center p-8 text-xs text-slate-500 italic space-y-2">
+                        <div className="w-10 h-10 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center mx-auto text-slate-600">
+                            <Icon name="swords" size={20} />
+                        </div>
+                        <div className="font-semibold text-slate-400">No one is in combat yet.</div>
+                        <p className="text-[11px] leading-relaxed text-slate-500">
+                            Add tokens from the map or party via the <span className="text-amber-400 font-bold">+</span> button above, or roll initiative from a token's context menu.
+                        </p>
                     </div>
                 )}
             </div>
-            {role === 'dm' && combat.active && (
-                <div className="p-2 bg-slate-900 border-t border-slate-700">
-                    <button onClick={handleNext} className="w-full bg-amber-600 hover:bg-amber-500 text-white py-2 rounded-lg font-bold shadow-lg flex items-center justify-center gap-2 transition-all">
-                        Next Turn <Icon name="arrow-right" size={16}/>
+
+            {/* Bottom Turn Advancer */}
+            {combat.active && (
+                <div className="p-3 bg-gradient-to-t from-slate-950 to-slate-900 border-t border-slate-800/90 shrink-0">
+                    <button 
+                        onClick={handleNext} 
+                        className="w-full bg-gradient-to-r from-amber-600 via-amber-500 to-amber-600 hover:from-amber-500 hover:to-amber-400 text-white py-2.5 rounded-xl font-black text-sm shadow-lg shadow-amber-950/50 flex items-center justify-center gap-2 transition-all active:scale-98"
+                    >
+                        <span>Next Turn</span>
+                        <Icon name="arrow-right" size={16} />
                     </button>
                 </div>
             )}
@@ -766,29 +1264,29 @@ export const CombatTrackerSidebar = ({ combat, updateCampaign, tokens, role, cam
                 });
 
                 return createPortal(
-                    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in zoom-in-95" onClick={() => setShowAddModal(false)}>
+                    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-in fade-in duration-200" onClick={() => setShowAddModal(false)}>
                         <div 
-                            className="bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl w-full max-w-lg flex flex-col max-h-[85vh] overflow-hidden"
+                            className="bg-gradient-to-b from-slate-900 via-slate-900 to-slate-950 border border-slate-700/80 rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.8)] w-full max-w-lg flex flex-col max-h-[85vh] overflow-hidden animate-in zoom-in-95 duration-200"
                             onClick={(e) => e.stopPropagation()}
                         >
-                            <div className="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-800 shrink-0">
-                                <h3 className="font-bold text-white flex items-center gap-2 text-base">
-                                    <Icon name="users" size={18} className="text-amber-500"/> Add to Combat
+                            <div className="p-4 border-b border-slate-800 bg-slate-900/90 flex justify-between items-center shrink-0">
+                                <h3 className="font-black text-white flex items-center gap-2 text-base fantasy-font tracking-wide">
+                                    <Icon name="users" size={18} className="text-amber-400" /> Add to Combat
                                 </h3>
-                                <button onClick={() => setShowAddModal(false)} className="text-slate-400 hover:text-white p-1 rounded hover:bg-slate-700">
-                                    <Icon name="x" size={20}/>
+                                <button onClick={() => setShowAddModal(false)} className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors">
+                                    <Icon name="x" size={18} />
                                 </button>
                             </div>
                             
-                            <div className="p-3 border-b border-slate-800 bg-slate-950/60 shrink-0">
+                            <div className="p-3 border-b border-slate-800 bg-slate-950/80 shrink-0">
                                 <div className="relative">
-                                    <Icon name="search" size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                    <Icon name="search" size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
                                     <input
                                         type="text"
                                         placeholder="Search tokens, party, NPCs..."
                                         value={addModalSearch}
                                         onChange={(e) => setAddModalSearch(e.target.value)}
-                                        className="w-full bg-slate-800 text-sm text-white pl-9 pr-8 py-2 rounded-lg border border-slate-700 focus:border-amber-500 focus:outline-none placeholder-slate-500"
+                                        className="w-full bg-slate-900 text-sm text-white pl-9 pr-8 py-2 rounded-xl border border-slate-700/80 focus:border-amber-500/80 focus:outline-none placeholder-slate-500 transition-colors"
                                         autoFocus
                                     />
                                     {addModalSearch && (
@@ -796,7 +1294,7 @@ export const CombatTrackerSidebar = ({ combat, updateCampaign, tokens, role, cam
                                             onClick={() => setAddModalSearch('')} 
                                             className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
                                         >
-                                            <Icon name="x" size={14}/>
+                                            <Icon name="x" size={14} />
                                         </button>
                                     )}
                                 </div>
@@ -807,15 +1305,15 @@ export const CombatTrackerSidebar = ({ combat, updateCampaign, tokens, role, cam
                                 {filteredMapTokens.length > 0 && (
                                     <div>
                                         <div className="flex justify-between items-center mb-2.5">
-                                            <h4 className="text-xs uppercase font-bold text-amber-500 tracking-wider flex items-center gap-1.5">
+                                            <h4 className="text-xs uppercase font-black text-amber-400 tracking-wider flex items-center gap-1.5">
                                                 <Icon name="map-pin" size={13} /> Active on Map ({filteredMapTokens.length})
                                             </h4>
                                             {unaddedMapTokensCount > 1 && (
                                                 <button 
                                                     onClick={handleAddAllMapTokens}
-                                                    className="text-[10px] uppercase font-bold bg-amber-600 hover:bg-amber-500 text-white px-2 py-1 rounded shadow flex items-center gap-1 transition-all"
+                                                    className="text-[10px] uppercase font-black bg-amber-600 hover:bg-amber-500 text-white px-2.5 py-1 rounded-lg shadow flex items-center gap-1 transition-all active:scale-95"
                                                 >
-                                                    <Icon name="plus" size={12}/> Add All ({unaddedMapTokensCount})
+                                                    <Icon name="plus" size={12} /> Add All ({unaddedMapTokensCount})
                                                 </button>
                                             )}
                                         </div>
@@ -830,20 +1328,28 @@ export const CombatTrackerSidebar = ({ combat, updateCampaign, tokens, role, cam
                                                 return (
                                                     <div 
                                                         key={`map-token-${t.id}`}
-                                                        className={`flex items-center gap-3 p-2.5 rounded-lg border transition-all ${
+                                                        className={`flex items-center gap-3 p-2.5 rounded-xl border transition-all ${
                                                             isAlreadyInCombat 
-                                                                ? 'bg-slate-800/40 border-slate-700/60 opacity-60' 
-                                                                : 'bg-slate-800/90 border-slate-700 hover:border-amber-500 cursor-pointer group shadow-sm'
+                                                                ? 'bg-slate-900/40 border-slate-800/60 opacity-60' 
+                                                                : 'bg-slate-900/90 border-slate-800 hover:border-amber-500/60 cursor-pointer group shadow-sm'
                                                         }`}
                                                         onClick={() => !isAlreadyInCombat && handleAddTokenToCombat(t)}
                                                     >
-                                                        <div className="w-9 h-9 rounded bg-slate-900 border border-slate-600 overflow-hidden shrink-0">
-                                                            {img ? <img src={img} className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : <div className="w-full h-full flex items-center justify-center font-bold text-slate-400 text-xs">{name[0] || '?'}</div>}
+                                                        <div className="w-10 h-10 rounded-xl bg-slate-950 border border-slate-700 overflow-hidden shrink-0">
+                                                            {img ? (
+                                                                <img src={img} className="w-full h-full object-cover" referrerPolicy="no-referrer" alt={name} />
+                                                            ) : (
+                                                                <div className="w-full h-full flex items-center justify-center font-bold text-slate-400 text-xs">
+                                                                    {name[0] || '?'}
+                                                                </div>
+                                                            )}
                                                         </div>
                                                         <div className="flex-1 min-w-0">
                                                             <div className="font-bold text-white text-sm truncate flex items-center gap-2">
                                                                 <span>{name}</span>
-                                                                <span className="text-[9px] bg-amber-950/80 text-amber-400 border border-amber-800/60 px-1.5 py-0.2 rounded font-normal">On Map</span>
+                                                                <span className="text-[9px] bg-amber-950/80 text-amber-400 border border-amber-800/60 px-1.5 py-0.2 rounded font-normal">
+                                                                    On Map
+                                                                </span>
                                                             </div>
                                                             <div className="text-[10px] text-slate-400 flex items-center gap-2 mt-0.5">
                                                                 <span>{isNpc ? 'NPC / Monster' : 'Party Member'}</span>
@@ -852,10 +1358,12 @@ export const CombatTrackerSidebar = ({ combat, updateCampaign, tokens, role, cam
                                                             </div>
                                                         </div>
                                                         {isAlreadyInCombat ? (
-                                                            <span className="text-xs text-slate-400 bg-slate-800 px-2 py-1 rounded border border-slate-700 font-medium">In Combat</span>
+                                                            <span className="text-xs text-slate-500 bg-slate-950/80 px-2 py-1 rounded-lg border border-slate-800 font-bold">
+                                                                In Combat
+                                                            </span>
                                                         ) : (
-                                                            <button className="px-2.5 py-1 bg-amber-600 group-hover:bg-amber-500 text-white text-xs font-bold rounded shadow flex items-center gap-1 transition-colors">
-                                                                <Icon name="plus" size={13}/> Add
+                                                            <button className="px-3 py-1.5 bg-amber-600 group-hover:bg-amber-500 text-white text-xs font-black rounded-lg shadow flex items-center gap-1 transition-colors">
+                                                                <Icon name="plus" size={13} /> Add
                                                             </button>
                                                         )}
                                                     </div>
@@ -869,7 +1377,7 @@ export const CombatTrackerSidebar = ({ combat, updateCampaign, tokens, role, cam
                                 {filteredPlayers.length > 0 && (
                                     <div>
                                         <div className="flex justify-between items-center mb-2.5">
-                                            <h4 className="text-xs uppercase font-bold text-indigo-400 tracking-wider flex items-center gap-1.5">
+                                            <h4 className="text-xs uppercase font-black text-indigo-400 tracking-wider flex items-center gap-1.5">
                                                 <Icon name="shield" size={13} /> Party ({filteredPlayers.length})
                                             </h4>
                                         </div>
@@ -882,20 +1390,30 @@ export const CombatTrackerSidebar = ({ combat, updateCampaign, tokens, role, cam
                                                 return (
                                                     <div 
                                                         key={`player-${p.id}`}
-                                                        className={`flex items-center gap-3 p-2.5 rounded-lg border transition-all ${
+                                                        className={`flex items-center gap-3 p-2.5 rounded-xl border transition-all ${
                                                             isAlreadyInCombat 
-                                                                ? 'bg-slate-800/40 border-slate-700/60 opacity-60' 
-                                                                : 'bg-slate-800/90 border-slate-700 hover:border-indigo-500 cursor-pointer group shadow-sm'
+                                                                ? 'bg-slate-900/40 border-slate-800/60 opacity-60' 
+                                                                : 'bg-slate-900/90 border-slate-800 hover:border-indigo-500/60 cursor-pointer group shadow-sm'
                                                         }`}
                                                         onClick={() => !isAlreadyInCombat && handleAddActorToCombat(p, false)}
                                                     >
-                                                        <div className="w-9 h-9 rounded bg-slate-900 border border-slate-600 overflow-hidden shrink-0">
-                                                            {p.image ? <img src={p.image} className="w-full h-full object-cover" referrerPolicy="no-referrer"/> : <div className="w-full h-full flex items-center justify-center font-bold text-slate-400 text-xs">{p.name?.[0] || '?'}</div>}
+                                                        <div className="w-10 h-10 rounded-xl bg-slate-950 border border-slate-700 overflow-hidden shrink-0">
+                                                            {p.image ? (
+                                                                <img src={p.image} className="w-full h-full object-cover" referrerPolicy="no-referrer" alt={p.name} />
+                                                            ) : (
+                                                                <div className="w-full h-full flex items-center justify-center font-bold text-slate-400 text-xs">
+                                                                    {p.name?.[0] || '?'}
+                                                                </div>
+                                                            )}
                                                         </div>
                                                         <div className="flex-1 min-w-0">
                                                             <div className="font-bold text-white text-sm truncate flex items-center gap-2">
                                                                 <span>{p.name}</span>
-                                                                {mapToken && <span className="text-[9px] bg-amber-950/80 text-amber-400 border border-amber-800/60 px-1.5 py-0.2 rounded font-normal">On Map</span>}
+                                                                {mapToken && (
+                                                                    <span className="text-[9px] bg-amber-950/80 text-amber-400 border border-amber-800/60 px-1.5 py-0.2 rounded font-normal">
+                                                                        On Map
+                                                                    </span>
+                                                                )}
                                                             </div>
                                                             <div className="text-[10px] text-slate-400 flex items-center gap-2 mt-0.5">
                                                                 <span>Player Character</span>
@@ -903,10 +1421,12 @@ export const CombatTrackerSidebar = ({ combat, updateCampaign, tokens, role, cam
                                                             </div>
                                                         </div>
                                                         {isAlreadyInCombat ? (
-                                                            <span className="text-xs text-slate-400 bg-slate-800 px-2 py-1 rounded border border-slate-700 font-medium">In Combat</span>
+                                                            <span className="text-xs text-slate-500 bg-slate-950/80 px-2 py-1 rounded-lg border border-slate-800 font-bold">
+                                                                In Combat
+                                                            </span>
                                                         ) : (
-                                                            <button className="px-2.5 py-1 bg-indigo-600 group-hover:bg-indigo-500 text-white text-xs font-bold rounded shadow flex items-center gap-1 transition-colors">
-                                                                <Icon name="plus" size={13}/> Add
+                                                            <button className="px-3 py-1.5 bg-indigo-600 group-hover:bg-indigo-500 text-white text-xs font-black rounded-lg shadow flex items-center gap-1 transition-colors">
+                                                                <Icon name="plus" size={13} /> Add
                                                             </button>
                                                         )}
                                                     </div>
@@ -920,7 +1440,7 @@ export const CombatTrackerSidebar = ({ combat, updateCampaign, tokens, role, cam
                                 {filteredNpcs.length > 0 && (
                                     <div>
                                         <div className="flex justify-between items-center mb-2.5">
-                                            <h4 className="text-xs uppercase font-bold text-rose-400 tracking-wider flex items-center gap-1.5">
+                                            <h4 className="text-xs uppercase font-black text-rose-400 tracking-wider flex items-center gap-1.5">
                                                 <Icon name="skull" size={13} /> NPCs & Monsters ({filteredNpcs.length})
                                             </h4>
                                         </div>
@@ -933,20 +1453,30 @@ export const CombatTrackerSidebar = ({ combat, updateCampaign, tokens, role, cam
                                                 return (
                                                     <div 
                                                         key={`npc-${n.id}`}
-                                                        className={`flex items-center gap-3 p-2.5 rounded-lg border transition-all ${
+                                                        className={`flex items-center gap-3 p-2.5 rounded-xl border transition-all ${
                                                             isAlreadyInCombat 
-                                                                ? 'bg-slate-800/40 border-slate-700/60 opacity-60' 
-                                                                : 'bg-slate-800/90 border-slate-700 hover:border-rose-500 cursor-pointer group shadow-sm'
+                                                                ? 'bg-slate-900/40 border-slate-800/60 opacity-60' 
+                                                                : 'bg-slate-900/90 border-slate-800 hover:border-rose-500/60 cursor-pointer group shadow-sm'
                                                         }`}
                                                         onClick={() => !isAlreadyInCombat && handleAddActorToCombat(n, true)}
                                                     >
-                                                        <div className="w-9 h-9 rounded bg-slate-900 border border-slate-600 overflow-hidden shrink-0">
-                                                            {n.image ? <img src={n.image} className="w-full h-full object-cover" referrerPolicy="no-referrer"/> : <div className="w-full h-full flex items-center justify-center font-bold text-slate-400 text-xs">{n.name?.[0] || '?'}</div>}
+                                                        <div className="w-10 h-10 rounded-xl bg-slate-950 border border-slate-700 overflow-hidden shrink-0">
+                                                            {n.image ? (
+                                                                <img src={n.image} className="w-full h-full object-cover" referrerPolicy="no-referrer" alt={n.name} />
+                                                            ) : (
+                                                                <div className="w-full h-full flex items-center justify-center font-bold text-slate-400 text-xs">
+                                                                    {n.name?.[0] || '?'}
+                                                                </div>
+                                                            )}
                                                         </div>
                                                         <div className="flex-1 min-w-0">
                                                             <div className="font-bold text-white text-sm truncate flex items-center gap-2">
                                                                 <span>{n.name}</span>
-                                                                {mapToken && <span className="text-[9px] bg-amber-950/80 text-amber-400 border border-amber-800/60 px-1.5 py-0.2 rounded font-normal">On Map</span>}
+                                                                {mapToken && (
+                                                                    <span className="text-[9px] bg-amber-950/80 text-amber-400 border border-amber-800/60 px-1.5 py-0.2 rounded font-normal">
+                                                                        On Map
+                                                                    </span>
+                                                                )}
                                                             </div>
                                                             <div className="text-[10px] text-slate-400 flex items-center gap-2 mt-0.5">
                                                                 <span>{typeLabel}</span>
@@ -954,10 +1484,12 @@ export const CombatTrackerSidebar = ({ combat, updateCampaign, tokens, role, cam
                                                             </div>
                                                         </div>
                                                         {isAlreadyInCombat ? (
-                                                            <span className="text-xs text-slate-400 bg-slate-800 px-2 py-1 rounded border border-slate-700 font-medium">In Combat</span>
+                                                            <span className="text-xs text-slate-500 bg-slate-950/80 px-2 py-1 rounded-lg border border-slate-800 font-bold">
+                                                                In Combat
+                                                            </span>
                                                         ) : (
-                                                            <button className="px-2.5 py-1 bg-rose-600 group-hover:bg-rose-500 text-white text-xs font-bold rounded shadow flex items-center gap-1 transition-colors">
-                                                                <Icon name="plus" size={13}/> Add
+                                                            <button className="px-3 py-1.5 bg-rose-600 group-hover:bg-rose-500 text-white text-xs font-black rounded-lg shadow flex items-center gap-1 transition-colors">
+                                                                <Icon name="plus" size={13} /> Add
                                                             </button>
                                                         )}
                                                     </div>

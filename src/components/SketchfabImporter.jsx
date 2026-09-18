@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import Icon from './Icon';
 import { storeChunkedMap } from '../utils/storageUtils';
+import { useDialog } from './DialogProvider';
 
 export const SketchfabImporter = ({ onSelectStamper, onImportCompleted }) => {
+    const dialog = useDialog();
     const [query, setQuery] = useState('');
     const [results, setResults] = useState([]);
     const [token, setToken] = useState(localStorage.getItem('sketchfabToken') || '');
@@ -25,7 +27,7 @@ export const SketchfabImporter = ({ onSelectStamper, onImportCompleted }) => {
             setResults(data.results);
         } catch (e) {
             console.error(e);
-            alert("Search failed. Try again.");
+            dialog.alert("Search failed. Try again.");
         } finally {
             setIsSearching(false);
         }
@@ -34,7 +36,7 @@ export const SketchfabImporter = ({ onSelectStamper, onImportCompleted }) => {
     const handleDownload = async (model) => {
         if (!token) {
             setShowTokenInput(true);
-            alert("You need a Sketchfab API Token to download models.");
+            dialog.alert("You need a Sketchfab API Token to download models.");
             return;
         }
 
@@ -92,7 +94,7 @@ export const SketchfabImporter = ({ onSelectStamper, onImportCompleted }) => {
                     });
                 } catch (storeErr) {
                     console.error(storeErr);
-                    alert("Failed to store the model. It might be too large.");
+                    dialog.alert("Failed to store the model. It might be too large.");
                 } finally {
                     setIsDownloading(false);
                     setDownloadStatus('');
@@ -101,7 +103,7 @@ export const SketchfabImporter = ({ onSelectStamper, onImportCompleted }) => {
             
         } catch (e) {
             console.error(e);
-            alert(e.message);
+            dialog.alert(e.message);
             setIsDownloading(false);
             setDownloadStatus('');
         }

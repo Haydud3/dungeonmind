@@ -10,15 +10,45 @@ import { subscribeToMap, updateMap } from '../utils/mapService';
 import { parseDndBeyondJson } from './character-sheet/dndBeyondParser.js';
 import { enrichCharacter } from '../utils/srdEnricher.js';
 import { fetchDndBeyondCharacter } from '../utils/dndBeyondService.js';
+import MonsterStatblockView from './MonsterStatblockView';
 
 const SideSheet = ({ characterId, onClose, role, onDiceRoll, onOpenDiceTray }) => {
     const { campaign: data, user, updateCampaign, gameParams } = useNewCampaign();
     const activeMapId = data?.activeMapId;
+    const addLogEntry = useCharacterStore((state) => state.addLogEntry);
     
     const isVirtual = typeof characterId === 'object' && characterId !== null && characterId.isToken;
     const actualCharId = isVirtual ? characterId.characterId : characterId;
     const tokenId = isVirtual ? characterId.tokenId : null;
     const initialTab = isVirtual ? characterId.initialTab : null;
+
+    const isPc = useMemo(() => {
+        if (typeof characterId === 'object' && characterId?.isPc !== undefined) {
+            return !!characterId.isPc;
+        }
+        return !!data?.players?.some(p => String(p.id) === String(actualCharId));
+    }, [data?.players, actualCharId, characterId]);
+
+    const [sheetMode, setSheetMode] = useState(() => {
+        const isPlayerChar = typeof characterId === 'object' && characterId?.isPc !== undefined
+            ? !!characterId.isPc
+            : data?.players?.some(p => String(p.id) === String(actualCharId));
+        if (isPlayerChar) return 'sheet';
+        if (typeof characterId === 'object' && characterId?.defaultMode) {
+            return characterId.defaultMode;
+        }
+        return 'statblock';
+    });
+
+    useEffect(() => {
+        if (isPc) {
+            setSheetMode('sheet');
+        } else if (typeof characterId === 'object' && characterId?.defaultMode) {
+            setSheetMode(characterId.defaultMode);
+        } else {
+            setSheetMode('statblock');
+        }
+    }, [actualCharId, isPc, characterId]);
     
     const [liveHp, setLiveHp] = useState(null);
     const [isSharedControl, setIsSharedControl] = useState(false);
@@ -136,6 +166,17 @@ const SideSheet = ({ characterId, onClose, role, onDiceRoll, onOpenDiceTray }) =
         }
     };
 
+    const handleHpChange = useCallback((newHp) => {
+        if (isVirtual && tokenId) {
+            if (activeMapId && gameParams?.code) {
+                updateMap(gameParams.code, activeMapId, { [`tokens.${tokenId}.hp`]: newHp });
+            }
+            setLiveHp(newHp);
+        } else if (character) {
+            handleSave({ ...character, hp: newHp });
+        }
+    }, [isVirtual, tokenId, activeMapId, gameParams?.code, character, handleSave]);
+
     const handleRefreshDndBeyond = async (mode) => {
         if (!character?.dndBeyondId) return;
         setIsRefreshing(true);
@@ -248,44 +289,118 @@ const SideSheet = ({ characterId, onClose, role, onDiceRoll, onOpenDiceTray }) =
                 onMouseDown={handleMouseDown}
                 onTouchStart={handleMouseDown}
             />
-            <div className="p-4 pt-safe-min pr-safe-min pl-safe-min border-b border-slate-700 flex items-center gap-4 shrink-0">
-                <input 
-                    type="text"
-                    value={editableName}
-                    onChange={e => setEditableName(e.target.value)}
-                    onBlur={handleNameSave}
-                    onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); }}
-                    className="text-xl font-bold text-white bg-transparent outline-none focus:bg-slate-800 rounded px-2 -mx-2 w-full"
-                />
-                {character?.dndBeyondId && (
-                    <button 
-                        onClick={() => setShowRefreshModal(true)} 
-                        className="text-blue-400 hover:text-white transition-colors p-1 shrink-0"
-                        title="Refresh from D&D Beyond"
-                    >
-                        <Icon name="refresh-cw" size={24} />
-                    </button>
+            <div className="p-3 sm:p-4 pt-safe-min pr-safe-min pl-safe-min border-b border-slate-700 flex items-center justify-between gap-3 shrink-0 bg-slate-900/90 backdrop-blur-md">
+                <div className="flex-1 min-w-0 flex items-center gap-2">
+                    {role === 'dm' || isOwner ? (
+                        <input 
+                            type="text"
+                            value={editableName}
+                            onChange={e => setEditableName(e.target.value)}
+                            onBlur={handleNameSave}
+                            onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); }}
+                            className="text-lg sm:text-xl font-bold text-white bg-transparent outline-none focus:bg-slate-800 rounded px-2 -mx-2 truncate w-full"
+                        />
+                    ) : (
+                        <h3 className="text-lg sm:text-xl font-bold text-white px-2 -mx-2 truncate w-full">
+                            {character?.name || editableName || 'Character'}
+                        </h3>
+                    )}
+                </div>
+
+                {/* Segmented Mode Switch - Only for NPCs and Monsters when permitted */}
+                {!isPc && (role === 'dm' || isOwner) && (
+                    <div className="flex items-center bg-slate-800/90 p-0.5 rounded-lg border border-slate-700/80 shrink-0 text-xs font-semibold shadow-inner">
+                        <button
+                            type="button"
+                            onClick={() => setSheetMode('statblock')}
+                            className={`px-2.5 py-1 rounded-md transition-all flex items-center gap-1.5 ${
+                                sheetMode === 'statblock'
+                                    ? 'bg-amber-500 text-slate-950 font-bold shadow-sm'
+                                    : 'text-slate-400 hover:text-slate-200'
+                            }`}
+                            title="5e Creature Statblock"
+                        >
+                            <Icon name="scroll" size={13} />
+                            <span className="hidden sm:inline">Statblock</span>
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setSheetMode('sheet')}
+                            className={`px-2.5 py-1 rounded-md transition-all flex items-center gap-1.5 ${
+                                sheetMode === 'sheet'
+                                    ? 'bg-amber-500 text-slate-950 font-bold shadow-sm'
+                                    : 'text-slate-400 hover:text-slate-200'
+                            }`}
+                            title="Full Character Sheet"
+                        >
+                            <Icon name="file-text" size={13} />
+                            <span className="hidden sm:inline">Full Sheet</span>
+                        </button>
+                    </div>
                 )}
-                <button onClick={onClose} className="text-slate-400 hover:text-white shrink-0">
-                    <Icon name="x" size={24} />
-                </button>
+
+                <div className="flex items-center gap-1 shrink-0">
+                    {character?.dndBeyondId && (
+                        <button 
+                            onClick={() => setShowRefreshModal(true)} 
+                            className="text-blue-400 hover:text-white transition-colors p-1.5 hover:bg-slate-800 rounded-lg shrink-0"
+                            title="Refresh from D&D Beyond"
+                        >
+                            <Icon name="refresh-cw" size={20} />
+                        </button>
+                    )}
+                    <button 
+                        onClick={onClose} 
+                        className="text-slate-400 hover:text-white hover:bg-slate-800 p-1.5 rounded-lg transition-colors shrink-0"
+                        title="Close Panel"
+                    >
+                        <Icon name="x" size={20} />
+                    </button>
+                </div>
             </div>
-            <div className="flex-1 min-h-0 relative">
-                <SheetContainer 
-                    key={displayId} // Keep key for re-render on ID change
-                    character={character} // Pass the actual character object
-                    data={modifiedData}
-                    initialTab={initialTab}
-                    onClose={onClose}
-                    onBack={onClose}
-                    onSave={handleSave}
-                    role={role}
-                    onDiceRoll={onDiceRoll}
-                    onLogAction={(msg) => addLogEntry({ message: msg, id: Date.now() })}
-                    isOwner={isOwner}
+            <div className="flex-1 min-h-0 relative flex flex-col overflow-hidden">
+                {!isPc && role !== 'dm' && !isOwner ? (
+                    <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-slate-950/90 select-none">
+                        <div className="w-16 h-16 rounded-2xl bg-amber-950/40 border border-amber-500/30 flex items-center justify-center text-amber-400 mb-4 shadow-xl ring-1 ring-amber-500/20">
+                            <Icon name="lock" size={28} />
+                        </div>
+                        <h3 className="text-base font-bold text-white fantasy-font mb-1.5 tracking-wide">
+                            Statblock Restricted
+                        </h3>
+                        <p className="text-xs text-slate-400 max-w-xs leading-relaxed">
+                            This creature's statblock has not been shared with players by the Dungeon Master.
+                        </p>
+                    </div>
+                ) : !isPc && sheetMode === 'statblock' ? (
+                    <div className="flex-1 overflow-y-auto custom-scrollbar p-1">
+                        <MonsterStatblockView 
+                            npc={character}
+                            liveHp={liveHp}
+                            onOpenSheet={() => setSheetMode('sheet')}
+                            onDiceRoll={onDiceRoll}
+                            onLogAction={(msg) => addLogEntry({ message: msg, id: Date.now() })}
+                            onHpChange={handleHpChange}
+                            role={role}
+                            hideHeaderActions={false}
+                        />
+                    </div>
+                ) : (
+                    <SheetContainer 
+                        key={displayId} // Keep key for re-render on ID change
+                        character={character} // Pass the actual character object
+                        data={modifiedData}
+                        initialTab={initialTab}
+                        onClose={onClose}
+                        onBack={onClose}
+                        onSave={handleSave}
+                        role={role}
+                        onDiceRoll={onDiceRoll}
+                        onLogAction={(msg) => addLogEntry({ message: msg, id: Date.now() })}
+                        isOwner={isOwner}
                         onOpenModelPicker={role === 'dm' ? handleOpenModelPicker : undefined}
-                    onOpenDiceTray={onOpenDiceTray}
-                />
+                        onOpenDiceTray={onOpenDiceTray}
+                    />
+                )}
                 {showModelPicker && character && (
                 <div className="fixed inset-0 z-[110] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
                     <div className="max-w-2xl w-full bg-slate-900 rounded-xl border border-slate-700 shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">

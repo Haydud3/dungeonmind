@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { collection, addDoc, getDocs, query, orderBy, serverTimestamp, doc, deleteDoc, updateDoc } from 'firebase/firestore';
 import { db, appId } from '../firebase';
 import { storeChunkedMap, deleteChunkedMap, retrieveChunkedMap } from '../utils/storageUtils';
@@ -8,7 +9,7 @@ import { useToast } from './ToastProvider';
 import { useDialog } from './DialogProvider';
 import SketchfabImporter from './SketchfabImporter';
 import MapGenerator from './MapGenerator';
-import ResolvedImage from './ResolvedImage'; // Add this import
+import ResolvedImage from './ResolvedImage';
 
 import { useResolvedUrl } from '../utils/useResolvedUrl';
 import { fulfillMapData } from '../utils/moduleFulfillment';
@@ -17,7 +18,7 @@ import { searchBattlemaps, getProxiedImageUrl } from '../utils/mapSearchService'
 
 // Helper to generate a lightweight thumbnail so the gallery loads instantly
 const generateThumbnail = (dataUrl) => {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
         const img = new Image();
         img.onload = () => {
             const canvas = document.createElement('canvas');
@@ -33,7 +34,7 @@ const generateThumbnail = (dataUrl) => {
         };
         img.onerror = () => {
             console.warn("Failed to generate thumbnail for image");
-            resolve(null); // Resolve with null instead of rejecting to avoid crashing the whole process
+            resolve(null);
         };
         img.src = dataUrl;
     });
@@ -64,10 +65,66 @@ const ThrottledSlider = ({ value, min, max, step, onChange, onDragStart, onDragE
     );
 };
 
+// Stepper control for fine-tuning numeric properties with [-] and [+] nudge buttons
+const NudgeStepper = ({ value, onChange, min = 0, max = 100, step = 0.05, unit = '', precision = 2 }) => {
+    const numVal = typeof value === 'number' && !isNaN(value) ? value : 0;
+
+    const handleStep = (delta) => {
+        const next = Math.max(min, Math.min(max, parseFloat((numVal + delta).toFixed(precision))));
+        onChange(next);
+    };
+
+    return (
+        <div className="flex items-center gap-1 shrink-0">
+            <button
+                type="button"
+                onClick={() => handleStep(-step)}
+                className="w-7 h-7 rounded bg-slate-800 hover:bg-slate-700 active:bg-slate-600 border border-slate-700 flex items-center justify-center text-slate-300 hover:text-white transition-colors"
+                title={`Decrease by ${step}`}
+            >
+                <Icon name="minus" size={13} />
+            </button>
+            <input
+                type="number"
+                step={step}
+                value={numVal}
+                onChange={(e) => {
+                    const v = parseFloat(e.target.value);
+                    if (!isNaN(v)) {
+                        onChange(Math.max(min, Math.min(max, parseFloat(v.toFixed(precision)))));
+                    }
+                }}
+                className="w-16 h-7 bg-slate-900 border border-slate-700 rounded px-1.5 text-xs text-center text-white font-mono outline-none focus:border-amber-500"
+            />
+            {unit && <span className="text-[10px] text-slate-400 font-mono select-none">{unit}</span>}
+            <button
+                type="button"
+                onClick={() => handleStep(step)}
+                className="w-7 h-7 rounded bg-slate-800 hover:bg-slate-700 active:bg-slate-600 border border-slate-700 flex items-center justify-center text-slate-300 hover:text-white transition-colors"
+                title={`Increase by ${step}`}
+            >
+                <Icon name="plus" size={13} />
+            </button>
+        </div>
+    );
+};
+
+const ENVIRONMENT_PRESETS = [
+    { id: 'day', label: 'Sunny Day', icon: 'sun', activeClass: 'border-amber-500 bg-amber-500/20 text-amber-300 shadow-[0_0_12px_rgba(245,158,11,0.2)]' },
+    { id: 'sunset', label: 'Sunset', icon: 'sunset', activeClass: 'border-orange-500 bg-orange-500/20 text-orange-300 shadow-[0_0_12px_rgba(249,115,22,0.2)]' },
+    { id: 'night', label: 'Midnight', icon: 'moon', activeClass: 'border-indigo-500 bg-indigo-500/20 text-indigo-300 shadow-[0_0_12px_rgba(99,102,241,0.2)]' },
+    { id: 'fog', label: 'Thick Fog', icon: 'cloud', activeClass: 'border-slate-400 bg-slate-400/20 text-slate-200 shadow-[0_0_12px_rgba(148,163,184,0.2)]' },
+    { id: 'rain', label: 'Rainstorm', icon: 'cloud-rain', activeClass: 'border-cyan-500 bg-cyan-500/20 text-cyan-300 shadow-[0_0_12px_rgba(6,182,212,0.2)]' },
+    { id: 'snow', label: 'Winter Snow', icon: 'snowflake', activeClass: 'border-sky-400 bg-sky-400/20 text-sky-200 shadow-[0_0_12px_rgba(56,189,248,0.2)]' },
+    { id: 'ash', label: 'Volcanic Ash', icon: 'flame', activeClass: 'border-red-500 bg-red-500/20 text-red-300 shadow-[0_0_12px_rgba(239,68,68,0.2)]' },
+    { id: 'spores', label: 'Bioluminescent', icon: 'sparkles', activeClass: 'border-purple-500 bg-purple-500/20 text-purple-300 shadow-[0_0_12px_rgba(168,85,247,0.2)]' },
+    { id: 'swamp', label: 'Gloomy Swamp', icon: 'droplets', activeClass: 'border-emerald-500 bg-emerald-500/20 text-emerald-300 shadow-[0_0_12px_rgba(16,185,129,0.2)]' },
+];
+
 const AssetThumbnail = ({ asset }) => {
     let imgUrl = asset.thumbnail || asset.url;
     if (imgUrl && typeof imgUrl === 'string' && imgUrl.startsWith('http') && !imgUrl.includes('firebasestorage.googleapis.com') && !imgUrl.includes('wsrv.nl')) {
-        imgUrl = `https://wsrv.nl/?url=${encodeURIComponent(imgUrl)}&cors=1&w=256`; // Resize via wsrv for thumbnails
+        imgUrl = `https://wsrv.nl/?url=${encodeURIComponent(imgUrl)}&cors=1&w=256`;
     }
 
     const resolvedUrl = useResolvedUrl(imgUrl);
@@ -76,19 +133,6 @@ const AssetThumbnail = ({ asset }) => {
         return <img src={resolvedUrl || imgUrl} className="w-full h-full object-cover" alt={asset.name} draggable={false} referrerPolicy="no-referrer" />;
     }
     return <div className="w-full h-full flex items-center justify-center bg-slate-900 border border-slate-700"><Icon name={asset.is3D ? "box" : "image"} size={32} className="text-slate-600 animate-pulse"/></div>;
-};
-
-const CharacterThumbnail = ({ char }) => {
-    let imgUrl = char.avatarUrl || char.imageUrl || char.image;
-    if (imgUrl && typeof imgUrl === 'string' && imgUrl.startsWith('http') && !imgUrl.includes('firebasestorage.googleapis.com') && !imgUrl.includes('wsrv.nl')) {
-        imgUrl = `https://wsrv.nl/?url=${encodeURIComponent(imgUrl)}&cors=1&w=256`;
-    }
-    const resolvedUrl = useResolvedUrl(imgUrl);
-
-    if (resolvedUrl || (imgUrl && typeof imgUrl === 'string' && !imgUrl.startsWith('chunked:'))) {
-        return <img src={resolvedUrl || imgUrl} className="w-full h-full object-cover" alt={char.name} draggable={false} referrerPolicy="no-referrer" />;
-    }
-    return <div className="w-full h-full flex items-center justify-center bg-slate-900 border border-slate-700 text-slate-500"><Icon name="user" size={32} className="animate-pulse"/></div>;
 };
 
 const ResolvedMapImage = ({ url, name, className }) => {
@@ -102,8 +146,123 @@ const ResolvedMapImage = ({ url, name, className }) => {
     return <div className="w-full h-full flex items-center justify-center text-slate-600 bg-slate-800"><Icon name="map" size={24} /></div>;
 };
 
-const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propActiveMapId, updateMap, onClose, onSetBackground, onSetHeightmap, onGenerateMap, onNewBlankMap, allCharacters, campaignData, updateCampaign, onSelectStamper, importTarget, aiHelper, generateNpc }) => {
+// 3-dot dropdown menu component mounted via Portal to avoid overflow-hidden clipping
+const CardActionsMenu = ({ isOpen, onToggle, items }) => {
+    const buttonRef = useRef(null);
+    const [coords, setCoords] = useState(null);
+
+    const updatePosition = useCallback(() => {
+        if (!buttonRef.current) return;
+        const rect = buttonRef.current.getBoundingClientRect();
+        const menuHeight = items.length * 30 + 16;
+        const spaceBelow = window.innerHeight - rect.bottom;
+        const openUpwards = spaceBelow < menuHeight && rect.top > menuHeight;
+
+        setCoords({
+            top: openUpwards ? Math.max(8, rect.top - menuHeight - 4) : rect.bottom + 4,
+            right: Math.max(8, window.innerWidth - rect.right),
+        });
+    }, [items.length]);
+
+    useEffect(() => {
+        if (!isOpen) return;
+        updatePosition();
+
+        const handleClickOutside = (e) => {
+            if (buttonRef.current && buttonRef.current.contains(e.target)) return;
+            const menuEl = document.getElementById('floating-card-menu');
+            if (menuEl && menuEl.contains(e.target)) return;
+            onToggle(false);
+        };
+
+        const handleCloseOnScrollOrResize = () => {
+            onToggle(false);
+        };
+
+        document.addEventListener('mousedown', handleClickOutside);
+        window.addEventListener('scroll', handleCloseOnScrollOrResize, true);
+        window.addEventListener('resize', handleCloseOnScrollOrResize);
+        return () => {
+            document.removeEventListener('mousedown', handleClickOutside);
+            window.removeEventListener('scroll', handleCloseOnScrollOrResize, true);
+            window.removeEventListener('resize', handleCloseOnScrollOrResize);
+        };
+    }, [isOpen, onToggle, updatePosition]);
+
+    const menuContent = isOpen && coords && typeof document !== 'undefined' ? (
+        createPortal(
+            <div 
+                id="floating-card-menu"
+                style={{
+                    position: 'fixed',
+                    top: `${coords.top}px`,
+                    right: `${coords.right}px`,
+                    zIndex: 99999,
+                }}
+                className="w-44 bg-slate-900/95 border border-slate-700/80 rounded-xl shadow-2xl py-1.5 backdrop-blur-md animate-in fade-in zoom-in-95 duration-100"
+                onClick={(e) => e.stopPropagation()}
+            >
+                {items.map((item, idx) => (
+                    <button
+                        key={idx}
+                        type="button"
+                        onClick={() => {
+                            onToggle(false);
+                            item.onClick();
+                        }}
+                        className={`w-full px-3 py-1.5 text-xs flex items-center gap-2 text-left transition-colors ${item.danger ? 'text-red-400 hover:bg-red-950/40 hover:text-red-300' : 'text-slate-200 hover:bg-slate-800 hover:text-amber-400'}`}
+                    >
+                        <Icon name={item.icon} size={14} className={item.danger ? 'text-red-400' : 'text-slate-400'} />
+                        <span>{item.label}</span>
+                    </button>
+                ))}
+            </div>,
+            document.body
+        )
+    ) : null;
+
+    return (
+        <div className="relative">
+            <button
+                ref={buttonRef}
+                type="button"
+                onClick={(e) => {
+                    e.stopPropagation();
+                    onToggle(!isOpen);
+                }}
+                className="w-7 h-7 rounded-md bg-black/70 hover:bg-black/90 text-slate-300 hover:text-white flex items-center justify-center backdrop-blur shadow transition-colors border border-slate-700"
+                title="Map Actions"
+            >
+                <Icon name="more-vertical" size={14} />
+            </button>
+
+            {menuContent}
+        </div>
+    );
+};
+
+const AssetManager = ({ 
+    campaignCode, 
+    mapData: propMapData, 
+    activeMapId: propActiveMapId, 
+    updateMap, 
+    onClose, 
+    onSetBackground, 
+    onSetHeightmap, 
+    onGenerateMap, 
+    onNewBlankMap, 
+    allCharacters, 
+    campaignData, 
+    updateCampaign, 
+    onSelectStamper, 
+    importTarget, 
+    aiHelper, 
+    generateNpc,
+    width = 420,
+    onResizeMouseDown
+}) => {
     const toast = useToast();
+    const dialog = useDialog();
     const [assets, setAssets] = useState([]);
     const [isUploading, setIsUploading] = useState(false);
     const [isExporting, setIsExporting] = useState(false);
@@ -115,7 +274,31 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
     const [assetCategory, setAssetCategory] = useState('Maps');
     const [editingMapData, setEditingMapData] = useState(null);
 
-    // STEP 1: Fix Target Map ID logic - Only hijack active map if we specifically selected a map to edit
+    // Dropdown menu state to ensure only one card menu is open at a time
+    const [openMenuId, setOpenMenuId] = useState(null);
+
+    // Sourcing / Discovery state
+    const [redditQuery, setRedditQuery] = useState(importTarget?.name || '');
+    const [redditResults, setRedditResults] = useState([]);
+    const [isSourcing, setIsSourcing] = useState(false);
+    const [inspectedMap, setInspectedMap] = useState(null);
+    const [directUrlInput, setDirectUrlInput] = useState('');
+    const [internalImportTarget, setInternalImportTarget] = useState(importTarget || null);
+
+    // Settings Collapsible Sections
+    const [expandedSections, setExpandedSections] = useState({
+        atmosphere: true,
+        grid: true,
+        vision: true,
+        elevation: false,
+        backup: false
+    });
+
+    const toggleSection = (section) => {
+        setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }));
+    };
+
+    // Target Map ID logic
     const targetMapId = (activeTab === 'settings' || activeTab === 'ai') && selectedAsset?.isSkeletonMap && selectedAsset?.activeMapId
         ? selectedAsset.activeMapId
         : propActiveMapId;
@@ -142,13 +325,6 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
 
     const [isProcessingMap, setIsProcessingMap] = useState(false);
     const [processingStep, setProcessingStep] = useState('');
-
-    // Reddit Sourcing States
-    const [redditQuery, setRedditQuery] = useState(importTarget?.name || '');
-    const [redditResults, setRedditResults] = useState([]);
-    const [isSourcing, setIsSourcing] = useState(false);
-    const [currentImageIndex, setCurrentImageIndex] = useState(0);
-    const [internalImportTarget, setInternalImportTarget] = useState(importTarget || null);
 
     const [uploadTargetMap, setUploadTargetMap] = useState(null);
     const mapFileInputRef = useRef(null);
@@ -336,7 +512,6 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
         try {
             const results = await searchBattlemaps(queryToSearch);
             setRedditResults(results);
-            setCurrentImageIndex(0);
         } catch (e) {
             console.error("Battlemap search failed", e);
             toast("Search failed. Check console.", "error");
@@ -376,7 +551,6 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
         };
     }, []);
 
-    // Fetch all previously uploaded images from this campaign's folder
     const fetchAssets = async () => {
         if (!campaignCode) return;
         const assetsRef = collection(db, 'artifacts', appId || 'dungeonmind', 'public', 'data', 'campaigns', campaignCode, 'assets');
@@ -396,7 +570,6 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
         }
     }, [campaignCode, activeTab]);
 
-    // Initialize the grid detection worker
     useEffect(() => {
         workerRef.current = new Worker(new URL('./gridDetection.worker.js', import.meta.url), { type: 'module' });
         
@@ -405,7 +578,7 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
             if (type === 'GRID_DETECTED') {
                 setIsDetectingGrid(false);
                 setGridDetectionResult(payload);
-                setGridSubdivision(1); // Reset subdivision
+                setGridSubdivision(1);
             }
         };
         return () => workerRef.current?.terminate();
@@ -432,16 +605,25 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
                     
                     const assetsRef = collection(db, 'artifacts', appId || 'dungeonmind', 'public', 'data', 'campaigns', campaignCode, 'assets');
                     
-                    const assetData = { name: file.name, url: chunkedId, thumbnail: thumbBase64, createdAt: serverTimestamp(), category: assetCategory === 'All' ? (isModel ? 'Props' : 'Uncategorized') : assetCategory };
+                    const assetData = { 
+                        name: file.name, 
+                        url: chunkedId, 
+                        thumbnail: thumbBase64, 
+                        createdAt: serverTimestamp(), 
+                        category: assetCategory === 'All' ? (isModel ? 'Props' : 'Maps') : assetCategory 
+                    };
                     if (isModel) {
                         assetData.is3D = true;
                         assetData.modelUrl = chunkedId;
                     }
                     
                     await addDoc(assetsRef, assetData);
-                    
                     await fetchAssets();
-                } catch (err) { console.error(err); toast("Processing failed.", "error"); }
+                    toast("Asset uploaded successfully!", "success");
+                } catch (err) { 
+                    console.error(err); 
+                    toast("Processing failed.", "error"); 
+                }
                 setIsUploading(false);
             };
             reader.readAsDataURL(file);
@@ -453,51 +635,29 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
         if (e.target) e.target.value = null;
     };
 
-    const handleDeleteCharacter = async (char) => {
-        if (!(await dialog.confirm(`Permanently remove "${char.name}" from the campaign?`))) return;
-        try {
-            if (campaignData?.players?.find(p => p.id === char.id)) {
-                if (updateCampaign) updateCampaign({ players: campaignData.players.filter(p => p.id !== char.id) });
-            } else if (campaignData?.npcs?.find(n => n.id === char.id)) {
-                if (updateCampaign) updateCampaign({ npcs: campaignData.npcs.filter(n => n.id !== char.id) });
-            }
-        } catch (err) {
-            console.error("Failed to delete character", err);
-            toast("Delete failed.", "error");
-        }
-    };
-
     const handleDeleteAsset = async (asset) => {
         if (!(await dialog.confirm(`Permanently delete "${asset.name}"?`))) return;
 
         try {
             const assetRef = doc(db, 'artifacts', appId || 'dungeonmind', 'public', 'data', 'campaigns', campaignCode, 'assets', asset.id);
             await deleteDoc(assetRef);
-
             await deleteChunkedMap(asset.url);
             
-            if (asset.thumbnailId) {
-                await deleteChunkedMap(asset.thumbnailId);
-            }
-
-            if (asset.generatedMapUrl) {
-                await deleteChunkedMap(asset.generatedMapUrl);
-            }
-            if (asset.generatedHeightmapUrl) {
-                await deleteChunkedMap(asset.generatedHeightmapUrl);
-            }
+            if (asset.thumbnailId) await deleteChunkedMap(asset.thumbnailId);
+            if (asset.generatedMapUrl) await deleteChunkedMap(asset.generatedMapUrl);
+            if (asset.generatedHeightmapUrl) await deleteChunkedMap(asset.generatedHeightmapUrl);
 
             setAssets(prev => prev.filter(a => a.id !== asset.id));
 
             if (mapData?.backgroundUrl === asset.url || mapData?.backgroundUrl === asset.generatedMapUrl) {
                 onNewBlankMap(true);
             }
-
+            toast("Asset deleted.", "info");
         } catch (err) {
             console.error("Error deleting asset:", err);
             toast("Failed to delete asset.", "error");
         }
-    }
+    };
 
     const handleUpdateAssetLayer = async (asset, layerType, data) => {
         const assetRef = doc(db, 'artifacts', appId || 'dungeonmind', 'public', 'data', 'campaigns', campaignCode, 'assets', asset.id);
@@ -520,7 +680,6 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
             const currentFeatures = asset.generatedFeatures || { walls: {}, lights: [] };
             updates.generatedFeatures = { ...currentFeatures, walls: data.walls };
             
-            // Preserve existing walls that were not generated by AI (e.g. boundary walls, hand-drawn)
             const preservedWalls = {};
             if (mapData?.walls) {
                 Object.values(mapData.walls).filter(Boolean).forEach(w => {
@@ -529,7 +688,6 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
                     }
                 });
             }
-            
             mapUpdates.walls = { ...preservedWalls, ...(data.walls || {}) };
         } else if (layerType === 'illuminationMask') {
             const currentFeatures = asset.generatedFeatures || { walls: {}, lights: [] };
@@ -569,12 +727,10 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
             await updateDoc(assetRef, updates);
         }
         
-        // Update local selectedAsset state to reflect changes instantly (green checkmarks)
         if (selectedAsset && selectedAsset.id === asset.id) {
             setSelectedAsset(prev => ({ ...prev, ...updates }));
         }
         
-        // Only apply to the current map if we are currently viewing THIS exact asset's background
         const isActiveMap = mapData?.backgroundUrl === asset.generatedMapUrl || 
                             mapData?.backgroundUrl === asset.url || 
                             (layerType === 'baseMap' && mapData?.backgroundUrl === data);
@@ -597,7 +753,6 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
             let finalUrl = imageUrl;
             let objectUrl = null;
 
-            // Resolve chunked IDs from local storage or proxy external URLs
             if (imageUrl.startsWith('chunked:')) {
                 const blob = await retrieveChunkedMap(imageUrl);
                 if (blob) {
@@ -610,7 +765,6 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
                 let cleanUrl = finalUrl;
                 if (cleanUrl.includes('corsproxy.io/?')) cleanUrl = decodeURIComponent(cleanUrl.split('corsproxy.io/?')[1] || cleanUrl);
                 if (cleanUrl.includes('api.allorigins.win/raw?url=')) cleanUrl = decodeURIComponent(cleanUrl.split('api.allorigins.win/raw?url=')[1] || cleanUrl);
-                if (cleanUrl.includes('api.allorigins.win/raw?url=')) cleanUrl = decodeURIComponent(cleanUrl.split('api.allorigins.win/raw?url=')[1] || cleanUrl);
                 if (!cleanUrl.includes('firebasestorage.googleapis.com') && !cleanUrl.includes('wsrv.nl')) {
                     finalUrl = `https://wsrv.nl/?url=${encodeURIComponent(cleanUrl)}&cors=1`;
                 } else {
@@ -619,7 +773,7 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
             }
 
             const img = new Image();
-            img.crossOrigin = "Anonymous"; // Crucial for reading pixel data
+            img.crossOrigin = "Anonymous";
             img.onload = () => {
                 const canvas = document.createElement('canvas');
                 canvas.width = img.width;
@@ -656,20 +810,16 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
         const subdividedCellSize = cellSize / subdivision;
         const scale = mapData?.scale || 20;
         
-        // Calculate the ratio: how many world units is one image pixel?
         const unitsPerPixel = scale / imageHeight;
         const newGridSize = subdividedCellSize * unitsPerPixel;
 
-        // Calculate world boundaries to map pixel offset to world offset
         const worldWidth = imageWidth * unitsPerPixel;
         const topLeftX = -worldWidth / 2;
         const topLeftZ = -scale / 2; 
 
-        // The exact world intersection point for the detected top-left grid corner
         const ix = topLeftX + (offsetX * unitsPerPixel);
         const iz = topLeftZ + (offsetY * unitsPerPixel);
 
-        // The ((x % m) + m) % m formula ensures safe positive modulo. Shift to keep offsets near 0.
         const modX = ((ix % newGridSize) + newGridSize) % newGridSize;
         const modZ = ((iz % newGridSize) + newGridSize) % newGridSize;
         const finalOffsetX = modX > newGridSize / 2 ? modX - newGridSize : modX;
@@ -682,6 +832,7 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
         });
 
         setGridDetectionResult(null);
+        toast("Grid alignment applied!", "success");
     };
 
     const handleExportPreset = async () => {
@@ -716,7 +867,7 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
             const characters = [];
             if (allCharacters && tokens.length > 0) {
                 tokens.forEach(t => {
-                    if (!t || !t.characterId) return; // Prevent TypeError if token is null or lacks characterId
+                    if (!t || !t.characterId) return;
                     const char = allCharacters.find(c => c && String(c.id) === String(t.characterId));
                     if (char && !characters.find(c => c.id === char.id)) {
                         characters.push(char);
@@ -725,6 +876,7 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
             }
 
             await exportMapPreset(mapSettings, geometry, lights, tokens, characters);
+            toast("Map preset exported!", "success");
         } catch (err) {
             console.error("Failed to export preset:", err);
             toast("Failed to export preset.", "error");
@@ -741,7 +893,6 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
         try {
             const preset = await importMapPreset(file);
             
-            // Process Characters
             const currentNpcs = campaignData?.npcs || [];
             const newNpcs = [...currentNpcs];
             const characterIdMap = {};
@@ -760,8 +911,8 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
                             try {
                                const chunkedId = await storeChunkedMap(char.modelBase64, `${char.name}_model.glb`);
                                newChar.modelUrl = chunkedId;
-                            } catch (e) {
-                               console.error("Failed to store model:", e);
+                            } catch (err) {
+                               console.error("Failed to store model:", err);
                             }
                         }
                         delete newChar.modelBase64;
@@ -772,7 +923,6 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
                 if (updateCampaign) updateCampaign({ npcs: newNpcs });
             }
 
-            // Process Map Assets
             let backgroundUrl = preset.mapSettings?.mapImageUrl;
             let heightmapUrl = preset.mapSettings?.heightmapUrl;
             let normalMapUrl = preset.mapSettings?.normalMapUrl;
@@ -819,7 +969,6 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
             delete updates.normalMapBase64;
             delete updates.mapImageUrl;
 
-            // Tokens
             const tokensUpdate = {};
             if (preset.tokens) {
                 preset.tokens.forEach(t => {
@@ -835,7 +984,6 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
                 updates.tokens = {};
             }
 
-            // Create a new map rather than overwriting the current one
             const newMapId = doc(collection(db, 'maps')).id;
             
             updates.name = updates.name || preset.mapSettings?.name || 'Imported Map';
@@ -848,8 +996,8 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
             if (updateCampaign) {
                 await updateCampaign({ activeMapId: newMapId });
             }
-            
-            if (onClose) onClose(); // Close the asset manager after importing
+            toast("Map preset loaded!", "success");
+            if (onClose) onClose();
             
         } catch (err) {
             console.error("Failed to import preset:", err);
@@ -907,25 +1055,92 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
         reader.readAsDataURL(file);
     };
 
-    const activeScaleData = useRef(null);
+    // Handler to accept a battlemap directly
+    const handleAcceptBattlemap = async (mapItem) => {
+        if (!mapItem?.url) return;
+        if (internalImportTarget) {
+            setIsProcessingMap(true);
+            try {
+                const targetMap = { ...internalImportTarget, id: internalImportTarget.mapId };
+                const newMapId = await fulfillMapData({
+                    imgUrl: mapItem.url,
+                    targetMap,
+                    campaignCode,
+                    skeleton: campaignData?.moduleSkeleton || campaignData?.campaign?.moduleSkeleton,
+                    data: {
+                        ...campaignData,
+                        npcs: (campaignData?.npcs || []).filter(n => n && n.name),
+                        players: (campaignData?.players || []).filter(p => p && p.name)
+                    },
+                    aiHelper: localAiHelper,
+                    generateNpc: localGenerateNpc,
+                    updateCampaign,
+                    setProcessingStep: setProcessingStep
+                });
+                toast(`${internalImportTarget.name} is now Ready!`, "success");
+                setProcessingStep('Populating Entities...');
+                await new Promise(r => setTimeout(r, 3500));
+                await updateCampaign({ activeMapId: newMapId });
+                setInternalImportTarget(null);
+                setSelectedAsset({ ...targetMap, url: mapItem.url, isSkeletonMap: true, activeMapId: newMapId });
+                setActiveTab('settings');
+                handleAutoDetectGrid(mapItem.url);
+            } catch (e) {
+                console.error(e);
+                toast("Fulfillment failed.", "error");
+            } finally {
+                setIsProcessingMap(false);
+                setProcessingStep('');
+            }
+        } else {
+            const isNew = await onSetBackground({ name: mapItem.title || 'Discovered Map', url: mapItem.url }, false);
+            setSelectedAsset({ name: mapItem.title, url: mapItem.url });
+            setActiveTab('settings');
+            if (isNew) {
+                handleAutoDetectGrid(mapItem.url);
+            }
+        }
+        setInspectedMap(null);
+    };
+
+    const handleApplyDirectUrl = async () => {
+        if (!directUrlInput || !directUrlInput.trim()) return;
+        const cleanUrl = directUrlInput.trim();
+        await handleAcceptBattlemap({ title: 'Imported Web Map', url: cleanUrl });
+        setDirectUrlInput('');
+    };
 
     return (
-        <div className="absolute top-0 right-0 bottom-0 w-full sm:w-80 max-w-full bg-slate-900 border-l border-slate-700 shadow-2xl z-[80] flex flex-col animate-in slide-in-from-right duration-300 pb-safe">
-            
+        <div 
+            className="absolute top-0 right-0 bottom-0 max-w-full bg-slate-950/95 backdrop-blur-md border-l border-slate-800 shadow-2xl z-[80] flex flex-col animate-in slide-in-from-right duration-300 pb-safe"
+            style={{ width: typeof window !== 'undefined' && window.innerWidth < 640 ? '100vw' : `${width}px` }}
+        >
+            {/* Left Edge Drag-to-Resize Handle */}
+            {typeof window !== 'undefined' && window.innerWidth >= 640 && onResizeMouseDown && (
+                <div 
+                    className="absolute left-0 top-0 bottom-0 w-3 -ml-1.5 cursor-col-resize hover:bg-amber-500/40 active:bg-amber-500/60 z-30 transition-colors touch-none flex items-center justify-center group"
+                    onMouseDown={onResizeMouseDown}
+                    onTouchStart={onResizeMouseDown}
+                    title="Drag to resize Map Studio"
+                >
+                    <div className="w-1 h-12 rounded-full bg-slate-700/80 group-hover:bg-amber-400 group-active:bg-amber-400 transition-colors shadow-sm" />
+                </div>
+            )}
+
             {/* Loading Overlay */}
             {(isDetectingGrid || isImporting || isProcessingMap) && (
-                <div className="fixed inset-0 z-[100] bg-slate-900/90 backdrop-blur-sm flex flex-col items-center justify-center text-center p-6">
+                <div className="fixed inset-0 z-[100] bg-slate-950/90 backdrop-blur-md flex flex-col items-center justify-center text-center p-6">
                     {isProcessingMap ? (
                         <>
-                            <div className="w-16 h-16 border-4 border-amber-500 border-t-transparent rounded-full animate-spin mb-6 shadow-[0_0_15px_rgba(245,158,11,0.5)]"></div>
-                            <h3 className="text-2xl font-bold text-white mb-2 tracking-wider">Forging Scene</h3>
-                            <p className="text-amber-400 animate-pulse font-mono bg-black/50 px-4 py-2 rounded border border-amber-500/20">{processingStep || 'Processing...'}</p>
+                            <div className="w-16 h-16 border-4 border-amber-500 border-t-transparent rounded-full animate-spin mb-6 shadow-[0_0_20px_rgba(245,158,11,0.5)]"></div>
+                            <h3 className="text-2xl font-bold text-white mb-2 tracking-wider fantasy-font">Forging Battlemap</h3>
+                            <p className="text-amber-400 animate-pulse font-mono bg-black/60 px-4 py-2 rounded-lg border border-amber-500/20">{processingStep || 'Processing...'}</p>
                         </>
                     ) : (
                         <>
                             <Icon name="loader" className="animate-spin text-amber-500 mb-4" size={48} />
-                            <h3 className="text-xl font-bold text-white mb-2">{isImporting ? 'Importing Preset...' : 'Analyzing Frequencies...'}</h3>
-                            <p className="text-sm text-slate-400">{isImporting ? 'Please wait while assets are loaded and applied.' : 'Running Computer Vision Grid Detection'}</p>
+                            <h3 className="text-xl font-bold text-white mb-2 fantasy-font">{isImporting ? 'Importing Preset...' : 'Analyzing Grid Frequencies...'}</h3>
+                            <p className="text-sm text-slate-400">{isImporting ? 'Loading scene geometry and assets.' : 'Computer Vision is detecting grid alignment & cell sizes.'}</p>
                         </>
                     )}
                 </div>
@@ -933,39 +1148,39 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
 
             {/* Verification UI Overlay */}
             {gridDetectionResult && (
-                <div className="absolute bottom-4 left-4 right-4 bg-slate-800 border border-amber-500 rounded-xl p-4 shadow-2xl z-[100] animate-in slide-in-from-bottom mb-safe mr-safe ml-safe">
-                    <div className="flex justify-between items-center mb-4">
-                        <h3 className="font-bold text-amber-500 flex items-center gap-2">
-                            <Icon name="check-circle" size={18} /> Grid Detected
+                <div className="absolute bottom-4 left-4 right-4 bg-slate-900/95 border border-amber-500/80 rounded-2xl p-4 shadow-2xl z-[100] animate-in slide-in-from-bottom mb-safe mr-safe ml-safe backdrop-blur-md">
+                    <div className="flex justify-between items-center mb-3">
+                        <h3 className="font-bold text-amber-400 flex items-center gap-2 text-sm">
+                            <Icon name="check-circle" size={16} className="text-amber-400" /> Grid Auto-Detected
                         </h3>
-                        <button onClick={() => setGridDetectionResult(null)} className="text-slate-400 hover:text-white">
-                            <Icon name="x" size={18} />
+                        <button onClick={() => setGridDetectionResult(null)} className="text-slate-400 hover:text-white p-1">
+                            <Icon name="x" size={16} />
                         </button>
                     </div>
                     
-                    <div className="grid grid-cols-3 gap-3 mb-4">
-                        <div className="bg-slate-900 p-2 rounded border border-slate-700 text-center">
-                            <div className="text-[10px] uppercase text-slate-500 font-bold mb-1">Cell Size</div>
-                            <div className="font-mono text-white text-base">{(gridDetectionResult.cellSize / gridSubdivision).toFixed(1)}<span className="text-[10px] text-slate-500 ml-1">px</span></div>
+                    <div className="grid grid-cols-3 gap-2 mb-3">
+                        <div className="bg-slate-950 p-2 rounded-lg border border-slate-800 text-center">
+                            <div className="text-[9px] uppercase text-slate-500 font-bold mb-0.5">Cell Size</div>
+                            <div className="font-mono text-white text-sm">{(gridDetectionResult.cellSize / gridSubdivision).toFixed(1)}<span className="text-[9px] text-slate-500 ml-0.5">px</span></div>
                         </div>
-                        <div className="bg-slate-900 p-2 rounded border border-slate-700 text-center">
-                            <div className="text-[10px] uppercase text-slate-500 font-bold mb-1">Offset X</div>
-                            <div className="font-mono text-white text-base">{gridDetectionResult.offsetX.toFixed(1)}<span className="text-[10px] text-slate-500 ml-1">px</span></div>
+                        <div className="bg-slate-950 p-2 rounded-lg border border-slate-800 text-center">
+                            <div className="text-[9px] uppercase text-slate-500 font-bold mb-0.5">Offset X</div>
+                            <div className="font-mono text-white text-sm">{gridDetectionResult.offsetX.toFixed(1)}<span className="text-[9px] text-slate-500 ml-0.5">px</span></div>
                         </div>
-                        <div className="bg-slate-900 p-2 rounded border border-slate-700 text-center">
-                            <div className="text-[10px] uppercase text-slate-500 font-bold mb-1">Offset Y</div>
-                            <div className="font-mono text-white text-base">{gridDetectionResult.offsetY.toFixed(1)}<span className="text-[10px] text-slate-500 ml-1">px</span></div>
+                        <div className="bg-slate-950 p-2 rounded-lg border border-slate-800 text-center">
+                            <div className="text-[9px] uppercase text-slate-500 font-bold mb-0.5">Offset Y</div>
+                            <div className="font-mono text-white text-sm">{gridDetectionResult.offsetY.toFixed(1)}<span className="text-[9px] text-slate-500 ml-0.5">px</span></div>
                         </div>
                     </div>
 
-                    <div className="flex justify-between items-center mb-4 bg-slate-900 p-2 rounded border border-slate-700">
+                    <div className="flex justify-between items-center mb-3 bg-slate-950 p-2 rounded-lg border border-slate-800">
                         <span className="text-xs font-bold text-slate-400">Subdivide Grid</span>
                         <div className="flex gap-1">
                             {[1, 2, 3, 4].map(num => (
                                 <button 
                                     key={num}
                                     onClick={() => setGridSubdivision(num)}
-                                    className={`px-3 py-1 text-xs font-bold rounded ${gridSubdivision === num ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}
+                                    className={`px-2.5 py-0.5 text-xs font-bold rounded-md transition-colors ${gridSubdivision === num ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}
                                 >
                                     {num}x
                                 </button>
@@ -974,216 +1189,282 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
                     </div>
 
                     <div className="flex justify-between items-center">
-                        <span className="text-xs font-bold text-slate-500">
-                            Confidence: <span className={gridDetectionResult.confidence > 0.7 ? "text-green-400" : gridDetectionResult.confidence > 0.4 ? "text-amber-400" : "text-red-400"}>{Math.round(gridDetectionResult.confidence * 100)}%</span>
+                        <span className="text-xs text-slate-400">
+                            Confidence: <span className={gridDetectionResult.confidence > 0.7 ? "text-green-400 font-bold" : gridDetectionResult.confidence > 0.4 ? "text-amber-400 font-bold" : "text-red-400 font-bold"}>{Math.round(gridDetectionResult.confidence * 100)}%</span>
                         </span>
                         <div className="flex gap-2">
                             <button 
                                 onClick={() => setGridDetectionResult(null)}
-                                className="px-3 py-1.5 text-xs font-bold text-slate-400 hover:text-white bg-slate-900 rounded border border-slate-700 hover:border-slate-500"
+                                className="px-3 py-1 text-xs font-semibold text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg border border-slate-700 transition-colors"
                             >
                                 Discard
                             </button>
                             <button 
                                 onClick={() => handleApplyGridAlignment(gridDetectionResult, gridSubdivision)}
-                                className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold rounded shadow"
+                                className="px-3.5 py-1 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-white text-xs font-bold rounded-lg shadow-md transition-all"
                             >
-                                Apply
+                                Apply Grid
                             </button>
                         </div>
                     </div>
                 </div>
             )}
 
-            <div className="flex-none p-4 pt-safe-min pr-safe-min pl-safe-min border-b border-slate-800 flex justify-between items-center bg-slate-950">
-                <h3 className="font-bold text-amber-500 flex items-center gap-2"><Icon name="map" size={18} /> Map Editor</h3>
-                <div className="flex items-center">
-                    <button onClick={() => onNewBlankMap()} className="text-slate-400 hover:text-white p-1" title="New Blank Map">
-                        <Icon name="file-plus" size={18} />
+            {/* Top Header */}
+            <div className="flex-none p-3.5 pt-safe-min pr-safe-min pl-safe-min border-b border-slate-800/80 flex justify-between items-center bg-slate-950/80 backdrop-blur">
+                <div className="flex items-center gap-2 min-w-0">
+                    <div className="w-7 h-7 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
+                        <Icon name="map" size={16} />
+                    </div>
+                    <div className="min-w-0">
+                        <h3 className="font-bold text-slate-100 text-sm tracking-wide truncate flex items-center gap-2">
+                            <span>Map Studio</span>
+                            {mapData?.name && (
+                                <span className="text-[10px] text-amber-400/90 font-mono font-normal bg-amber-950/40 px-2 py-0.5 rounded border border-amber-800/40 truncate max-w-[150px]">
+                                    {mapData.name}
+                                </span>
+                            )}
+                        </h3>
+                    </div>
+                </div>
+                <div className="flex items-center gap-1">
+                    <button 
+                        onClick={() => onNewBlankMap()} 
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-amber-400 hover:bg-slate-800 transition-colors" 
+                        title="Create New Blank Map"
+                    >
+                        <Icon name="file-plus" size={17} />
                     </button>
-                    <button onClick={onClose} className="text-slate-400 hover:text-white p-1"><Icon name="x" size={18} /></button>
+                    <button 
+                        onClick={onClose} 
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+                        title="Close Sidebar (Esc)"
+                    >
+                        <Icon name="x" size={17} />
+                    </button>
                 </div>
             </div>
 
-            <div className="flex-none border-b border-slate-800 flex overflow-x-auto no-scrollbar">
-                <TabButton name="web" activeTab={activeTab} onClick={setActiveTab} icon="search">Web</TabButton>
-                <TabButton name="library" activeTab={activeTab} onClick={setActiveTab} icon="library">Assets</TabButton>
-                <TabButton name="sketchfab" activeTab={activeTab} onClick={setActiveTab} icon="globe">Sketchfab</TabButton>
-                <TabButton name="settings" activeTab={activeTab} onClick={(tab) => { setSelectedAsset(null); setActiveTab(tab); }} icon="sliders-horizontal">Settings</TabButton>
-                {activeTab === 'ai' && <TabButton name="ai" activeTab={activeTab} onClick={setActiveTab} icon="layers">Layers</TabButton>}
+            {/* Navigation Tabs */}
+            <div className="flex-none border-b border-slate-800 bg-slate-950/50 flex overflow-x-auto no-scrollbar">
+                <TabButton name="library" activeTab={activeTab} onClick={setActiveTab} icon="map">Maps & Atlas</TabButton>
+                <TabButton name="web" activeTab={activeTab} onClick={setActiveTab} icon="compass">Discover</TabButton>
+                <TabButton name="settings" activeTab={activeTab} onClick={(tab) => { setSelectedAsset(null); setActiveTab(tab); }} icon="sliders-horizontal">Tuning</TabButton>
+                <TabButton name="sketchfab" activeTab={activeTab} onClick={setActiveTab} icon="box">3D Props</TabButton>
+                {activeTab === 'ai' && <TabButton name="ai" activeTab={activeTab} onClick={setActiveTab} icon="layers">Layers & AI</TabButton>}
             </div>
-            
+
+            {/* TAB: DISCOVER / WEB SEARCH */}
             {activeTab === 'web' && (
-                <div className="flex-1 min-h-0 flex flex-col bg-slate-900">
-                    <div className="p-3 border-b border-slate-800 bg-slate-950 flex flex-col gap-2 shrink-0">
+                <div className="flex-1 min-h-0 flex flex-col bg-slate-900/60">
+                    {/* Search & Filter Header */}
+                    <div className="p-3 border-b border-slate-800 bg-slate-950/70 flex flex-col gap-2 shrink-0">
                         <div className="flex gap-2">
-                            <input 
-                                value={redditQuery} 
-                                onChange={(e) => setRedditQuery(e.target.value)} 
-                                onKeyDown={(e) => e.key === 'Enter' && handleRedditSearch()}
-                                placeholder="Search battlemaps (e.g. Tavern, Dungeon, Forest)..." 
-                                className="flex-1 bg-slate-900 border border-slate-700 rounded px-3 py-2 text-white outline-none focus:border-amber-500 text-sm"
-                            />
-                            <button onClick={() => handleRedditSearch()} disabled={isSourcing} className="bg-amber-600 hover:bg-amber-500 px-4 rounded text-white font-bold flex items-center justify-center transition-colors">
-                                {isSourcing ? <Icon name="loader" className="animate-spin" /> : <Icon name="search" />}
+                            <div className="flex-1 relative">
+                                <input 
+                                    value={redditQuery} 
+                                    onChange={(e) => setRedditQuery(e.target.value)} 
+                                    onKeyDown={(e) => e.key === 'Enter' && handleRedditSearch()}
+                                    placeholder="Search battlemaps (Tavern, Dungeon, Forest)..." 
+                                    className="w-full bg-slate-900 border border-slate-700/80 rounded-xl pl-8 pr-3 py-2 text-white outline-none focus:border-amber-500 text-xs shadow-inner transition-colors"
+                                />
+                                <div className="absolute left-2.5 top-2.5 text-slate-500 pointer-events-none">
+                                    <Icon name="search" size={14} />
+                                </div>
+                            </div>
+                            <button 
+                                onClick={() => handleRedditSearch()} 
+                                disabled={isSourcing} 
+                                className="bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 px-3.5 rounded-xl text-white font-bold text-xs flex items-center justify-center transition-all shadow-md shrink-0 disabled:opacity-50"
+                            >
+                                {isSourcing ? <Icon name="loader" size={14} className="animate-spin" /> : "Search"}
                             </button>
                         </div>
+
                         {/* Quick Suggestion Tags */}
-                        <div className="flex flex-wrap gap-1.5 items-center">
-                            <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Quick:</span>
-                            {['Tavern', 'Dungeon', 'Forest', 'Cave', 'Crypt', 'Castle', 'Temple', 'Swamp', 'Ship', 'Snow', 'Desert', 'City', 'Volcano', 'Dragon', 'Tower', 'Sewers'].map(tag => (
+                        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+                            <span className="text-[10px] uppercase font-bold text-slate-500 shrink-0">Tags:</span>
+                            {['Tavern', 'Dungeon', 'Forest', 'Cave', 'Castle', 'Crypt', 'Swamp', 'Ship', 'Snow', 'Desert', 'City', 'Volcano', 'Dragon', 'Tower', 'Sewers'].map(tag => (
                                 <button
                                     key={tag}
                                     type="button"
                                     onClick={() => { setRedditQuery(tag); handleRedditSearch(tag); }}
-                                    className="text-[11px] px-2 py-0.5 rounded-full bg-slate-800 hover:bg-amber-600/30 text-slate-300 hover:text-amber-300 border border-slate-700 transition-colors"
+                                    className="text-[11px] px-2.5 py-0.5 rounded-full bg-slate-800/80 hover:bg-amber-600/30 text-slate-300 hover:text-amber-300 border border-slate-700/70 transition-colors shrink-0"
                                 >
                                     {tag}
                                 </button>
                             ))}
                         </div>
-                        {/* External Web Search Quick Links */}
-                        <div className="flex items-center gap-2 pt-1 border-t border-slate-800/60 text-xs text-slate-400">
-                            <span>Find more:</span>
+
+                        {/* Direct URL Import Accordion Bar */}
+                        <div className="flex items-center gap-2 pt-1 border-t border-slate-800/80">
+                            <input
+                                type="text"
+                                value={directUrlInput}
+                                onChange={(e) => setDirectUrlInput(e.target.value)}
+                                onKeyDown={(e) => e.key === 'Enter' && handleApplyDirectUrl()}
+                                placeholder="Or paste direct image URL (jpg, png, webp)..."
+                                className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1 text-[11px] text-slate-300 outline-none focus:border-amber-500"
+                            />
                             <button
                                 type="button"
-                                onClick={() => window.open(`https://www.google.com/search?tbm=isch&q=${encodeURIComponent((redditQuery || 'fantasy') + ' dnd battlemap top down grid')}`, '_blank')}
-                                className="text-blue-400 hover:text-blue-300 hover:underline flex items-center gap-1"
+                                onClick={handleApplyDirectUrl}
+                                disabled={!directUrlInput.trim()}
+                                className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-300 hover:text-white rounded-lg text-[11px] font-bold border border-slate-700 transition-colors"
                             >
-                                <Icon name="external-link" size={12} /> Google Images
+                                Import
                             </button>
-                            <span>•</span>
-                            <button
-                                type="button"
-                                onClick={() => window.open(`https://www.reddit.com/r/battlemaps/search/?q=${encodeURIComponent(redditQuery || '')}&restrict_sr=1`, '_blank')}
-                                className="text-orange-400 hover:text-orange-300 hover:underline flex items-center gap-1"
-                            >
-                                <Icon name="external-link" size={12} /> Reddit /r/battlemaps
-                            </button>
-                            <span className="text-[10px] text-slate-500 ml-auto hidden sm:inline">(Paste any image link into search bar)</span>
                         </div>
                     </div>
-                    <div className="flex-1 relative flex items-center justify-center overflow-hidden">
+
+                    {/* Results Visual Grid */}
+                    <div className="flex-1 min-h-0 overflow-y-auto custom-scroll p-3">
                         {isSourcing ? (
-                            <div className="text-center animate-pulse">
-                                <Icon name="loader" size={48} className="animate-spin text-amber-500 mx-auto mb-4" />
-                                <div className="text-slate-300 font-bold">Searching battlemap archives...</div>
+                            <div className="h-64 flex flex-col items-center justify-center text-center animate-pulse">
+                                <Icon name="loader" size={36} className="animate-spin text-amber-500 mb-3" />
+                                <div className="text-slate-300 font-bold text-sm">Searching Battlemap Archives...</div>
+                                <div className="text-slate-500 text-xs mt-1">Gathering top-down maps from Reddit & Cartographers</div>
                             </div>
                         ) : redditResults.length > 0 ? (
                             <>
-                                <div className="absolute inset-0 flex items-center justify-center p-4">
-                                    <img 
-                                        src={getProxiedImageUrl(redditResults[currentImageIndex].url, 1200)} 
-                                        referrerPolicy="no-referrer"
-                                        className="max-h-full max-w-full object-contain shadow-2xl rounded" 
-                                        alt="Map Preview" 
-                                    />
+                                <div className="flex justify-between items-center mb-2.5 px-0.5">
+                                    <span className="text-xs font-semibold text-slate-400">
+                                        Found <span className="text-amber-400">{redditResults.length}</span> battlemaps
+                                    </span>
+                                    <div className="flex items-center gap-2 text-[11px] text-slate-500">
+                                        <button 
+                                            onClick={() => window.open(`https://www.google.com/search?tbm=isch&q=${encodeURIComponent((redditQuery || 'fantasy') + ' dnd battlemap top down grid')}`, '_blank')}
+                                            className="hover:text-blue-400 transition-colors flex items-center gap-1"
+                                        >
+                                            <Icon name="external-link" size={10} /> Google
+                                        </button>
+                                        <span>•</span>
+                                        <button 
+                                            onClick={() => window.open(`https://www.reddit.com/r/battlemaps/search/?q=${encodeURIComponent(redditQuery || '')}&restrict_sr=1`, '_blank')}
+                                            className="hover:text-orange-400 transition-colors flex items-center gap-1"
+                                        >
+                                            <Icon name="external-link" size={10} /> Reddit
+                                        </button>
+                                    </div>
                                 </div>
-                                
-                                <button 
-                                    onClick={() => setCurrentImageIndex(prev => prev > 0 ? prev - 1 : redditResults.length - 1)}
-                                    className="absolute left-4 top-1/2 -translate-y-1/2 bg-black/50 hover:bg-black/80 text-white p-3 rounded-full backdrop-blur transition-colors border border-slate-700 shadow-xl"
-                                >
-                                    <Icon name="chevron-left" size={24}/>
-                                </button>
-                                <button 
-                                    onClick={() => setCurrentImageIndex(prev => prev < redditResults.length - 1 ? prev + 1 : 0)}
-                                    className="absolute right-4 top-1/2 -translate-y-1/2 bg-black/50 hover:bg-black/80 text-white p-3 rounded-full backdrop-blur transition-colors border border-slate-700 shadow-xl"
-                                >
-                                    <Icon name="chevron-right" size={24}/>
-                                </button>
 
-                                <div className="absolute bottom-4 left-0 right-0 text-center flex flex-col items-center">
-                                    <div className="inline-block bg-black/70 backdrop-blur px-4 py-2 rounded-lg border border-slate-700 shadow-xl max-w-[80%] mb-2">
-                                        <p className="text-white font-bold text-sm truncate">{redditResults[currentImageIndex].title}</p>
-                                        <p className="text-slate-400 text-xs mt-1">
-                                            {redditResults[currentImageIndex].source ? `${redditResults[currentImageIndex].source} • ` : ''}
-                                            {redditResults[currentImageIndex].author ? `by ${redditResults[currentImageIndex].author} • ` : ''}
-                                            Result {currentImageIndex + 1} of {redditResults.length}
-                                        </p>
-                                    </div>
-                                    <div className="flex gap-2">
-                                        <button 
-                                             onClick={() => setActiveTab('ai')}
-                                             className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded shadow-lg flex items-center gap-2 border border-purple-500"
-                                         >
-                                             <Icon name="sparkles" size={16}/> Use AI
-                                         </button>
-                                        <button 
-                                             onClick={async () => {
-                                                 const selectedMap = redditResults[currentImageIndex];
-                                                 if (internalImportTarget) {
-                                                     setIsProcessingMap(true);
-                                                     try {
-                                                         const targetMap = { ...internalImportTarget, id: internalImportTarget.mapId };
-                                                         const newMapId = await fulfillMapData({
-                                                             imgUrl: selectedMap.url,
-                                                             targetMap,
-                                                             campaignCode,
-                                                             skeleton: campaignData?.moduleSkeleton || campaignData?.campaign?.moduleSkeleton,
-                                                             data: {
-                                                                 ...campaignData,
-                                                                 npcs: (campaignData?.npcs || []).filter(n => n && n.name),
-                                                                 players: (campaignData?.players || []).filter(p => p && p.name)
-                                                             },
-                                                             aiHelper: localAiHelper,
-                                                             generateNpc: localGenerateNpc,
-                                                             updateCampaign,
-                                                             setProcessingStep: setProcessingStep
-                                                         });
-                                                         toast(`${internalImportTarget.name} is now Ready!`, "success");
-                                                         setProcessingStep('Populating Entities...');
-                                                         await new Promise(r => setTimeout(r, 3500));
-                                                         await updateCampaign({ activeMapId: newMapId });
-                                                         setInternalImportTarget(null);
-                                                         setSelectedAsset({ ...targetMap, url: selectedMap.url, isSkeletonMap: true, activeMapId: newMapId });
-                                                         setActiveTab('settings');
-                                                         handleAutoDetectGrid(selectedMap.url);
-                                                     } catch (e) {
-                                                         console.error(e);
-                                                         toast("Fulfillment failed.", "error");
-                                                     } finally {
-                                                         setIsProcessingMap(false);
-                                                         setProcessingStep('');
-                                                     }
-                                                 } else {
-                                                     const isNew = await onSetBackground({ name: selectedMap.title, url: selectedMap.url }, false);
-                                                     setSelectedAsset({ name: selectedMap.title, url: selectedMap.url });
-                                                     setActiveTab('settings');
-                                                     if (isNew) {
-                                                         handleAutoDetectGrid(selectedMap.url);
-                                                     }
-                                                 }
-                                             }}
-                                             className="px-6 py-2 bg-green-600 hover:bg-green-500 text-white font-bold rounded shadow-lg flex items-center gap-2 border border-green-500"
-                                         >
-                                             <Icon name="check" size={18}/> Accept Map
-                                         </button>
-                                    </div>
+                                <div className="grid grid-cols-2 gap-2.5">
+                                    {redditResults.map((mapItem, idx) => (
+                                        <div 
+                                            key={idx}
+                                            onClick={() => setInspectedMap(mapItem)}
+                                            className="group relative aspect-square bg-slate-950 rounded-xl border border-slate-800 hover:border-amber-500/80 shadow-md overflow-hidden cursor-pointer transition-all duration-200"
+                                        >
+                                            <img 
+                                                src={getProxiedImageUrl(mapItem.url, 400)}
+                                                alt={mapItem.title}
+                                                referrerPolicy="no-referrer"
+                                                className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+                                                loading="lazy"
+                                            />
+                                            <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent pointer-events-none opacity-90 group-hover:opacity-100 transition-opacity" />
+                                            
+                                            <div className="absolute inset-x-0 bottom-0 p-2 flex flex-col justify-end pointer-events-none">
+                                                <div className="text-xs font-bold text-white truncate drop-shadow" title={mapItem.title}>
+                                                    {mapItem.title}
+                                                </div>
+                                                <div className="text-[10px] text-slate-400 truncate flex items-center gap-1 mt-0.5">
+                                                    <span>{mapItem.source || 'Reddit'}</span>
+                                                    {mapItem.author && <span>• {mapItem.author}</span>}
+                                                </div>
+                                            </div>
+
+                                            <div className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
+                                                <button
+                                                    type="button"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handleAcceptBattlemap(mapItem);
+                                                    }}
+                                                    className="w-7 h-7 rounded-md bg-amber-500 hover:bg-amber-400 text-black flex items-center justify-center shadow-lg transition-colors"
+                                                    title="Use as Map"
+                                                >
+                                                    <Icon name="check" size={14} />
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ))}
                                 </div>
                             </>
                         ) : (
-                            <div className="text-center text-slate-500 p-6">
-                                <Icon name="search-x" size={48} className="mx-auto mb-4 opacity-50" />
-                                <p>No suitable maps found.</p>
-                                <button 
-                                     onClick={() => setActiveTab('ai')}
-                                     className="mt-4 w-64 px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded font-bold transition-colors shadow-lg flex items-center justify-center gap-2 mx-auto"
-                                >
-                                     <Icon name="sparkles" size={16} /> Generate with AI Instead
-                                </button>
-                                <button 
-                                     onClick={() => window.open(`https://www.google.com/search?tbm=isch&q=${encodeURIComponent(redditQuery + ' dnd battlemap')}`, '_blank')}
-                                     className="mt-4 w-64 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded font-bold transition-colors shadow-lg flex items-center justify-center gap-2 mx-auto"
-                                >
-                                     <Icon name="external-link" size={16} /> Search Google Images
-                                </button>
+                            <div className="h-64 flex flex-col items-center justify-center text-center text-slate-500 p-6">
+                                <Icon name="search" size={36} className="mx-auto mb-2 opacity-40" />
+                                <p className="text-sm font-semibold text-slate-400">Search for any battlemap keyword</p>
+                                <p className="text-xs text-slate-500 mt-1">E.g. "Tavern", "Swamp", "Dungeon", "Catacombs"</p>
                             </div>
                         )}
                     </div>
+
+                    {/* Battlemap Inspection Flyout Modal */}
+                    {inspectedMap && (
+                        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+                            <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-xl w-full max-h-[90vh] flex flex-col overflow-hidden shadow-2xl animate-in zoom-in-95 duration-150">
+                                <div className="p-3.5 border-b border-slate-800 flex justify-between items-center bg-slate-950">
+                                    <h4 className="font-bold text-white text-sm truncate pr-2" title={inspectedMap.title}>
+                                        {inspectedMap.title}
+                                    </h4>
+                                    <button 
+                                        onClick={() => setInspectedMap(null)}
+                                        className="text-slate-400 hover:text-white p-1"
+                                    >
+                                        <Icon name="x" size={18} />
+                                    </button>
+                                </div>
+
+                                <div className="flex-1 min-h-0 overflow-y-auto p-4 flex flex-col items-center justify-center bg-slate-950/60">
+                                    <img 
+                                        src={getProxiedImageUrl(inspectedMap.url, 1200)}
+                                        alt={inspectedMap.title}
+                                        referrerPolicy="no-referrer"
+                                        className="max-h-[55vh] max-w-full object-contain rounded-lg shadow-xl border border-slate-800"
+                                    />
+                                    <div className="mt-3 text-center">
+                                        <div className="text-xs text-slate-400">
+                                            {inspectedMap.source && <span className="font-semibold text-slate-300">{inspectedMap.source}</span>}
+                                            {inspectedMap.author && <span> • by {inspectedMap.author}</span>}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="p-3.5 border-t border-slate-800 bg-slate-950 flex justify-end gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => setInspectedMap(null)}
+                                        className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-bold rounded-xl transition-colors"
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setSelectedAsset({ name: inspectedMap.title, url: inspectedMap.url });
+                                            setActiveTab('ai');
+                                            setInspectedMap(null);
+                                        }}
+                                        className="px-4 py-2 bg-purple-600/80 hover:bg-purple-600 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 transition-colors border border-purple-500/50"
+                                    >
+                                        <Icon name="sparkles" size={14} /> Use AI Layers
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => handleAcceptBattlemap(inspectedMap)}
+                                        className="px-5 py-2 bg-gradient-to-r from-green-600 to-emerald-500 hover:from-green-500 hover:to-emerald-400 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-lg transition-all"
+                                    >
+                                        <Icon name="check" size={16} /> Load as Active Map
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
                 </div>
             )}
 
+            {/* TAB: SKETCHFAB 3D MODELS */}
             {activeTab === 'sketchfab' && (
                 <SketchfabImporter 
                     onSelectStamper={onSelectStamper} 
@@ -1205,8 +1486,9 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
                 />
             )}
 
+            {/* TAB: LAYERS & AI FORGE */}
             {activeTab === 'ai' && (selectedAsset || importTarget) && (
-                <div className="flex-1 min-h-0 overflow-y-auto custom-scroll bg-slate-900">
+                <div className="flex-1 min-h-0 overflow-y-auto custom-scroll bg-slate-900/60">
                     <MapGenerator 
                         asset={selectedAsset || { name: internalImportTarget?.name || importTarget?.name }}
                         mapData={mapData} 
@@ -1255,198 +1537,232 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
                 </div>
             )}
 
+            {/* TAB: MAPS & ATLAS (LIBRARY) */}
             {activeTab === 'library' && (
-                <>
-                    <div className="flex-none p-4 border-b border-slate-800 flex gap-2">
-                        <input
-                            type="file"
-                            ref={fileInputRef}
-                            onChange={handleUpload}
-                            className="hidden"
-                            accept="image/png, image/jpeg, image/gif, image/webp, video/mp4, video/webm, .glb, .gltf"
-                        />
-                        <button onClick={() => fileInputRef.current?.click()} disabled={isUploading} className="flex-1 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded flex items-center justify-center gap-2 shadow">
-                            {isUploading ? <Icon name="loader" size={14} className="animate-spin" /> : <Icon name="upload" size={14} />}
-                            {isUploading ? "Uploading..." : "Upload Asset"}
-                        </button>
-                        
-                        <input
-                            type="file"
-                            ref={importPresetRef}
-                            onChange={handleImportPresetClick}
-                            className="hidden"
-                            accept=".json"
-                        />
-                        <button onClick={() => importPresetRef.current?.click()} disabled={isImporting} className="flex-1 py-2 bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs rounded flex items-center justify-center gap-2 shadow">
-                            {isImporting ? <Icon name="loader" size={14} className="animate-spin" /> : <Icon name="download" size={14} />}
-                            {isImporting ? "Importing..." : "Import Preset"}
-                        </button>
+                <div className="flex-1 min-h-0 flex flex-col bg-slate-900/60">
+                    {/* Top Actions & Filters */}
+                    <div className="flex-none p-3 border-b border-slate-800 bg-slate-950/70 flex flex-col gap-2">
+                        <div className="flex gap-2">
+                            <input
+                                type="file"
+                                ref={fileInputRef}
+                                onChange={handleUpload}
+                                className="hidden"
+                                accept="image/png, image/jpeg, image/gif, image/webp, video/mp4, video/webm, .glb, .gltf"
+                            />
+                            <button 
+                                onClick={() => fileInputRef.current?.click()} 
+                                disabled={isUploading} 
+                                className="flex-1 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 shadow transition-colors"
+                            >
+                                {isUploading ? <Icon name="loader" size={14} className="animate-spin" /> : <Icon name="upload" size={14} />}
+                                {isUploading ? "Uploading..." : "Upload Map / Prop"}
+                            </button>
+                            
+                            <input
+                                type="file"
+                                ref={importPresetRef}
+                                onChange={handleImportPresetClick}
+                                className="hidden"
+                                accept=".json"
+                            />
+                            <button 
+                                onClick={() => importPresetRef.current?.click()} 
+                                disabled={isImporting} 
+                                className="flex-1 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 border border-slate-700 transition-colors shadow"
+                            >
+                                {isImporting ? <Icon name="loader" size={14} className="animate-spin" /> : <Icon name="download" size={14} />}
+                                {isImporting ? "Importing..." : "Import Preset"}
+                            </button>
+                        </div>
+
+                        <div className="flex gap-1.5 overflow-x-auto no-scrollbar pt-0.5">
+                            {['Maps', 'Props', 'All', 'Uncategorized'].map(cat => (
+                                <button 
+                                    key={cat} 
+                                    onClick={() => setAssetCategory(cat)} 
+                                    className={`px-3 py-1 text-xs font-semibold rounded-full whitespace-nowrap transition-colors ${assetCategory === cat ? 'bg-amber-500/20 text-amber-300 border border-amber-500/50' : 'bg-slate-800/80 text-slate-400 hover:bg-slate-700 hover:text-slate-200 border border-slate-800'}`}
+                                >
+                                    {cat}
+                                </button>
+                            ))}
+                        </div>
                     </div>
 
-                    <div className="flex gap-2 p-2 px-4 border-b border-slate-800 bg-slate-900 overflow-x-auto no-scrollbar shrink-0">
-                        {['All', 'Maps', 'Tokens', 'Props', 'Uncategorized'].map(cat => (
-                            <button 
-                                key={cat} 
-                                onClick={() => setAssetCategory(cat)} 
-                                className={`px-3 py-1 text-[10px] font-bold rounded-full whitespace-nowrap transition-colors ${assetCategory === cat ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}
-                            >
-                                {cat}
-                            </button>
-                        ))}
-                    </div>
-                    <div className="flex-1 min-h-0 overflow-y-auto custom-scroll p-4">
-                        
+                    {/* Gallery Content */}
+                    <div className="flex-1 min-h-0 overflow-y-auto custom-scroll p-3 space-y-4">
+                        {/* ACTIVE MAP HERO CARD */}
+                        {mapData && (mapData.backgroundUrl || mapData.name) && (
+                            <div className="bg-gradient-to-r from-amber-950/30 via-slate-900/80 to-slate-900/80 rounded-2xl border border-amber-500/30 p-3 shadow-lg flex items-center gap-3">
+                                <div className="w-16 h-16 rounded-xl overflow-hidden bg-slate-950 border border-slate-800 shrink-0 relative shadow">
+                                    <ResolvedMapImage 
+                                        url={mapData.backgroundUrl || mapData.mapUrl || mapData.image} 
+                                        name={mapData.name} 
+                                        className="w-full h-full object-cover" 
+                                    />
+                                    <div className="absolute top-1 left-1 w-2.5 h-2.5 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.8)] animate-pulse" title="Active on Tabletop" />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-1.5">
+                                        <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400 font-mono">Current Map</span>
+                                    </div>
+                                    <h4 className="font-bold text-white text-sm truncate" title={mapData.name || 'Unnamed Map'}>
+                                        {mapData.name || 'Unnamed Map'}
+                                    </h4>
+                                    <div className="text-[11px] text-slate-400 font-mono mt-0.5 flex items-center gap-2">
+                                        <span>Grid: {mapData.gridSize ?? 1}x</span>
+                                        <span>•</span>
+                                        <span>Scale: {mapData.scale || 20}u</span>
+                                    </div>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setSelectedAsset(null);
+                                        setActiveTab('settings');
+                                    }}
+                                    className="px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded-xl text-xs font-bold flex items-center gap-1 transition-colors shrink-0 shadow"
+                                    title="Open Map Tuning"
+                                >
+                                    <Icon name="sliders-horizontal" size={13} />
+                                    <span>Tune</span>
+                                </button>
+                            </div>
+                        )}
+
                         {/* CAMPAIGN ATLAS / MODULE SKELETON */}
                         {['Maps', 'All'].includes(assetCategory) && (campaignData?.moduleSkeleton || campaignData?.campaign?.moduleSkeleton)?.chapters && (
-                            <div className="mb-8 space-y-4">
-                                <div className="flex items-center gap-2 border-b border-amber-500/30 pb-2 mb-4">
-                                    <Icon name="book-open" className="text-amber-500" size={18} />
-                                    <h3 className="text-lg font-bold text-amber-500 fantasy-font truncate">{(campaignData?.moduleSkeleton || campaignData?.campaign?.moduleSkeleton).title || 'Campaign Module'}</h3>
+                            <div className="space-y-3">
+                                <div className="flex items-center gap-2 border-b border-amber-500/30 pb-2">
+                                    <Icon name="book-open" className="text-amber-400" size={16} />
+                                    <h3 className="text-sm font-bold text-amber-400 fantasy-font truncate">
+                                        {(campaignData?.moduleSkeleton || campaignData?.campaign?.moduleSkeleton).title || 'Campaign Module Atlas'}
+                                    </h3>
                                 </div>
                                 
                                 {(campaignData?.moduleSkeleton || campaignData?.campaign?.moduleSkeleton).chapters.map(chapter => {
                                     const isExpanded = expandedChapters[chapter.id];
+                                    const totalMaps = chapter.maps?.length || 0;
+
                                     return (
-                                    <div key={chapter.id} className="bg-slate-900/60 rounded-xl border border-slate-800/80 mb-4 shadow-sm overflow-hidden">
-                                        <div 
-                                            className="p-3 flex items-center justify-between cursor-pointer hover:bg-slate-800/60 transition-colors"
-                                            onClick={() => setExpandedChapters(prev => ({ ...prev, [chapter.id]: !prev[chapter.id] }))}
-                                        >
-                                            <h4 className="text-sm font-bold text-slate-300 flex items-center gap-2">
-                                                <Icon name={isExpanded ? "folder-open" : "folder"} size={14} className="text-indigo-400 shrink-0" />
-                                                <span className="truncate">{chapter.title}</span>
-                                            </h4>
-                                            <Icon name={isExpanded ? "chevron-down" : "chevron-right"} size={16} className="text-slate-500" />
-                                        </div>
-                                        {isExpanded && (
-                                        <div className="p-3 pt-2 grid grid-cols-2 gap-3 border-t border-slate-800/50">
-                                            {chapter.maps?.map(map => {
-                                                const isMissing = map.status === 'missing';
-                                                if (isMissing) {
-                                                    return (
-                                                        <div key={map.id} className="flex flex-col gap-1.5 group">
-                                                            <div className="relative aspect-square rounded-lg transition-all duration-300 bg-indigo-950/20 border border-dashed border-indigo-500/40 hover:border-indigo-400 hover:bg-indigo-900/40 overflow-hidden shadow-inner">
-                                                                <div 
-                                                                    onClick={() => {
-                                                                        setInternalImportTarget({ ...map, chapterId: chapter.id, mapId: map.id });
-                                                                        setRedditQuery(map.name);
-                                                                        setActiveTab('web');
-                                                                        handleRedditSearch(map.name);
-                                                                    }}
-                                                                    className="absolute inset-0 flex flex-col items-center justify-center cursor-pointer"
-                                                                >
-                                                                    <Icon name="search" size={20} className="text-indigo-400 mb-1 group-hover:scale-110 transition-transform" />
-                                                                    <span className="text-[10px] font-bold text-indigo-300">Search Map</span>
-                                                                </div>
-                                                                <div className="absolute top-1 left-1 opacity-0 group-hover:opacity-100 transition-opacity z-10 flex gap-1">
-                                                                    <button 
-                                                                        onClick={(e) => {
-                                                                            e.stopPropagation();
-                                                                            setUploadTargetMap({ ...map, chapterId: chapter.id, mapId: map.id });
-                                                                            mapFileInputRef.current?.click();
-                                                                        }}
-                                                                        className="bg-black/80 text-slate-300 hover:text-white p-1.5 rounded shadow-md border border-slate-700 hover:border-amber-500 transition-colors"
-                                                                        title="Upload Custom Map"
-                                                                    >
-                                                                        <Icon name="upload" size={14} />
-                                                                    </button>
-                                                                </div>
-                                                            </div>
-                                                            <div className="text-center">
-                                                                <div className="text-xs font-bold text-slate-300 truncate px-1" title={map.name}>{map.name}</div>
-                                                                <div className="text-[9px] text-slate-500 font-mono uppercase tracking-widest mt-0.5">Missing</div>
-                                                            </div>
-                                                        </div>
-                                                    );
-                                                } else {
-                                                    const lowerUrl = (map.mapUrl || map.image || map.backgroundUrl || '').toLowerCase();
-                                                    const lowerName = (map.name || '').toLowerCase();
-                                                    const isAnimated = lowerUrl.includes('.mp4') || lowerUrl.includes('.webm') || lowerUrl.includes('.gif') || lowerUrl.includes('data:video') || lowerUrl.includes('data:image/gif') || lowerName.includes('.mp4') || lowerName.includes('.webm') || lowerName.includes('.gif');
+                                        <div key={chapter.id} className="bg-slate-900/80 rounded-xl border border-slate-800/80 overflow-hidden shadow-sm">
+                                            <div 
+                                                className="p-2.5 flex items-center justify-between cursor-pointer hover:bg-slate-800/50 transition-colors"
+                                                onClick={() => setExpandedChapters(prev => ({ ...prev, [chapter.id]: !prev[chapter.id] }))}
+                                            >
+                                                <h4 className="text-xs font-bold text-slate-200 flex items-center gap-2 min-w-0">
+                                                    <Icon name={isExpanded ? "folder-open" : "folder"} size={14} className="text-indigo-400 shrink-0" />
+                                                    <span className="truncate">{chapter.title}</span>
+                                                    <span className="text-[10px] text-slate-500 font-mono bg-slate-800 px-1.5 py-0.5 rounded">
+                                                        {totalMaps}
+                                                    </span>
+                                                </h4>
+                                                <Icon name={isExpanded ? "chevron-down" : "chevron-right"} size={15} className="text-slate-500" />
+                                            </div>
 
-                                                    return (
-                                                        <div key={map.id} className="flex flex-col gap-1.5 group">
-                                                            <div 
-                                                                className="relative aspect-square rounded-lg transition-all duration-300 bg-slate-900 border border-slate-700 hover:border-amber-500/80 shadow-md overflow-hidden cursor-pointer"
-                                                                onClick={async () => {
-                                                                    if (map.activeMapId) {
-                                                                        if (updateCampaign) await updateCampaign({ activeMapId: map.activeMapId });
-                                                                        if (onClose) onClose();
-                                                                    } else {
-                                                                        const mapImg = map.mapUrl || map.image || map.backgroundUrl || '';
-                                                                        const isNew = await onSetBackground({ name: map.name, url: mapImg }, false);
-                                                                        if (isNew && mapImg) {
-                                                                            setSelectedAsset({ ...map, url: mapImg, isSkeletonMap: true });
-                                                                            setActiveTab('settings');
-                                                                            handleAutoDetectGrid(mapImg);
-                                                                        } else {
-                                                                            if (onClose) onClose();
-                                                                        }
-                                                                    }
-                                                                }}
-                                                            >
-                                                                <ResolvedMapImage url={map.mapUrl || map.image || map.backgroundUrl} name={map.name} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" />
-                                                                
-                                                                {isAnimated && (
-                                                                    <div className="absolute bottom-1 right-1 bg-black/60 text-amber-400 p-1.5 rounded backdrop-blur-sm pointer-events-none group-hover:opacity-0 transition-opacity shadow-md z-10" title="Animated Map">
-                                                                        <Icon name="film" size={14} />
+                                            {isExpanded && (
+                                                <div className="p-2.5 pt-1 grid grid-cols-2 gap-2.5 border-t border-slate-800/60">
+                                                    {chapter.maps?.map(map => {
+                                                        const isMissing = map.status === 'missing';
+                                                        if (isMissing) {
+                                                            return (
+                                                                <div key={map.id} className="flex flex-col gap-1 group">
+                                                                    <div className="relative aspect-square rounded-xl bg-indigo-950/20 border border-dashed border-indigo-500/40 hover:border-indigo-400 hover:bg-indigo-900/30 overflow-hidden transition-all shadow-inner">
+                                                                        <div 
+                                                                            onClick={() => {
+                                                                                setInternalImportTarget({ ...map, chapterId: chapter.id, mapId: map.id });
+                                                                                setRedditQuery(map.name);
+                                                                                setActiveTab('web');
+                                                                                handleRedditSearch(map.name);
+                                                                            }}
+                                                                            className="absolute inset-0 flex flex-col items-center justify-center cursor-pointer p-2 text-center"
+                                                                        >
+                                                                            <Icon name="search" size={20} className="text-indigo-400 mb-1 group-hover:scale-110 transition-transform" />
+                                                                            <span className="text-[11px] font-bold text-indigo-300 leading-tight">Source Map</span>
+                                                                        </div>
+                                                                        <div className="absolute top-1.5 left-1.5 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                                                                            <button 
+                                                                                onClick={(e) => {
+                                                                                    e.stopPropagation();
+                                                                                    setUploadTargetMap({ ...map, chapterId: chapter.id, mapId: map.id });
+                                                                                    mapFileInputRef.current?.click();
+                                                                                }}
+                                                                                className="w-7 h-7 rounded-md bg-black/80 text-slate-300 hover:text-white flex items-center justify-center shadow border border-slate-700"
+                                                                                title="Upload Custom File"
+                                                                            >
+                                                                                <Icon name="upload" size={13} />
+                                                                            </button>
+                                                                        </div>
                                                                     </div>
-                                                                )}
+                                                                    <div className="text-center px-1">
+                                                                        <div className="text-xs font-semibold text-slate-300 truncate" title={map.name}>{map.name}</div>
+                                                                        <div className="text-[9px] text-amber-500/80 font-mono uppercase tracking-widest">Missing</div>
+                                                                    </div>
+                                                                </div>
+                                                            );
+                                                        } else {
+                                                            const lowerUrl = (map.mapUrl || map.image || map.backgroundUrl || '').toLowerCase();
+                                                            const lowerName = (map.name || '').toLowerCase();
+                                                            const isAnimated = lowerUrl.includes('.mp4') || lowerUrl.includes('.webm') || lowerUrl.includes('.gif');
+                                                            const isActiveThisMap = map.activeMapId && map.activeMapId === activeMapId;
 
-                                                                <div className="absolute top-1 left-1 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                                    <button onClick={async (e) => { 
-                                                                        e.stopPropagation(); 
+                                                            const mapMenuItems = [
+                                                                {
+                                                                    label: 'Set as Active Map',
+                                                                    icon: 'map',
+                                                                    onClick: async () => {
                                                                         if (map.activeMapId) {
                                                                             if (updateCampaign) await updateCampaign({ activeMapId: map.activeMapId });
-                                                                            if (onClose) onClose();
                                                                         } else {
                                                                             const mapImg = map.mapUrl || map.image || map.backgroundUrl || '';
-                                                                            const isNew = await onSetBackground({ name: map.name, url: mapImg }, false); 
-                                                                            setSelectedAsset({ ...map, url: mapImg, isSkeletonMap: true });
-                                                                            setActiveTab('settings');
+                                                                            const isNew = await onSetBackground({ name: map.name, url: mapImg }, false);
                                                                             if (isNew && mapImg) {
+                                                                                setSelectedAsset({ ...map, url: mapImg, isSkeletonMap: true });
+                                                                                setActiveTab('settings');
                                                                                 handleAutoDetectGrid(mapImg);
                                                                             }
                                                                         }
-                                                                    }} className="bg-black/80 text-amber-500 hover:text-white p-1.5 rounded shadow-md" title={map.activeMapId ? "Load Map & Tokens" : "Set as Map Background"}>
-                                                                        <Icon name="map" size={14}/>
-                                                                    </button>
-                                                                    {map.activeMapId && (
-                                                                        <button onClick={(e) => { 
-                                                                            e.stopPropagation(); 
-                                                                            const mapImg = map.mapUrl || map.image || map.backgroundUrl || '';
-                                                                            setSelectedAsset({ ...map, url: mapImg, isSkeletonMap: true }); 
-                                                                            setActiveTab('settings'); 
-                                                                        }} className="bg-black/80 text-cyan-400 hover:text-white p-1.5 rounded shadow-md" title="Map Settings">
-                                                                            <Icon name="settings" size={14}/>
-                                                                        </button>
-                                                                    )}
-                                                                    <button onClick={(e) => { 
-                                                                        e.stopPropagation(); 
+                                                                        toast(`Switched to ${map.name}`, "success");
+                                                                    }
+                                                                },
+                                                                {
+                                                                    label: 'Map Tuning',
+                                                                    icon: 'sliders-horizontal',
+                                                                    onClick: () => {
                                                                         const mapImg = map.mapUrl || map.image || map.backgroundUrl || '';
-                                                                        setSelectedAsset({ ...map, url: mapImg, isSkeletonMap: true }); 
-                                                                        setActiveTab('ai'); 
-                                                                    }} className="bg-black/80 text-purple-400 hover:text-white p-1.5 rounded shadow-md" title="Map Layers & Importers">
-                                                                        <Icon name="layers" size={14}/>
-                                                                    </button>
-                                                                </div>
-                                                                <div className="absolute top-1 right-1 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                                    <button onClick={(e) => { 
-                                                                        e.stopPropagation(); 
-                                                                        const newName = prompt("Enter new name for map:", map.name);
+                                                                        setSelectedAsset({ ...map, url: mapImg, isSkeletonMap: true });
+                                                                        setActiveTab('settings');
+                                                                    }
+                                                                },
+                                                                {
+                                                                    label: 'Layers & AI',
+                                                                    icon: 'layers',
+                                                                    onClick: () => {
+                                                                        const mapImg = map.mapUrl || map.image || map.backgroundUrl || '';
+                                                                        setSelectedAsset({ ...map, url: mapImg, isSkeletonMap: true });
+                                                                        setActiveTab('ai');
+                                                                    }
+                                                                },
+                                                                {
+                                                                    label: 'Rename Map',
+                                                                    icon: 'pencil',
+                                                                    onClick: async () => {
+                                                                        const newName = await dialog.prompt("Enter new name for map:", map.name);
                                                                         if (newName && newName !== map.name) {
                                                                             const newSkeleton = JSON.parse(JSON.stringify(campaignData?.moduleSkeleton || campaignData?.campaign?.moduleSkeleton));
                                                                             const chap = newSkeleton.chapters.find(c => c.id === chapter.id);
                                                                             const mapToUpdate = chap?.maps.find(m => m.id === map.id);
                                                                             if (mapToUpdate) {
-                                                                                mapToUpdate.name = newName;
+                                                                                mapToUpdate.name = newName.trim();
                                                                                 if (updateCampaign) updateCampaign({ moduleSkeleton: newSkeleton });
                                                                             }
                                                                         }
-                                                                    }} className="bg-black/80 text-green-400 hover:text-white p-1.5 rounded shadow-md" title="Rename Map">
-                                                                        <Icon name="pencil" size={14}/>
-                                                                    </button>
-                                                                    <button onClick={async (e) => { 
-                                                                        e.stopPropagation();
+                                                                    }
+                                                                },
+                                                                {
+                                                                    label: 'Download Image',
+                                                                    icon: 'download',
+                                                                    onClick: async () => {
                                                                         try {
                                                                             const url = map.mapUrl || map.image || map.backgroundUrl;
                                                                             if (!url) return;
@@ -1465,12 +1781,14 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
                                                                         } catch (err) {
                                                                             console.error(err);
                                                                         }
-                                                                    }} className="bg-black/80 text-blue-400 hover:text-white p-1.5 rounded shadow-md" title="Download Map">
-                                                                        <Icon name="download" size={14}/>
-                                                                    </button>
-                                                                    <button onClick={(e) => { 
-                                                                        e.stopPropagation(); 
-                                                                        if (confirm(`Remove "${map.name}" and mark as missing?`)) {
+                                                                    }
+                                                                },
+                                                                {
+                                                                    label: 'Remove Map',
+                                                                    icon: 'trash',
+                                                                    danger: true,
+                                                                    onClick: async () => {
+                                                                        if (await dialog.confirm(`Remove "${map.name}" and mark as missing?`)) {
                                                                             const newSkeleton = JSON.parse(JSON.stringify(campaignData?.moduleSkeleton || campaignData?.campaign?.moduleSkeleton));
                                                                             const chap = newSkeleton.chapters.find(c => c.id === chapter.id);
                                                                             const mapToUpdate = chap?.maps.find(m => m.id === map.id);
@@ -1487,691 +1805,748 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
                                                                                 
                                                                                 if (selectedAsset?.id === map.id) {
                                                                                     setSelectedAsset(null);
-                                                                                    if (activeTab === 'settings' || activeTab === 'ai') {
-                                                                                        setActiveTab('library');
-                                                                                    }
                                                                                 }
                                                                             }
                                                                         }
-                                                                    }} className="bg-black/80 text-red-500 hover:text-white p-1.5 rounded shadow-md" title="Delete Map Data">
-                                                                        <Icon name="trash" size={14}/>
-                                                                    </button>
+                                                                    }
+                                                                }
+                                                            ];
+
+                                                            return (
+                                                                <div key={map.id} className="flex flex-col gap-1 group">
+                                                                    <div 
+                                                                        className={`relative aspect-square rounded-xl bg-slate-950 border shadow-md overflow-hidden cursor-pointer transition-all duration-200 ${isActiveThisMap ? 'border-green-500 shadow-[0_0_10px_rgba(34,197,94,0.3)]' : 'border-slate-800 hover:border-amber-500/80'}`}
+                                                                        onClick={async () => {
+                                                                            if (map.activeMapId) {
+                                                                                if (updateCampaign) await updateCampaign({ activeMapId: map.activeMapId });
+                                                                                toast(`Loaded ${map.name}`, "success");
+                                                                            } else {
+                                                                                const mapImg = map.mapUrl || map.image || map.backgroundUrl || '';
+                                                                                const isNew = await onSetBackground({ name: map.name, url: mapImg }, false);
+                                                                                if (isNew && mapImg) {
+                                                                                    setSelectedAsset({ ...map, url: mapImg, isSkeletonMap: true });
+                                                                                    setActiveTab('settings');
+                                                                                    handleAutoDetectGrid(mapImg);
+                                                                                }
+                                                                            }
+                                                                        }}
+                                                                    >
+                                                                        <ResolvedMapImage url={map.mapUrl || map.image || map.backgroundUrl} name={map.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                                                                        
+                                                                        {isAnimated && (
+                                                                            <div className="absolute bottom-1.5 left-1.5 bg-black/70 text-amber-400 p-1 rounded-md backdrop-blur-sm pointer-events-none shadow" title="Animated Map">
+                                                                                <Icon name="film" size={12} />
+                                                                            </div>
+                                                                        )}
+
+                                                                        {isActiveThisMap && (
+                                                                            <div className="absolute top-1.5 left-1.5 w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.9)]" title="Active on Tabletop" />
+                                                                        )}
+
+                                                                        <div className="absolute top-1.5 right-1.5 z-20">
+                                                                            <CardActionsMenu 
+                                                                                isOpen={openMenuId === `skeleton-${map.id}`}
+                                                                                onToggle={(isOpen) => setOpenMenuId(isOpen ? `skeleton-${map.id}` : null)}
+                                                                                items={mapMenuItems}
+                                                                            />
+                                                                        </div>
+                                                                    </div>
+                                                                    <div className="text-center px-1">
+                                                                        <div className="text-xs font-semibold text-slate-200 truncate group-hover:text-amber-400 transition-colors" title={map.name}>
+                                                                            {map.name}
+                                                                        </div>
+                                                                        <div className="text-[9px] text-green-500/80 font-mono uppercase tracking-widest mt-0.5">Ready</div>
+                                                                    </div>
                                                                 </div>
-                                                            </div>
-                                                            <div className="text-center">
-                                                                <div className="text-xs font-bold text-slate-200 truncate px-1 group-hover:text-amber-400" title={map.name}>{map.name}</div>
-                                                                <div className="text-[9px] text-green-500 font-mono uppercase tracking-widest mt-0.5">Ready</div>
-                                                            </div>
-                                                        </div>
-                                                    );
-                                                }
-                                            })}
-                                            {(!chapter.maps || chapter.maps.length === 0) && (
-                                                <div className="col-span-full text-slate-500 text-sm italic">No maps required for this chapter.</div>
+                                                            );
+                                                        }
+                                                    })}
+                                                    {(!chapter.maps || chapter.maps.length === 0) && (
+                                                        <div className="col-span-full text-slate-500 text-xs italic text-center py-2">No maps registered in this chapter.</div>
+                                                    )}
+                                                </div>
                                             )}
                                         </div>
-                                        )}
-                                    </div>
-                                )})}
-                                
-                                <div className="flex items-center gap-2 border-b border-slate-700 pb-2 mt-8 mb-4">
-                                    <Icon name="globe" className="text-slate-400" size={18} />
-                                    <h3 className="text-lg font-bold text-slate-200 fantasy-font">Sandbox Assets</h3>
-                                </div>
+                                    );
+                                })}
                             </div>
                         )}
 
-                        <div className="grid grid-cols-2 gap-2">
-                            {['Tokens', 'All'].includes(assetCategory) && allCharacters?.map((char) => {
-                                return (
-                                    <div key={`actor-${char.id}`} draggable 
-                                        onDragStart={(e) => {
-                                            const payload = JSON.stringify({ format: 'dungeonmind-character', type: 'pc', id: char.id, name: char.name, image: char.avatarUrl || char.imageUrl });
-                                            e.dataTransfer.setData('application/dungeonmind-character', payload);
-                                            e.dataTransfer.setData('text/plain', payload);
-                                        }}
-                                        className="aspect-square bg-slate-800 rounded border border-slate-700 overflow-hidden cursor-grab active:cursor-grabbing hover:border-amber-500 transition-colors relative group"
-                                    >
-                                        <CharacterThumbnail char={char} />
-                                        <div className="absolute inset-x-0 bottom-0 bg-black/80 text-[10px] text-white p-1 truncate font-bold text-center pointer-events-none">{char.name}</div>
-                                        <div className="absolute top-1 right-1 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                            <button onClick={(e) => { e.stopPropagation(); handleDeleteCharacter(char); }} className="bg-black/80 text-red-500 hover:text-white p-1.5 rounded shadow-md" title="Delete Token">
-                                                <Icon name="trash" size={14}/>
-                                            </button>
-                                        </div>
-                                    </div>
-                                );
-                            })}
-                            {assets.filter(a => assetCategory === 'All' || (a.category || 'Uncategorized') === assetCategory).map((asset) => {
-                                const lowerUrl = (asset.url || '').toLowerCase();
-                                const lowerName = (asset.name || '').toLowerCase();
-                                const isAnimated = lowerUrl.includes('.mp4') || lowerUrl.includes('.webm') || lowerUrl.includes('.gif') || lowerUrl.includes('data:video') || lowerUrl.includes('data:image/gif') || lowerName.includes('.mp4') || lowerName.includes('.webm') || lowerName.includes('.gif');
-                                
-                                return (
-                                <div key={asset.id} draggable 
-                                    onClick={() => {
-                                        if (onSelectStamper) onSelectStamper(asset);
-                                    }}
-                                    onDragStart={(e) => {
-                                        const payload = JSON.stringify({ format: 'dungeonmind-asset', url: asset.url, is3D: asset.is3D, modelUrl: asset.modelUrl, category: asset.category, name: asset.name });
-                                        e.dataTransfer.setData('application/dungeonmind-asset', payload);
-                                        e.dataTransfer.setData('text/plain', payload);
-                                    }}
-                                    className="aspect-square bg-slate-800 rounded border border-slate-700 overflow-hidden cursor-grab active:cursor-grabbing hover:border-amber-500 transition-colors relative group"
-                                >
-                                    <AssetThumbnail asset={asset} />
-                                    {isAnimated && (
-                                        <div className="absolute top-1 right-1 bg-black/60 text-amber-400 p-1.5 rounded backdrop-blur-sm pointer-events-none group-hover:opacity-0 transition-opacity shadow-md z-10" title="Animated Asset">
-                                            <Icon name="film" size={14} />
-                                        </div>
-                                    )}
-                                    <div className="absolute inset-x-0 bottom-0 bg-black/60 text-[9px] text-white p-1 truncate opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">{asset.name}</div>
-                                    <div className="absolute top-1 left-1 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                        {asset.category !== 'Props' && asset.category !== 'Tokens' && (
-                                            <>
-                                                <button onClick={async (e) => { 
-                                                    e.stopPropagation();
-                                                    const target = internalImportTarget || importTarget;
-                                                    if (target) {
-                                                        setIsProcessingMap(true);
-                                                        setProcessingStep(`Fulfilling ${target.name}...`);
-                                                        try {
-                                                            const targetMap = { ...target, id: target.mapId || target.id };
-                                                            const newMapId = await fulfillMapData({
-                                                                imgUrl: asset.generatedMapUrl || asset.url,
-                                                                targetMap,
-                                                                campaignCode,
-                                                                skeleton: campaignData?.moduleSkeleton || campaignData?.campaign?.moduleSkeleton,
-                                                                data: {
-                                                                    ...campaignData,
-                                                                    npcs: (campaignData?.npcs || []).filter(n => n && n.name),
-                                                                    players: (campaignData?.players || []).filter(p => p && p.name)
-                                                                },
-                                                                aiHelper: localAiHelper,
-                                                                generateNpc: localGenerateNpc,
-                                                                updateCampaign,
-                                                                setProcessingStep: setProcessingStep
-                                                            });
-                                                            toast(`${targetMap.name} is now Ready!`, "success");
-                                                            setProcessingStep('Populating Entities...');
-                                                            await new Promise(r => setTimeout(r, 3500));
-                                                            if (updateCampaign) await updateCampaign({ activeMapId: newMapId });
-                                                            setInternalImportTarget(null);
-                                                            setSelectedAsset({ ...targetMap, url: asset.generatedMapUrl || asset.url, isSkeletonMap: true, activeMapId: newMapId });
-                                                            setActiveTab('settings');
-                                                            handleAutoDetectGrid(asset.generatedMapUrl || asset.url);
-                                                        } catch (err) {
-                                                            console.error(err);
-                                                            toast("Fulfillment failed.", "error");
-                                                        } finally {
-                                                            setIsProcessingMap(false);
-                                                            setProcessingStep('');
-                                                        }
-                                                    } else {
-                                                        const isNew = await onSetBackground(asset, false); 
-                                                        if (isNew) {
-                                                            setSelectedAsset(asset);
-                                                            setActiveTab('settings');
-                                                            handleAutoDetectGrid(asset.generatedMapUrl || asset.url);
-                                                        } else {
-                                                            if (onClose) onClose();
-                                                        }
-                                                    }
-                                                }} className="bg-black/80 text-amber-500 hover:text-white p-1.5 rounded shadow-md" title={internalImportTarget || importTarget ? "Use Asset for Missing Map" : "Set as Map Background"}>
-                                                    <Icon name={internalImportTarget || importTarget ? "check" : "map"} size={14}/>
-                                                </button>
-                                                <button onClick={(e) => { e.stopPropagation(); setSelectedAsset(asset); setActiveTab('settings'); }} className="bg-black/80 text-cyan-400 hover:text-white p-1.5 rounded shadow-md" title="Map Settings">
-                                                    <Icon name="settings" size={14}/>
-                                                </button>
-                                                <button onClick={(e) => { e.stopPropagation(); setSelectedAsset(asset); setActiveTab('ai'); }} className="bg-black/80 text-purple-400 hover:text-white p-1.5 rounded shadow-md" title="Map Layers & Importers">
-                                                    <Icon name="layers" size={14}/>
-                                                </button>
-                                            </>
-                                        )}
-                                    </div>
-                                    <div className="absolute top-1 right-1 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                        <button onClick={(e) => { 
-                                            e.stopPropagation(); 
-                                            const newName = prompt("Enter new name for asset:", asset.name);
-                                            if (newName && newName !== asset.name) {
-                                                const assetRef = doc(db, 'artifacts', appId || 'dungeonmind', 'public', 'data', 'campaigns', campaignCode, 'assets', asset.id);
-                                                updateDoc(assetRef, { name: newName }).then(() => {
-                                                    setAssets(prev => prev.map(a => a.id === asset.id ? { ...a, name: newName } : a));
-                                                }).catch(err => {
-                                                    console.error("Error renaming asset", err);
-                                                    toast("Failed to rename asset.", "error");
-                                                });
-                                            }
-                                        }} className="bg-black/80 text-green-400 hover:text-white p-1.5 rounded shadow-md" title="Rename Asset">
-                                            <Icon name="pencil" size={14}/>
-                                        </button>
-                                        {(!asset.category || asset.category === 'Maps') && (
-                                        <button onClick={async (e) => { 
-                                            e.stopPropagation();
-                                            try {
-                                                const url = asset.generatedMapUrl || asset.url;
-                                                if (!url) return;
-                                                let downloadUrl = url;
-                                                if (url.startsWith('chunked:')) {
-                                                    const blob = await retrieveChunkedMap(url);
-                                                    if (blob) downloadUrl = URL.createObjectURL(blob);
-                                                }
-                                                const a = document.createElement('a');
-                                                a.href = downloadUrl;
-                                                a.download = `${asset.name || 'asset'}.png`;
-                                                document.body.appendChild(a);
-                                                a.click();
-                                                document.body.removeChild(a);
-                                                if (url.startsWith('chunked:')) URL.revokeObjectURL(downloadUrl);
-                                            } catch (err) {
-                                                console.error(err);
-                                            }
-                                        }} className="bg-black/80 text-blue-400 hover:text-white p-1.5 rounded shadow-md" title="Download Map">
-                                            <Icon name="download" size={14}/>
-                                        </button>
-                                        )}
-                                        <button onClick={(e) => { e.stopPropagation(); handleDeleteAsset(asset); }} className="bg-black/80 text-red-500 hover:text-white p-1.5 rounded shadow-md" title="Delete Asset">
-                                            <Icon name="trash" size={14}/>
-                                        </button>
-                                    </div>
-                                    <div className="absolute bottom-5 left-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                        <select 
-                                            value={asset.category || 'Uncategorized'} 
-                                            onChange={(e) => {
-                                                e.stopPropagation();
-                                                const assetRef = doc(db, 'artifacts', appId || 'dungeonmind', 'public', 'data', 'campaigns', campaignCode, 'assets', asset.id);
-                                                updateDoc(assetRef, { category: e.target.value }).then(() => {
-                                                    setAssets(prev => prev.map(a => a.id === asset.id ? { ...a, category: e.target.value } : a));
-                                                });
-                                            }}
-                                            onClick={e => e.stopPropagation()}
-                                            className="bg-black/80 text-[8px] font-bold uppercase text-slate-300 border border-slate-700 rounded px-1 outline-none w-20"
-                                        >
-                                            <option value="Uncategorized">Uncategorized</option>
-                                            <option value="Maps">Maps</option>
-                                            <option value="Tokens">Tokens</option>
-                                            <option value="Props">Props</option>
-                                        </select>
-                                    </div>
+                        {/* SANDBOX ASSETS & PROPS */}
+                        <div className="space-y-2 pt-2">
+                            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                                <div className="flex items-center gap-2">
+                                    <Icon name="globe" className="text-slate-400" size={15} />
+                                    <h3 className="text-xs font-bold text-slate-300 tracking-wider uppercase">Saved Assets & Props</h3>
                                 </div>
-                                );
-                            })}
-                            {assets.filter(a => assetCategory === 'All' || (a.category || 'Uncategorized') === assetCategory).length === 0 && (!['Tokens', 'All'].includes(assetCategory) || !allCharacters || allCharacters.length === 0) && !isUploading && (
-                                <div className="col-span-2 text-center text-slate-500 text-sm mt-10 flex flex-col items-center"><Icon name={assetCategory === 'Tokens' ? 'users' : 'image'} size={32} className="opacity-20 mb-2" /> No {assetCategory === 'Tokens' ? 'tokens' : 'assets'} available.</div>
-                            )}
+                                <span className="text-[11px] text-slate-500 font-mono">{assets.length} items</span>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2.5">
+                                {assets.filter(a => assetCategory === 'All' || (a.category || 'Uncategorized') === assetCategory).map((asset) => {
+                                    const lowerUrl = (asset.url || '').toLowerCase();
+                                    const lowerName = (asset.name || '').toLowerCase();
+                                    const isAnimated = lowerUrl.includes('.mp4') || lowerUrl.includes('.webm') || lowerUrl.includes('.gif');
+
+                                    const sandboxMenuItems = [
+                                        ...(asset.category !== 'Props' ? [
+                                            {
+                                                label: 'Set as Map Background',
+                                                icon: 'map',
+                                                onClick: async () => {
+                                                    const isNew = await onSetBackground(asset, false);
+                                                    if (isNew) {
+                                                        setSelectedAsset(asset);
+                                                        setActiveTab('settings');
+                                                        handleAutoDetectGrid(asset.generatedMapUrl || asset.url);
+                                                    }
+                                                }
+                                            },
+                                            {
+                                                label: 'Map Tuning',
+                                                icon: 'sliders-horizontal',
+                                                onClick: () => {
+                                                    setSelectedAsset(asset);
+                                                    setActiveTab('settings');
+                                                }
+                                            },
+                                            {
+                                                label: 'Layers & AI',
+                                                icon: 'layers',
+                                                onClick: () => {
+                                                    setSelectedAsset(asset);
+                                                    setActiveTab('ai');
+                                                }
+                                            }
+                                        ] : []),
+                                        {
+                                            label: 'Rename Asset',
+                                            icon: 'pencil',
+                                            onClick: async () => {
+                                                const newName = await dialog.prompt("Enter new name for asset:", asset.name);
+                                                if (newName && newName !== asset.name) {
+                                                    const assetRef = doc(db, 'artifacts', appId || 'dungeonmind', 'public', 'data', 'campaigns', campaignCode, 'assets', asset.id);
+                                                    updateDoc(assetRef, { name: newName.trim() }).then(() => {
+                                                        setAssets(prev => prev.map(a => a.id === asset.id ? { ...a, name: newName.trim() } : a));
+                                                    }).catch(err => {
+                                                        console.error("Error renaming asset", err);
+                                                        toast("Failed to rename asset.", "error");
+                                                    });
+                                                }
+                                            }
+                                        },
+                                        {
+                                            label: 'Delete Asset',
+                                            icon: 'trash',
+                                            danger: true,
+                                            onClick: () => handleDeleteAsset(asset)
+                                        }
+                                    ];
+
+                                    return (
+                                        <div 
+                                            key={asset.id} 
+                                            draggable 
+                                            onClick={() => {
+                                                if (onSelectStamper) onSelectStamper(asset);
+                                            }}
+                                            onDragStart={(e) => {
+                                                const payload = JSON.stringify({ format: 'dungeonmind-asset', url: asset.url, is3D: asset.is3D, modelUrl: asset.modelUrl, category: asset.category, name: asset.name });
+                                                e.dataTransfer.setData('application/dungeonmind-asset', payload);
+                                                e.dataTransfer.setData('text/plain', payload);
+                                            }}
+                                            className="group relative aspect-square bg-slate-950 rounded-xl border border-slate-800 hover:border-amber-500/80 shadow-md overflow-hidden cursor-grab active:cursor-grabbing transition-all duration-200"
+                                        >
+                                            <AssetThumbnail asset={asset} />
+                                            
+                                            {isAnimated && (
+                                                <div className="absolute bottom-1.5 left-1.5 bg-black/70 text-amber-400 p-1 rounded-md backdrop-blur-sm pointer-events-none shadow" title="Animated Asset">
+                                                    <Icon name="film" size={12} />
+                                                </div>
+                                            )}
+
+                                            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent p-1.5 pointer-events-none">
+                                                <div className="text-[11px] font-semibold text-white truncate drop-shadow">{asset.name}</div>
+                                            </div>
+
+                                            <div className="absolute top-1.5 right-1.5 z-20">
+                                                <CardActionsMenu 
+                                                    isOpen={openMenuId === `asset-${asset.id}`}
+                                                    onToggle={(isOpen) => setOpenMenuId(isOpen ? `asset-${asset.id}` : null)}
+                                                    items={sandboxMenuItems}
+                                                />
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                                {assets.length === 0 && (
+                                    <div className="col-span-2 text-center text-slate-500 text-xs py-8 flex flex-col items-center">
+                                        <Icon name="image" size={32} className="opacity-20 mb-2" />
+                                        <span>No assets uploaded yet.</span>
+                                    </div>
+                                )}
+                            </div>
                         </div>
                     </div>
-                </>
+                </div>
             )}
 
+            {/* TAB: MAP TUNING & ATMOSPHERE (SETTINGS) */}
             {activeTab === 'settings' && (
-                 <div className="flex-1 min-h-0 overflow-y-auto custom-scroll p-4 space-y-6">
-
-                    <div>
-                        <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Map Name</label>
+                <div className="flex-1 min-h-0 overflow-y-auto custom-scroll p-4 space-y-4 bg-slate-900/40">
+                    
+                    {/* SECTION 1: MAP IDENTITY */}
+                    <div className="bg-slate-950/60 rounded-2xl border border-slate-800/80 p-3.5 shadow-sm space-y-3">
+                        <label className="block text-[11px] uppercase font-bold text-slate-400 tracking-wider">Map Identity</label>
                         <input
                             type="text"
                             value={mapData?.name || ''}
                             placeholder="Unnamed Map"
                             onChange={(e) => updateMap(campaignCode, activeMapId, { name: e.target.value })}
-                            className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm outline-none focus:border-amber-500 shadow-inner"
+                            className="w-full bg-slate-900 border border-slate-700/80 rounded-xl px-3 py-2 text-white text-xs outline-none focus:border-amber-500 shadow-inner"
                         />
-                    </div>
 
-                    {(() => {
-                        const bg = mapData?.backgroundUrl || mapData?.mapUrl || mapData?.image || selectedAsset?.url || '';
-                        const name = mapData?.name || selectedAsset?.name || '';
-                        const lowerBg = bg.toLowerCase();
-                        const lowerName = name.toLowerCase();
-                        const isAnimated = lowerBg.includes('.mp4') || lowerBg.includes('.webm') || lowerBg.includes('.gif') || lowerBg.includes('data:video') || lowerBg.includes('data:image/gif') || lowerName.includes('.mp4') || lowerName.includes('.webm') || lowerName.includes('.gif') || bg.startsWith('blob:') || bg.startsWith('chunked:');
-                        if (isAnimated) {
-                            return (
-                                <div>
-                                    <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Animation Playback Speed</label>
-                                    <div className="flex items-center gap-2 mb-6">
+                        {(() => {
+                            const bg = mapData?.backgroundUrl || mapData?.mapUrl || mapData?.image || selectedAsset?.url || '';
+                            const name = mapData?.name || selectedAsset?.name || '';
+                            const lowerBg = bg.toLowerCase();
+                            const lowerName = name.toLowerCase();
+                            const isAnimated = lowerBg.includes('.mp4') || lowerBg.includes('.webm') || lowerBg.includes('.gif') || lowerName.includes('.mp4') || lowerName.includes('.webm') || lowerName.includes('.gif');
+                            if (isAnimated) {
+                                return (
+                                    <div className="pt-2 border-t border-slate-800/80">
+                                        <div className="flex justify-between items-center mb-1.5">
+                                            <span className="text-[11px] font-semibold text-slate-300">Playback Speed</span>
+                                            <span className="text-xs text-amber-400 font-mono">{mapData?.playbackRate ?? 1}x</span>
+                                        </div>
                                         <ThrottledSlider 
                                             type="range" 
                                             min="0.1" 
-                                            max="5" 
+                                            max="3" 
                                             step="0.1" 
                                             value={mapData?.playbackRate ?? 1} 
                                             onChange={(val) => throttledUpdateMap({ playbackRate: val })}
-                                            className="w-full accent-amber-500 flex-1"
-                                        />
-                                        <input 
-                                            type="number" 
-                                            min="0.1" 
-                                            max="5"
-                                            step="0.1" 
-                                            value={mapData?.playbackRate ?? 1} 
-                                            onChange={(e) => {
-                                                const val = parseFloat(e.target.value);
-                                                if (!isNaN(val)) throttledUpdateMap({ playbackRate: val });
-                                            }}
-                                            className="w-16 bg-slate-900 border border-slate-700 rounded p-1 text-xs text-white text-right outline-none focus:border-amber-500"
+                                            className="w-full accent-amber-500"
                                         />
                                     </div>
-                                </div>
-                            );
-                        }
-                        return null;
-                    })()}
-                    
-                    <div>
-                        <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Grid Auto-Detect (AI)</label>
-                        <button 
-                            onClick={handleAutoDetectGrid}
-                            disabled={!mapData?.backgroundUrl || isDetectingGrid}
-                            className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold rounded flex items-center justify-center gap-2 transition-colors shadow"
-                        >
-                            <Icon name="scan" size={14} /> Detect Grid Size & Alignment
-                        </button>
-                    </div>
-
-                    <div>
-                        <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Environment & Lighting</label>
-                        <select 
-                            value={mapData?.environment || 'day'} 
-                            onChange={(e) => updateMap(campaignCode, activeMapId, { environment: e.target.value })}
-                            className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-xs outline-none focus:border-amber-500 mb-4"
-                        >
-                            <option value="day">Sunny Day</option>
-                            <option value="night">Midnight (Dark)</option>
-                            <option value="sunset">Sunset / Sunrise</option>
-                            <option value="fog">Thick Fog</option>
-                            <option value="rain">Dreary Rain</option>
-                            <option value="snow">Light Snow</option>
-                            <option value="ash">Volcanic Ash</option>
-                            <option value="spores">Magical Spores</option>
-                            <option value="swamp">Gloomy Swamp</option>
-                        </select>
-
-                        <label className="block text-xs uppercase font-bold text-slate-500 mb-2 mt-4 tracking-wider">Ambient Life Effects</label>
-                        <select 
-                            value={mapData?.ambientLifeLevel || 'high'} 
-                            onChange={(e) => {
-                                const val = e.target.value;
-                                const updates = { ambientLifeLevel: val };
-                                if (val === 'off') {
-                                    updates.particleDensity = 0;
-                                } else if (mapData?.particleDensity === 0) {
-                                    updates.particleDensity = 1;
-                                }
-                                updateMap(campaignCode, activeMapId, updates);
-                            }}
-                            className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-xs outline-none focus:border-amber-500 mb-4"
-                        >
-                            <option value="off">Off (None)</option>
-                            <option value="low">Low (Particles Only)</option>
-                            <option value="high">High (Particles & Fauna)</option>
-                        </select>
-
-                        <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Ambient Ecosystem Biome</label>
-                        <select 
-                            value={mapData?.biomeType || 'forest'} 
-                            onChange={(e) => updateMap(campaignCode, activeMapId, { biomeType: e.target.value })}
-                            className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-xs outline-none focus:border-amber-500 mb-4"
-                        >
-                            <option value="generic">Generic (Dust, Shadows)</option>
-                            <option value="dungeon">Dungeon (Spores, Critters, Dust)</option>
-                            <option value="forest">Forest (Leaves, Birds, Spores, Shadows)</option>
-                            <option value="city">City (Dust, Birds, Critters, Shadows)</option>
-                            <option value="coast">Coast (Birds, Shadows)</option>
-                            <option value="desert">Desert (Dust, Shadows)</option>
-                        </select>
-                        
-                        <label className="block text-[10px] uppercase font-bold text-slate-500 mb-2 tracking-wider">Particle Density Multiplier</label>
-                        <ThrottledSlider 
-                            type="range" 
-                            min="0" 
-                            max="5" 
-                            step="0.1" 
-                            value={mapData?.particleDensity ?? 1.0} 
-                            onChange={(val) => throttledUpdateMap({ particleDensity: val })}
-                            className={`w-full accent-indigo-500 ${mapData?.ambientLifeLevel === 'off' ? 'opacity-50 cursor-not-allowed' : ''}`}
-                            disabled={mapData?.ambientLifeLevel === 'off'}
-                        />
-                        <div className="text-right text-xs text-slate-400 mt-1 mb-4">{mapData?.particleDensity ?? 1.0}x</div>
-
-                        <label className="block text-[10px] uppercase font-bold text-slate-500 mb-2 tracking-wider">Brightness Multiplier</label>
-                        <ThrottledSlider 
-                            type="range" 
-                            min="0" 
-                            max="10" 
-                            step="0.05" 
-                            value={mapData?.lightingIntensity ?? 1} 
-                            onChange={(val) => throttledUpdateMap({ lightingIntensity: val })}
-                            className="w-full accent-amber-500" 
-                        />
-                        <div className="text-right text-xs text-slate-400 mt-1">{mapData?.lightingIntensity ?? 1}x</div>
-
-
-                    </div>
-                    
-                    <div>
-                        <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Map Scale</label>
-                        <input 
-                            type="range" 
-                            min="5" 
-                            max="100" 
-                            step="1" 
-                            value={mapData?.scale || 20} 
-                            onChange={(e) => {
-                                const newScale = parseFloat(e.target.value);
-                                const oldScale = mapData?.scale || 20;
-                                const ratio = newScale / oldScale;
-
-                                const updates = { scale: newScale };
-
-                                if (mapData?.walls) {
-                                    updates.walls = {};
-                                    for (const [id, wall] of Object.entries(mapData.walls)) {
-                                        updates.walls[id] = {
-                                            ...wall,
-                                            points: wall.points.map(p => ({
-                                                ...p,
-                                                x: p.x * ratio,
-                                                z: p.z * ratio,
-                                            }))
-                                        };
-                                    }
-                                }
-
-                                if (mapData?.lights) {
-                                    updates.lights = {};
-                                    for (const [id, light] of Object.entries(mapData.lights)) {
-                                        updates.lights[id] = {
-                                            ...light,
-                                            position: {
-                                                ...light.position,
-                                                x: light.position.x * ratio,
-                                                z: light.position.z * ratio,
-                                            },
-                                            radius: (light.radius || 15) * ratio,
-                                        };
-                                    }
-                                }
-
-                                throttledUpdateMap(updates);
-                            }}
-                            className="w-full accent-amber-500"
-                        />
-                        <div className="text-right text-xs text-slate-400 mt-1">{mapData?.scale || 20} units</div>
-                    </div>
-                    
-                    <div>
-                        <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Grid Size</label>
-                        <div className="flex items-center gap-2">
-                            <ThrottledSlider 
-                                type="range" 
-                                min="0.1" 
-                                max="5" 
-                                step="0.01" 
-                                value={mapData?.gridSize ?? 1} 
-                                onChange={(val) => throttledUpdateMap({ gridSize: val })}
-                                className="w-full accent-amber-500 flex-1"
-                            />
-                            <input 
-                                type="number" 
-                                min="0.1" 
-                                step="0.01" 
-                                value={mapData?.gridSize ?? 1} 
-                                onChange={(e) => {
-                                    const val = parseFloat(e.target.value);
-                                    if (!isNaN(val)) throttledUpdateMap({ gridSize: val });
-                                }}
-                                className="w-16 bg-slate-900 border border-slate-700 rounded p-1 text-xs text-white text-right outline-none focus:border-amber-500"
-                            />
-                        </div>
-                    </div>
-
-                    <div>
-                        <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Grid Offset X</label>
-                        <div className="flex items-center gap-2">
-                            <ThrottledSlider 
-                                type="range" 
-                                min="-5" 
-                                max="5" 
-                                step="0.01" 
-                                value={mapData?.gridOffsetX ?? 0} 
-                                onChange={(val) => throttledUpdateMap({ gridOffsetX: val })}
-                                className="w-full accent-amber-500 flex-1"
-                            />
-                            <input 
-                                type="number" 
-                                step="0.01" 
-                                value={mapData?.gridOffsetX ?? 0} 
-                                onChange={(e) => {
-                                    const val = parseFloat(e.target.value);
-                                    if (!isNaN(val)) throttledUpdateMap({ gridOffsetX: val });
-                                }}
-                                className="w-16 bg-slate-900 border border-slate-700 rounded p-1 text-xs text-white text-right outline-none focus:border-amber-500"
-                            />
-                        </div>
-                    </div>
-
-                    <div>
-                        <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Grid Offset Y</label>
-                        <div className="flex items-center gap-2">
-                            <ThrottledSlider 
-                                type="range" 
-                                min="-5" 
-                                max="5" 
-                                step="0.01" 
-                                value={mapData?.gridOffsetY ?? 0} 
-                                onChange={(val) => throttledUpdateMap({ gridOffsetY: val })}
-                                className="w-full accent-amber-500 flex-1"
-                            />
-                            <input 
-                                type="number" 
-                                step="0.01" 
-                                value={mapData?.gridOffsetY ?? 0} 
-                                onChange={(e) => {
-                                    const val = parseFloat(e.target.value);
-                                    if (!isNaN(val)) throttledUpdateMap({ gridOffsetY: val });
-                                }}
-                                className="w-16 bg-slate-900 border border-slate-700 rounded p-1 text-xs text-white text-right outline-none focus:border-amber-500"
-                            />
-                        </div>
-                    </div>
-
-                    <div>
-                        <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Grid Color</label>
-                        <div className="flex gap-2 items-center">
-                            <input 
-                                type="color" 
-                                value={mapData?.gridColor || '#888888'} 
-                                onChange={(e) => throttledUpdateMap({ gridColor: e.target.value })}
-                                className="w-8 h-8 rounded cursor-pointer bg-slate-900 border border-slate-700 p-0.5"
-                            />
-                            <div className="flex-1 text-xs text-slate-400 uppercase">{mapData?.gridColor || '#888888'}</div>
-                        </div>
-                    </div>
-
-                    <div>
-                        <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Grid Thickness</label>
-                        <ThrottledSlider 
-                            type="range" 
-                            min="0.5" 
-                            max="5" 
-                            step="0.5" 
-                            value={mapData?.gridThickness || 0.5} 
-                            onChange={(val) => throttledUpdateMap({ gridThickness: val })}
-                            className="w-full accent-amber-500"
-                        />
-                        <div className="text-right text-xs text-slate-400 mt-1">{mapData?.gridThickness || 0.5}x</div>
-                    </div>
-
-                    <div>
-                        <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Token Elevation Offset</label>
-                        <div className="flex items-center gap-2">
-                            <ThrottledSlider 
-                                type="range" 
-                                min="-0.5" 
-                                max="0.5" 
-                                step="0.01" 
-                                value={mapData?.tokenElevationOffset ?? (!mapData?.heightmapUrl ? 0.04 : -0.12)} 
-                                onChange={(val) => throttledUpdateMap({ tokenElevationOffset: val })}
-                                className="w-full accent-amber-500 flex-1"
-                            />
-                            <input 
-                                type="number" 
-                                step="0.01" 
-                                value={mapData?.tokenElevationOffset ?? (!mapData?.heightmapUrl ? 0.04 : -0.12)} 
-                                onChange={(e) => {
-                                    const val = parseFloat(e.target.value);
-                                    if (!isNaN(val)) throttledUpdateMap({ tokenElevationOffset: val });
-                                }}
-                                className="w-16 bg-slate-900 border border-slate-700 rounded p-1 text-xs text-white text-right outline-none focus:border-amber-500"
-                            />
-                        </div>
-                    </div>
-
-                    <div>
-                        <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Grid Visibility</label>
-                        <button
-                            onClick={() => updateMap(campaignCode, activeMapId, { showGrid: mapData?.showGrid === false ? true : false })}
-                            className={`w-full py-2 border rounded text-center text-xs font-bold transition-colors flex items-center justify-center gap-2 ${mapData?.showGrid !== false ? 'border-cyan-500 bg-cyan-900/20 text-cyan-400' : 'border-slate-600 text-slate-300 hover:border-cyan-500'}`}
-                        >
-                            <Icon name={mapData?.showGrid !== false ? "grid" : "layout-grid"} size={14} className="inline mr-1" />
-                            {mapData?.showGrid !== false ? 'Grid is VISIBLE' : 'Grid is HIDDEN'}
-                        </button>
-                    </div>
-
-                    <div>
-                        <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Token Snapping</label>
-                        <button
-                            onClick={() => updateMap(campaignCode, activeMapId, { isSnapToGrid: mapData?.isSnapToGrid === false ? true : false })}
-                            className={`w-full py-2 border rounded text-center text-xs font-bold transition-colors flex items-center justify-center gap-2 ${mapData?.isSnapToGrid !== false ? 'border-green-500 bg-green-900/20 text-green-400' : 'border-slate-600 text-slate-300 hover:border-green-500'}`}
-                        >
-                            <Icon name="magnet" size={14} className="inline mr-1" />
-                            {mapData?.isSnapToGrid !== false ? 'Snap to Grid is ON' : 'Snap to Grid is OFF'}
-                        </button>
-                    </div>
-
-                    <div>
-                        <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Nameplates</label>
-                        <button
-                            onClick={() => updateMap(campaignCode, activeMapId, { showNameplates: mapData?.showNameplates === false ? true : false })}
-                            className={`w-full py-2 border rounded text-center text-xs font-bold transition-colors flex items-center justify-center gap-2 ${mapData?.showNameplates !== false ? 'border-blue-500 bg-blue-900/20 text-blue-400' : 'border-slate-600 text-slate-300 hover:border-blue-500'}`}
-                        >
-                            <Icon name={mapData?.showNameplates !== false ? "eye" : "eye-off"} size={14} className="inline mr-1" />
-                            {mapData?.showNameplates !== false ? 'Nameplates Visible' : 'Nameplates Hidden'}
-                        </button>
-                    </div>
-
-                    <div>
-                        <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Vision & Fog</label>
-                        <button
-                            onClick={() => {
-                                const currentMode = mapData?.visionMode || 'off';
-                                let nextMode;
-                                if (currentMode === 'off') nextMode = 'fow';
-                                else if (currentMode === 'fow') nextMode = 'darkness';
-                                else nextMode = 'off';
-                                updateMap(campaignCode, activeMapId, { visionMode: nextMode });
-                            }}
-                            className={`w-full py-2 border rounded text-center text-xs font-bold transition-colors flex items-center justify-center gap-2 ${
-                                mapData?.visionMode === 'fow' ? 'border-indigo-500 bg-indigo-900/20 text-indigo-400' :
-                                mapData?.visionMode === 'darkness' ? 'border-purple-500 bg-purple-900/20 text-purple-400' :
-                                'border-slate-600 text-slate-300 hover:border-indigo-500'
-                            }`}
-                        >
-                            <Icon name={
-                                mapData?.visionMode === 'fow' ? 'eye' :
-                                mapData?.visionMode === 'darkness' ? 'moon' :
-                                'eye-off'
-                            } size={14} className="inline mr-1" />
-                            {
-                                mapData?.visionMode === 'fow' ? 'Fog of War is ON' :
-                                mapData?.visionMode === 'darkness' ? 'Magical Darkness is ON' :
-                                'Vision is OFF'
+                                );
                             }
-                        </button>
-                        <div className="flex gap-2 mt-2">
-                            <button
-                                onClick={async () => {
-                                    if (await dialog.confirm("Are you sure you want to reset the Fog of War? All explored areas will be hidden again.")) {
-                                        const currentReset = mapData?.fowResetCounter || 0;
-                                        updateMap(campaignCode, activeMapId, { 
-                                            fowExploredState: null, 
-                                            fowResetCounter: currentReset + 1 
-                                        });
-                                    }
-                                }}
-                                className="flex-1 py-1.5 bg-red-900/40 hover:bg-red-900/60 border border-red-700/50 rounded text-center text-xs font-bold text-red-200 transition-colors flex items-center justify-center gap-1"
-                                title="Reset explored areas back to pitch black"
-                            >
-                                <Icon name="rotate-ccw" size={12} />
-                                Reset Fog
-                            </button>
+                            return null;
+                        })()}
+                    </div>
+
+                    {/* SECTION 2: ATMOSPHERE & WEATHER */}
+                    <div className="bg-slate-950/60 rounded-2xl border border-slate-800/80 overflow-hidden shadow-sm">
+                        <div 
+                            className="p-3.5 flex justify-between items-center cursor-pointer hover:bg-slate-800/30 transition-colors"
+                            onClick={() => toggleSection('atmosphere')}
+                        >
+                            <div className="flex items-center gap-2">
+                                <Icon name="sun" size={16} className="text-amber-400" />
+                                <h4 className="text-xs font-bold text-slate-200 tracking-wide">Atmosphere & Mood</h4>
+                            </div>
+                            <Icon name={expandedSections.atmosphere ? "chevron-up" : "chevron-down"} size={16} className="text-slate-500" />
                         </div>
-                    </div>
 
-                    <div>
-                        <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Fog of War Walls</label>
-                        <button
-                            onClick={() => updateMap(campaignCode, activeMapId, { fowWallsEnabled: mapData?.fowWallsEnabled === true ? false : true })}
-                            className={`w-full py-2 border rounded text-center text-xs font-bold transition-colors flex items-center justify-center gap-2 ${mapData?.fowWallsEnabled ? 'border-indigo-500 bg-indigo-900/20 text-indigo-400' : 'border-slate-600 text-slate-300 hover:border-indigo-500'}`}
-                        >
-                            <Icon name={mapData?.fowWallsEnabled ? "eye-off" : "eye"} size={14} className="inline mr-1" />
-                            {mapData?.fowWallsEnabled ? 'FoW Walls are ON' : 'FoW Walls are OFF'}
-                        </button>
-                    </div>
+                        {expandedSections.atmosphere && (
+                            <div className="p-3.5 pt-0 space-y-3.5 border-t border-slate-800/50">
+                                <div>
+                                    <span className="block text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-2">Weather & Environmental Preset</span>
+                                    <div className="grid grid-cols-3 gap-1.5">
+                                        {ENVIRONMENT_PRESETS.map((preset) => {
+                                            const isActive = (mapData?.environment || 'day') === preset.id;
+                                            return (
+                                                <button
+                                                    key={preset.id}
+                                                    type="button"
+                                                    onClick={() => updateMap(campaignCode, activeMapId, { environment: preset.id })}
+                                                    className={`py-2 px-1.5 rounded-xl border text-center transition-all flex flex-col items-center justify-center gap-1 ${isActive ? preset.activeClass : 'border-slate-800 bg-slate-900/60 text-slate-400 hover:text-slate-200 hover:border-slate-700'}`}
+                                                >
+                                                    <Icon name={preset.icon} size={15} />
+                                                    <span className="text-[10px] font-semibold truncate max-w-full">{preset.label}</span>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
 
-                    <div>
-                        <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Player Door Visibility</label>
-                        <button
-                            onClick={() => updateMap(campaignCode, activeMapId, { playerDoorVisibility: mapData?.playerDoorVisibility === true ? false : true })}
-                            className={`w-full py-2 border rounded text-center text-xs font-bold transition-colors flex items-center justify-center gap-2 ${mapData?.playerDoorVisibility ? 'border-indigo-500 bg-indigo-900/20 text-indigo-400' : 'border-slate-600 text-slate-300 hover:border-indigo-500'}`}
-                        >
-                            <Icon name={mapData?.playerDoorVisibility ? "eye" : "eye-off"} size={14} className="inline mr-1" />
-                            {mapData?.playerDoorVisibility ? 'Player Door Visibility is ON' : 'Player Door Visibility is OFF'}
-                        </button>
-                    </div>
+                                <div className="space-y-1.5">
+                                    <div className="flex justify-between items-center">
+                                        <span className="text-[11px] font-semibold text-slate-300">Brightness Multiplier</span>
+                                        <span className="text-xs text-amber-400 font-mono">{mapData?.lightingIntensity ?? 1}x</span>
+                                    </div>
+                                    <ThrottledSlider 
+                                        type="range" 
+                                        min="0" 
+                                        max="5" 
+                                        step="0.05" 
+                                        value={mapData?.lightingIntensity ?? 1} 
+                                        onChange={(val) => throttledUpdateMap({ lightingIntensity: val })}
+                                        className="w-full accent-amber-500" 
+                                    />
+                                </div>
 
-                    <div>
-                        <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">3D Mini Bases</label>
-                        <button
-                            onClick={() => updateMap(campaignCode, activeMapId, { hide3DTokenBases: mapData?.hide3DTokenBases !== false ? false : true })}
-                            className={`w-full py-2 border rounded text-center text-xs font-bold transition-colors flex items-center justify-center gap-2 ${mapData?.hide3DTokenBases !== false ? 'border-indigo-500 bg-indigo-900/20 text-indigo-400' : 'border-slate-600 text-slate-300 hover:border-indigo-500'}`}
-                        >
-                            <Icon name={mapData?.hide3DTokenBases !== false ? "eye-off" : "eye"} size={14} className="inline mr-1" />
-                            {mapData?.hide3DTokenBases !== false ? '3D Bases are HIDDEN' : '3D Bases are VISIBLE'}
-                        </button>
-                    </div>
+                                <div className="space-y-1.5">
+                                    <span className="block text-[10px] uppercase font-bold text-slate-400 tracking-wider">Ambient Life Effects</span>
+                                    <div className="grid grid-cols-3 gap-1 bg-slate-900 p-1 rounded-xl border border-slate-800">
+                                        {[
+                                            { id: 'off', label: 'Off' },
+                                            { id: 'low', label: 'Particles' },
+                                            { id: 'high', label: 'Fauna' }
+                                        ].map(lvl => (
+                                            <button
+                                                key={lvl.id}
+                                                type="button"
+                                                onClick={() => {
+                                                    const updates = { ambientLifeLevel: lvl.id };
+                                                    if (lvl.id === 'off') updates.particleDensity = 0;
+                                                    else if (mapData?.particleDensity === 0) updates.particleDensity = 1;
+                                                    updateMap(campaignCode, activeMapId, updates);
+                                                }}
+                                                className={`py-1 text-xs font-semibold rounded-lg transition-colors ${(mapData?.ambientLifeLevel || 'high') === lvl.id ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
+                                            >
+                                                {lvl.label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
 
-                    <div className="border-t border-slate-800 pt-4">
-                        <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">3D Heightmap Scale</label>
-                        <ThrottledSlider 
-                            type="range" 
-                            min="0" 
-                            max="10" 
-                            step="0.1" 
-                            value={mapData?.heightScale || 1} 
-                            onChange={(val) => throttledUpdateMap({ heightScale: val })}
-                            className="w-full accent-blue-500"
-                        />
-                        <div className="text-right text-xs text-slate-400 mt-1">{mapData?.heightScale || 1}x multiplier</div>
-                        
-                        <button onClick={() => updateMap(campaignCode, activeMapId, { heightmapUrl: null, heightScale: 1 })} className="w-full py-2 border border-red-900/50 rounded text-center text-xs font-bold text-red-400 hover:bg-red-900/20 hover:text-red-300 hover:border-red-500 mt-4 transition-colors">
-                            <Icon name="trash-2" size={14} className="inline mr-1" /> Remove Heightmap
-                        </button>
-                        
-                        {mapData?.normalMapUrl && (
-                            <button onClick={() => updateMap(campaignCode, activeMapId, { normalMapUrl: null })} className="w-full py-2 border border-red-900/50 rounded text-center text-xs font-bold text-red-400 hover:bg-red-900/20 hover:text-red-300 hover:border-red-500 mt-4 transition-colors">
-                                <Icon name="trash-2" size={14} className="inline mr-1" /> Remove Normal Map
-                            </button>
+                                {mapData?.ambientLifeLevel !== 'off' && (
+                                    <div className="space-y-1.5">
+                                        <div className="flex justify-between items-center">
+                                            <span className="text-[11px] font-semibold text-slate-300">Particle Density</span>
+                                            <span className="text-xs text-indigo-400 font-mono">{mapData?.particleDensity ?? 1.0}x</span>
+                                        </div>
+                                        <ThrottledSlider 
+                                            type="range" 
+                                            min="0" 
+                                            max="5" 
+                                            step="0.1" 
+                                            value={mapData?.particleDensity ?? 1.0} 
+                                            onChange={(val) => throttledUpdateMap({ particleDensity: val })}
+                                            className="w-full accent-indigo-500"
+                                        />
+                                    </div>
+                                )}
+
+                                <div className="space-y-1.5">
+                                    <span className="block text-[10px] uppercase font-bold text-slate-400 tracking-wider">Ecosystem Biome</span>
+                                    <select 
+                                        value={mapData?.biomeType || 'forest'} 
+                                        onChange={(e) => updateMap(campaignCode, activeMapId, { biomeType: e.target.value })}
+                                        className="w-full bg-slate-900 border border-slate-700/80 rounded-xl p-2 text-white text-xs outline-none focus:border-amber-500"
+                                    >
+                                        <option value="generic">Generic (Dust, Motes)</option>
+                                        <option value="dungeon">Dungeon (Spores, Critters)</option>
+                                        <option value="forest">Forest (Leaves, Birds, Butterflies)</option>
+                                        <option value="city">City (Dust, Shadows)</option>
+                                        <option value="coast">Coast (Birds, Spray)</option>
+                                        <option value="desert">Desert (Heat Shimmer, Dust)</option>
+                                    </select>
+                                </div>
+                            </div>
                         )}
                     </div>
 
-                    <div className="border-t border-slate-800 pt-4">
-                        <label className="block text-xs uppercase font-bold text-slate-500 mb-2 tracking-wider">Export & Backup</label>
-                        <button onClick={handleExportPreset} disabled={isExporting} className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold rounded flex items-center justify-center gap-2 transition-colors border border-slate-700 shadow">
-                            {isExporting ? <Icon name="loader" size={14} className="animate-spin" /> : <Icon name="save" size={14} />}
-                            {isExporting ? "Packaging Preset..." : "Export Map Preset"}
-                        </button>
-                        <p className="text-[10px] text-slate-500 text-center mt-2 leading-tight">Exports a shareable JSON file containing the current map image, 3D heightmaps, lighting, walls, tokens, and character sheets.</p>
+                    {/* SECTION 3: PRECISION GRID ALIGNMENT */}
+                    <div className="bg-slate-950/60 rounded-2xl border border-slate-800/80 overflow-hidden shadow-sm">
+                        <div 
+                            className="p-3.5 flex justify-between items-center cursor-pointer hover:bg-slate-800/30 transition-colors"
+                            onClick={() => toggleSection('grid')}
+                        >
+                            <div className="flex items-center gap-2">
+                                <Icon name="grid" size={16} className="text-indigo-400" />
+                                <h4 className="text-xs font-bold text-slate-200 tracking-wide">Grid Calibration & Scale</h4>
+                            </div>
+                            <Icon name={expandedSections.grid ? "chevron-up" : "chevron-down"} size={16} className="text-slate-500" />
+                        </div>
+
+                        {expandedSections.grid && (
+                            <div className="p-3.5 pt-0 space-y-3.5 border-t border-slate-800/50">
+                                {/* AI Auto-Detect Grid Banner */}
+                                <button 
+                                    onClick={handleAutoDetectGrid}
+                                    disabled={!mapData?.backgroundUrl || isDetectingGrid}
+                                    className="w-full py-2.5 bg-gradient-to-r from-indigo-700 via-indigo-600 to-purple-600 hover:from-indigo-600 hover:to-purple-500 disabled:opacity-50 text-white text-xs font-bold rounded-xl flex items-center justify-center gap-2 transition-all shadow-md"
+                                >
+                                    <Icon name="scan" size={15} />
+                                    <span>Auto-Detect Grid Alignment (AI)</span>
+                                </button>
+
+                                {/* Grid Size with Stepper */}
+                                <div className="space-y-1.5">
+                                    <div className="flex justify-between items-center">
+                                        <span className="text-[11px] font-semibold text-slate-300">Grid Cell Size</span>
+                                        <NudgeStepper 
+                                            value={mapData?.gridSize ?? 1} 
+                                            min={0.1} 
+                                            max={10} 
+                                            step={0.05} 
+                                            onChange={(val) => throttledUpdateMap({ gridSize: val })} 
+                                        />
+                                    </div>
+                                    <ThrottledSlider 
+                                        type="range" 
+                                        min="0.1" 
+                                        max="5" 
+                                        step="0.01" 
+                                        value={mapData?.gridSize ?? 1} 
+                                        onChange={(val) => throttledUpdateMap({ gridSize: val })}
+                                        className="w-full accent-amber-500"
+                                    />
+                                </div>
+
+                                {/* Offset X with Stepper */}
+                                <div className="space-y-1.5">
+                                    <div className="flex justify-between items-center">
+                                        <span className="text-[11px] font-semibold text-slate-300">Grid Offset X</span>
+                                        <NudgeStepper 
+                                            value={mapData?.gridOffsetX ?? 0} 
+                                            min={-5} 
+                                            max={5} 
+                                            step={0.05} 
+                                            onChange={(val) => throttledUpdateMap({ gridOffsetX: val })} 
+                                        />
+                                    </div>
+                                    <ThrottledSlider 
+                                        type="range" 
+                                        min="-5" 
+                                        max="5" 
+                                        step="0.01" 
+                                        value={mapData?.gridOffsetX ?? 0} 
+                                        onChange={(val) => throttledUpdateMap({ gridOffsetX: val })}
+                                        className="w-full accent-amber-500"
+                                    />
+                                </div>
+
+                                {/* Offset Y with Stepper */}
+                                <div className="space-y-1.5">
+                                    <div className="flex justify-between items-center">
+                                        <span className="text-[11px] font-semibold text-slate-300">Grid Offset Y</span>
+                                        <NudgeStepper 
+                                            value={mapData?.gridOffsetY ?? 0} 
+                                            min={-5} 
+                                            max={5} 
+                                            step={0.05} 
+                                            onChange={(val) => throttledUpdateMap({ gridOffsetY: val })} 
+                                        />
+                                    </div>
+                                    <ThrottledSlider 
+                                        type="range" 
+                                        min="-5" 
+                                        max="5" 
+                                        step="0.01" 
+                                        value={mapData?.gridOffsetY ?? 0} 
+                                        onChange={(val) => throttledUpdateMap({ gridOffsetY: val })}
+                                        className="w-full accent-amber-500"
+                                    />
+                                </div>
+
+                                {/* Map Scale */}
+                                <div className="space-y-1.5">
+                                    <div className="flex justify-between items-center">
+                                        <span className="text-[11px] font-semibold text-slate-300">Map Scale (World Units)</span>
+                                        <span className="text-xs text-amber-400 font-mono">{mapData?.scale || 20}u</span>
+                                    </div>
+                                    <input 
+                                        type="range" 
+                                        min="5" 
+                                        max="100" 
+                                        step="1" 
+                                        value={mapData?.scale || 20} 
+                                        onChange={(e) => {
+                                            const newScale = parseFloat(e.target.value);
+                                            const oldScale = mapData?.scale || 20;
+                                            const ratio = newScale / oldScale;
+                                            const updates = { scale: newScale };
+
+                                            if (mapData?.walls) {
+                                                updates.walls = {};
+                                                for (const [id, wall] of Object.entries(mapData.walls)) {
+                                                    updates.walls[id] = {
+                                                        ...wall,
+                                                        points: wall.points.map(p => ({
+                                                            ...p,
+                                                            x: p.x * ratio,
+                                                            z: p.z * ratio,
+                                                        }))
+                                                    };
+                                                }
+                                            }
+
+                                            if (mapData?.lights) {
+                                                updates.lights = {};
+                                                for (const [id, light] of Object.entries(mapData.lights)) {
+                                                    updates.lights[id] = {
+                                                        ...light,
+                                                        position: {
+                                                            ...light.position,
+                                                            x: light.position.x * ratio,
+                                                            z: light.position.z * ratio,
+                                                        },
+                                                        radius: (light.radius || 15) * ratio,
+                                                    };
+                                                }
+                                            }
+                                            throttledUpdateMap(updates);
+                                        }}
+                                        className="w-full accent-amber-500"
+                                    />
+                                </div>
+
+                                {/* Grid Color & Thickness */}
+                                <div className="grid grid-cols-2 gap-3 pt-1">
+                                    <div>
+                                        <span className="block text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-1.5">Grid Color</span>
+                                        <div className="flex gap-2 items-center bg-slate-900 border border-slate-700/80 rounded-xl p-1.5">
+                                            <input 
+                                                type="color" 
+                                                value={mapData?.gridColor || '#888888'} 
+                                                onChange={(e) => throttledUpdateMap({ gridColor: e.target.value })}
+                                                className="w-6 h-6 rounded cursor-pointer bg-transparent border-0 p-0"
+                                            />
+                                            <span className="text-[11px] text-slate-300 uppercase font-mono">{mapData?.gridColor || '#888888'}</span>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <span className="block text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-1.5">Grid Line Width</span>
+                                        <ThrottledSlider 
+                                            type="range" 
+                                            min="0.5" 
+                                            max="4" 
+                                            step="0.5" 
+                                            value={mapData?.gridThickness || 0.5} 
+                                            onChange={(val) => throttledUpdateMap({ gridThickness: val })}
+                                            className="w-full accent-amber-500 mt-2"
+                                        />
+                                    </div>
+                                </div>
+
+                                {/* Toggles: Visibility, Snapping, Nameplates */}
+                                <div className="grid grid-cols-3 gap-2 pt-1">
+                                    <button
+                                        type="button"
+                                        onClick={() => updateMap(campaignCode, activeMapId, { showGrid: mapData?.showGrid === false ? true : false })}
+                                        className={`py-2 px-1 rounded-xl border text-xs font-bold transition-all flex flex-col items-center gap-1 ${mapData?.showGrid !== false ? 'border-cyan-500/50 bg-cyan-500/10 text-cyan-300' : 'border-slate-800 bg-slate-900 text-slate-500'}`}
+                                    >
+                                        <Icon name={mapData?.showGrid !== false ? "grid" : "layout-grid"} size={14} />
+                                        <span className="text-[10px]">{mapData?.showGrid !== false ? 'Grid ON' : 'Grid OFF'}</span>
+                                    </button>
+
+                                    <button
+                                        type="button"
+                                        onClick={() => updateMap(campaignCode, activeMapId, { isSnapToGrid: mapData?.isSnapToGrid === false ? true : false })}
+                                        className={`py-2 px-1 rounded-xl border text-xs font-bold transition-all flex flex-col items-center gap-1 ${mapData?.isSnapToGrid !== false ? 'border-green-500/50 bg-green-500/10 text-green-300' : 'border-slate-800 bg-slate-900 text-slate-500'}`}
+                                    >
+                                        <Icon name="magnet" size={14} />
+                                        <span className="text-[10px]">{mapData?.isSnapToGrid !== false ? 'Snap ON' : 'Snap OFF'}</span>
+                                    </button>
+
+                                    <button
+                                        type="button"
+                                        onClick={() => updateMap(campaignCode, activeMapId, { showNameplates: mapData?.showNameplates === false ? true : false })}
+                                        className={`py-2 px-1 rounded-xl border text-xs font-bold transition-all flex flex-col items-center gap-1 ${mapData?.showNameplates !== false ? 'border-blue-500/50 bg-blue-500/10 text-blue-300' : 'border-slate-800 bg-slate-900 text-slate-500'}`}
+                                    >
+                                        <Icon name={mapData?.showNameplates !== false ? "eye" : "eye-off"} size={14} />
+                                        <span className="text-[10px]">{mapData?.showNameplates !== false ? 'Names ON' : 'Names OFF'}</span>
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* SECTION 4: VISION & FOG OF WAR */}
+                    <div className="bg-slate-950/60 rounded-2xl border border-slate-800/80 overflow-hidden shadow-sm">
+                        <div 
+                            className="p-3.5 flex justify-between items-center cursor-pointer hover:bg-slate-800/30 transition-colors"
+                            onClick={() => toggleSection('vision')}
+                        >
+                            <div className="flex items-center gap-2">
+                                <Icon name="eye" size={16} className="text-purple-400" />
+                                <h4 className="text-xs font-bold text-slate-200 tracking-wide">Vision & Dynamic Fog</h4>
+                            </div>
+                            <Icon name={expandedSections.vision ? "chevron-up" : "chevron-down"} size={16} className="text-slate-500" />
+                        </div>
+
+                        {expandedSections.vision && (
+                            <div className="p-3.5 pt-0 space-y-3 border-t border-slate-800/50">
+                                <div>
+                                    <span className="block text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-1.5">Vision Mode</span>
+                                    <div className="grid grid-cols-3 gap-1 bg-slate-900 p-1 rounded-xl border border-slate-800">
+                                        {[
+                                            { id: 'off', label: 'Vision Off', icon: 'eye-off' },
+                                            { id: 'fow', label: 'Fog of War', icon: 'eye' },
+                                            { id: 'darkness', label: 'Darkness', icon: 'moon' }
+                                        ].map(vMode => {
+                                            const current = mapData?.visionMode || 'off';
+                                            const isSelected = current === vMode.id;
+                                            return (
+                                                <button
+                                                    key={vMode.id}
+                                                    type="button"
+                                                    onClick={() => updateMap(campaignCode, activeMapId, { visionMode: vMode.id })}
+                                                    className={`py-1.5 text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5 transition-colors ${isSelected ? 'bg-purple-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
+                                                >
+                                                    <Icon name={vMode.icon} size={13} />
+                                                    <span className="text-[11px]">{vMode.label}</span>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => updateMap(campaignCode, activeMapId, { fowWallsEnabled: mapData?.fowWallsEnabled === true ? false : true })}
+                                        className={`p-2 rounded-xl border text-xs font-semibold transition-all flex items-center justify-center gap-1.5 ${mapData?.fowWallsEnabled ? 'border-purple-500/50 bg-purple-500/10 text-purple-300' : 'border-slate-800 bg-slate-900 text-slate-500'}`}
+                                    >
+                                        <Icon name={mapData?.fowWallsEnabled ? "shield" : "shield-off"} size={13} />
+                                        <span>FoW Walls</span>
+                                    </button>
+
+                                    <button
+                                        type="button"
+                                        onClick={() => updateMap(campaignCode, activeMapId, { playerDoorVisibility: mapData?.playerDoorVisibility === true ? false : true })}
+                                        className={`p-2 rounded-xl border text-xs font-semibold transition-all flex items-center justify-center gap-1.5 ${mapData?.playerDoorVisibility ? 'border-indigo-500/50 bg-indigo-500/10 text-indigo-300' : 'border-slate-800 bg-slate-900 text-slate-500'}`}
+                                    >
+                                        <Icon name={mapData?.playerDoorVisibility ? "door-open" : "door-closed"} size={13} />
+                                        <span>Door Vis</span>
+                                    </button>
+                                </div>
+
+                                <button
+                                    type="button"
+                                    onClick={async () => {
+                                        if (await dialog.confirm("Reset all explored Fog of War back to pitch black?")) {
+                                            const currentReset = mapData?.fowResetCounter || 0;
+                                            updateMap(campaignCode, activeMapId, { 
+                                                fowExploredState: null, 
+                                                fowResetCounter: currentReset + 1 
+                                            });
+                                            toast("Fog of war reset.", "info");
+                                        }
+                                    }}
+                                    className="w-full py-2 bg-red-950/40 hover:bg-red-900/50 border border-red-800/50 rounded-xl text-center text-xs font-bold text-red-300 transition-colors flex items-center justify-center gap-1.5"
+                                >
+                                    <Icon name="rotate-ccw" size={13} />
+                                    <span>Reset Explored Fog</span>
+                                </button>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* SECTION 5: 3D TERRAIN & ELEVATION */}
+                    <div className="bg-slate-950/60 rounded-2xl border border-slate-800/80 overflow-hidden shadow-sm">
+                        <div 
+                            className="p-3.5 flex justify-between items-center cursor-pointer hover:bg-slate-800/30 transition-colors"
+                            onClick={() => toggleSection('elevation')}
+                        >
+                            <div className="flex items-center gap-2">
+                                <Icon name="mountain" size={16} className="text-cyan-400" />
+                                <h4 className="text-xs font-bold text-slate-200 tracking-wide">3D Terrain & Elevation</h4>
+                            </div>
+                            <Icon name={expandedSections.elevation ? "chevron-up" : "chevron-down"} size={16} className="text-slate-500" />
+                        </div>
+
+                        {expandedSections.elevation && (
+                            <div className="p-3.5 pt-0 space-y-3.5 border-t border-slate-800/50">
+                                <div className="space-y-1.5">
+                                    <div className="flex justify-between items-center">
+                                        <span className="text-[11px] font-semibold text-slate-300">Token Elevation Offset</span>
+                                        <NudgeStepper 
+                                            value={mapData?.tokenElevationOffset ?? (!mapData?.heightmapUrl ? 0.04 : -0.12)}
+                                            min={-0.5}
+                                            max={0.5}
+                                            step={0.02}
+                                            onChange={(val) => throttledUpdateMap({ tokenElevationOffset: val })}
+                                        />
+                                    </div>
+                                    <ThrottledSlider 
+                                        type="range" 
+                                        min="-0.5" 
+                                        max="0.5" 
+                                        step="0.01" 
+                                        value={mapData?.tokenElevationOffset ?? (!mapData?.heightmapUrl ? 0.04 : -0.12)} 
+                                        onChange={(val) => throttledUpdateMap({ tokenElevationOffset: val })}
+                                        className="w-full accent-cyan-500"
+                                    />
+                                </div>
+
+                                <div className="space-y-1.5">
+                                    <div className="flex justify-between items-center">
+                                        <span className="text-[11px] font-semibold text-slate-300">3D Heightmap Scale</span>
+                                        <span className="text-xs text-cyan-400 font-mono">{mapData?.heightScale || 1}x</span>
+                                    </div>
+                                    <ThrottledSlider 
+                                        type="range" 
+                                        min="0" 
+                                        max="10" 
+                                        step="0.1" 
+                                        value={mapData?.heightScale || 1} 
+                                        onChange={(val) => throttledUpdateMap({ heightScale: val })}
+                                        className="w-full accent-cyan-500"
+                                    />
+                                </div>
+
+                                <button
+                                    type="button"
+                                    onClick={() => updateMap(campaignCode, activeMapId, { hide3DTokenBases: mapData?.hide3DTokenBases !== false ? false : true })}
+                                    className={`w-full py-2 border rounded-xl text-center text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${mapData?.hide3DTokenBases !== false ? 'border-indigo-500/50 bg-indigo-500/10 text-indigo-300' : 'border-slate-800 bg-slate-900 text-slate-400'}`}
+                                >
+                                    <Icon name={mapData?.hide3DTokenBases !== false ? "eye-off" : "eye"} size={14} />
+                                    <span>{mapData?.hide3DTokenBases !== false ? '3D Bases Hidden' : '3D Bases Visible'}</span>
+                                </button>
+
+                                {mapData?.heightmapUrl && (
+                                    <button 
+                                        onClick={() => updateMap(campaignCode, activeMapId, { heightmapUrl: null, heightScale: 1 })} 
+                                        className="w-full py-2 border border-red-900/50 rounded-xl text-center text-xs font-bold text-red-400 hover:bg-red-900/20 transition-colors flex items-center justify-center gap-1.5"
+                                    >
+                                        <Icon name="trash-2" size={13} /> Remove Heightmap
+                                    </button>
+                                )}
+
+                                {mapData?.normalMapUrl && (
+                                    <button 
+                                        onClick={() => updateMap(campaignCode, activeMapId, { normalMapUrl: null })} 
+                                        className="w-full py-2 border border-red-900/50 rounded-xl text-center text-xs font-bold text-red-400 hover:bg-red-900/20 transition-colors flex items-center justify-center gap-1.5"
+                                    >
+                                        <Icon name="trash-2" size={13} /> Remove Normal Map
+                                    </button>
+                                )}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* SECTION 6: EXPORT & BACKUP */}
+                    <div className="bg-slate-950/60 rounded-2xl border border-slate-800/80 overflow-hidden shadow-sm">
+                        <div 
+                            className="p-3.5 flex justify-between items-center cursor-pointer hover:bg-slate-800/30 transition-colors"
+                            onClick={() => toggleSection('backup')}
+                        >
+                            <div className="flex items-center gap-2">
+                                <Icon name="save" size={16} className="text-emerald-400" />
+                                <h4 className="text-xs font-bold text-slate-200 tracking-wide">Backup & Export</h4>
+                            </div>
+                            <Icon name={expandedSections.backup ? "chevron-up" : "chevron-down"} size={16} className="text-slate-500" />
+                        </div>
+
+                        {expandedSections.backup && (
+                            <div className="p-3.5 pt-0 space-y-2.5 border-t border-slate-800/50">
+                                <button 
+                                    onClick={handleExportPreset} 
+                                    disabled={isExporting} 
+                                    className="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold rounded-xl flex items-center justify-center gap-2 transition-colors border border-slate-700 shadow"
+                                >
+                                    {isExporting ? <Icon name="loader" size={14} className="animate-spin" /> : <Icon name="download" size={14} />}
+                                    <span>{isExporting ? "Packaging Preset..." : "Export Map Preset JSON"}</span>
+                                </button>
+                                <p className="text-[10px] text-slate-500 text-center leading-relaxed">
+                                    Exports a shareable JSON file containing the battlemap image, 3D heightmaps, lighting, walls, tokens, and character data.
+                                </p>
+                            </div>
+                        )}
                     </div>
                 </div>
             )}
@@ -2190,10 +2565,13 @@ const AssetManager = ({ campaignCode, mapData: propMapData, activeMapId: propAct
 const TabButton = ({ name, activeTab, onClick, icon, children }) => (
     <button
         onClick={() => onClick(name)}
-        className={`flex-1 p-3 text-sm font-bold flex items-center justify-center gap-2 transition-colors ${activeTab === name ? 'bg-slate-800 text-amber-400' : 'text-slate-400 hover:bg-slate-800/50 hover:text-white'}`}
+        className={`flex-1 py-3 px-2 text-xs font-bold flex items-center justify-center gap-1.5 transition-all relative ${activeTab === name ? 'text-amber-400' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/40'}`}
     >
-        <Icon name={icon} size={16} />
-        {children}
+        <Icon name={icon} size={15} />
+        <span className="truncate">{children}</span>
+        {activeTab === name && (
+            <div className="absolute bottom-0 inset-x-2 h-0.5 bg-gradient-to-r from-amber-500 to-amber-400 rounded-full" />
+        )}
     </button>
 );
 

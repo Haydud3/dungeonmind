@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useCharacterStore } from '../../../stores/useCharacterStore';
 import Icon from '../../Icon';
+import { useDialog } from '../../DialogProvider';
 import RollButton from '../widgets/RollButton';
 import TrackerPips from '../widgets/TrackerPips';
 
@@ -19,10 +20,12 @@ const CORE_COMBAT_ACTIONS = [
 
 // UPDATE: Added isOwner
 const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
+    const dialog = useDialog();
     const { character, updateInfo, toggleCondition, useItemCharge } = useCharacterStore();
     const [showAdd, setShowAdd] = useState(false);
     const [newAction, setNewAction] = useState({ name: "", hit: "", dmg: "", type: "Action", category: "Attack", notes: "" });
     const [lastCritId, setLastCritId] = useState(null);
+    const [activeCategory, setActiveCategory] = useState('all');
     
     // Edit State
     const [editingId, setEditingId] = useState(null);
@@ -155,7 +158,7 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
 
         // Then handle the actual dice roll logic
         if (type === 'hit') {
-            if (!onDiceRoll) return alert("Dice connection missing.");
+            if (!onDiceRoll) return dialog.alert("Dice connection missing.");
             if (String(action.hit).toUpperCase().includes('DC')) {
                 const match = String(action.hit).match(/DC\s*(\d+)(?:\s*([a-zA-Z]+))?/i);
                 let dcData = null;
@@ -176,9 +179,12 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
             const mod = parseInt(action.hit) || 0;
             const formula = `1d20${mod >= 0 ? '+' : ''}${mod}`;
             const rollObj = await onDiceRoll(formula, {
+                actionType: 'attack',
                 weaponName: action.name,
                 alias: 'Attack',
-                characterName: character.name
+                characterName: character.name,
+                damageRoll: action.dmg || null,
+                damageType: action.notes || null
             });
             
             if (rollObj?.isCrit) {
@@ -188,7 +194,7 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
             }
         } 
         else if (type === 'dmg') {
-            if (!onDiceRoll) return alert("Dice connection missing.");
+            if (!onDiceRoll) return dialog.alert("Dice connection missing.");
             if (!action.dmg) {
                 onDiceRoll('1d0', {
                     alias: action.name,
@@ -235,9 +241,9 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
         } 
     };
 
-    const deleteAction = (action) => {
-        if(action.source !== 'custom') return alert("This is a Spell or Item. Remove it from those tabs.");
-        if(!confirm(`Delete ${action.name}?`)) return;
+    const deleteAction = async (action) => {
+        if(action.source !== 'custom') return dialog.alert("This is a Spell or Item. Remove it from those tabs.");
+        if(!(await dialog.confirm(`Delete ${action.name}?`))) return;
         updateInfo('customActions', (character?.customActions || []).filter(a => a.name !== action.name));
     };
 
@@ -249,7 +255,7 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
     };
 
     const startEdit = (action) => {
-        if (action.source !== 'custom') return alert("Can only edit Custom Actions here.");
+        if (action.source !== 'custom') return dialog.alert("Can only edit Custom Actions here.");
         setEditingId(action.id);
         setEditForm({ ...action });
     };
@@ -286,18 +292,18 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
         const isCore = action.isCore; // Detect core actions
 
         return (
-            <div className={`bg-slate-800 border ${isCore ? 'border-slate-700/50' : 'border-slate-700'} rounded-lg overflow-hidden transition-colors group relative mb-2`}>
+            <div className={`bg-slate-900/80 border ${isCore ? 'border-slate-800' : 'border-slate-800/90'} hover:border-amber-500/40 rounded-xl overflow-hidden transition-all group relative mb-2.5 shadow-sm`}>
                 
                 {/* Normal View */}
                 {editingId !== action.id && (
-                    <div className="p-3 flex flex-wrap justify-between items-center gap-2 hover:border-indigo-500 border border-transparent rounded-lg">
+                    <div className="p-3 flex flex-wrap justify-between items-center gap-2.5 hover:bg-slate-800/30 transition-colors">
                         
                         {/* LEFT: Info */}
                         <div className="overflow-hidden flex-1 min-w-[150px] cursor-pointer" onClick={() => hasText && setIsExpanded(!isExpanded)}>
-                            <div className={`font-bold ${isCore ? 'text-slate-400' : 'text-slate-200'} truncate flex items-center gap-2`}>
+                            <div className={`font-bold ${isCore ? 'text-slate-400 font-serif' : 'text-slate-100 font-serif'} text-sm truncate flex items-center gap-2`}>
                                 {action.name}
-                                {action.isItem && <Icon name="backpack" size={12} className="text-slate-500"/>}
-                                {action.source === 'spell' && <Icon name="sparkles" size={12} className="text-purple-400"/>}
+                                {action.isItem && <Icon name="backpack" size={13} className="text-amber-400/80"/>}
+                                {action.source === 'spell' && <Icon name="sparkles" size={13} className="text-purple-400"/>}
                             </div>
                             <div className="text-xs text-slate-500 truncate flex gap-2 items-center">
                                 <span>{action.type || "Action"}</span>
@@ -451,93 +457,169 @@ const ActionsTab = ({ onDiceRoll, onLogAction, isOwner }) => {
     };
 
     return (
-        <div className="space-y-6 pb-24">
-            
-            {/* UPDATE: Hide ADD BUTTON if not owner */}
-            {isOwner && (
-                <button onClick={() => setShowAdd(!showAdd)} className="w-full py-3 border border-dashed border-slate-700 rounded-xl text-slate-500 hover:text-white hover:border-slate-500 hover:bg-slate-800/50 transition-all flex items-center justify-center gap-2 text-sm font-bold">
-                    <Icon name="plus" size={16}/> Add Action
-                </button>
-            )}
+        <div className="space-y-4 pb-20">
+            {/* Top Command Toolbar: Filter Chips & Add Action */}
+            <div className="flex items-center justify-between gap-2 flex-wrap pb-1">
+                <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+                    {[
+                        { id: 'all', label: 'All', count: allActions.length },
+                        { id: 'attacks', label: 'Attacks', count: attacks.length },
+                        { id: 'bonus', label: 'Bonus', count: bonusActions.length },
+                        { id: 'reactions', label: 'Reactions', count: reactions.length },
+                        { id: 'core', label: '5e Rules', count: CORE_COMBAT_ACTIONS.length },
+                    ].map(f => (
+                        <button
+                            key={f.id}
+                            type="button"
+                            onClick={() => setActiveCategory(f.id)}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-semibold font-mono transition-all cursor-pointer flex items-center gap-1.5 ${
+                                activeCategory === f.id
+                                    ? 'bg-amber-500 text-slate-950 font-bold shadow-sm'
+                                    : 'bg-slate-900/90 text-slate-400 hover:text-slate-200 border border-slate-800'
+                            }`}
+                        >
+                            <span>{f.label}</span>
+                            <span className={`text-[10px] px-1 rounded-full ${
+                                activeCategory === f.id ? 'bg-slate-950/20 text-slate-950 font-bold' : 'bg-slate-800 text-slate-400'
+                            }`}>
+                                {f.count}
+                            </span>
+                        </button>
+                    ))}
+                </div>
+
+                {isOwner && (
+                    <button 
+                        onClick={() => setShowAdd(!showAdd)} 
+                        className={`px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-sm ml-auto ${
+                            showAdd 
+                                ? 'bg-amber-500 text-slate-950 font-bold shadow-md' 
+                                : 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                        }`}
+                    >
+                        <Icon name={showAdd ? "x" : "plus"} size={13}/>
+                        <span>{showAdd ? "Close" : "Custom Action"}</span>
+                    </button>
+                )}
+            </div>
 
             {/* ADD FORM */}
             {showAdd && isOwner && (
-                <div className="bg-slate-800 p-4 rounded-xl border border-slate-600 shadow-xl animate-in slide-in-from-top-2">
+                <div className="bg-slate-900/95 p-4 rounded-xl border border-amber-500/40 shadow-xl animate-in slide-in-from-top-2">
+                    <div className="text-xs font-bold text-amber-300 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                        <Icon name="sparkles" size={13} />
+                        <span>Create Custom Action</span>
+                    </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
                         <div className="col-span-2">
-                            <label className="text-[10px] uppercase font-bold text-slate-500">Name</label>
-                            <input className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm" value={newAction.name} onChange={e=>setNewAction({...newAction, name:e.target.value})} placeholder="Fireball"/>
+                            <label className="text-[10px] uppercase font-bold text-slate-400">Action Name</label>
+                            <input 
+                                className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white text-sm outline-none focus:border-amber-400" 
+                                value={newAction.name} 
+                                onChange={e=>setNewAction({...newAction, name:e.target.value})} 
+                                placeholder="e.g. Greatsword Slash, Flaming Sphere..."
+                            />
                         </div>
                         <div>
-                            <label className="text-[10px] uppercase font-bold text-slate-500">Hit Bonus</label>
-                            <input className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm" value={newAction.hit} onChange={e=>setNewAction({...newAction, hit:e.target.value})} placeholder="+5"/>
+                            <label className="text-[10px] uppercase font-bold text-slate-400">Hit Bonus / Save DC</label>
+                            <input 
+                                className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white text-sm outline-none focus:border-amber-400" 
+                                value={newAction.hit} 
+                                onChange={e=>setNewAction({...newAction, hit:e.target.value})} 
+                                placeholder="+5 or DC 14 Dex"
+                            />
                         </div>
                         <div>
-                            <label className="text-[10px] uppercase font-bold text-slate-500">Damage</label>
-                            <input className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm" value={newAction.dmg} onChange={e=>setNewAction({...newAction, dmg:e.target.value})} placeholder="8d6 Fire"/>
+                            <label className="text-[10px] uppercase font-bold text-slate-400">Damage Formula</label>
+                            <input 
+                                className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white text-sm outline-none focus:border-amber-400" 
+                                value={newAction.dmg} 
+                                onChange={e=>setNewAction({...newAction, dmg:e.target.value})} 
+                                placeholder="2d6+3 Slashing"
+                            />
                         </div>
                         <div>
-                            <label className="text-[10px] uppercase font-bold text-slate-500">Type</label>
-                            <select className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm" value={newAction.type} onChange={e=>setNewAction({...newAction, type:e.target.value})}>
+                            <label className="text-[10px] uppercase font-bold text-slate-400">Action Economy</label>
+                            <select 
+                                className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white text-sm outline-none focus:border-amber-400" 
+                                value={newAction.type} 
+                                onChange={e=>setNewAction({...newAction, type:e.target.value})}
+                            >
                                 <option>Action</option>
                                 <option>Bonus Action</option>
                                 <option>Reaction</option>
                             </select>
                         </div>
                     </div>
-                    <button onClick={addAction} className="w-full bg-green-600 hover:bg-green-500 text-white font-bold py-2 rounded-lg">Save Action</button>
+                    <button 
+                        onClick={addAction} 
+                        className="w-full bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-slate-950 font-black py-2 rounded-lg transition-all shadow-md active:scale-95"
+                    >
+                        Save Action
+                    </button>
                 </div>
             )}
 
             {/* --- SECTIONS --- */}
-            {attacks.length > 0 && (
+            {(activeCategory === 'all' || activeCategory === 'attacks') && attacks.length > 0 && (
                 <div>
-                    {/* START CHANGE: Attacks per Action Label */}
-                    <div className="flex justify-between items-baseline mb-2 pl-1 border-b border-slate-800 pb-1">
-                        <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Attacks</h4>
-                        <span className="text-[10px] font-bold text-slate-400">Attacks per Action: <span className="text-white">{character?.attacksPerAction || 1}</span></span>
+                    <div className="flex justify-between items-baseline mb-2 pl-1 border-b border-slate-800/80 pb-1">
+                        <h4 className="text-[10px] font-bold text-amber-400 uppercase tracking-widest flex items-center gap-1.5">
+                            <Icon name="sword" size={12} /> Attacks & Weapon Strikes
+                        </h4>
+                        <span className="text-[10px] font-mono text-slate-400">
+                            Attacks per Action: <strong className="text-white font-bold">{character?.attacksPerAction || 1}</strong>
+                        </span>
                     </div>
-                    {/* END CHANGE */}
                     {attacks.map((a) => <ActionRow key={a.id} action={a} />)}
                 </div>
             )}
 
-            {bonusActions.length > 0 && (
+            {(activeCategory === 'all' || activeCategory === 'bonus') && bonusActions.length > 0 && (
                 <div>
-                    <h4 className="text-[10px] font-bold text-amber-500 uppercase mb-2 tracking-widest pl-1 border-b border-amber-900/30 pb-1">Bonus Actions</h4>
+                    <h4 className="text-[10px] font-bold text-amber-500 uppercase mb-2 tracking-widest pl-1 border-b border-slate-800/80 pb-1 flex items-center gap-1.5">
+                        <Icon name="zap" size={12} /> Bonus Actions
+                    </h4>
                     {bonusActions.map((a) => <ActionRow key={a.id} action={a} />)}
                 </div>
             )}
 
-            {reactions.length > 0 && (
+            {(activeCategory === 'all' || activeCategory === 'reactions') && reactions.length > 0 && (
                 <div>
-                    <h4 className="text-[10px] font-bold text-indigo-400 uppercase mb-2 tracking-widest pl-1 border-b border-indigo-900/30 pb-1">Reactions</h4>
+                    <h4 className="text-[10px] font-bold text-indigo-400 uppercase mb-2 tracking-widest pl-1 border-b border-slate-800/80 pb-1 flex items-center gap-1.5">
+                        <Icon name="shield" size={12} /> Reactions
+                    </h4>
                     {reactions.map((a) => <ActionRow key={a.id} action={a} />)}
                 </div>
             )}
 
-            {otherFeatures.length > 0 && (
+            {activeCategory === 'all' && otherFeatures.length > 0 && (
                 <div>
-                    <h4 className="text-[10px] font-bold text-slate-500 uppercase mb-2 tracking-widest pl-1 border-b border-slate-800 pb-1">Features</h4>
+                    <h4 className="text-[10px] font-bold text-slate-400 uppercase mb-2 tracking-widest pl-1 border-b border-slate-800/80 pb-1 flex items-center gap-1.5">
+                        <Icon name="sparkles" size={12} /> Special Actions & Features
+                    </h4>
                     {otherFeatures.map((a) => <ActionRow key={a.id} action={a} />)}
                 </div>
             )}
 
-            {/* START CHANGE: Render Core Combat Actions */}
-            <div className="mt-8 pt-4 border-t border-slate-800/50">
-                <h4 className="text-[10px] font-bold text-slate-600 uppercase mb-2 tracking-widest pl-1">Core Combat Actions</h4>
-                {CORE_COMBAT_ACTIONS.map((action, i) => (
-                    <ActionRow 
-                        key={`core-${i}`} 
-                        action={{ ...action, id: `core-${i}`, type: 'Action', isCore: true }} 
-                    />
-                ))}
-            </div>
-            {/* END CHANGE */}
+            {/* Core Combat Actions */}
+            {(activeCategory === 'all' || activeCategory === 'core') && (
+                <div className="mt-6 pt-3 border-t border-slate-800/80">
+                    <h4 className="text-[10px] font-bold text-slate-400 uppercase mb-2 tracking-widest pl-1 flex items-center gap-1.5">
+                        <Icon name="book-open" size={12} /> Standard 5e Combat Actions
+                    </h4>
+                    {CORE_COMBAT_ACTIONS.map((action, i) => (
+                        <ActionRow 
+                            key={`core-${i}`} 
+                            action={{ ...action, id: `core-${i}`, type: 'Action', isCore: true }} 
+                        />
+                    ))}
+                </div>
+            )}
 
             {allActions.length === 0 && (
-                <div className="text-center text-slate-500 py-12 italic border-2 border-dashed border-slate-800 rounded-xl">
-                    No actions found.
+                <div className="text-center text-slate-500 py-12 italic border border-dashed border-slate-800 rounded-2xl bg-slate-900/30">
+                    No actions or attacks found. Click &quot;Custom Action&quot; or equip combat weapons to populate.
                 </div>
             )}
         </div>

@@ -1019,9 +1019,9 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                                             <button onClick={() => setEditingCharacter(char)} className="text-indigo-400 hover:text-indigo-300 text-sm font-bold flex items-center gap-1">
                                                 <Icon name="pencil" size={14} /> Edit
                                             </button>
-                                            <button onClick={(e) => {
+                                            <button onClick={async (e) => {
                                                 e.stopPropagation();
-                                                if(confirm("Delete this character?")) {
+                                                if (await dialog.confirm("Delete this character?")) {
                                                     deleteDoc(doc(fb.db, 'users', user.uid, 'characters', char.id)).then(() => {
                                                         setCharacters(prev => prev.filter(c => c.id !== char.id));
                                                     });

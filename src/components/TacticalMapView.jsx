@@ -11,6 +11,7 @@ const MeasurementTools = lazy(() => import('./MeasurementTools').then(m => ({ de
 import Icon from './Icon';
 import { useDialog } from './DialogProvider';
 import { useToast } from './ToastProvider';
+import MonsterForgeModal from './MonsterForgeModal';
 import { retrieveChunkedMap, storeChunkedMap, deleteChunkedMap, fileToBase64 } from '../utils/storageUtils';
 const Token3D = lazy(() => import('./tactical/Token').then(m => ({ default: m.default })));
 const MapProp = lazy(() => import('./tactical/MapProp').then(m => ({ default: m.default })));
@@ -38,6 +39,8 @@ const Walls = lazy(() => import('./3d/Walls').then(m => ({ default: m.Walls })))
 const CombatTrackerSidebar = lazy(() => import('./ui/CombatTrackerSidebar').then(m => ({ default: m.CombatTrackerSidebar })));
 const CombatRibbon = lazy(() => import('./ui/CombatTrackerSidebar').then(m => ({ default: m.CombatRibbon })));
 const InitiativePrompt = lazy(() => import('./ui/CombatTrackerSidebar').then(m => ({ default: m.InitiativePrompt })));
+import MapForgePanel from './tactical/MapForgePanel';
+import QuickRollMenu from './QuickRollMenu';
 
 const CombatCameraDirector = lazy(() => import('./3d/CombatCameraDirector').then(m => ({ default: m.CombatCameraDirector })));
 const ArchitectPenController = lazy(() => import('./3d/controllers/ArchitectPenController').then(m => ({ default: m.ArchitectPenController })));
@@ -166,56 +169,105 @@ class ErrorBoundary extends React.Component {
     }
 }
 
+const LOADING_SUBTITLES = [
+    "Weaving terrain geometry & heightmaps...",
+    "Igniting dynamic torchlights & shadows...",
+    "Summoning miniatures & tokens to the grid...",
+    "Attuning atmospheric weather & particle auras...",
+    "Harmonizing spatial acoustics & ambient winds..."
+];
+
 const LoadingOverlay = ({ activeMapId, isMapDataReady }) => {
     const { active, progress, loaded, total } = useProgress();
     const [prevMapId, setPrevMapId] = useState(activeMapId);
     const [isInitialLoad, setIsInitialLoad] = useState(true);
+    const [subtitleIndex, setSubtitleIndex] = useState(0);
 
     if (activeMapId !== prevMapId) {
         setPrevMapId(activeMapId);
         setIsInitialLoad(true);
     }
 
+    // Cycle immersive loading subtitles every 2.4 seconds
+    useEffect(() => {
+        if (!isInitialLoad && !active) return;
+        const interval = setInterval(() => {
+            setSubtitleIndex(prev => (prev + 1) % LOADING_SUBTITLES.length);
+        }, 2400);
+        return () => clearInterval(interval);
+    }, [isInitialLoad, active]);
+
     useEffect(() => {
         if (isInitialLoad && isMapDataReady && !active) {
-            const timer = setTimeout(() => setIsInitialLoad(false), 500);
+            const timer = setTimeout(() => setIsInitialLoad(false), 550);
             return () => clearTimeout(timer);
         }
     }, [isInitialLoad, isMapDataReady, active]);
     
     const showFullscreen = isInitialLoad || !isMapDataReady;
     const showMini = !showFullscreen && active;
+    const roundedProgress = Math.min(Math.round(progress || 0), 100);
 
     return (
         <>
-            {/* Fullscreen Overlay for Initial Load */}
-            <div className={`absolute inset-0 z-50 flex items-center justify-center bg-slate-950 text-white transition-opacity duration-500 ${showFullscreen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}>
-                <div className="flex flex-col items-center gap-6">
-                    {/* Spinning Hexagon Ring */}
-                    <div className="relative w-24 h-24">
-                        <div className="absolute inset-0 border-t-4 border-amber-500 border-r-4 border-r-transparent rounded-full animate-spin"></div>
-                        <div className="absolute inset-2 border-b-4 border-emerald-500 border-l-4 border-l-transparent rounded-full animate-spin" style={{ animationDirection: 'reverse', animationDuration: '1.5s' }}></div>
-                        <div className="absolute inset-0 flex items-center justify-center">
-                            <Icon name="hexagon" size={32} className="text-amber-500 animate-pulse" />
+            {/* Fullscreen Arcane Portal Overlay for Initial Load */}
+            <div className={`absolute inset-0 z-50 flex items-center justify-center bg-slate-950/95 backdrop-blur-xl text-white transition-opacity duration-700 select-none ${showFullscreen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}>
+                {/* Background ambient radial flares */}
+                <div className="absolute w-[500px] h-[500px] bg-amber-500/10 rounded-full blur-[120px] pointer-events-none animate-pulse" />
+                <div className="absolute w-[350px] h-[350px] bg-indigo-600/10 rounded-full blur-[100px] pointer-events-none" />
+
+                <div className="flex flex-col items-center gap-7 relative z-10 max-w-sm px-6 text-center">
+                    {/* Multi-Layer Arcane Summoning Ring */}
+                    <div className="relative w-28 h-28 flex items-center justify-center">
+                        {/* Outer Runic Dashed Ring */}
+                        <div className="absolute inset-0 border-2 border-dashed border-amber-500/40 rounded-full animate-spin" style={{ animationDuration: '14s' }} />
+                        
+                        {/* Primary Amber Arcane Flare */}
+                        <div className="absolute inset-2 border-t-2 border-r-2 border-amber-400 border-b-transparent border-l-transparent rounded-full animate-spin shadow-[0_0_15px_rgba(245,158,11,0.4)]" style={{ animationDuration: '2.5s' }} />
+                        
+                        {/* Counter-rotating Emerald/Cyan Ring */}
+                        <div className="absolute inset-4 border-b-2 border-l-2 border-emerald-400/80 border-t-transparent border-r-transparent rounded-full animate-spin shadow-[0_0_12px_rgba(52,211,153,0.3)]" style={{ animationDirection: 'reverse', animationDuration: '3.5s' }} />
+                        
+                        {/* Inner Core Glowing Emblem */}
+                        <div className="relative w-12 h-12 rounded-full bg-slate-900/90 border border-amber-500/50 shadow-[0_0_20px_rgba(245,158,11,0.6)] flex items-center justify-center">
+                            <Icon name="sparkles" size={22} className="text-amber-400 animate-pulse" />
                         </div>
                     </div>
                     
-                    {/* Text and Bar */}
+                    {/* Atmospheric Titles & Lore */}
                     <div className="flex flex-col items-center gap-2">
-                        <div className="text-2xl font-bold font-serif text-amber-500 tracking-wider">Summoning Realm</div>
-                        <div className="w-64 h-1.5 bg-slate-800 rounded-full overflow-hidden shadow-inner">
-                            <div className="h-full bg-gradient-to-r from-amber-600 to-amber-400 transition-all duration-300 ease-out" style={{ width: `${progress}%` }}></div>
+                        <div className="text-2xl font-bold font-serif text-transparent bg-clip-text bg-gradient-to-r from-amber-200 via-amber-400 to-amber-100 tracking-widest drop-shadow-[0_2px_10px_rgba(245,158,11,0.3)]">
+                            Summoning Realm
                         </div>
-                        <div className="text-xs text-slate-500 font-mono tracking-widest">{loaded} / {total || 1} Assets</div>
+                        <p className="text-xs text-slate-400 italic min-h-[1.25rem] transition-all duration-300 font-sans">
+                            {LOADING_SUBTITLES[subtitleIndex]}
+                        </p>
+                    </div>
+
+                    {/* Luminous Mana Progress Capsule */}
+                    <div className="w-full flex flex-col items-center gap-2">
+                        <div className="w-full h-2 bg-slate-900/90 rounded-full overflow-hidden p-0.5 border border-slate-800 shadow-inner relative">
+                            <div 
+                                className="h-full bg-gradient-to-r from-amber-600 via-amber-400 to-amber-200 rounded-full transition-all duration-300 ease-out shadow-[0_0_12px_rgba(251,191,36,0.8)] relative"
+                                style={{ width: `${Math.max(roundedProgress, 4)}%` }}
+                            >
+                                <div className="absolute right-0 top-0 bottom-0 w-2 bg-white/80 rounded-full blur-[1px]" />
+                            </div>
+                        </div>
+
+                        <div className="flex justify-between items-center w-full text-[11px] font-mono text-slate-500 px-0.5">
+                            <span>{roundedProgress}% Complete</span>
+                            <span>{loaded} / {total || 1} Components</span>
+                        </div>
                     </div>
                 </div>
             </div>
 
-            {/* Mini Loader for Subsequent Asset Loads */}
-            <div className={`absolute top-4 left-1/2 -translate-x-1/2 z-[60] flex items-center gap-3 px-4 py-2 bg-slate-900/90 backdrop-blur border border-slate-700 rounded-full shadow-2xl transition-all duration-500 ${showMini ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 -translate-y-4 pointer-events-none'}`}>
-                <Icon name="loader" size={16} className="text-amber-500 animate-spin" />
-                <span className="text-xs font-bold text-slate-300 font-mono tracking-wider">
-                    Downloading... {loaded}/{total || 1}
+            {/* Redesigned Floating Mini Loader for Background Asset Streams */}
+            <div className={`absolute top-4 left-1/2 -translate-x-1/2 z-[80] flex items-center gap-2.5 px-3.5 py-1.5 bg-slate-950/85 backdrop-blur-md border border-amber-500/40 rounded-full shadow-[0_4px_20px_rgba(0,0,0,0.5)] transition-all duration-500 ${showMini ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 -translate-y-4 pointer-events-none'}`}>
+                <div className="w-4 h-4 rounded-full border border-amber-500/40 border-t-amber-400 animate-spin" />
+                <span className="text-xs font-bold text-amber-300 font-mono tracking-wider">
+                    Materializing {loaded}/{total || 1}
                 </span>
             </div>
         </>
@@ -395,7 +447,7 @@ const MapControlsCursorHandler = () => {
     return null;
 };
 
-export default React.memo(function TacticalMapView({ campaignCode, activeMapId, onOpenSheet, role, onOpenHandouts, onOpenChat, onOpenJournal, onOpenDiceTray, onOpenCast, isCastMode: propIsCastMode, onBack, rightOffset, onSidebarOpen, isChatOpen, isJournalOpen, isHandoutsOpen, isDiceTrayOpen, aiHelper, generateNpc, hideInviteCode, setHideInviteCode, onSendMessage, setView, onNavigate, onDiceRoll }) {
+export default React.memo(function TacticalMapView({ isActive = true, campaignCode, activeMapId, onOpenSheet, role, onOpenHandouts, onOpenChat, onOpenJournal, onOpenDiceTray, onOpenCast, isCastMode: propIsCastMode, onBack, rightOffset, onSidebarOpen, isChatOpen, isJournalOpen, isHandoutsOpen, isDiceTrayOpen, aiHelper, generateNpc, hideInviteCode, setHideInviteCode, onSendMessage, setView, onNavigate, onDiceRoll, diceLog = [] }) {
   const isCastMode = propIsCastMode || (typeof window !== 'undefined' && (new URLSearchParams(window.location.search).get('cast') === 'true' || window.location.hash.includes('cast=true')));
   const isLowPerformance = typeof window !== 'undefined' && localStorage.getItem('vtt_low_performance') === 'true';
   const { campaign, updateCampaign, user, sendMessage } = useNewCampaign();
@@ -519,10 +571,12 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
   const [contextMenu, setContextMenu] = useState(null);
   const [showAssetManager, setShowAssetManager] = useState(false);
   const [showTokenManager, setShowTokenManager] = useState(false);
+  const [showMapForge, setShowMapForge] = useState(false);
   const [showInitiativeTracker, setShowInitiativeTracker] = useState(false);
   const [isSpaceDown, setIsSpaceDown] = useState(false);
   
   const [tokenManagerWidth, setTokenManagerWidth] = useState(320);
+  const [assetManagerWidth, setAssetManagerWidth] = useState(420);
   const [sideSheetWidth, setSideSheetWidth] = useState(0);
 
   const [isDraggingToken, setIsDraggingToken] = useState(false);
@@ -691,6 +745,31 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       document.addEventListener('touchend', handleMouseUp);
   }, [tokenManagerWidth]);
 
+  const handleAssetManagerMouseDown = useCallback((e) => {
+      if (e.cancelable) e.preventDefault();
+      const startX = e.clientX || (e.touches && e.touches[0].clientX) || 0;
+      const startWidth = assetManagerWidth;
+
+      const handleMouseMove = (moveEvent) => {
+          const clientX = moveEvent.clientX || (moveEvent.touches && moveEvent.touches[0].clientX) || 0;
+          const deltaX = startX - clientX;
+          const newWidth = Math.max(340, Math.min(window.innerWidth - 50, startWidth + deltaX));
+          setAssetManagerWidth(newWidth);
+      };
+
+      const handleMouseUp = () => {
+          document.removeEventListener('mousemove', handleMouseMove);
+          document.removeEventListener('mouseup', handleMouseUp);
+          document.removeEventListener('touchmove', handleMouseMove);
+          document.removeEventListener('touchend', handleMouseUp);
+      };
+
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
+      document.addEventListener('touchmove', handleMouseMove, { passive: false });
+      document.addEventListener('touchend', handleMouseUp);
+  }, [assetManagerWidth]);
+
   useEffect(() => {
       if (rightOffset > 0 || sideSheetWidth > 0) {
           setShowAssetManager(false);
@@ -721,6 +800,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
   }, [data?.campaign?.combat?.active, isCastMode]);
 
   useEffect(() => {
+      if (!isActive) return;
       const handleKeyDown = (e) => {
           if (e.code === 'Space' && !e.repeat && e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
               if (draggedTokenId) return; // Ignore space for map pan when a token is currently being moved
@@ -743,7 +823,7 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
           window.removeEventListener('keyup', handleKeyUp);
           window.removeEventListener('blur', handleBlur);
       };
-  }, [draggedTokenId]);
+  }, [isActive, draggedTokenId]);
 
   const [isDrawingWalls, setIsDrawingWalls] = useState(false);
   const [drawingWallType, setDrawingWallType] = useState('wall');
@@ -789,6 +869,47 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
         setIsMovingLorePin(null);
         setIsEditingLorePin(false);
   }, []);
+
+  const handleClearAllFog = useCallback(async () => {
+      if (!manualFogCanvasRef.current) return;
+      const { ctx, canvas, texture } = manualFogCanvasRef.current;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (manualFogAlphaRef.current) manualFogAlphaRef.current.fill(0);
+      if (texture) texture.needsUpdate = true;
+      setManualFogRevision(r => r + 1);
+      try {
+          const base64 = canvas.toDataURL('image/png');
+          const url = await storeChunkedMap(base64, `manual_fog_clear_${Date.now()}.png`);
+          updateMap(campaignCode, activeMapId, { manualFogUrl: url });
+      } catch (err) { console.error('Failed to clear fog:', err); }
+  }, [campaignCode, activeMapId]);
+
+  const handleDeleteSelectedWallsOrLights = useCallback(() => {
+      if (selectedWalls.length > 0 || selectedLights.length > 0 || selectedTokenIds.length > 0) {
+          let updates = {};
+          let changed = false;
+
+          if (selectedWalls.length > 0) {
+              selectedWalls.forEach(id => updates[`walls.${id}`] = null);
+              changed = true;
+          }
+          if (selectedLights.length > 0) {
+              selectedLights.forEach(id => updates[`lights.${id}`] = null);
+              changed = true;
+          }
+          if (selectedTokenIds.length > 0) {
+              selectedTokenIds.forEach(id => updates[`tokens.${id}`] = null);
+              changed = true;
+          }
+
+          if (changed) {
+              updateMap(campaignCode, activeMapId, updates);
+              setSelectedWalls([]);
+              setSelectedLights([]);
+              setSelectedTokenIds([]);
+          }
+      }
+  }, [selectedWalls, selectedLights, selectedTokenIds, campaignCode, activeMapId]);
 
   // Determine active cursor based on current action, tool, or mode
   const activeCursor = useMemo(() => {
@@ -2229,29 +2350,13 @@ export default React.memo(function TacticalMapView({ campaignCode, activeMapId, 
       setIsLoadingCompendium(false);
   };
 
-  const handleForgeSubmit = async () => {
-      if (!forgeName.trim() || !generateNpc) return;
-      setIsForging(true);
-      try {
-          const instruction = forgeContext ? `Role/Vibe: ${forgeContext}` : "Standard 5e Statblock.";
-          const newNpc = await generateNpc(forgeName, instruction);
-          if (newNpc) {
-              const finalNpc = { ...newNpc, quirk: "Forged from Lore" };
-              setShowForge(false);
-              setForgeName('');
-              setForgeContext('');
-              
-              setPendingNpc(finalNpc);
-              setAvailableModels([]);
-              setShowModelPicker(true);
-              setMiniSearchQuery(finalNpc.name);
-              handleMiniSearch(finalNpc.name, finalNpc.race);
-          } else { toast("The Forge failed.", "error"); }
-      } catch (e) {
-          console.error(e);
-          toast("The Forge encountered an error: " + e.message, "error");
-      }
-      setIsForging(false);
+  const handleForgeComplete = (finalNpc) => {
+      setShowForge(false);
+      setPendingNpc(finalNpc);
+      setAvailableModels([]);
+      setShowModelPicker(true);
+      setMiniSearchQuery(finalNpc.name);
+      handleMiniSearch(finalNpc.name, finalNpc.race);
   };
 
   const handlePasteTextSubmit = async () => {
@@ -2923,6 +3028,7 @@ ${pasteTextContent}`;
 
   // --- Keyboard Shortcuts ---
   useEffect(() => {
+    if (!isActive) return;
     const handleKeyDown = (e) => {
       // Ignore shortcuts if the user is typing in a text field
       if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target?.tagName)) return;
@@ -3200,7 +3306,7 @@ ${pasteTextContent}`;
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [effectiveRole, selectedTokenIds, data, user, campaignCode, activeMapId, activeTool, isDrawingWalls, isArchitectMode, isDrawingFreehand, gridSize, isSnapToGrid, mapData?.orientation, mapData?.gridOffsetX, mapData?.gridOffsetY, mapData?.tokenElevationOffset, mapData?.heightmapUrl, getTerrainHeight, isCastMode, allCharacters, stableAssignments]);
+  }, [isActive, effectiveRole, selectedTokenIds, data, user, campaignCode, activeMapId, activeTool, isDrawingWalls, isArchitectMode, isDrawingFreehand, gridSize, isSnapToGrid, mapData?.orientation, mapData?.gridOffsetX, mapData?.gridOffsetY, mapData?.tokenElevationOffset, mapData?.heightmapUrl, getTerrainHeight, isCastMode, allCharacters, stableAssignments]);
 
   const handleNewBlankMap = async (skipConfirm = false) => {
       if (effectiveRole !== 'dm') return;
@@ -3497,9 +3603,37 @@ ${pasteTextContent}`;
           </button>
         </div>
       )}
+      {/* Floating Active Tool Control Banner */}
+      {effectiveRole === 'dm' && (isFogPainting || activeTool === 'sculpt' || activeTool === 'paintMaterial' || isDrawingWalls || isArchitectMode || isPlacingLights || isDeleting) && (
+        <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-[80] pointer-events-auto animate-in slide-in-from-top-3 duration-200">
+            <div className="bg-slate-900/95 backdrop-blur-md border border-amber-500/60 shadow-2xl shadow-black/80 px-4 py-2 rounded-full flex items-center gap-3 text-xs font-bold text-white">
+                <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse shadow-[0_0_8px_rgba(245,158,11,0.8)]" />
+                    <span className="text-amber-400 uppercase tracking-wider text-[11px]">
+                        {isFogPainting && `Fog: ${fogBrushMode === 'paint' ? 'Paint (Hide)' : 'Reveal Area'}`}
+                        {activeTool === 'sculpt' && `Terrain Sculpt: ${sculptBrushType}`}
+                        {activeTool === 'paintMaterial' && 'Surface Biome Painter'}
+                        {isDrawingWalls && `Drawing ${drawingWallType === 'wall' ? 'Solid Wall' : drawingWallType === 'door' ? 'Door' : 'Window'}`}
+                        {isArchitectMode && 'Architect Pen'}
+                        {isPlacingLights && 'Placing Light Source'}
+                        {isDeleting && 'Eraser Tool Active'}
+                    </span>
+                </div>
+                <div className="h-3 w-px bg-slate-700" />
+                <button 
+                    onClick={resetAllTools}
+                    className="bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold px-2.5 py-1 rounded-full text-[10px] tracking-wide transition-all shadow-md active:scale-95 flex items-center gap-1"
+                    title="Finish and return to normal token selection (or press Esc)"
+                >
+                    <Icon name="check" size={12} />
+                    Done (Esc)
+                </button>
+            </div>
+        </div>
+      )}
       <Canvas 
         eventPrefix="client"
-        frameloop="always"
+        frameloop={isActive ? "always" : "never"}
         camera={{ position: [0, 8, 8], fov: 50 }} 
         style={{ width: '100%', height: '100%', touchAction: 'none', cursor: activeCursor }}
         shadows={!isLowPerformance}
@@ -4058,14 +4192,14 @@ ${pasteTextContent}`;
           const group3FitsOnRow1 = group2FitsOnRow1 && ((group0Width + 8 + group1Width + 8 + group2Width + 8 + group3Width) <= maxRow1WidthBeforeRibbon);
 
           const renderCameraGroup = (key = 'camera') => (
-              <div key={key} className="flex items-center gap-1 bg-slate-900/80 backdrop-blur-md border border-slate-700 p-1 rounded-xl shadow-2xl h-10 pointer-events-auto shrink-0">
+              <div key={key} className="flex items-center gap-1.5 bg-slate-950/80 backdrop-blur-md border border-slate-800/80 p-1 rounded-2xl shadow-xl h-10 pointer-events-auto shrink-0">
                   <ToolButton name="Reset View" icon="camera" onClick={() => { cameraControllerRef.current?.reset(); }} title="Reset Camera" />
                   <ToolButton name={viewMode === 'isometric' ? 'Switch to Top-Down (V)' : 'Switch to Isometric (V)'} icon={viewMode === 'isometric' ? 'layout-grid' : 'box'} onClick={() => setViewMode(prev => prev === 'isometric' ? 'top-down' : 'isometric')} title={viewMode === 'isometric' ? 'Switch to Top-Down (V)' : 'Switch to Isometric (V)'} />
               </div>
           );
 
           const renderNavigationGroup = (key = 'nav') => (
-              <div key={key} className="flex items-center gap-1 bg-slate-900/80 backdrop-blur-md border border-slate-700 p-1 rounded-xl shadow-2xl h-10 pointer-events-auto shrink-0">
+              <div key={key} className="flex items-center gap-1.5 bg-slate-950/80 backdrop-blur-md border border-slate-800/80 p-1 rounded-2xl shadow-xl h-10 pointer-events-auto shrink-0">
                   <ToolButton name="Zoom Out" icon="zoom-out" onClick={() => zoomRef.current?.zoomOut()} title="Zoom Out" />
                   <ToolButton name="Zoom In" icon="zoom-in" onClick={() => zoomRef.current?.zoomIn()} title="Zoom In" />
                   <ToolButton name="Fit to Screen" icon="expand" onClick={() => setFitTrigger(p => p + 1)} title="Fit Map to Screen" />
@@ -4079,7 +4213,7 @@ ${pasteTextContent}`;
           );
 
           const renderDisplayGroup = (key = 'display') => (
-              <div key={key} className="flex items-center gap-1 bg-slate-900/80 backdrop-blur-md border border-slate-700 p-1 rounded-xl shadow-2xl h-10 pointer-events-auto shrink-0">
+              <div key={key} className="flex items-center gap-1.5 bg-slate-950/80 backdrop-blur-md border border-slate-800/80 p-1 rounded-2xl shadow-xl h-10 pointer-events-auto shrink-0">
                   <ToolButton name="Toggle Fullscreen" icon={isFullscreen ? "minimize" : "maximize"} onClick={toggleFullscreen} title="Toggle Fullscreen" />
                   {effectiveRole === 'dm' && (
                       <>
@@ -4116,30 +4250,43 @@ ${pasteTextContent}`;
           return (
               <div 
                   className={`absolute top-4 left-4 vtt-safe-top vtt-safe-left z-[70] flex flex-row flex-wrap gap-2 items-start pointer-events-none transition-all duration-300 ${uiOpacityClass}`}
-                  style={{ maxWidth: `calc(100vw - ${Math.max(sideSheetWidth > 0 ? sideSheetWidth : (rightOffset || 0), showTokenManager ? tokenManagerWidth : (showAssetManager ? 320 : 0)) + 80}px)` }}
+                  style={{ maxWidth: `calc(100vw - ${Math.max(sideSheetWidth > 0 ? sideSheetWidth : (rightOffset || 0), showTokenManager ? tokenManagerWidth : (showAssetManager ? assetManagerWidth : 0)) + 80}px)` }}
               >
                   {/* Row 1: Connection Status & Navigation */}
                   <div className="flex items-center gap-2 pointer-events-auto shrink-0">
                       {onBack && (
                           <button 
+                              type="button"
                               onClick={onBack} 
-                              className="h-10 px-3 bg-slate-900/80 backdrop-blur border border-slate-700 rounded-xl shadow-2xl flex items-center justify-center text-slate-300 hover:text-white hover:border-amber-500 transition-colors"
+                              className="h-10 px-3 bg-slate-950/85 backdrop-blur-md border border-slate-800/80 rounded-2xl shadow-xl flex items-center justify-center text-slate-300 hover:text-amber-400 hover:border-amber-500/60 hover:bg-slate-900 transition-all active:scale-95"
                               title="Back to Previous View"
                           >
                               <Icon name="arrow-left" size={18} />
                           </button>
                       )}
                       <button 
+                          type="button"
                           onClick={() => setIsTopMenuCollapsed(!isTopMenuCollapsed)}
-                          className={`h-10 px-3 bg-slate-900/80 backdrop-blur border rounded-xl shadow-2xl flex items-center justify-center transition-colors ${isTopMenuCollapsed ? 'border-indigo-500 text-indigo-400' : 'border-slate-700 text-slate-300 hover:text-white'}`}
+                          className={`h-10 px-3 bg-slate-950/85 backdrop-blur-md border rounded-2xl shadow-xl flex items-center justify-center transition-all active:scale-95 ${
+                              isTopMenuCollapsed 
+                                  ? 'border-amber-500/80 text-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.25)]' 
+                                  : 'border-slate-800/80 text-slate-300 hover:text-white hover:border-slate-700 hover:bg-slate-900'
+                          }`}
                           title={isTopMenuCollapsed ? "Expand Tools" : "Collapse Tools"}
                       >
                           <Icon name="menu" size={18} />
                       </button>
                       {!isCombatActive && (
-                          <div className="h-10 px-3 bg-slate-900/80 backdrop-blur border border-slate-700 rounded-xl shadow-2xl flex items-center gap-2">
-                              <div className="w-2 h-2 rounded-full shadow-[0_0_10px_rgba(34,197,94,0.5)] bg-green-500"></div>
-                              <span className="text-sm font-bold text-amber-500 fantasy-font tracking-widest truncate max-w-[200px]">{mapData?.name || 'Loading Map...'}</span>
+                          <div className="h-10 px-3.5 bg-slate-950/85 backdrop-blur-md border border-slate-800/80 rounded-2xl shadow-xl flex items-center gap-2.5">
+                              <div className="w-2 h-2 rounded-full shadow-[0_0_8px_rgba(34,197,94,0.8)] bg-emerald-400 animate-pulse"></div>
+                              <span className="text-sm font-bold text-amber-400 font-serif tracking-wider truncate max-w-[220px]">
+                                  {mapData?.name || 'Loading Map...'}
+                              </span>
+                              {tokensList?.length > 0 && (
+                                  <span className="text-[10px] text-slate-500 font-mono hidden sm:inline-block border-l border-slate-800 pl-2">
+                                      {tokensList.length} {tokensList.length === 1 ? 'token' : 'tokens'}
+                                  </span>
+                              )}
                           </div>
                       )}
                   </div>
@@ -4171,7 +4318,7 @@ ${pasteTextContent}`;
       })()}
 
       <Suspense fallback={null}>
-        {!isCastMode && <CombatRibbon combat={data?.campaign?.combat} updateCampaign={updateCampaign} tokens={tokensList} role={effectiveRole} campaignData={data?.campaign} className={uiOpacityClass} />}
+        {!isCastMode && <CombatRibbon combat={data?.campaign?.combat} updateCampaign={updateCampaign} tokens={tokensList} role={effectiveRole} campaignData={data?.campaign} allCharacters={allCharacters} user={user} assignments={stableAssignments} onOpenSheet={onOpenSheet} className={uiOpacityClass} />}
         {!isCastMode && <InitiativePrompt combat={data?.campaign?.combat} updateCampaign={updateCampaign} tokens={tokensList} role={effectiveRole} campaignData={data?.campaign} allCharacters={allCharacters} user={user} assignments={stableAssignments} sendMessage={sendMessage} campaignCode={campaignCode} onDiceRoll={onDiceRoll} />}
       </Suspense>
 
@@ -4179,24 +4326,25 @@ ${pasteTextContent}`;
       {!isCastMode && (
           <div 
               className={`absolute top-4 right-4 vtt-safe-top vtt-safe-right z-[70] flex flex-col gap-2 max-h-[calc(100dvh-2rem)] overflow-y-auto overflow-x-hidden no-scrollbar pb-8 overscroll-contain touch-pan-y ${uiOpacityClass}`}
-              style={{ transform: `translateX(-${Math.max(sideSheetWidth > 0 ? sideSheetWidth : (rightOffset || 0), showTokenManager ? (isMobile ? (typeof window !== 'undefined' ? window.innerWidth : 380) : tokenManagerWidth) : (showAssetManager ? (isMobile ? (typeof window !== 'undefined' ? window.innerWidth : 320) : 320) : 0))}px)`, transition: 'transform 0.3s ease-in-out' }}
+              style={{ transform: `translateX(-${Math.max(sideSheetWidth > 0 ? sideSheetWidth : (rightOffset || 0), showMapForge ? (isMobile ? (typeof window !== 'undefined' ? window.innerWidth : 340) : 340) : 0, showTokenManager ? (isMobile ? (typeof window !== 'undefined' ? window.innerWidth : 380) : tokenManagerWidth) : (showAssetManager ? (isMobile ? (typeof window !== 'undefined' ? window.innerWidth : assetManagerWidth) : assetManagerWidth) : 0))}px)`, transition: 'transform 0.3s ease-in-out' }}
           >
               {/* Mobile Collapse/Expand Trigger */}
               {isMobile && (
                   <button
+                      type="button"
                       onClick={() => setIsRightDockCollapsed(p => !p)}
-                      className="w-10 h-10 flex-shrink-0 backdrop-blur rounded-xl border shadow-2xl flex items-center justify-center transition-all bg-slate-900/90 border-slate-700 text-slate-300 hover:text-white hover:border-amber-500 pointer-events-auto active:scale-95"
+                      className="w-10 h-10 flex-shrink-0 backdrop-blur-md rounded-2xl border shadow-2xl flex items-center justify-center transition-all bg-slate-950/85 border-slate-800/80 text-slate-300 hover:text-amber-400 hover:border-amber-500/60 pointer-events-auto active:scale-95"
                       title={isRightDockCollapsed ? "Show Tools" : "Hide Tools"}
                   >
                       <Icon name={isRightDockCollapsed ? "wrench" : "chevron-right"} size={18} className={isRightDockCollapsed ? "text-amber-500" : ""} />
                   </button>
               )}
               {(!isMobile || !isRightDockCollapsed) && (
-                  <>
+                  <div className="bg-slate-950/80 backdrop-blur-md border border-slate-800/80 p-1.5 rounded-2xl shadow-2xl flex flex-col items-center gap-1.5 ring-1 ring-amber-500/10 pointer-events-auto">
                   {effectiveRole === 'dm' && (
                       <>
-                      <ToolButton name="Tokens" icon="users" isActive={showTokenManager} onClick={() => { setActiveTool(null); setShowAssetManager(false); setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); if (!showTokenManager && onSidebarOpen) onSidebarOpen(); setShowTokenManager(!showTokenManager); }} isStandalone={true} />
-                      <ToolButton name="Map" icon="map" isActive={showAssetManager} onClick={() => { setActiveTool(null); setShowTokenManager(false); setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); if (!showAssetManager && onSidebarOpen) onSidebarOpen(); setShowAssetManager(!showAssetManager); }} isStandalone={true} />
+                      <ToolButton name="Tokens" icon="users" isActive={showTokenManager} onClick={() => { setActiveTool(null); setShowAssetManager(false); setShowMapForge(false); setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); if (!showTokenManager && onSidebarOpen) onSidebarOpen(); setShowTokenManager(!showTokenManager); }} isStandalone={true} title="Actors & Tokens (T)" />
+                      <ToolButton name="Map" icon="map" isActive={showAssetManager} onClick={() => { setActiveTool(null); setShowTokenManager(false); setShowMapForge(false); setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); if (!showAssetManager && onSidebarOpen) onSidebarOpen(); setShowAssetManager(!showAssetManager); }} isStandalone={true} title="Map & Grid Settings (M)" />
                       <ToolButton 
                           name="Combat" 
                           icon="swords" 
@@ -4208,20 +4356,57 @@ ${pasteTextContent}`;
                               setShowInitiativeTracker(p => !p);
                           }} 
                           isStandalone={true} 
+                          title="Initiative & Combat Tracker (C)"
+                      />
+                      <ToolButton 
+                          name="Forge" 
+                          icon="hammer" 
+                          isActive={showMapForge || activeTool === 'sculpt' || activeTool === 'paintMaterial' || isFogPainting || isDrawingWalls || isArchitectMode || isPlacingLights || isDeleting} 
+                          onClick={() => { 
+                              if (!showMapForge && onSidebarOpen) onSidebarOpen(); 
+                              setShowAssetManager(false); 
+                              setShowTokenManager(false); 
+                              setShowMapForge(p => !p); 
+                          }} 
+                          isStandalone={true} 
+                          title="Map Forge (Terrain, Walls, Fog, Lighting)"
                       />
 
-                      <div className="h-px w-8 bg-slate-700/50 my-1 mx-auto"></div>
+                      <div className="h-px w-6 bg-slate-800/80 my-1 mx-auto"></div>
                   </>
               )}
 
-              {onOpenDiceTray && <ToolButton name="Dice" icon="dices" onClick={onOpenDiceTray} isActive={isDiceTrayOpen} isStandalone={true} />}
-              {onOpenHandouts && <ToolButton name="Handouts" icon="scroll" onClick={onOpenHandouts} isActive={isHandoutsOpen} isStandalone={true} />}
-              {onOpenChat && <ToolButton name="Chat" icon="message-circle" onClick={onOpenChat} isActive={isChatOpen} isStandalone={true} />}
-              {onOpenJournal && <ToolButton name="Journal" icon="book" onClick={onOpenJournal} isActive={isJournalOpen} isStandalone={true} />}
+              {onOpenDiceTray && (
+                  <div className="relative group flex justify-center">
+                      <ToolButton 
+                          name="Dice" 
+                          icon="dices" 
+                          onClick={() => {
+                              setIsToolbarOpen(p => p === 'dice' ? null : 'dice');
+                          }} 
+                          isActive={isDiceTrayOpen || isToolbarOpen === 'dice'} 
+                          isStandalone={true} 
+                          title="Dice Roller (Click for Quick Rolls)"
+                      />
+                      {isToolbarOpen === 'dice' && (
+                          <ToolSubmenu>
+                              <QuickRollMenu
+                                  onDiceRoll={onDiceRoll}
+                                  onOpenDiceTray={onOpenDiceTray}
+                                  onClose={() => setIsToolbarOpen(null)}
+                                  diceLog={diceLog}
+                              />
+                          </ToolSubmenu>
+                      )}
+                  </div>
+              )}
+              {onOpenHandouts && <ToolButton name="Handouts" icon="scroll" onClick={onOpenHandouts} isActive={isHandoutsOpen} isStandalone={true} title="Handouts & Handout Library" />}
+              {onOpenChat && <ToolButton name="Chat" icon="message-circle" onClick={onOpenChat} isActive={isChatOpen} isStandalone={true} title="Party Chat & Logs" />}
+              {onOpenJournal && <ToolButton name="Journal" icon="book" onClick={onOpenJournal} isActive={isJournalOpen} isStandalone={true} title="Campaign Journal & Notes" />}
               
-              <div className="h-px w-8 bg-slate-700/50 my-1 mx-auto"></div>
+              <div className="h-px w-6 bg-slate-800/80 my-1 mx-auto"></div>
 
-              {/* Map Tools */}
+              {/* Map Measurement Tools */}
               <div className="relative group flex justify-center">
                   <ToolButton 
                       name="Measure" 
@@ -4232,30 +4417,31 @@ ${pasteTextContent}`;
                           setIsToolbarOpen(p => p === 'measure' ? null : 'measure');
                       }} 
                       isStandalone={true} 
+                      title="Tactical Measurement & Spells"
                   />
                   {isToolbarOpen === 'measure' && (
                       <ToolSubmenu>
                           {isDrawingFreehand && (
-                              <div className="flex flex-col items-center gap-2 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-2 rounded-full shadow-2xl animate-in slide-in-from-right-2">
+                              <div className="flex flex-col items-center gap-2 bg-slate-950/90 backdrop-blur-xl border border-slate-800/90 p-2.5 rounded-2xl shadow-2xl animate-in slide-in-from-right-2 ring-1 ring-amber-500/20">
                                   <input type="color" value={drawingColor} onChange={e => setDrawingColor(e.target.value)} className="w-6 h-6 rounded cursor-pointer bg-transparent border-0 p-0" title="Color" />
                                   <input type="range" min="1" max="20" value={drawingLineWidth} onChange={e => setDrawingLineWidth(Number(e.target.value))} className="w-24 accent-amber-500" title="Line Width" />
-                                  <div className="h-px w-4 bg-slate-700 my-1 mx-auto"></div>
+                                  <div className="h-px w-4 bg-slate-800 my-1 mx-auto"></div>
                                   <ToolButton name="clear-drawings" icon="trash-2" onClick={async () => { if (await dialog.confirm("Clear all map drawings?")) { updateMap(campaignCode, activeMapId, { drawings: {} }); } }} title="Clear All Drawings" />
                               </div>
                           )}
 
                           {isStampMode && activeTool !== 'ruler' && activeTool !== 'ruler-linger' && activeTool !== 'ping' && (
-                              <div className="flex flex-col items-center gap-1 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-1 rounded-full shadow-2xl animate-in slide-in-from-right-2">
+                              <div className="flex flex-col items-center gap-1 bg-slate-950/90 backdrop-blur-xl border border-slate-800/90 p-1.5 rounded-2xl shadow-2xl animate-in slide-in-from-right-2 ring-1 ring-amber-500/20">
                                   <ToolButton name="style-default" icon="mouse-pointer-2" isActive={activeMeasurementStyle === 'default'} onClick={() => setActiveMeasurementStyle('default')} title="Standard" />
-                                  <ToolButton name="style-fire" icon="flame" isActive={activeMeasurementStyle === 'fire'} onClick={() => setActiveMeasurementStyle('fire')} title="Fire" />
-                                  <ToolButton name="style-ice" icon="snowflake" isActive={activeMeasurementStyle === 'ice'} onClick={() => setActiveMeasurementStyle('ice')} title="Ice" />
-                                  <ToolButton name="style-web" icon="box-select" isActive={activeMeasurementStyle === 'web'} onClick={() => setActiveMeasurementStyle('web')} title="Web" />
-                                  <ToolButton name="style-poison" icon="skull" isActive={activeMeasurementStyle === 'poison'} onClick={() => setActiveMeasurementStyle('poison')} title="Poison" />
-                                  <ToolButton name="style-radiant" icon="sun" isActive={activeMeasurementStyle === 'radiant'} onClick={() => setActiveMeasurementStyle('radiant')} title="Radiant" />
+                                  <ToolButton name="style-fire" icon="flame" isActive={activeMeasurementStyle === 'fire'} onClick={() => setActiveMeasurementStyle('fire')} title="Fire Element 🔥" />
+                                  <ToolButton name="style-ice" icon="snowflake" isActive={activeMeasurementStyle === 'ice'} onClick={() => setActiveMeasurementStyle('ice')} title="Ice Element ❄️" />
+                                  <ToolButton name="style-web" icon="box-select" isActive={activeMeasurementStyle === 'web'} onClick={() => setActiveMeasurementStyle('web')} title="Web Element 🕸️" />
+                                  <ToolButton name="style-poison" icon="skull" isActive={activeMeasurementStyle === 'poison'} onClick={() => setActiveMeasurementStyle('poison')} title="Poison Element ☠️" />
+                                  <ToolButton name="style-radiant" icon="sun" isActive={activeMeasurementStyle === 'radiant'} onClick={() => setActiveMeasurementStyle('radiant')} title="Radiant Element ☀️" />
                               </div>
                           )}
 
-                          <div className="flex flex-col items-center gap-1 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-1 rounded-full shadow-2xl animate-in slide-in-from-right-2">
+                          <div className="flex flex-col items-center gap-1.5 bg-slate-950/90 backdrop-blur-xl border border-slate-800/90 p-1.5 rounded-2xl shadow-2xl animate-in slide-in-from-right-2 ring-1 ring-amber-500/20">
                               <ToolButton 
                                   name="Stamp Measurement" 
                                   icon="stamp" 
@@ -4273,211 +4459,28 @@ ${pasteTextContent}`;
                                   title="Leave Measurements on Map (Toggle Stamp)" 
                               />
 
-                              <div className="h-px w-6 bg-slate-700 my-1 mx-auto"></div>
+                              <div className="h-px w-6 bg-slate-800/80 my-1 mx-auto"></div>
 
                               <ToolButton name="Live Ping" icon="radio" isActive={activeTool === 'ping'} onClick={() => { if (effectiveRole === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => p === 'ping' ? null : 'ping'); }} title="Live Ping" />
                               <ToolButton name="freehand" icon="pen-tool" isActive={activeTool === 'freehand' || activeTool === 'freehand-linger'} onClick={() => { if (effectiveRole === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => (p === 'freehand' || p === 'freehand-linger') ? null : (isStampMode ? 'freehand-linger' : 'freehand')); }} title="Measure Freehand" />
-                              <ToolButton name="ruler" icon="ruler" isActive={activeTool === 'ruler' || activeTool === 'ruler-linger'} onClick={() => { if (effectiveRole === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => (p === 'ruler' || p === 'ruler-linger') ? null : (isStampMode ? 'ruler-linger' : 'ruler')); }} />
-                              <ToolButton name="cone" icon="triangle" isActive={activeTool === 'cone' || activeTool === 'cone-linger'} onClick={() => { if (effectiveRole === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => (p === 'cone' || p === 'cone-linger') ? null : (isStampMode ? 'cone-linger' : 'cone')); }} />
-                              <ToolButton name="circle" icon="circle" isActive={activeTool === 'circle' || activeTool === 'circle-linger'} onClick={() => { if (effectiveRole === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => (p === 'circle' || p === 'circle-linger') ? null : (isStampMode ? 'circle-linger' : 'circle')); }} />
-                              <ToolButton name="box" icon="square" isActive={activeTool === 'box' || activeTool === 'box-linger'} onClick={() => { if (effectiveRole === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => (p === 'box' || p === 'box-linger') ? null : (isStampMode ? 'box-linger' : 'box')); }} />
-                              <ToolButton name="darkness" icon="moon" isActive={activeTool === 'darkness' || activeTool === 'darkness-linger'} onClick={() => { if (effectiveRole === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => (p === 'darkness' || p === 'darkness-linger') ? null : (isStampMode ? 'darkness-linger' : 'darkness')); }} />
-                                                    </div>
+                              <ToolButton name="ruler" icon="ruler" isActive={activeTool === 'ruler' || activeTool === 'ruler-linger'} onClick={() => { if (effectiveRole === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => (p === 'ruler' || p === 'ruler-linger') ? null : (isStampMode ? 'ruler-linger' : 'ruler')); }} title="Linear Distance Ruler" />
+                              <ToolButton name="cone" icon="triangle" isActive={activeTool === 'cone' || activeTool === 'cone-linger'} onClick={() => { if (effectiveRole === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => (p === 'cone' || p === 'cone-linger') ? null : (isStampMode ? 'cone-linger' : 'cone')); }} title="Cone AoE Template" />
+                              <ToolButton name="circle" icon="circle" isActive={activeTool === 'circle' || activeTool === 'circle-linger'} onClick={() => { if (effectiveRole === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => (p === 'circle' || p === 'circle-linger') ? null : (isStampMode ? 'circle-linger' : 'circle')); }} title="Circle / Sphere AoE Template" />
+                              <ToolButton name="box" icon="square" isActive={activeTool === 'box' || activeTool === 'box-linger'} onClick={() => { if (effectiveRole === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => (p === 'box' || p === 'box-linger') ? null : (isStampMode ? 'box-linger' : 'box')); }} title="Cube / Box AoE Template" />
+                              <ToolButton name="darkness" icon="moon" isActive={activeTool === 'darkness' || activeTool === 'darkness-linger'} onClick={() => { if (effectiveRole === 'dm') { setIsDrawingWalls(false); setIsArchitectMode(false); setIsPlacingLights(false); } setIsDrawingFreehand(false); setActiveTool(p => (p === 'darkness' || p === 'darkness-linger') ? null : (isStampMode ? 'darkness-linger' : 'darkness')); }} title="Magical Darkness Sphere" />
+                          </div>
                       </ToolSubmenu>
                   )}
               </div>
-              
-              {effectiveRole === 'dm' && (
-                  <div className="relative group flex justify-center">
-                      <ToolButton
-                          name="Sculpt" icon="mountain" isActive={activeTool === 'sculpt'} isStandalone={true}
-                          onClick={() => {
-                              if (isToolbarOpen !== 'sculpt') {
-                                  resetAllTools();
-                                  setActiveTool('sculpt');
-                                  setIsToolbarOpen('sculpt');
-                              } else {
-                                  resetAllTools();
-                                  setIsToolbarOpen(null);
-                              }
-                          }}
-                      />
-                      {isToolbarOpen === 'sculpt' && (
-                          <ToolSubmenu>
-                          <div className="flex flex-col items-center gap-2 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-2 rounded-full shadow-2xl animate-in slide-in-from-right-2">
-                              <ToolButton name="Raise" icon="arrow-up" isActive={sculptBrushType === 'raise'} onClick={() => setSculptBrushType('raise')} title="Raise" />
-                              <ToolButton name="Lower" icon="arrow-down" isActive={sculptBrushType === 'lower'} onClick={() => setSculptBrushType('lower')} title="Lower" />
-                              <ToolButton name="Flatten" icon="minus" isActive={sculptBrushType === 'flatten'} onClick={() => setSculptBrushType('flatten')} title="Flatten" />
-                              <ToolButton name="Smooth" icon="waves" isActive={sculptBrushType === 'smooth'} onClick={() => setSculptBrushType('smooth')} title="Smooth" />
-                              <div className="h-px w-6 bg-slate-700 my-1 mx-auto"></div>
-                              <input type="range" min="0.5" max="10" step="0.5" value={sculptBrushSize} onChange={e => setSculptBrushSize(Number(e.target.value))} className="w-20 accent-amber-500" title="Brush Size" />
-                              <input type="range" min="0.01" max="0.2" step="0.01" value={sculptBrushStrength} onChange={e => setSculptBrushStrength(Number(e.target.value))} className="w-20 accent-blue-500" title="Brush Strength" />
-                          </div>
-                      </ToolSubmenu>
-                      )}
                   </div>
               )}
-
-              {effectiveRole === 'dm' && (
-                  <div className="relative group flex justify-center">
-                      <ToolButton
-                          name="Paint Effects" icon="brush" isActive={activeTool === 'paintMaterial'} isStandalone={true}
-                          onClick={() => {
-                              if (isToolbarOpen !== 'paintMaterial') {
-                                  resetAllTools();
-                                  setActiveTool('paintMaterial');
-                                  setIsToolbarOpen('paintMaterial');
-                              } else {
-                                  resetAllTools();
-                                  setIsToolbarOpen(null);
-                              }
-                          }}
-                      />
-                      {isToolbarOpen === 'paintMaterial' && (
-                          <ToolSubmenu>
-                          <div className="flex flex-col items-center gap-2 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-2 rounded-full shadow-2xl animate-in slide-in-from-right-2">
-                              <ToolButton name="Grass" icon="leaf" isActive={materialBrushType === '#00FF00'} onClick={() => setMaterialBrushType('#00FF00')} title="Grass (Green)" />
-                              <ToolButton name="Trees" icon="tree-pine" isActive={materialBrushType === '#FF00FF'} onClick={() => setMaterialBrushType('#FF00FF')} title="Trees (Magenta)" />
-                              <ToolButton name="Water" icon="droplets" isActive={materialBrushType === '#0000FF'} onClick={() => setMaterialBrushType('#0000FF')} title="Water (Blue)" />
-                              <ToolButton name="Lava" icon="flame" isActive={materialBrushType === '#FF0000'} onClick={() => setMaterialBrushType('#FF0000')} title="Lava (Red)" />
-                              <ToolButton name="Ice" icon="snowflake" isActive={materialBrushType === '#FFFF00'} onClick={() => setMaterialBrushType('#FFFF00')} title="Ice (Yellow)" />
-                              <div className="h-px w-6 bg-slate-700 my-1 mx-auto"></div>
-                              <ToolButton name="Erase" icon="eraser" isActive={materialBrushType === '#000000'} onClick={() => setMaterialBrushType('#000000')} title="Erase (Black)" />
-                              <div className="h-px w-6 bg-slate-700 my-1 mx-auto"></div>
-                              <ToolButton name="Circle Brush" icon="circle" isActive={materialBrushShape === 'circle'} onClick={() => setMaterialBrushShape('circle')} title="Circle Brush" />
-                              <ToolButton name="Square Brush" icon="square" isActive={materialBrushShape === 'square'} onClick={() => setMaterialBrushShape('square')} title="Square Brush" />
-                              <ToolButton name="Ground Only" icon="mountain" isActive={materialLimitToGround} onClick={() => setMaterialLimitToGround(p => !p)} title="Limit to Ground (Don't paint walls)" />
-                              <div className="h-px w-6 bg-slate-700 my-1 mx-auto"></div>
-                              <input type="range" min="2" max="100" step="2" value={materialBrushSize} onChange={e => setMaterialBrushSize(Number(e.target.value))} className="w-20 accent-amber-500" title="Brush Size" />
-                              <input type="range" min="0" max="1" step="0.1" value={materialBrushSoftness} onChange={e => setMaterialBrushSoftness(Number(e.target.value))} className="w-20 accent-blue-500" title="Brush Softness" />
-                          </div>
-                      </ToolSubmenu>
-                      )}
-                  </div>
-              )}
-
-              {effectiveRole === 'dm' && (
-                  <div className="relative group flex justify-center">
-                      <ToolButton
-                          name="Fog Painter" icon="cloud-fog" isActive={isFogPainting} isStandalone={true}
-                          onClick={() => {
-                              if (isToolbarOpen !== 'fogPaint') {
-                                  resetAllTools();
-                                  setIsFogPainting(true);
-                                  setIsToolbarOpen('fogPaint');
-                              } else {
-                                  setIsFogPainting(false);
-                                  setIsToolbarOpen(null);
-                              }
-                          }}
-                      />
-                      {isToolbarOpen === 'fogPaint' && (
-                          <ToolSubmenu>
-                              <div className="flex flex-col items-center gap-2 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-2 rounded-full shadow-2xl animate-in slide-in-from-right-2">
-                                  <ToolButton name="Paint Fog" icon="cloud" isActive={fogBrushMode === 'paint'} onClick={() => setFogBrushMode('paint')} title="Paint Fog (Hides area)" />
-                                  <ToolButton name="Erase Fog" icon="eraser" isActive={fogBrushMode === 'erase'} onClick={() => setFogBrushMode('erase')} title="Erase Fog (Reveals area)" />
-                                  <div className="h-px w-6 bg-slate-700 my-1 mx-auto"></div>
-                                  <ToolButton name="Circle Brush" icon="circle" isActive={fogBrushShape === 'circle'} onClick={() => setFogBrushShape('circle')} title="Circle Brush" />
-                                  <ToolButton name="Square Brush" icon="square" isActive={fogBrushShape === 'square'} onClick={() => setFogBrushShape('square')} title="Square Brush" />
-                                  <div className="h-px w-6 bg-slate-700 my-1 mx-auto"></div>
-                                  <input type="range" min="10" max="200" step="5" value={fogBrushSize} onChange={e => setFogBrushSize(Number(e.target.value))} className="w-20 accent-slate-400" title="Brush Size" />
-                                  <input type="range" min="0" max="1" step="0.05" value={fogBrushSoftness} onChange={e => setFogBrushSoftness(Number(e.target.value))} className="w-20 accent-blue-500" title="Brush Softness" />
-                                  <div className="h-px w-6 bg-slate-700 my-1 mx-auto"></div>
-                                  <ToolButton
-                                      name="Clear All Fog" icon="trash-2" isActive={false}
-                                      title="Clear all manual fog"
-                                      onClick={async () => {
-                                          if (!manualFogCanvasRef.current) return;
-                                          const { ctx, canvas, texture } = manualFogCanvasRef.current;
-                                          ctx.clearRect(0, 0, canvas.width, canvas.height);
-                                          manualFogAlphaRef.current = new Uint8ClampedArray(1024 * 1024 * 4);
-                                          if (texture) texture.needsUpdate = true;
-                                          setManualFogRevision(r => r + 1);
-                                          try {
-                                              const base64 = canvas.toDataURL('image/png');
-                                              const url = await storeChunkedMap(base64, `manual_fog_clear_${Date.now()}.png`);
-                                              updateMap(campaignCode, activeMapId, { manualFogUrl: url });
-                                          } catch (err) { console.error('Failed to clear fog:', err); }
-                                      }}
-                                  />
-                              </div>
-                          </ToolSubmenu>
-                      )}
-                  </div>
-              )}
-
-              {effectiveRole === 'dm' && (
-                  <div className="relative group flex justify-center">
-                      <ToolButton 
-                          name="Architect" 
-                          icon="hammer" 
-                          isActive={isArchitectMode || isDrawingWalls || isPlacingLights || isDeleting} 
-                          onClick={() => {
-                              if (isToolbarOpen !== 'architect') resetAllTools();
-                              setIsToolbarOpen(p => p === 'architect' ? null : 'architect');
-                          }} 
-                          isStandalone={true} 
-                      />
-                      {isToolbarOpen === 'architect' && (
-                          <ToolSubmenu>
-                              {isDrawingWalls && (
-                                  <div className="flex flex-col items-center gap-1 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-1 rounded-full shadow-2xl animate-in slide-in-from-right-2">
-                                      <ToolButton name="wall" icon="square" isActive={drawingWallType === 'wall'} onClick={() => setDrawingWallType('wall')} title="Wall" />
-                                      <ToolButton name="door" icon="door-closed" isActive={drawingWallType === 'door'} onClick={() => setDrawingWallType('door')} title="Door" />
-                                      <ToolButton name="window" icon="layout" isActive={drawingWallType === 'window'} onClick={() => setDrawingWallType('window')} title="Window" />
-                                  </div>
-                              )}
-                              <div className="flex flex-col items-center gap-1 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-1 rounded-full shadow-2xl animate-in slide-in-from-right-2">
-                                  <ToolButton name="architect" icon="pen-tool" isActive={isArchitectMode} onClick={() => { setActiveTool(null); setIsDrawingWalls(false); setIsPlacingLights(false); setIsArchitectMode(p => !p); }} />
-                                  <ToolButton name="draw" icon="pencil" isActive={isDrawingWalls} onClick={() => { setActiveTool(null); setIsArchitectMode(false); setIsPlacingLights(false); setIsDrawingWalls(p => !p); }} />
-                                  <ToolButton name="light" icon="lightbulb" isActive={isPlacingLights} onClick={() => { setActiveTool(null); setIsArchitectMode(false); setIsDrawingWalls(false); setIsPlacingLights(p => !p); }} />
-                                  <ToolButton name="delete" icon="trash-2" isActive={isDeleting} onClick={() => {
-                                      if (isDeleting && (selectedWalls.length > 0 || selectedLights.length > 0 || selectedTokenIds.length > 0)) {
-                                          let updates = {};
-                                          let changed = false;
-
-                                          if (selectedWalls.length > 0) {
-                                              selectedWalls.forEach(id => updates[`walls.${id}`] = null);
-                                              changed = true;
-                                          }
-                                          if (selectedLights.length > 0) {
-                                              selectedLights.forEach(id => updates[`lights.${id}`] = null);
-                                              changed = true;
-                                          }
-                                          if (selectedTokenIds.length > 0) {
-                                              selectedTokenIds.forEach(id => updates[`tokens.${id}`] = null);
-                                              changed = true;
-                                          }
-
-                                          if (changed) {
-                                              updateMap(campaignCode, activeMapId, updates);
-                                              setSelectedWalls([]);
-                                              setSelectedLights([]);
-                                              setSelectedTokenIds([]);
-                                          }
-                                      } else {
-                                          setActiveTool(null); setIsArchitectMode(false); setIsDrawingWalls(false); setIsPlacingLights(false); 
-                                          if (isDeleting) {
-                                              setSelectedWalls([]);
-                                              setSelectedLights([]);
-                                          }
-                                          setIsDeleting(!isDeleting);
-                                      }
-                                  }} />
-                              </div>
-                          </ToolSubmenu>
-                      )}
-                  </div>
-              )}
-              </>
-          )}
-      </div>
+          </div>
       )}
 
       {/* Actors Manager Drawer */}
       {showTokenManager && effectiveRole === 'dm' && (
         <div 
-            className="absolute top-0 right-0 bottom-0 w-full sm:w-[380px] max-w-full bg-slate-900 border-l border-slate-700 shadow-2xl z-[80] flex flex-col animate-in slide-in-from-right duration-300 pb-safe"
+            className="absolute top-0 right-0 bottom-0 w-full sm:w-[380px] max-w-full bg-slate-950/95 backdrop-blur-xl border-l border-slate-800/90 shadow-2xl z-[80] flex flex-col animate-in slide-in-from-right duration-300 pb-safe"
             style={{ width: isMobile ? '100vw' : `${tokenManagerWidth}px` }}
         >
             {!isMobile && (
@@ -4487,14 +4490,37 @@ ${pasteTextContent}`;
                     onTouchStart={handleTokenManagerMouseDown}
                 />
             )}
-            <div className="flex-none p-4 pt-safe-min pr-safe-min pl-safe-min border-b border-slate-800 flex justify-between items-center bg-slate-950">
-                <h3 className="font-bold text-indigo-500 flex items-center gap-2"><Icon name="users" size={18} /> Actors</h3>
+            <div className="flex-none p-4 pt-safe-min pr-safe-min pl-safe-min border-b border-slate-800/80 flex justify-between items-center bg-slate-950/80 backdrop-blur-md">
+                <h3 className="font-bold text-amber-400 flex items-center gap-2 font-serif uppercase tracking-wider text-xs">
+                    <Icon name="users" size={16} className="text-amber-500" /> Actors & Tokens
+                </h3>
                 <div className="flex items-center gap-2">
-                    <div className="flex bg-slate-800 rounded p-1 border border-slate-700">
-                        <button onClick={() => setActorViewMode('grid')} className={`p-1 rounded ${actorViewMode === 'grid' ? 'bg-slate-700 text-indigo-400' : 'text-slate-500 hover:text-slate-300'}`}><Icon name="layout-grid" size={14}/></button>
-                        <button onClick={() => setActorViewMode('list')} className={`p-1 rounded ${actorViewMode === 'list' ? 'bg-slate-700 text-indigo-400' : 'text-slate-500 hover:text-slate-300'}`}><Icon name="list" size={14}/></button>
+                    <div className="flex bg-slate-900/90 rounded-xl p-0.5 border border-slate-800">
+                        <button 
+                            type="button"
+                            onClick={() => setActorViewMode('grid')} 
+                            className={`p-1.5 rounded-lg transition-all ${actorViewMode === 'grid' ? 'bg-amber-500 text-slate-950 shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}
+                            title="Grid View"
+                        >
+                            <Icon name="layout-grid" size={14}/>
+                        </button>
+                        <button 
+                            type="button"
+                            onClick={() => setActorViewMode('list')} 
+                            className={`p-1.5 rounded-lg transition-all ${actorViewMode === 'list' ? 'bg-amber-500 text-slate-950 shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}
+                            title="List View"
+                        >
+                            <Icon name="list" size={14}/>
+                        </button>
                     </div>
-                    <button onClick={() => setShowTokenManager(false)} className="text-slate-400 hover:text-white p-1"><Icon name="x" size={18} /></button>
+                    <button 
+                        type="button"
+                        onClick={() => setShowTokenManager(false)} 
+                        className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors"
+                        title="Close Drawer"
+                    >
+                        <Icon name="x" size={18} />
+                    </button>
                 </div>
             </div>
             
@@ -4846,12 +4872,18 @@ ${pasteTextContent}`;
                       {data?.npcs?.filter(n => !n?.ownerId)?.map((n, i) => (
                           actorViewMode === 'grid' ? (
                               <div key={`npc-${i}`} draggable 
+                                  onClick={() => {
+                                      if (onOpenSheet) {
+                                          onOpenSheet({ isToken: false, characterId: n.id, defaultMode: 'statblock' });
+                                      }
+                                  }}
                                   onDragStart={(e) => {
                                       const payload = JSON.stringify({ format: 'dungeonmind-character', id: n.id, name: n.name, type: 'npc', image: n.image, size: n.size || 1, hp: n.hp, isSimple: n.isSimple });
                                       e.dataTransfer.setData('application/dungeonmind-character', payload);
                                       e.dataTransfer.setData('text/plain', payload);
                                   }}
-                                  className="aspect-square bg-slate-800 rounded-lg border border-slate-700 overflow-hidden cursor-grab active:cursor-grabbing hover:border-red-500 transition-colors relative group shadow-lg"
+                                  className="aspect-square bg-slate-800 rounded-lg border border-slate-700 overflow-hidden cursor-pointer hover:border-amber-500 transition-all relative group shadow-lg"
+                                  title="Click to view 5e statblock, drag to place on map"
                               >
                                   {n.image ? (
                                     <img src={getProxiedImageUrl(n.image)} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" alt={n.name} draggable={false} referrerPolicy="no-referrer" />
@@ -4859,6 +4891,16 @@ ${pasteTextContent}`;
                                     <div className="w-full h-full flex items-center justify-center font-bold text-3xl text-slate-600 bg-slate-700 opacity-80 group-hover:opacity-100 transition-opacity">{n.name?.[0] || '?'}</div>
                                   )}
                                   <div className="absolute top-1 left-1 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                                      <button 
+                                          onClick={(e) => {
+                                              e.stopPropagation();
+                                              if (onOpenSheet) onOpenSheet({ isToken: false, characterId: n.id, defaultMode: 'statblock' });
+                                          }} 
+                                          className="p-1 bg-slate-800/90 hover:bg-amber-600 text-amber-300 hover:text-white rounded shadow-md transition-colors" 
+                                          title="View 5e Statblock"
+                                      >
+                                          <Icon name="scroll" size={11}/>
+                                      </button>
                                       <button 
                                           onClick={(e) => {
                                               e.stopPropagation();
@@ -4872,7 +4914,7 @@ ${pasteTextContent}`;
                                                   ownerId: null
                                               });
                                           }} 
-                                          className="p-1 bg-slate-800/90 hover:bg-amber-600 text-amber-300 hover:text-white rounded shadow-md transition-colors" 
+                                          className="p-1 bg-slate-800/90 hover:bg-slate-700 text-slate-300 hover:text-white rounded shadow-md transition-colors" 
                                           title="Edit Entity / Photo"
                                       >
                                           <Icon name="edit-2" size={11}/>
@@ -4892,12 +4934,18 @@ ${pasteTextContent}`;
                               </div>
                           ) : (
                               <div key={`npc-${i}`} draggable 
+                                  onClick={() => {
+                                      if (onOpenSheet) {
+                                          onOpenSheet({ isToken: false, characterId: n.id, defaultMode: 'statblock' });
+                                      }
+                                  }}
                                   onDragStart={(e) => {
                                       const payload = JSON.stringify({ format: 'dungeonmind-character', id: n.id, name: n.name, type: 'npc', image: n.image, size: n.size || 1, hp: n.hp, isSimple: n.isSimple });
                                       e.dataTransfer.setData('application/dungeonmind-character', payload);
                                       e.dataTransfer.setData('text/plain', payload);
                                   }}
-                                  className="flex items-center gap-3 bg-slate-800 rounded-lg border border-slate-700 p-2 cursor-grab active:cursor-grabbing hover:border-red-500 transition-colors group shadow-lg"
+                                  className="flex items-center gap-3 bg-slate-800 rounded-lg border border-slate-700 p-2 cursor-pointer hover:border-amber-500 transition-all group shadow-lg"
+                                  title="Click to view 5e statblock, drag to place on map"
                               >
                                   <div className="w-10 h-10 rounded bg-slate-700 shrink-0 overflow-hidden relative">
                                       {n.image ? <img src={getProxiedImageUrl(n.image)} className="w-full h-full object-cover" draggable={false} referrerPolicy="no-referrer" /> : <div className="w-full h-full flex items-center justify-center font-bold text-slate-500">{n.name?.[0] || '?'}</div>}
@@ -4907,6 +4955,16 @@ ${pasteTextContent}`;
                                       {n.isSimple && <span className="text-[9px] bg-red-950/80 text-red-300 border border-red-800 px-1 py-0.2 rounded font-normal">Quick</span>}
                                   </div>
                                   <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                                      <button 
+                                          onClick={(e) => {
+                                              e.stopPropagation();
+                                              if (onOpenSheet) onOpenSheet({ isToken: false, characterId: n.id, defaultMode: 'statblock' });
+                                          }} 
+                                          className="p-1.5 text-slate-400 hover:text-amber-400 hover:bg-amber-950/60 rounded transition-colors" 
+                                          title="View 5e Statblock"
+                                      >
+                                          <Icon name="scroll" size={13}/>
+                                      </button>
                                       <button 
                                           onClick={(e) => {
                                               e.stopPropagation();
@@ -4920,7 +4978,7 @@ ${pasteTextContent}`;
                                                   ownerId: null
                                               });
                                           }} 
-                                          className="p-1.5 text-slate-400 hover:text-amber-400 hover:bg-amber-950/60 rounded transition-colors" 
+                                          className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-700 rounded transition-colors" 
                                           title="Edit Entity / Photo"
                                       >
                                           <Icon name="edit-2" size={13}/>
@@ -4947,6 +5005,8 @@ ${pasteTextContent}`;
       {showAssetManager && effectiveRole === 'dm' && (
         <Suspense fallback={null}>
           <AssetManager 
+            width={assetManagerWidth}
+            onResizeMouseDown={handleAssetManagerMouseDown}
             campaignCode={campaignCode} 
             mapData={mapData}
             activeMapId={activeMapId}
@@ -4977,6 +5037,61 @@ ${pasteTextContent}`;
         </Suspense>
       )}
 
+      {/* Map Forge Inspector Drawer */}
+      {showMapForge && effectiveRole === 'dm' && (
+        <MapForgePanel 
+          isOpen={showMapForge}
+          onClose={() => setShowMapForge(false)}
+          resetAllTools={resetAllTools}
+          dialog={dialog}
+          activeTool={activeTool}
+          setActiveTool={setActiveTool}
+          // Fog
+          isFogPainting={isFogPainting}
+          setIsFogPainting={setIsFogPainting}
+          fogBrushMode={fogBrushMode}
+          setFogBrushMode={setFogBrushMode}
+          fogBrushShape={fogBrushShape}
+          setFogBrushShape={setFogBrushShape}
+          fogBrushSize={fogBrushSize}
+          setFogBrushSize={setFogBrushSize}
+          fogBrushSoftness={fogBrushSoftness}
+          setFogBrushSoftness={setFogBrushSoftness}
+          onClearFog={handleClearAllFog}
+          // Walls & Architecture
+          isDrawingWalls={isDrawingWalls}
+          setIsDrawingWalls={setIsDrawingWalls}
+          drawingWallType={drawingWallType}
+          setDrawingWallType={setDrawingWallType}
+          isArchitectMode={isArchitectMode}
+          setIsArchitectMode={setIsArchitectMode}
+          isDeleting={isDeleting}
+          setIsDeleting={setIsDeleting}
+          onDeleteSelected={handleDeleteSelectedWallsOrLights}
+          // Lights
+          isPlacingLights={isPlacingLights}
+          setIsPlacingLights={setIsPlacingLights}
+          // Sculpt
+          sculptBrushType={sculptBrushType}
+          setSculptBrushType={setSculptBrushType}
+          sculptBrushSize={sculptBrushSize}
+          setSculptBrushSize={setSculptBrushSize}
+          sculptBrushStrength={sculptBrushStrength}
+          setSculptBrushStrength={setSculptBrushStrength}
+          // Biomes
+          materialBrushType={materialBrushType}
+          setMaterialBrushType={setMaterialBrushType}
+          materialBrushShape={materialBrushShape}
+          setMaterialBrushShape={setMaterialBrushShape}
+          materialBrushSize={materialBrushSize}
+          setMaterialBrushSize={setMaterialBrushSize}
+          materialBrushSoftness={materialBrushSoftness}
+          setMaterialBrushSoftness={setMaterialBrushSoftness}
+          materialLimitToGround={materialLimitToGround}
+          setMaterialLimitToGround={setMaterialLimitToGround}
+        />
+      )}
+
       {/* Context Menu Overlay */}
       {contextMenu && (
         <>
@@ -4989,7 +5104,7 @@ ${pasteTextContent}`;
           
           <div 
             ref={tokenMenuRef}
-            className="fixed z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-2xl py-1 text-sm text-slate-200 min-w-[160px] max-w-[calc(100vw-20px)] overflow-y-auto custom-scroll overscroll-contain"
+            className="fixed z-50 bg-slate-950/95 backdrop-blur-xl border border-slate-800/90 rounded-2xl shadow-[0_10px_40px_rgba(0,0,0,0.8)] py-2 text-xs text-slate-200 min-w-[180px] max-w-[calc(100vw-20px)] overflow-y-auto custom-scroll overscroll-contain ring-1 ring-amber-500/20 animate-in fade-in zoom-in-95 duration-150"
             style={{ 
               top: `${tokenMenuDisplayPosition.y}px`, 
               left: `${tokenMenuDisplayPosition.x}px`, 
@@ -5046,22 +5161,57 @@ ${pasteTextContent}`;
                   ) : (
                     <>
                       {contextMenu.characterId && onOpenSheet && (
-                        <button 
-                          className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors flex items-center gap-2"
-                          onClick={() => {
-                            if (onOpenSheet) {
-                                const hp = token?.hp?.current ?? char?.hp?.current ?? null;
-                                const maxHp = token?.hp?.max ?? char?.hp?.max ?? null;
-                                onOpenSheet({ isToken: true, tokenId: contextMenu.tokenId, characterId: contextMenu.characterId, hp, maxHp });
-                            }
-                            setContextMenu(null);
-                          }}
-                        >
-                          <Icon name="file-text" size={14} className="text-indigo-400" /> Open Sheet
-                        </button>
+                        isPc ? (
+                          <button 
+                            className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors flex items-center gap-2 text-indigo-300 font-medium"
+                            onClick={() => {
+                              if (onOpenSheet) {
+                                  const hp = token?.hp?.current ?? char?.hp?.current ?? null;
+                                  const maxHp = token?.hp?.max ?? char?.hp?.max ?? null;
+                                  onOpenSheet({ isToken: true, tokenId: contextMenu.tokenId, characterId: contextMenu.characterId, hp, maxHp, isPc: true, defaultMode: 'sheet' });
+                              }
+                              setContextMenu(null);
+                            }}
+                          >
+                            <Icon name="file-text" size={14} className="text-indigo-400" /> Open Sheet
+                          </button>
+                        ) : (
+                          (effectiveRole === 'dm' || token?.isSharedControl) ? (
+                            <>
+                              <button 
+                                className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors flex items-center gap-2 text-amber-300 font-medium"
+                                onClick={() => {
+                                  if (onOpenSheet) {
+                                      const hp = token?.hp?.current ?? char?.hp?.current ?? null;
+                                      const maxHp = token?.hp?.max ?? char?.hp?.max ?? null;
+                                      onOpenSheet({ isToken: true, tokenId: contextMenu.tokenId, characterId: contextMenu.characterId, hp, maxHp, isPc: false, defaultMode: 'statblock' });
+                                  }
+                                  setContextMenu(null);
+                                }}
+                              >
+                                <Icon name="scroll" size={14} className="text-amber-400" /> Open Statblock
+                              </button>
+                              {effectiveRole === 'dm' && (
+                                <button 
+                                  className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors flex items-center gap-2"
+                                  onClick={() => {
+                                    if (onOpenSheet) {
+                                        const hp = token?.hp?.current ?? char?.hp?.current ?? null;
+                                        const maxHp = token?.hp?.max ?? char?.hp?.max ?? null;
+                                        onOpenSheet({ isToken: true, tokenId: contextMenu.tokenId, characterId: contextMenu.characterId, hp, maxHp, isPc: false, defaultMode: 'sheet' });
+                                    }
+                                    setContextMenu(null);
+                                  }}
+                                >
+                                  <Icon name="file-text" size={14} className="text-indigo-400" /> Full Sheet
+                                </button>
+                              )}
+                            </>
+                          ) : null
+                        )
                       )}
 
-                      {contextMenu.characterId && onOpenSheet && (
+                      {contextMenu.characterId && onOpenSheet && effectiveRole === 'dm' && (
                         <button 
                           className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors flex items-center gap-2"
                           onClick={() => {
@@ -5130,16 +5280,17 @@ ${pasteTextContent}`;
                 <div className="border-t border-slate-700 my-1"></div>
                 <button 
                   className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors"
-                  onClick={() => {
+                  onClick={async () => {
                     const currentName = contextMenu.name || "Token";
-                    const newName = window.prompt("Enter new token name:", currentName);
-                    if (newName) { // check for null (cancel)
-                      const idsToUpdate = selectedTokenIds.includes(contextMenu.tokenId) && selectedTokenIds.length > 1 ? selectedTokenIds : [contextMenu.tokenId];
+                    const targetTokenId = contextMenu.tokenId;
+                    setContextMenu(null);
+                    const newName = await dialog.prompt("Enter new token name:", currentName);
+                    if (newName !== null && newName.trim()) {
+                      const idsToUpdate = selectedTokenIds.includes(targetTokenId) && selectedTokenIds.length > 1 ? selectedTokenIds : [targetTokenId];
                       const updates = {};
-                      idsToUpdate.forEach(id => updates[`tokens.${id}.name`] = newName);
+                      idsToUpdate.forEach(id => updates[`tokens.${id}.name`] = newName.trim());
                       updateMap(campaignCode, activeMapId, updates);
                     }
-                    setContextMenu(null);
                   }}
                 >
                   Rename Token
@@ -5830,67 +5981,15 @@ ${pasteTextContent}`;
       )}
 
       {showForge && (
-          <div className="fixed inset-0 z-[100] bg-slate-900/90 backdrop-blur-sm flex items-center justify-center p-4">
-              <div className="bg-slate-800 border border-slate-600 rounded-lg shadow-2xl w-full max-w-2xl p-6 animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
-                  <div className="flex justify-between items-center mb-6 border-b border-slate-700 pb-2 shrink-0">
-                      <div className="flex gap-6">
-                          <button onClick={() => setForgeTab('generate')} className={`text-xl font-bold flex items-center gap-2 transition-colors ${forgeTab === 'generate' ? 'text-white' : 'text-slate-500 hover:text-slate-300'}`}>
-                              <Icon name="sparkles" className={forgeTab === 'generate' ? "text-purple-500" : ""} /> AI Generate
-                          </button>
-                          <span className="text-slate-600 text-xl">|</span>
-                          <button onClick={() => setForgeTab('paste')} className={`text-xl font-bold flex items-center gap-2 transition-colors ${forgeTab === 'paste' ? 'text-white' : 'text-slate-500 hover:text-slate-300'}`}>
-                              <Icon name="clipboard" className={forgeTab === 'paste' ? "text-orange-500" : ""} /> Paste Text
-                          </button>
-                      </div>
-                      <button onClick={() => setShowForge(false)} className="text-slate-400 hover:text-white"><Icon name="x"/></button>
-                  </div>
-                  
-                  {forgeTab === 'generate' ? (
-                      isForging ? (
-                          <div className="text-center py-8">
-                              <Icon name="loader-2" size={48} className="animate-spin text-purple-500 mx-auto mb-4"/>
-                              <p className="text-purple-300 font-bold animate-pulse">Consulting the Archives...</p>
-                              <p className="text-xs text-slate-500 mt-2">Checking Lore for stats...</p>
-                          </div>
-                      ) : (
-                          <div className="space-y-4">
-                              <div>
-                                  <label className="block text-xs font-bold text-slate-400 mb-1">Name / Creature Type</label>
-                                  <input autoFocus className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white" placeholder="e.g. Glasstaff OR Redbrand Ruffian" value={forgeName} onChange={e => setForgeName(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleForgeSubmit()}/>
-                                  <p className="text-[10px] text-slate-500 mt-1">If this name appears in your PDFs, we use those stats!</p>
-                              </div>
-                              <div>
-                                  <label className="block text-xs font-bold text-slate-400 mb-1">Context (Optional)</label>
-                                  <input className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white" placeholder="e.g. CR 4, fire themed" value={forgeContext} onChange={e => setForgeContext(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleForgeSubmit()}/>
-                              </div>
-                              <button onClick={handleForgeSubmit} disabled={!forgeName.trim()} className="w-full bg-purple-800 hover:bg-purple-700 text-white font-bold py-3 rounded flex justify-center items-center gap-2 mt-4"><Icon name="hammer" size={18}/> Forge Monster</button>
-                          </div>
-                      )
-                  ) : (
-                      isParsingText ? (
-                          <div className="text-center py-12 flex-1 flex flex-col justify-center">
-                              <Icon name="loader-2" size={48} className="animate-spin text-orange-500 mx-auto mb-4"/>
-                              <p className="text-orange-300 font-bold animate-pulse">Parsing Statblock...</p>
-                              <p className="text-xs text-slate-500 mt-2">The DungeonMind is extracting the stats.</p>
-                          </div>
-                      ) : (
-                          <div className="space-y-4 flex-1 flex flex-col min-h-0">
-                              <div className="flex-1 flex flex-col min-h-0">
-                                  <label className="block text-xs font-bold text-slate-400 mb-2">Raw Text</label>
-                                  <textarea 
-                                      autoFocus 
-                                      className="flex-1 w-full bg-slate-900 border border-slate-600 rounded p-3 text-white text-sm font-mono custom-scroll resize-none min-h-[200px]" 
-                                      placeholder="Paste the raw text from D&D Beyond or a PDF here..." 
-                                      value={pasteTextContent} 
-                                      onChange={e => setPasteTextContent(e.target.value)} 
-                                  />
-                              </div>
-                              <button onClick={handlePasteTextSubmit} disabled={!pasteTextContent.trim()} className="w-full bg-orange-700 hover:bg-orange-600 text-white font-bold py-3 rounded flex justify-center items-center gap-2 shrink-0"><Icon name="wand-2" size={18}/> Extract NPC</button>
-                          </div>
-                      )
-                  )}
-              </div>
-          </div>
+          <MonsterForgeModal
+              isOpen={showForge}
+              onClose={() => setShowForge(false)}
+              onForgeComplete={handleForgeComplete}
+              generateNpc={generateNpc}
+              aiHelper={aiHelper}
+              initialTab={forgeTab}
+              onDiceRoll={onDiceRoll}
+          />
       )}
 
       {showCompendium && (
@@ -6185,7 +6284,7 @@ ${pasteTextContent}`;
                                                       const chunkedUrl = await storeChunkedMap(b64, file.name);
                                                       setQuickActorModal(prev => ({ ...prev, image: chunkedUrl }));
                                                   } catch(err) {
-                                                      alert("Failed to upload image: " + err.message);
+                                                      dialog.alert("Failed to upload image: " + err.message);
                                                   }
                                               }} 
                                               accept="image/*" 
@@ -6332,7 +6431,7 @@ ${pasteTextContent}`;
                                                   const chunkedUrl = await storeChunkedMap(b64, file.name);
                                                   setPhotoEditModal(prev => ({ ...prev, image: chunkedUrl }));
                                               } catch(err) {
-                                                  alert("Failed to upload image: " + err.message);
+                                                  dialog.alert("Failed to upload image: " + err.message);
                                               }
                                           }} 
                                           accept="image/*" 
