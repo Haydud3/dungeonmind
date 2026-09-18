@@ -667,7 +667,7 @@ const JournalPageEditor = ({
     return (
         <div className="infinite-desk flex flex-col h-full bg-slate-950 select-none overflow-hidden relative">
             {/* Top HUD Toolbar - Note overflow: visible so Quill dropdowns float freely */}
-            <div className="border-b border-slate-800 bg-slate-900/95 backdrop-blur-md flex flex-col justify-center px-3 sm:px-4 py-2 z-50 shrink-0 shadow-md gap-1.5" style={{ overflow: 'visible' }}>
+            <div className="border-b border-amber-500/20 bg-slate-950/95 backdrop-blur-xl flex flex-col justify-center px-3 sm:px-4 py-2.5 z-50 shrink-0 shadow-xl gap-2" style={{ overflow: 'visible' }}>
                 {/* Row 1: Navigation, Category, Pin, Actions & Window Controls */}
                 <div className="flex items-center justify-between w-full gap-2" style={{ overflow: 'visible' }}>
                     {/* Left: Back button & Category */}
@@ -680,7 +680,7 @@ const JournalPageEditor = ({
                                 }
                                 onBack();
                             }}
-                            className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
+                            className="p-1.5 text-slate-400 hover:text-amber-400 hover:bg-slate-900 rounded-xl transition-colors border border-transparent hover:border-slate-800"
                             title="Back to Journal Hub"
                         >
                             <Icon name="arrow-left" size={18} />
@@ -690,7 +690,7 @@ const JournalPageEditor = ({
                         <div className="relative" ref={categoryMenuRef}>
                             <button
                                 onClick={() => setShowCategoryMenu(!showCategoryMenu)}
-                                className="px-2 py-1 rounded-md text-xs font-semibold bg-slate-800 border border-slate-700 text-slate-300 hover:text-white flex items-center gap-1 transition-colors shadow-sm"
+                                className="px-2.5 py-1 rounded-xl text-xs font-bold bg-slate-900/90 border border-slate-800 text-slate-300 hover:text-amber-300 hover:border-amber-500/40 flex items-center gap-1.5 transition-all shadow-inner"
                                 title="Change Category"
                             >
                                 <span className="capitalize">{category}</span>
@@ -698,12 +698,15 @@ const JournalPageEditor = ({
                             </button>
 
                             {showCategoryMenu && (
-                                <div className="absolute top-full left-0 mt-1.5 w-44 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-1.5 z-[100000] animate-in zoom-in-95 duration-100">
+                                <div className="absolute top-full left-0 mt-1.5 w-48 bg-slate-950/95 border border-amber-500/30 rounded-2xl shadow-2xl backdrop-blur-xl p-1.5 z-[100000] animate-in zoom-in-95 duration-100">
+                                    <div className="text-[10px] font-bold text-amber-400 uppercase px-2.5 py-1 tracking-wider">
+                                        Category
+                                    </div>
                                     {['session', 'quest', 'npc', 'loot', 'general'].map(cat => (
                                         <button
                                             key={cat}
                                             onClick={() => handleCategoryChange(cat)}
-                                            className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-medium capitalize flex items-center justify-between ${category === cat ? 'bg-amber-600/30 text-amber-300' : 'text-slate-300 hover:bg-slate-800'}`}
+                                            className={`w-full text-left px-2.5 py-1.5 rounded-xl text-xs font-bold capitalize flex items-center justify-between transition-colors ${category === cat ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' : 'text-slate-300 hover:bg-slate-900 hover:text-white'}`}
                                         >
                                             <span>{cat}</span>
                                             {category === cat && <Icon name="check" size={12} className="text-amber-400" />}
@@ -716,19 +719,23 @@ const JournalPageEditor = ({
                         {/* Pin Star Toggle */}
                         <button
                             onClick={handleTogglePin}
-                            className={`p-1.5 rounded-lg transition-colors ${isPinned ? 'text-amber-400 bg-amber-950/30' : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800'}`}
+                            className={`p-1.5 rounded-xl transition-all ${isPinned ? 'text-amber-400 bg-amber-950/40 border border-amber-500/40 shadow-[0_0_10px_rgba(245,158,11,0.2)]' : 'text-slate-500 hover:text-amber-400 hover:bg-slate-900 border border-transparent'}`}
                             title={isPinned ? "Unpin entry" : "Pin entry to top"}
                         >
-                            <Icon name="star" size={16} className={isPinned ? "fill-amber-400" : ""} />
+                            <Icon name="star" size={16} className={isPinned ? "fill-amber-400 text-amber-400" : ""} />
                         </button>
                     </div>
 
                     {/* Right: Actions, Permissions, Delete, and Close */}
-                    <div className="flex items-center gap-1 sm:gap-1.5 shrink-0" style={{ overflow: 'visible' }}>
+                    <div className="flex items-center gap-1.5 sm:gap-2 shrink-0" style={{ overflow: 'visible' }}>
                         {/* Primary View / Edit Toggle Button */}
                         <button
                             onClick={toggleEditMode}
-                            className={`px-2.5 py-1 text-xs font-bold rounded-lg flex items-center gap-1 transition-colors shadow-sm ${isEditing ? 'bg-amber-600 hover:bg-amber-500 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700'}`}
+                            className={`px-3 py-1.5 text-xs font-extrabold rounded-xl flex items-center gap-1.5 transition-all shadow-md active:scale-95 ${
+                                isEditing 
+                                    ? 'bg-gradient-to-r from-amber-600 via-amber-500 to-yellow-500 hover:from-amber-500 hover:to-yellow-400 text-slate-950 border border-amber-400/40 shadow-amber-950/30' 
+                                    : 'bg-slate-900/90 hover:bg-slate-800 text-slate-200 border border-slate-800 hover:border-amber-500/40'
+                            }`}
                             title={isEditing ? "Done Editing (Save)" : "Enter Edit Mode"}
                         >
                             {isEditing ? (
@@ -748,26 +755,26 @@ const JournalPageEditor = ({
                         <div className="relative" ref={themeMenuRef}>
                             <button
                                 onClick={() => setShowThemeMenu(!showThemeMenu)}
-                                className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
+                                className="p-1.5 text-slate-400 hover:text-amber-400 hover:bg-slate-900 rounded-xl transition-colors border border-transparent hover:border-slate-800"
                                 title="Paper Theme"
                             >
                                 <Icon name="palette" size={16} />
                             </button>
 
                             {showThemeMenu && (
-                                <div className="absolute top-full right-0 mt-1.5 w-52 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-2 z-[100000] animate-in zoom-in-95 duration-100">
-                                    <div className="text-[10px] font-bold text-slate-400 uppercase px-2 py-1 tracking-wider">
+                                <div className="absolute top-full right-0 mt-1.5 w-56 bg-slate-950/95 border border-amber-500/30 rounded-2xl shadow-2xl backdrop-blur-xl p-2 z-[100000] animate-in zoom-in-95 duration-100">
+                                    <div className="text-[10px] font-bold text-amber-400 uppercase px-2 py-1 tracking-wider">
                                         Paper Style
                                     </div>
                                     {PAPER_THEMES.map(th => (
                                         <button
                                             key={th.id}
                                             onClick={() => handleThemeChange(th.id)}
-                                            className={`w-full text-left px-2.5 py-2 rounded-lg text-xs flex items-center gap-2.5 transition-colors ${theme === th.id ? 'bg-amber-600/20 text-amber-300' : 'hover:bg-slate-800 text-slate-200'}`}
+                                            className={`w-full text-left px-2.5 py-2 rounded-xl text-xs flex items-center gap-2.5 transition-colors ${theme === th.id ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40' : 'hover:bg-slate-900 text-slate-200'}`}
                                         >
                                             <span className={`w-3 h-3 rounded-full shrink-0 ${th.dot}`} />
                                             <div className="flex-1 min-w-0">
-                                                <div className="font-semibold">{th.name}</div>
+                                                <div className="font-bold">{th.name}</div>
                                                 <div className="text-[10px] text-slate-400 truncate">{th.desc}</div>
                                             </div>
                                             {theme === th.id && <Icon name="check" size={14} className="text-amber-400 shrink-0" />}
@@ -779,12 +786,12 @@ const JournalPageEditor = ({
 
                         {/* Zoom Controls (hidden in sidebar mode or small screens) */}
                         {!isSidebar && (
-                            <div className="hidden md:flex items-center bg-slate-800/80 rounded-lg border border-slate-700">
-                                <button onClick={() => adjustZoom(-0.1)} className="p-1 hover:text-white text-slate-400 border-r border-slate-700">
+                            <div className="hidden md:flex items-center bg-slate-950/80 rounded-xl border border-slate-800 shadow-inner">
+                                <button onClick={() => adjustZoom(-0.1)} className="p-1 hover:text-amber-400 text-slate-400 border-r border-slate-800/80">
                                     <Icon name="minus" size={11} />
                                 </button>
-                                <span className="text-[10px] w-8 text-center font-mono text-slate-300">{Math.round(zoom * 100)}%</span>
-                                <button onClick={() => adjustZoom(0.1)} className="p-1 hover:text-white text-slate-400 border-l border-slate-700">
+                                <span className="text-[10px] w-8 text-center font-mono font-bold text-slate-300">{Math.round(zoom * 100)}%</span>
+                                <button onClick={() => adjustZoom(0.1)} className="p-1 hover:text-amber-400 text-slate-400 border-l border-slate-800/80">
                                     <Icon name="plus" size={11} />
                                 </button>
                             </div>
@@ -794,13 +801,13 @@ const JournalPageEditor = ({
                         {(() => {
                             const statusMap = {
                                 idle: { icon: 'cloud', color: 'text-slate-500', title: 'Synced' },
-                                typing: { icon: 'pencil', color: 'text-amber-500', title: 'Editing' },
-                                saving: { icon: 'loader', color: 'text-blue-500', anim: 'animate-spin', title: 'Saving...' },
+                                typing: { icon: 'pencil', color: 'text-amber-400 animate-pulse', title: 'Editing' },
+                                saving: { icon: 'loader', color: 'text-amber-400', anim: 'animate-spin', title: 'Saving...' },
                                 saved: { icon: 'check', color: 'text-emerald-400', title: 'Saved' }
                             };
                             const current = statusMap[syncStatus] || statusMap.idle;
                             return (
-                                <div className="hidden sm:block" title={current.title}>
+                                <div className="hidden sm:block px-1" title={current.title}>
                                     <Icon name={current.icon} size={15} className={`${current.color} ${current.anim || ''}`} />
                                 </div>
                             );
@@ -810,28 +817,28 @@ const JournalPageEditor = ({
                         <div className="relative" ref={permMenuRef}>
                             <button
                                 onClick={() => setShowPermMenu(!showPermMenu)}
-                                className={`p-1.5 rounded-lg hover:bg-slate-800 transition-colors flex items-center gap-1 ${page.isPublic ? 'text-emerald-400' : (page.visibleTo?.length > 0 ? 'text-indigo-400' : 'text-slate-400')}`}
+                                className={`p-1.5 rounded-xl hover:bg-slate-900 border border-transparent hover:border-slate-800 transition-colors flex items-center gap-1 ${page.isPublic ? 'text-emerald-400' : (page.visibleTo?.length > 0 ? 'text-indigo-400' : 'text-slate-400')}`}
                                 title="Access Permissions"
                             >
                                 <Icon name={page.isPublic ? "globe" : (page.visibleTo?.length > 0 ? "users" : "lock")} size={16} />
                             </button>
 
                             {showPermMenu && (
-                                <div className="absolute top-full right-0 mt-2 w-72 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-[100000] p-3 animate-in zoom-in-95 duration-100">
-                                    <h4 className="text-[10px] font-bold text-slate-400 uppercase mb-2 tracking-wider">Access Rights</h4>
+                                <div className="absolute top-full right-0 mt-2 w-72 bg-slate-950/95 border border-amber-500/30 rounded-2xl shadow-2xl backdrop-blur-xl z-[100000] p-3.5 animate-in zoom-in-95 duration-100">
+                                    <h4 className="text-[10px] font-bold text-amber-400 uppercase mb-2.5 tracking-wider">Access Rights</h4>
 
                                     <div
                                         onClick={toggleVisibility}
-                                        className="flex items-center justify-between p-2 rounded-lg hover:bg-slate-800 cursor-pointer mb-2 border border-slate-800"
+                                        className={`flex items-center justify-between p-2.5 rounded-xl cursor-pointer mb-2.5 border transition-all ${page.isPublic ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-200' : 'bg-slate-900/60 border-slate-800 hover:bg-slate-900 text-slate-300'}`}
                                     >
-                                        <span className="text-xs font-semibold text-white flex items-center gap-2">
+                                        <span className="text-xs font-bold flex items-center gap-2">
                                             <Icon name="globe" size={14} className="text-emerald-400" />
                                             <span>Everyone (Public)</span>
                                         </span>
                                         {page.isPublic && <Icon name="check" size={14} className="text-emerald-400" />}
                                     </div>
 
-                                    <div className="text-[10px] font-bold text-slate-500 uppercase px-1 mb-1 tracking-wider">
+                                    <div className="text-[10px] font-bold text-slate-500 uppercase px-1 mb-1.5 tracking-wider">
                                         Specific Players
                                     </div>
                                     <div className="space-y-1 max-h-52 overflow-y-auto custom-scroll">
@@ -843,7 +850,7 @@ const JournalPageEditor = ({
                                                 <div
                                                     key={p.id}
                                                     onClick={() => toggleCharacterPermission(targetId)}
-                                                    className={`flex items-center justify-between p-2 rounded-lg cursor-pointer text-xs ${isSelected ? 'bg-indigo-950/40 border border-indigo-500/40 text-indigo-200' : 'hover:bg-slate-800 text-slate-300 border border-transparent'}`}
+                                                    className={`flex items-center justify-between p-2 rounded-xl cursor-pointer text-xs transition-colors ${isSelected ? 'bg-indigo-950/40 border border-indigo-500/40 text-indigo-200' : 'hover:bg-slate-900 text-slate-300 border border-transparent'}`}
                                                 >
                                                     <div className="flex items-center gap-2 truncate">
                                                         <div className="w-5 h-5 rounded-full bg-slate-800 overflow-hidden shrink-0 border border-slate-700">
@@ -871,7 +878,7 @@ const JournalPageEditor = ({
                                         toast("Entry deleted", "warning");
                                     }
                                 }}
-                                className="text-slate-500 hover:text-red-400 p-1.5 rounded-lg hover:bg-slate-800 transition-colors"
+                                className="text-slate-500 hover:text-red-400 p-1.5 rounded-xl hover:bg-red-950/30 transition-colors"
                                 title="Delete Entry"
                             >
                                 <Icon name="trash-2" size={16} />
@@ -882,7 +889,7 @@ const JournalPageEditor = ({
                         {onClose && (
                             <button
                                 onClick={onClose}
-                                className="text-slate-400 hover:text-white p-1.5 hover:bg-slate-800 rounded-lg transition-colors ml-0.5"
+                                className="text-slate-400 hover:text-white p-1.5 hover:bg-slate-800 rounded-xl transition-colors ml-0.5"
                                 title="Close Editor"
                             >
                                 <Icon name="x" size={18} />
@@ -1017,13 +1024,13 @@ const JournalPageEditor = ({
                 </div>
 
                 {/* Row 3: Tags & Stats */}
-                <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-800/70 text-xs">
+                <div className="flex items-center justify-between gap-2 pt-1.5 border-t border-slate-800/80 text-xs">
                     <div className="flex items-center flex-wrap gap-1 flex-1 min-w-0">
-                        <Icon name="tag" size={12} className="text-slate-400 shrink-0" />
+                        <Icon name="tag" size={12} className="text-amber-400/70 shrink-0" />
                         {tags.map((tag, idx) => (
                             <span
                                 key={idx}
-                                className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded-full bg-slate-800 text-slate-300 text-[10px] border border-slate-700 font-mono"
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-slate-900/90 text-slate-300 text-[10px] border border-slate-800 font-mono shadow-inner"
                             >
                                 #{tag}
                                 {isEditing && (
@@ -1054,18 +1061,18 @@ const JournalPageEditor = ({
                                             }
                                         }}
                                         placeholder="tag-name..."
-                                        className="bg-slate-800 text-slate-200 border border-slate-700 rounded-md px-1.5 py-0.5 text-[10px] w-20 focus:outline-none focus:border-amber-500"
+                                        className="bg-slate-950 text-slate-200 border border-amber-500/50 rounded-lg px-2 py-0.5 text-[10px] w-24 focus:outline-none shadow-inner"
                                         autoFocus
                                     />
                                     <button
                                         onClick={handleAddTag}
-                                        className="p-0.5 rounded bg-amber-600 hover:bg-amber-500 text-white text-[9px]"
+                                        className="p-1 rounded-lg bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold text-[9px]"
                                     >
                                         <Icon name="check" size={10} />
                                     </button>
                                     <button
                                         onClick={() => setShowTagInput(false)}
-                                        className="p-0.5 rounded hover:bg-slate-800 text-slate-400 text-[9px]"
+                                        className="p-1 rounded-lg hover:bg-slate-800 text-slate-400 text-[9px]"
                                     >
                                         <Icon name="x" size={10} />
                                     </button>
@@ -1073,7 +1080,7 @@ const JournalPageEditor = ({
                             ) : (
                                 <button
                                     onClick={() => setShowTagInput(true)}
-                                    className="text-[10px] text-slate-400 hover:text-amber-400 flex items-center gap-0.5 px-1.5 py-0.5 rounded hover:bg-slate-800/80 transition-colors"
+                                    className="text-[10px] text-slate-400 hover:text-amber-400 flex items-center gap-1 px-2 py-0.5 rounded-lg hover:bg-slate-900 border border-transparent hover:border-slate-800 transition-all font-semibold"
                                 >
                                     <Icon name="plus" size={10} />
                                     <span>Tag</span>
@@ -1082,7 +1089,7 @@ const JournalPageEditor = ({
                         )}
                     </div>
 
-                    <div className="flex items-center gap-2 text-[10px] text-slate-400 font-medium shrink-0">
+                    <div className="flex items-center gap-2 text-[10px] text-slate-400 font-mono shrink-0">
                         <span>{stats.words} words</span>
                         <span>•</span>
                         <span>~{stats.readTime} min read</span>
@@ -1104,13 +1111,13 @@ const JournalPageEditor = ({
                     }}
                 >
                     {/* Top Sheet Header */}
-                    <div className="p-3 sm:p-5 pb-2 border-b border-slate-700/60 flex flex-col gap-1.5">
+                    <div className="p-4 sm:p-6 pb-2 border-b border-slate-700/40 flex flex-col gap-2">
                         <input
                             type="text"
                             value={pageTitle}
                             onChange={(e) => handleTitleChange(e.target.value)}
                             placeholder="DOCUMENT TITLE"
-                            className="journal-title-input w-full bg-transparent border-none outline-none font-bold text-xl sm:text-3xl tracking-tight transition-colors"
+                            className="journal-title-input w-full bg-transparent border-none outline-none font-bold font-serif text-xl sm:text-3xl tracking-tight transition-colors"
                             readOnly={!isEditing}
                         />
 
@@ -1120,7 +1127,7 @@ const JournalPageEditor = ({
                                 {activeTypers.map(t => (
                                     <div
                                         key={t.id}
-                                        className="text-[10px] px-2 py-0.5 rounded-full text-white flex items-center gap-1 shadow-md bg-opacity-90 backdrop-blur"
+                                        className="text-[10px] px-2.5 py-0.5 rounded-full text-white flex items-center gap-1.5 shadow-md bg-opacity-90 backdrop-blur font-semibold"
                                         style={{ backgroundColor: t.color }}
                                     >
                                         <Icon name="pencil" size={10} className="animate-bounce" />
@@ -1132,7 +1139,7 @@ const JournalPageEditor = ({
                     </div>
 
                     {/* Rich Text Editor */}
-                    <div className="flex-1 p-2 sm:p-5 pt-2">
+                    <div className="flex-1 p-2 sm:p-6 pt-2">
                         <ReactQuill
                             ref={quillRef}
                             theme="snow"
@@ -1145,7 +1152,7 @@ const JournalPageEditor = ({
                     </div>
 
                     {/* Bottom Document Status Bar */}
-                    <div className="px-3 sm:p-4 py-2 border-t border-slate-700/40 text-[10px] text-slate-400 flex items-center justify-between">
+                    <div className="px-4 sm:px-6 py-2.5 border-t border-slate-700/40 text-[10px] text-slate-400 flex items-center justify-between font-mono">
                         <div className="flex items-center gap-2">
                             <span>{stats.words} words</span>
                             <span>({stats.chars} characters)</span>

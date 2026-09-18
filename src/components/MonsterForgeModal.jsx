@@ -3,6 +3,7 @@ import Icon from './Icon';
 import { useToast } from './ToastProvider';
 import { MonsterStatblockView } from './MonsterStatblockView';
 import { enrichCharacter } from '../utils/srdEnricher';
+import { createProceduralToken } from '../utils/tokenGenerator';
 
 const INSPIRATION_ARCHETYPES = [
     {
@@ -215,7 +216,11 @@ export const MonsterForgeModal = ({
     const toast = useToast();
     const [tab, setTab] = useState(initialTab);
     const [isForging, setIsForging] = useState(false);
+    const [forgeProgress, setForgeProgress] = useState(0);
+    const [forgeStageText, setForgeStageText] = useState('');
     const [isParsingText, setIsParsingText] = useState(false);
+    const [parseProgress, setParseProgress] = useState(0);
+    const [parseStageText, setParseStageText] = useState('');
 
     // Form fields
     const [name, setName] = useState('');
@@ -264,33 +269,115 @@ export const MonsterForgeModal = ({
             toast("Please enter a creature name.", "warning");
             return;
         }
-        if (!generateNpc) {
-            toast("AI generator is unavailable.", "error");
+        if (!generateNpc && !aiHelper) {
+            toast("AI service is unavailable. Please check your AI connection in Settings.", "error");
             return;
         }
 
         setIsForging(true);
+        setForgeProgress(8);
+        setForgeStageText("Igniting the Forge & Consulting 5e Ruleset...");
+
+        // Smooth ticker to keep progress bar alive and responsive during network/model latency
+        const progressTicker = setInterval(() => {
+            setForgeProgress(prev => {
+                if (prev < 28) return prev + 2.4;
+                if (prev < 58) return prev + 1.2;
+                if (prev < 82) return prev + 0.6;
+                if (prev < 94) return prev + 0.15;
+                return prev;
+            });
+        }, 300);
+
         try {
             const compiledInstruction = `Role/Vibe: ${role}. CR: ${cr}. Size: ${size}. Type: ${type}. Alignment: ${alignment}. Environment: ${environment}. Signature Abilities: ${selectedAbilities.join(', ') || 'None'}. Context Details: ${customNotes || 'Standard 5e creature'}.`;
 
-            const forged = await generateNpc(name.trim(), compiledInstruction);
+            let forged = null;
+            if (generateNpc) {
+                forged = await generateNpc(name.trim(), compiledInstruction, (pct, stage) => {
+                    setForgeProgress(p => Math.max(p, pct));
+                    if (stage) setForgeStageText(stage);
+                });
+            }
+
+            // Fallback to aiHelper directly if generateNpc wasn't provided or returned null
+            if (!forged && aiHelper) {
+                setForgeProgress(p => Math.max(p, 45));
+                setForgeStageText("Synthesizing Statblock via Direct AI Helper...");
+                const fallbackPrompt = `You are an expert D&D 5e Monster Designer. Create an authentic, balanced, fully playable 5e Monster Statblock for: "${name.trim()}".
+Parameters: ${compiledInstruction}
+Output ONLY valid JSON without markdown wrapping:
+{
+  "name": "${name.trim()}",
+  "cr": "${cr}",
+  "level": "${cr}",
+  "xp": "1,000 XP",
+  "race": "${size} ${type.toLowerCase()}, ${alignment.toLowerCase()}",
+  "size": "${size}",
+  "type": "${type}",
+  "alignment": "${alignment}",
+  "hp": { "current": 50, "max": 50, "formula": "8d8 + 14" },
+  "ac": 14,
+  "acFormula": "natural armor",
+  "speed": "30 ft.",
+  "profBonus": 2,
+  "stats": { "str": 14, "dex": 12, "con": 14, "int": 10, "wis": 12, "cha": 10 },
+  "savingThrows": { "str": false, "dex": false, "con": false, "int": false, "wis": false, "cha": false },
+  "skills": { "Perception": true },
+  "senses": { "darkvision": "60 ft.", "passivePerception": 13 },
+  "darkvision": 60,
+  "passivePerception": 13,
+  "defenses": { "resistances": "", "immunities": "", "vulnerabilities": "", "conditionImmunities": "" },
+  "proficiencies": { "languages": "Common" },
+  "features": [],
+  "customActions": [
+    { "name": "Multiattack", "desc": "The creature makes two attacks.", "type": "Action" },
+    { "name": "Attack", "desc": "Melee Weapon Attack: +5 to hit, reach 5 ft., one target. Hit: 8 (1d8 + 4) damage.", "hit": "+5", "dmg": "1d8+4", "type": "Action" }
+  ],
+  "spells": [],
+  "bio": { "appearance": "", "backstory": "Forged by AI" }
+}`;
+                const rawRes = await aiHelper([{ role: 'user', content: fallbackPrompt }]);
+                const text = typeof rawRes === 'string' ? rawRes : (rawRes?.message?.content || JSON.stringify(rawRes));
+                const match = text.match(/\{[\s\S]*\}/);
+                if (match) {
+                    forged = JSON.parse(match[0]);
+                }
+            }
+
             if (forged) {
+                clearInterval(progressTicker);
+                setForgeProgress(100);
+                setForgeStageText("Creature Forged Successfully!");
+
+                if (!forged.image) {
+                    forged.image = createProceduralToken(forged);
+                    forged.avatarUrl = forged.image;
+                }
+
                 const finalCreature = {
                     ...forged,
                     quirk: "Forged by AI",
                     isHidden: true,
                     id: forged.id || Date.now()
                 };
+
+                // Brief pause so user perceives the 100% completion
+                await new Promise(r => setTimeout(r, 450));
                 setPreviewNpc(finalCreature);
                 toast(`Forged ${finalCreature.name}! Review statblock below.`, "success");
             } else {
-                toast("The Forge could not generate creature. Please try again.", "error");
+                clearInterval(progressTicker);
+                toast("The Forge could not generate creature. Please check your AI connection in Settings.", "error");
             }
         } catch (e) {
+            clearInterval(progressTicker);
             console.error("Forge Error:", e);
-            toast("Forge failed: " + e.message, "error");
+            toast("Forge failed: " + (e.message || "Unknown error"), "error");
+        } finally {
+            clearInterval(progressTicker);
+            setIsForging(false);
         }
-        setIsForging(false);
     };
 
     const handleParseRawText = async () => {
@@ -301,6 +388,18 @@ export const MonsterForgeModal = ({
         }
 
         setIsParsingText(true);
+        setParseProgress(12);
+        setParseStageText("Analyzing text structure & detecting statblock schema...");
+
+        const parseTicker = setInterval(() => {
+            setParseProgress(prev => {
+                if (prev < 40) return prev + 3;
+                if (prev < 75) return prev + 1.5;
+                if (prev < 90) return prev + 0.4;
+                return prev;
+            });
+        }, 250);
+
         const prompt = `You are an expert D&D 5e monster parser. Extract the full 5e statblock from this text into this exact JSON format. DO NOT WRAP IN MARKDOWN. Only return pure valid JSON:
 {
   "name": "Monster Name",
@@ -341,6 +440,9 @@ ${pasteText}`;
 
         try {
             let res = await aiHelper([{ role: 'user', content: prompt }]);
+            setParseProgress(65);
+            setParseStageText("Parsing ability scores, traits, and action formulas...");
+
             if (typeof res !== 'string') {
                 let extracted = res;
                 if (res?.message?.content) extracted = res.message.content;
@@ -354,8 +456,20 @@ ${pasteText}`;
             if (!match) throw new Error("No JSON returned from AI parser");
             const parsed = JSON.parse(match[0]);
 
+            setParseProgress(85);
+            setParseStageText("Cross-referencing SRD compendium for spells & actions...");
             // Enrich with SRD
             const enriched = await enrichCharacter(parsed);
+            if (!enriched.image) {
+                enriched.image = createProceduralToken(enriched);
+                enriched.avatarUrl = enriched.image;
+            }
+
+            clearInterval(parseTicker);
+            setParseProgress(100);
+            setParseStageText("Statblock Extracted Successfully!");
+            await new Promise(r => setTimeout(r, 400));
+
             const finalCreature = {
                 ...enriched,
                 quirk: "Extracted from Text",
@@ -365,10 +479,13 @@ ${pasteText}`;
             setPreviewNpc(finalCreature);
             toast(`Extracted ${finalCreature.name}! Review statblock below.`, "success");
         } catch (e) {
+            clearInterval(parseTicker);
             console.error("Text Extract Error:", e);
             toast("Failed to parse text into a valid monster statblock: " + e.message, "error");
+        } finally {
+            clearInterval(parseTicker);
+            setIsParsingText(false);
         }
-        setIsParsingText(false);
     };
 
     const handleAcceptCreature = () => {
@@ -464,18 +581,80 @@ ${pasteText}`;
                     <div className="flex-1 min-h-0 overflow-y-auto custom-scroll p-5 sm:p-6 space-y-5">
                         {tab === 'generate' ? (
                             isForging ? (
-                                <div className="py-20 text-center flex flex-col items-center justify-center space-y-4">
-                                    <div className="relative">
-                                        <div className="w-16 h-16 rounded-full border-4 border-purple-500/20 border-t-purple-500 animate-spin"></div>
-                                        <div className="absolute inset-0 flex items-center justify-center text-purple-400">
-                                            <Icon name="sparkles" size={24}/>
+                                <div className="py-12 sm:py-16 px-4 max-w-xl mx-auto flex flex-col items-center justify-center space-y-6">
+                                    {/* Animated Forge Centerpiece */}
+                                    <div className="relative flex items-center justify-center">
+                                        <div className="absolute w-28 h-28 rounded-full bg-purple-600/25 blur-2xl animate-pulse"></div>
+                                        <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-purple-950/90 via-slate-900 to-slate-950 border border-purple-500/40 flex items-center justify-center shadow-[0_0_30px_rgba(168,85,247,0.35)] relative overflow-hidden">
+                                            <div className="absolute inset-0 bg-gradient-to-t from-purple-500/10 to-transparent"></div>
+                                            <Icon name="hammer" size={32} className="text-amber-400 animate-bounce relative z-10"/>
+                                            <div className="absolute top-1.5 right-1.5 text-purple-300 animate-spin text-[10px]">✦</div>
+                                            <div className="absolute bottom-1.5 left-1.5 text-amber-300 text-[10px]">✦</div>
                                         </div>
                                     </div>
-                                    <div>
-                                        <h3 className="text-lg font-bold text-purple-300 fantasy-font">Forging 5e Creature...</h3>
-                                        <p className="text-xs text-slate-400 max-w-sm mt-1">
-                                            Calculating CR benchmarks, balancing damage output, creating traits, and summoning portrait.
+
+                                    {/* Stage Heading */}
+                                    <div className="text-center space-y-2 w-full">
+                                        <div className="flex items-center justify-center gap-2">
+                                            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold font-mono tracking-wider uppercase bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                                                5e AI Forge
+                                            </span>
+                                            <span className="text-xs font-mono font-bold text-amber-300 px-2 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/20">
+                                                {name || 'Creature'} (CR {cr})
+                                            </span>
+                                        </div>
+                                        <h3 className="text-lg sm:text-xl font-bold text-white fantasy-font tracking-wide min-h-[28px]">
+                                            {forgeStageText || "Forging 5e Creature..."}
+                                        </h3>
+                                        <p className="text-xs text-slate-400 max-w-md mx-auto">
+                                            Applying 5e DMG balance tables, ability scores, action damage formulas, and token artwork.
                                         </p>
+                                    </div>
+
+                                    {/* Progress Bar Container */}
+                                    <div className="w-full bg-slate-950/70 border border-slate-800/90 rounded-2xl p-4 sm:p-5 shadow-2xl space-y-3">
+                                        <div className="flex justify-between items-center text-xs font-mono font-bold">
+                                            <span className="text-purple-400 flex items-center gap-2">
+                                                <span className="relative flex h-2 w-2">
+                                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-purple-400 opacity-75"></span>
+                                                    <span className="relative inline-flex rounded-full h-2 w-2 bg-purple-500"></span>
+                                                </span>
+                                                Forging in progress...
+                                            </span>
+                                            <span className="text-amber-300 text-sm font-bold bg-slate-900 px-2.5 py-0.5 rounded-md border border-slate-700/80 shadow-inner">
+                                                {Math.min(100, Math.round(forgeProgress))}%
+                                            </span>
+                                        </div>
+
+                                        {/* The Animated Bar */}
+                                        <div className="w-full h-3.5 bg-slate-900 rounded-full overflow-hidden border border-slate-700/80 p-0.5 shadow-inner relative">
+                                            <div 
+                                                className="h-full rounded-full bg-gradient-to-r from-purple-600 via-amber-500 to-emerald-400 transition-all duration-300 ease-out shadow-[0_0_14px_rgba(217,119,6,0.6)] relative overflow-hidden"
+                                                style={{ width: `${Math.max(6, Math.min(100, forgeProgress))}%` }}
+                                            >
+                                                <div className="absolute inset-0 bg-[linear-gradient(90deg,transparent_0%,rgba(255,255,255,0.3)_50%,transparent_100%)] animate-[pulse_2s_infinite]"></div>
+                                            </div>
+                                        </div>
+
+                                        {/* 4 Multi-stage Milestone Badges */}
+                                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 text-[11px] font-medium">
+                                            <div className={`p-2 rounded-xl border text-center transition-all ${forgeProgress >= 20 ? 'bg-purple-950/50 border-purple-500/50 text-purple-200' : 'bg-slate-900/40 border-slate-800 text-slate-500'}`}>
+                                                <div className="font-bold">{forgeProgress >= 28 ? '✓' : '1.'} SRD Compendium</div>
+                                                <div className="text-[9px] text-slate-400 mt-0.5">Rules &amp; CR Data</div>
+                                            </div>
+                                            <div className={`p-2 rounded-xl border text-center transition-all ${forgeProgress >= 40 ? 'bg-purple-950/50 border-purple-500/50 text-purple-200' : 'bg-slate-900/40 border-slate-800 text-slate-500'}`}>
+                                                <div className="font-bold">{forgeProgress >= 65 ? '✓' : '2.'} 5e Statblock</div>
+                                                <div className="text-[9px] text-slate-400 mt-0.5">HP, AC &amp; Attacks</div>
+                                            </div>
+                                            <div className={`p-2 rounded-xl border text-center transition-all ${forgeProgress >= 70 ? 'bg-purple-950/50 border-purple-500/50 text-purple-200' : 'bg-slate-900/40 border-slate-800 text-slate-500'}`}>
+                                                <div className="font-bold">{forgeProgress >= 85 ? '✓' : '3.'} Token Art</div>
+                                                <div className="text-[9px] text-slate-400 mt-0.5">Portrait &amp; Glyphs</div>
+                                            </div>
+                                            <div className={`p-2 rounded-xl border text-center transition-all ${forgeProgress >= 90 ? 'bg-purple-950/50 border-purple-500/50 text-purple-200' : 'bg-slate-900/40 border-slate-800 text-slate-500'}`}>
+                                                <div className="font-bold">{forgeProgress >= 100 ? '✓' : '4.'} 3D Mini</div>
+                                                <div className="text-[9px] text-slate-400 mt-0.5">Tactical Model</div>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
                             ) : (
@@ -672,11 +851,75 @@ ${pasteText}`;
                         ) : (
                             /* Paste Text Tab */
                             isParsingText ? (
-                                <div className="py-20 text-center flex flex-col items-center justify-center space-y-4">
-                                    <div className="w-14 h-14 rounded-full border-4 border-orange-500/20 border-t-orange-500 animate-spin"></div>
-                                    <div>
-                                        <h3 className="text-lg font-bold text-orange-300 fantasy-font">Extracting 5e Statblock...</h3>
-                                        <p className="text-xs text-slate-400 mt-1">Parsing stats, actions, spells, and defenses from raw text.</p>
+                                <div className="py-12 sm:py-16 px-4 max-w-xl mx-auto flex flex-col items-center justify-center space-y-6">
+                                    {/* Animated Centerpiece */}
+                                    <div className="relative flex items-center justify-center">
+                                        <div className="absolute w-28 h-28 rounded-full bg-orange-600/25 blur-2xl animate-pulse"></div>
+                                        <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-orange-950/80 via-slate-900 to-slate-950 border border-orange-500/40 flex items-center justify-center shadow-[0_0_30px_rgba(249,115,22,0.35)] relative overflow-hidden">
+                                            <div className="absolute inset-0 bg-gradient-to-t from-orange-500/10 to-transparent"></div>
+                                            <Icon name="wand-2" size={32} className="text-orange-400 animate-pulse relative z-10"/>
+                                        </div>
+                                    </div>
+
+                                    {/* Stage Heading */}
+                                    <div className="text-center space-y-2 w-full">
+                                        <div className="flex items-center justify-center gap-2">
+                                            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold font-mono tracking-wider uppercase bg-orange-500/20 text-orange-300 border border-orange-500/30">
+                                                Text Extractor
+                                            </span>
+                                        </div>
+                                        <h3 className="text-lg sm:text-xl font-bold text-white fantasy-font tracking-wide min-h-[28px]">
+                                            {parseStageText || "Extracting 5e Statblock..."}
+                                        </h3>
+                                        <p className="text-xs text-slate-400 max-w-md mx-auto">
+                                            Parsing ability scores, hit point formulas, saving throws, actions, and spells from raw text.
+                                        </p>
+                                    </div>
+
+                                    {/* Progress Bar Container */}
+                                    <div className="w-full bg-slate-950/70 border border-slate-800/90 rounded-2xl p-4 sm:p-5 shadow-2xl space-y-3">
+                                        <div className="flex justify-between items-center text-xs font-mono font-bold">
+                                            <span className="text-orange-400 flex items-center gap-2">
+                                                <span className="relative flex h-2 w-2">
+                                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75"></span>
+                                                    <span className="relative inline-flex rounded-full h-2 w-2 bg-orange-500"></span>
+                                                </span>
+                                                Parsing raw statblock...
+                                            </span>
+                                            <span className="text-amber-300 text-sm font-bold bg-slate-900 px-2.5 py-0.5 rounded-md border border-slate-700/80 shadow-inner">
+                                                {Math.min(100, Math.round(parseProgress))}%
+                                            </span>
+                                        </div>
+
+                                        {/* The Animated Bar */}
+                                        <div className="w-full h-3.5 bg-slate-900 rounded-full overflow-hidden border border-slate-700/80 p-0.5 shadow-inner relative">
+                                            <div 
+                                                className="h-full rounded-full bg-gradient-to-r from-orange-600 via-amber-500 to-emerald-400 transition-all duration-300 ease-out shadow-[0_0_14px_rgba(249,115,22,0.6)] relative overflow-hidden"
+                                                style={{ width: `${Math.max(6, Math.min(100, parseProgress))}%` }}
+                                            >
+                                                <div className="absolute inset-0 bg-[linear-gradient(90deg,transparent_0%,rgba(255,255,255,0.3)_50%,transparent_100%)] animate-[pulse_2s_infinite]"></div>
+                                            </div>
+                                        </div>
+
+                                        {/* Milestone Badges */}
+                                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 text-[11px] font-medium">
+                                            <div className={`p-2 rounded-xl border text-center transition-all ${parseProgress >= 20 ? 'bg-orange-950/50 border-orange-500/50 text-orange-200' : 'bg-slate-900/40 border-slate-800 text-slate-500'}`}>
+                                                <div className="font-bold">{parseProgress >= 35 ? '✓' : '1.'} Text Schema</div>
+                                                <div className="text-[9px] text-slate-400 mt-0.5">Regex &amp; Headers</div>
+                                            </div>
+                                            <div className={`p-2 rounded-xl border text-center transition-all ${parseProgress >= 45 ? 'bg-orange-950/50 border-orange-500/50 text-orange-200' : 'bg-slate-900/40 border-slate-800 text-slate-500'}`}>
+                                                <div className="font-bold">{parseProgress >= 70 ? '✓' : '2.'} Stats &amp; Saves</div>
+                                                <div className="text-[9px] text-slate-400 mt-0.5">Modifiers &amp; HP</div>
+                                            </div>
+                                            <div className={`p-2 rounded-xl border text-center transition-all ${parseProgress >= 75 ? 'bg-orange-950/50 border-orange-500/50 text-orange-200' : 'bg-slate-900/40 border-slate-800 text-slate-500'}`}>
+                                                <div className="font-bold">{parseProgress >= 90 ? '✓' : '3.'} Actions &amp; Attacks</div>
+                                                <div className="text-[9px] text-slate-400 mt-0.5">Dice Formulas</div>
+                                            </div>
+                                            <div className={`p-2 rounded-xl border text-center transition-all ${parseProgress >= 95 ? 'bg-orange-950/50 border-orange-500/50 text-orange-200' : 'bg-slate-900/40 border-slate-800 text-slate-500'}`}>
+                                                <div className="font-bold">{parseProgress >= 100 ? '✓' : '4.'} SRD Enrich</div>
+                                                <div className="text-[9px] text-slate-400 mt-0.5">Spells &amp; Traits</div>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
                             ) : (

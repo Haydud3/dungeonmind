@@ -25,6 +25,7 @@ import { useCharacterStore } from './stores/useCharacterStore';
 import { retrieveContext, buildPrompt, buildCastList } from './utils/loreEngine';
 import { retrieveChunkedMap, resolveChunkedHtml, parseHandoutBody } from './utils/storageUtils';
 import { searchGithubModels } from './utils/miniManifest';
+import { createProceduralToken } from './utils/tokenGenerator';
 import { collection, query, where, onSnapshot, doc, updateDoc } from 'firebase/firestore';
 
 import SheetContainer from './components/character-sheet/SheetContainer';
@@ -493,16 +494,49 @@ function DungeonMindApp() {
       console.log('queryAiService called with provider:', aiProvider);
       
       try {
-          if (aiProvider === 'puter') {
-              if (!window.puter) {
-                  throw new Error("Puter.js script is missing or blocked.");
-              }
-              // Puter expects the chat format
-              const response = await window.puter.ai.chat(messages, { model: puterModel });
+          if (aiProvider === 'openai' && apiKey) {
+              const res = await fetch('https://api.openai.com/v1/chat/completions', {
+                  method: 'POST',
+                  headers: {
+                      'Content-Type': 'application/json',
+                      'Authorization': `Bearer ${apiKey.trim()}`
+                  },
+                  body: JSON.stringify({
+                      model: openAiModel || 'gpt-4o',
+                      messages: messages
+                  })
+              });
+              const data = await res.json();
+              if (data.error) throw new Error(data.error.message || 'OpenAI API error');
+              return data.choices?.[0]?.message?.content || '';
+          }
+
+          if (aiProvider === 'gemini' && apiKey) {
+              const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey.trim()}`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                      contents: messages.map(m => ({
+                          role: m.role === 'assistant' ? 'model' : 'user',
+                          parts: [{ text: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) }]
+                      }))
+                  })
+              });
+              const data = await res.json();
+              if (data.error) throw new Error(data.error.message || 'Gemini API error');
+              return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          }
+
+          // Default or Puter provider
+          if (window.puter && window.puter.ai && typeof window.puter.ai.chat === 'function') {
+              const response = await window.puter.ai.chat(messages, { model: puterModel || 'mistral-large-latest' });
               return response?.message?.content || response;
           }
-          
-          // Add OpenAI / Gemini logic here later
+
+          if (aiProvider === 'puter' && !window.puter) {
+              throw new Error("Puter.js script is missing or blocked.");
+          }
+
           return "AI Provider not fully configured yet.";
           
       } catch (error) {
@@ -695,39 +729,79 @@ function DungeonMindApp() {
   // Helper to generate an image and convert it to a Base64 string for storage
   const generatePortrait = async (char) => {
       try {
-          const race = char.race || 'Humanoid';
-          const charClass = char.class || 'Creature';
-          const appearance = char.bio?.appearance || '';
+          const race = char?.race || 'Humanoid';
+          const charClass = char?.class || char?.type || 'Creature';
+          const appearance = char?.bio?.appearance || '';
           
-          const imagePrompt = `High quality fantasy digital character illustration of a ${char.name || ''}, ${race} ${charClass}. ${appearance.substring(0, 150)}. 2D fantasy character concept art, flat colors, solid white background, stylized token art, not photorealistic.`;
+          const imagePrompt = `High quality fantasy digital character illustration of a ${char?.name || ''}, ${race} ${charClass}. ${appearance.substring(0, 150)}. 2D fantasy character concept art, flat colors, solid white background, stylized token art, not photorealistic.`;
           
+          // 1. If OpenAI API key is configured, attempt DALL-E generation
+          if (aiProvider === 'openai' && apiKey) {
+              try {
+                  const dres = await fetch('https://api.openai.com/v1/images/generations', {
+                      method: 'POST',
+                      headers: {
+                          'Content-Type': 'application/json',
+                          'Authorization': `Bearer ${apiKey}`
+                      },
+                      body: JSON.stringify({
+                          prompt: imagePrompt.substring(0, 950),
+                          n: 1,
+                          size: '512x512',
+                          response_format: 'b64_json'
+                      })
+                  });
+                  if (dres.ok) {
+                      const dj = await dres.json();
+                      if (dj?.data?.[0]?.b64_json) {
+                          return `data:image/png;base64,${dj.data[0].b64_json}`;
+                      }
+                  }
+              } catch (oe) {
+                  console.warn("OpenAI image generation unavailable:", oe);
+              }
+          }
+
+          // 2. Puter.ai txt2img (clean call without replicate provider options to avoid unsafe Origin header error)
           if (window.puter?.ai?.txt2img) {
               try {
-                  const imgEl = await window.puter.ai.txt2img(imagePrompt, { provider: 'replicate-image-generation', model: 'black-forest-labs/flux-schnell', ratio: { w: 1, h: 1 } });
-                  const response = await fetch(imgEl.src);
+                  const imgEl = await window.puter.ai.txt2img(imagePrompt);
+                  if (imgEl && imgEl.src) {
+                      const response = await fetch(imgEl.src);
+                      if (response.ok) {
+                          const blob = await response.blob();
+                          return await new Promise((resolve) => {
+                              const reader = new FileReader();
+                              reader.onloadend = () => resolve(reader.result);
+                              reader.readAsDataURL(blob);
+                          });
+                      }
+                  }
+              } catch (e) {
+                  console.warn("Puter image generation unavailable:", e?.message || e);
+              }
+          }
+
+          // 3. Fallback web image endpoint with safe status check
+          try {
+              const response = await fetch(`https://image.pollinations.ai/prompt/${encodeURIComponent(imagePrompt)}?width=512&height=512&nologo=true&seed=${Math.floor(Math.random() * 100000)}`);
+              if (response && response.ok) {
                   const blob = await response.blob();
                   return await new Promise((resolve) => {
                       const reader = new FileReader();
                       reader.onloadend = () => resolve(reader.result);
                       reader.readAsDataURL(blob);
                   });
-              } catch (e) {
-                  console.error("Puter image generation failed, falling back to pollinations...", e);
               }
+          } catch (pe) {
+              // Ignore network / Cloudflare blocks cleanly
           }
-
-          // Pollinations.ai is a free image generation API that returns an image buffer directly
-          const response = await fetch(`https://image.pollinations.ai/prompt/${encodeURIComponent(imagePrompt)}?width=512&height=512&nologo=true&seed=${Math.floor(Math.random() * 100000)}`);
-          const blob = await response.blob();
-          return await new Promise((resolve) => {
-              const reader = new FileReader();
-              reader.onloadend = () => resolve(reader.result);
-              reader.readAsDataURL(blob);
-          });
       } catch (e) {
-          console.error("Image generation failed", e);
+          console.warn("Portrait generation fallback triggered:", e);
       }
-      return "";
+      
+      // 4. Guaranteed fallback: Procedural high-resolution fantasy token SVG
+      return createProceduralToken(char);
   };
 
   const generatePlayer = async (name, contextStr) => {
@@ -744,20 +818,26 @@ function DungeonMindApp() {
       catch (e) { return null; }
   };
 
-  const generateNpc = async (name, contextStr) => {
+  const generateNpc = async (name, contextStr, onProgress = null) => {
+      onProgress?.(10, "Consulting 5e SRD Compendium & Archival Records...");
       let apiContext = "";
       try {
           const searchRes = await fetch(`https://www.dnd5eapi.co/api/monsters/?name=${encodeURIComponent(name)}`);
-          const searchData = await searchRes.json();
-          if (searchData.count > 0) {
-              const exactMatch = await fetch(`https://www.dnd5eapi.co${searchData.results[0].url}`);
-              const exactData = await exactMatch.json();
-              apiContext = `\n\nFound Official 5e SRD Data for this creature:\n${JSON.stringify(exactData)}`;
+          if (searchRes.ok) {
+              const searchData = await searchRes.json();
+              if (searchData.count > 0) {
+                  const exactMatch = await fetch(`https://www.dnd5eapi.co${searchData.results[0].url}`);
+                  if (exactMatch.ok) {
+                      const exactData = await exactMatch.json();
+                      apiContext = `\n\nFound Official 5e SRD Data for this creature:\n${JSON.stringify(exactData)}`;
+                  }
+              }
           }
       } catch (e) {
-          console.error("5eAPI fetch failed for NPC", e);
+          console.warn("5eAPI fetch failed for NPC (using pure AI generation)", e);
       }
 
+      onProgress?.(30, "Synthesizing 5e Statblock & CR Benchmarks with AI...");
       const prompt = `You are an expert D&D 5e Monster Designer. Create an authentic, balanced, fully playable 5e Monster Statblock for: "${name}".
 Context / Design Parameters: ${contextStr}.${apiContext}
 
@@ -786,17 +866,25 @@ ${MONSTER_STATBLOCK_SCHEMA}`;
       
       const res = await queryAiService([{ role: 'user', content: prompt }]);
       try { 
+          onProgress?.(65, "Balancing HP, Armor Class, Spell Slots & Actions...");
           const match = res.match(/\{[\s\S]*\}/);
           if (!match) throw new Error("No JSON returned from AI for NPC");
           const char = sanitizeAiMonster(JSON.parse(match[0])); 
           if (char) {
+              onProgress?.(80, "Forging Character Portrait & Token Art...");
               const img = await generatePortrait(char);
               if (img) { char.image = img; char.avatarUrl = img; }
               
-              let results = await searchGithubModels(char.name);
-              if (results.length === 0 && char.type) results = await searchGithubModels(char.type);
-              if (results.length > 0) char.model3d = results[0].url;
+              onProgress?.(92, "Querying 3D Miniatures Repository...");
+              try {
+                  let results = await searchGithubModels(char.name);
+                  if (results.length === 0 && char.type) results = await searchGithubModels(char.type);
+                  if (results.length > 0) char.model3d = results[0].url;
+              } catch (me) {
+                  console.warn("3D mini lookup failed:", me);
+              }
           }
+          onProgress?.(100, "Creature Sheet Finalized!");
           return char;
       } 
       catch (e) { 
@@ -1147,12 +1235,15 @@ ${MONSTER_STATBLOCK_SCHEMA}`;
                            onOpenSheet={handleOpenSheet} 
                            onDiceRoll={handleDiceRoll} 
                            diceLog={diceLog}
-                           // --- FIX: PASS ROLE HERE ---
                            role={effectiveRole}
-                           // ---------------------------
                            isOwner={true}
                            onLogAction={(msg) => addLogEntry({ message: msg, id: Date.now() })}
                            onOpenDiceTray={() => setShowTools(p => !p)}
+                           generateNpc={generateNpc}
+                           aiHelper={queryAiService}
+                           edition={data?.config?.edition || '2014'}
+                           apiKey={apiKey}
+                           setView={setCurrentView}
                        />
                    </div>
                )}
@@ -1235,7 +1326,7 @@ ${MONSTER_STATBLOCK_SCHEMA}`;
                )}
 
                {!isCastMode && vttSidebar === 'journal' && currentView === 'map' && (
-                   <div className="absolute top-0 right-0 bottom-0 w-full sm:w-[500px] max-w-full bg-slate-900 border-l border-slate-700 shadow-2xl z-[80] flex flex-col animate-in slide-in-from-right duration-300 pb-safe">
+                   <div className="absolute top-0 right-0 bottom-0 w-full sm:w-[500px] max-w-full bg-slate-950/95 border-l border-amber-500/30 shadow-2xl z-[80] flex flex-col backdrop-blur-xl animate-in slide-in-from-right duration-300 pb-safe">
                        <JournalView role={effectiveRole} userId={user?.uid} isSidebar={true} onClose={() => setVttSidebar(null)} />
                    </div>
                )}

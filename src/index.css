@@ -458,30 +458,36 @@ h1, h2, h3, .fantasy-font { font-family: 'Cinzel', serif; }
 
 /* Journal Paper Themes */
 .journal-sheet-slate {
-    background-color: #1e293b;
-    color: #e2e8f0;
-    border: 1px solid #334155;
-    box-shadow: 0 10px 25px -3px rgba(0, 0, 0, 0.5), 0 0 0 1px #334155;
+    background: linear-gradient(170deg, #090e17 0%, #0f172a 100%);
+    color: #f1f5f9;
+    border: 1px solid rgba(245, 158, 11, 0.25);
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.8), 0 0 30px rgba(245, 158, 11, 0.06);
 }
 .journal-sheet-slate .journal-title-input {
-    color: #f8fafc;
-    border-bottom: 2px solid #334155;
+    color: #fef08a;
+    font-family: 'Cinzel', serif;
+    border-bottom: 2px solid rgba(245, 158, 11, 0.25);
+}
+.journal-sheet-slate .journal-title-input::placeholder {
+    color: rgba(254, 240, 138, 0.4);
 }
 .journal-sheet-slate .ql-editor h1,
 .journal-sheet-slate .ql-editor h2,
 .journal-sheet-slate .ql-editor h3 {
-    color: #f8fafc;
-    border-bottom: 1px solid #334155;
+    color: #fbbf24;
+    font-family: 'Cinzel', serif;
+    border-bottom: 1px solid rgba(245, 158, 11, 0.2);
 }
 
 .journal-sheet-parchment {
     background-color: #f6f0dd;
     color: #2c2219;
     border: 1px solid #d5c7a3;
-    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4), inset 0 0 80px rgba(180, 140, 90, 0.12);
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.6), inset 0 0 100px rgba(180, 140, 90, 0.16);
 }
 .journal-sheet-parchment .journal-title-input {
     color: #2b1810;
+    font-family: 'Cinzel', serif;
     border-bottom: 2px solid #d5c7a3;
 }
 .journal-sheet-parchment .journal-title-input::placeholder {
@@ -494,6 +500,7 @@ h1, h2, h3, .fantasy-font { font-family: 'Cinzel', serif; }
 .journal-sheet-parchment .ql-editor h2,
 .journal-sheet-parchment .ql-editor h3 {
     color: #3b2214;
+    font-family: 'Cinzel', serif;
     border-bottom: 1px solid #d5c7a3;
 }
 .journal-sheet-parchment table {
@@ -510,30 +517,32 @@ h1, h2, h3, .fantasy-font { font-family: 'Cinzel', serif; }
 }
 
 .journal-sheet-grimoire {
-    background-color: #12101d;
-    color: #ddd6fe;
-    border: 1px solid #3b2d56;
-    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.7), 0 0 35px rgba(139, 92, 246, 0.1);
+    background: linear-gradient(170deg, #0b0914 0%, #171129 100%);
+    color: #ede9fe;
+    border: 1px solid rgba(168, 85, 247, 0.35);
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.85), 0 0 35px rgba(168, 85, 247, 0.12);
 }
 .journal-sheet-grimoire .journal-title-input {
-    color: #c084fc;
-    border-bottom: 2px solid #3b2d56;
+    color: #e9d5ff;
+    font-family: 'Cinzel', serif;
+    border-bottom: 2px solid rgba(168, 85, 247, 0.3);
 }
 .journal-sheet-grimoire .journal-title-input::placeholder {
-    color: #5b4a78;
+    color: #6b538c;
 }
 .journal-sheet-grimoire .ql-editor {
-    color: #ddd6fe !important;
+    color: #ede9fe !important;
 }
 .journal-sheet-grimoire .ql-editor h1,
 .journal-sheet-grimoire .ql-editor h2,
 .journal-sheet-grimoire .ql-editor h3 {
-    color: #e9d5ff;
-    border-bottom: 1px solid #3b2d56;
+    color: #f3e8ff;
+    font-family: 'Cinzel', serif;
+    border-bottom: 1px solid rgba(168, 85, 247, 0.25);
 }
 .journal-sheet-grimoire thead tr {
-    background-color: #241d3b !important;
-    color: #e9d5ff !important;
+    background-color: #281e42 !important;
+    color: #f3e8ff !important;
 }
 
 /* Force the Editor to grow dynamically (Auto-Expand) */
