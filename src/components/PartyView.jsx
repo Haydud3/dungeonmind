@@ -11,6 +11,7 @@ import { enrichCharacter } from '../utils/srdEnricher.js';
 import { fetchDndBeyondCharacter } from '../utils/dndBeyondService.js';
 import { retrieveChunkedMap, storeChunkedMap, fileToBase64 } from '../utils/storageUtils';
 import { searchGithubModels } from '../utils/miniManifest';
+import ModelPickerModal from './ModelPickerModal';
 import { Client } from "@gradio/client";
 import PartyPassivesModal from './PartyPassivesModal';
 import PartyCreationHubModal from './PartyCreationHubModal';
@@ -61,6 +62,7 @@ export const PartyView = ({
     const [quickActorModal, setQuickActorModal] = useState(null);
     const [showBuilder, setShowBuilder] = useState(initialAction === 'builder');
     const [refreshCharacter, setRefreshCharacter] = useState(null);
+    const [manualDndId, setManualDndId] = useState('');
 
     const triggerQuickGroupRoll = async (rollType, category = 'skill') => {
         if (playersList.length === 0) {
@@ -86,6 +88,18 @@ export const PartyView = ({
                     timestamp: Date.now(),
                     content: JSON.stringify(payload)
                 });
+                if (rollType.toLowerCase() === 'initiative' && updateCampaign) {
+                    updateCampaign({
+                        campaign: {
+                            ...(data?.campaign || {}),
+                            combat: {
+                                ...(data?.campaign?.combat || {}),
+                                active: true,
+                                initiativeCalledAt: Date.now()
+                            }
+                        }
+                    });
+                }
                 toast(`🎲 Group ${rollType} prompt sent to chat!`, "success");
             }
         } catch (e) {
@@ -448,8 +462,9 @@ export const PartyView = ({
     // Sheet Save
     const handleSheetSave = async (updatedChar) => {
         const cleanChar = JSON.parse(JSON.stringify(updatedChar, (k, v) => v === undefined ? null : v));
-        const currentData = dataRef.current;
-        const newPlayers = (currentData.players || []).map(p => p.id === cleanChar.id ? cleanChar : p);
+        const currentData = dataRef.current || {};
+        const players = currentData.players || data?.players || [];
+        const newPlayers = players.map(p => String(p.id) === String(cleanChar.id) ? cleanChar : p);
         updateCampaign({ players: newPlayers });
     };
 
@@ -481,29 +496,36 @@ export const PartyView = ({
     const handleDelete = async (id, e) => {
         e?.stopPropagation?.();
         const currentData = dataRef.current || {};
-        const pList = currentData.players || [];
-        const charToDelete = pList.find(p => p.id === id);
+        const pList = currentData.players || data?.players || [];
+        const charToDelete = pList.find(p => String(p.id) === String(id));
         
         if (!(await dialog.confirm(`Are you sure you want to delete ${charToDelete?.name || 'this character'}?`))) {
             return;
         }
 
-        const newPlayers = pList.filter(p => p.id !== id);
+        const newPlayers = pList.filter(p => String(p.id) !== String(id));
         updateCampaign({ players: newPlayers });
+        if (String(viewingCharacterId) === String(id)) {
+            setViewingCharacterId(null);
+        }
         toast("Character deleted.", "info");
     };
 
-    const handleRefreshDndBeyond = async (mode) => {
-        if (!refreshCharacter?.dndBeyondId) return;
+    const handleRefreshDndBeyond = async (mode, customId = null) => {
+        const targetId = customId || manualDndId || refreshCharacter?.dndBeyondId;
+        if (!targetId) {
+            toast("Please enter a D&D Beyond Character ID or URL.", "warning");
+            return;
+        }
         setIsImporting(true);
         setImportStatus("Fetching from D&D Beyond...");
         try {
-            const jsonData = await fetchDndBeyondCharacter(refreshCharacter.dndBeyondId);
+            const jsonData = await fetchDndBeyondCharacter(targetId);
             const parsedData = parseDndBeyondJson(jsonData);
             const enrichedChar = await enrichCharacter(parsedData);
             
             const currentData = dataRef.current || {};
-            const pList = currentData.players || [];
+            const pList = currentData.players || data?.players || [];
             const existingIndex = pList.findIndex(p => String(p.id) === String(refreshCharacter.id));
             
             if (existingIndex !== -1) {
@@ -514,6 +536,7 @@ export const PartyView = ({
                     cleanChar = JSON.parse(JSON.stringify({
                         ...enrichedChar,
                         id: existing.id,
+                        dndBeyondId: enrichedChar.dndBeyondId || targetId,
                         ownerId: existing.ownerId,
                         image: existing.image || enrichedChar.image,
                         hp: existing.hp,
@@ -528,6 +551,7 @@ export const PartyView = ({
                     cleanChar = JSON.parse(JSON.stringify({
                         ...enrichedChar,
                         id: existing.id,
+                        dndBeyondId: enrichedChar.dndBeyondId || targetId,
                         ownerId: existing.ownerId,
                         image: existing.image || enrichedChar.image,
                         bio: { ...enrichedChar.bio, notes: existing.bio?.notes || enrichedChar.bio?.notes }
@@ -538,11 +562,15 @@ export const PartyView = ({
                 const newPlayers = [...pList];
                 newPlayers[existingIndex] = cleanChar;
                 updateCampaign({ players: newPlayers });
+                if (String(viewingCharacterId) === String(cleanChar.id)) {
+                    useCharacterStore.getState().loadCharacter(cleanChar);
+                }
             }
         } catch(err) {
             toast("Refresh failed: " + err.message, "error");
         }
         setRefreshCharacter(null);
+        setManualDndId('');
         setIsImporting(false);
     };
 
@@ -655,93 +683,53 @@ export const PartyView = ({
         }
     };
 
-    const handleMiniSearch = async (query, race) => {
-        setIsSearchingMinis(true);
-        const q = query || miniSearchQuery;
-        let results = await searchGithubModels(q);
-        if (results.length === 0 && race) results = await searchGithubModels(race);
-        setAvailableModels(results);
-        setIsSearchingMinis(false);
-    };
-
-    const handleModelSelect = (model, isStatue = false) => {
+    const handleSaveModelConfig = (config) => {
         if (!characterForModelSelection) return;
-        const finalChar = { ...characterForModelSelection };
-        if (model) {
-            finalChar.model3d = model.url;
-            finalChar.modelScale = model.scale || 1;
-            finalChar.modelYOffset = model.yOffset || 0;
-            if (isStatue) finalChar.forceStatue = true;
-            else delete finalChar.forceStatue;
-        } else {
-            delete finalChar.model3d;
-            delete finalChar.modelScale;
-            delete finalChar.modelYOffset;
-            delete finalChar.forceStatue;
-        }
-        
+        const finalChar = { 
+            ...characterForModelSelection,
+            model3d: config.modelUrl,
+            modelUrl: config.modelUrl,
+            modelScale: config.modelScale || 1,
+            modelYOffset: config.modelYOffset || 0,
+            modelRotation: config.modelRotation || 0,
+            materialStyle: config.materialStyle || 'original',
+            forceStatue: !!config.forceStatue
+        };
         handleSheetSave(finalChar);
-        toast(`Updated 3D model for ${finalChar.name}!`, "success");
-        if (viewingCharacterId === finalChar.id) {
+        if (String(viewingCharacterId) === String(finalChar.id)) {
             useCharacterStore.getState().loadCharacter(finalChar);
         }
-        
+        setCharacterForModelSelection(null);
+        setShowModelPicker(false);
+    };
+
+    const handleDeleteModel = () => {
+        if (!characterForModelSelection) return;
+        const finalChar = { 
+            ...characterForModelSelection,
+            model3d: null,
+            modelUrl: null,
+            modelScale: 1,
+            modelYOffset: 0,
+            modelRotation: 0,
+            materialStyle: 'original'
+        };
+        delete finalChar.forceStatue;
+        handleSheetSave(finalChar);
+        if (String(viewingCharacterId) === String(finalChar.id)) {
+            useCharacterStore.getState().loadCharacter(finalChar);
+        }
         setCharacterForModelSelection(null);
         setShowModelPicker(false);
     };
 
     const openModelPickerForExisting = (charId) => {
         const currentData = dataRef.current || {};
-        const char = (currentData.players || []).find(n => String(n.id) === String(charId));
+        const pList = currentData.players || data?.players || [];
+        const char = pList.find(n => String(n.id) === String(charId));
         if (!char) return;
         setCharacterForModelSelection(char);
-        setAvailableModels([]);
         setShowModelPicker(true);
-        setMiniSearchQuery(char.name);
-        handleMiniSearch(char.name, char.race);
-    };
-
-    const handleForge3D = async (character) => {
-        if (!character.image) {
-            toast("Character needs a portrait image to forge a 3D mini.", "warning");
-            return;
-        }
-        setIsForging3D(true);
-        setForge3DStatus("Connecting to Neural 3D Forge...");
-        try {
-            const client = await Client.connect("TencentARC/InstantMesh");
-            setForge3DStatus("Synthesizing 3D Geometry...");
-            let imageBlob;
-            if (character.image.startsWith('chunked:')) {
-                const b64 = await retrieveChunkedMap(character.image);
-                const res = await fetch(b64);
-                imageBlob = await res.blob();
-            } else {
-                const res = await fetch(character.image);
-                imageBlob = await res.blob();
-            }
-            const result = await client.predict("/check_input_image", [imageBlob]);
-            const processedImage = result.data[0];
-            setForge3DStatus("Extracting High-Poly Mesh (.obj)...");
-            const meshResult = await client.predict("/generate_mvs", [processedImage, 42]);
-            const finalMesh = await client.predict("/make3d", [meshResult.data[0]]);
-            const objUrl = finalMesh.data[0].url;
-            
-            const finalChar = {
-                ...character,
-                model3d: objUrl,
-                modelScale: 1,
-                modelYOffset: 0
-            };
-            handleSheetSave(finalChar);
-            toast("Forged custom 3D mini successfully!", "success");
-            setShowModelPicker(false);
-            setCharacterForModelSelection(null);
-        } catch(e) {
-            console.error("3D Forge error:", e);
-            toast("3D Forge failed: " + e.message, "error");
-        }
-        setIsForging3D(false);
     };
 
     // If a full sheet is currently open
@@ -1097,55 +1085,55 @@ export const PartyView = ({
                                         )}
                                         <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-transparent to-transparent"></div>
 
-                                        {/* Level Badge */}
-                                        <div className="absolute top-3 right-3 bg-amber-600 text-white text-xs font-mono font-extrabold px-2.5 py-0.5 rounded-lg shadow-md border border-amber-400 flex items-center gap-1">
-                                            <span>LVL</span> {p.level || 1}
-                                        </div>
-
-                                        {/* Heroic Inspiration Star Toggle */}
-                                        <button
-                                            type="button"
-                                            onClick={(e) => handleToggleInspiration(p, e)}
-                                            className={`absolute top-3 left-3 p-1.5 rounded-xl border shadow-lg transition-all ${
-                                                p.inspiration
-                                                    ? 'bg-yellow-500 text-slate-950 border-yellow-300 shadow-[0_0_12px_rgba(234,179,8,0.6)] scale-110'
-                                                    : 'bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-yellow-300 border-slate-700'
-                                            }`}
-                                            title={p.inspiration ? "Heroic Inspiration Active (Click to spend)" : "Grant Heroic Inspiration"}
-                                        >
-                                            <Icon name="star" size={15}/>
-                                        </button>
-
-                                        {/* Quick Actions (Hover Overlay) */}
-                                        <div className="absolute bottom-2 right-2 flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                                            {p.dndBeyondId && (
+                                        {/* Top-Right Level Badge & Quick Actions Ribbon */}
+                                        <div className="absolute top-2.5 right-2.5 flex items-center gap-1.5 z-30" onClick={(e) => e.stopPropagation()}>
+                                            {/* Quick Action Buttons Pill */}
+                                            <div className="flex items-center gap-1 bg-slate-950/85 backdrop-blur-md p-1 rounded-xl border border-slate-700/80 shadow-lg">
+                                                {/* Refresh / Sync D&D Beyond Button */}
                                                 <button
                                                     type="button"
                                                     onClick={(e) => { e.stopPropagation(); setRefreshCharacter(p); }}
-                                                    className="p-1.5 bg-slate-900/90 hover:bg-blue-600 text-blue-300 hover:text-white rounded-lg border border-blue-500/40 shadow transition-colors"
-                                                    title="Refresh from D&D Beyond"
+                                                    className={`p-1.5 rounded-lg transition-colors ${
+                                                        p.dndBeyondId
+                                                            ? 'text-blue-400 hover:bg-blue-600/30 hover:text-blue-300'
+                                                            : 'text-slate-400 hover:bg-blue-600/30 hover:text-blue-400'
+                                                    }`}
+                                                    title={p.dndBeyondId ? "Refresh from D&D Beyond" : "Link & Sync D&D Beyond"}
                                                 >
                                                     <Icon name="refresh-cw" size={13}/>
                                                 </button>
-                                            )}
-                                            <button
-                                                type="button"
-                                                onClick={(e) => { e.stopPropagation(); openModelPickerForExisting(p.id); }}
-                                                className="p-1.5 bg-slate-900/90 hover:bg-amber-600 text-amber-300 hover:text-white rounded-lg border border-amber-500/40 shadow transition-colors"
-                                                title="Select 3D Mini Model"
-                                            >
-                                                <Icon name="box" size={13}/>
-                                            </button>
-                                            {(role === 'dm' || isOwnerOf(p)) && (
+
+                                                {/* 3D Mini Model Button */}
                                                 <button
                                                     type="button"
-                                                    onClick={(e) => handleDelete(p.id, e)}
-                                                    className="p-1.5 bg-slate-900/90 hover:bg-red-700 text-red-400 hover:text-white rounded-lg border border-red-500/40 shadow transition-colors"
-                                                    title="Delete Hero"
+                                                    onClick={(e) => { e.stopPropagation(); openModelPickerForExisting(p.id); }}
+                                                    className={`p-1.5 rounded-lg transition-colors ${
+                                                        p.model3d 
+                                                            ? 'text-amber-400 hover:bg-amber-600/30 hover:text-amber-300' 
+                                                            : 'text-slate-400 hover:bg-amber-600/30 hover:text-amber-300'
+                                                    }`}
+                                                    title={p.model3d ? "Change or Remove 3D Mini" : "Assign 3D Mini Model"}
                                                 >
-                                                    <Icon name="trash-2" size={13}/>
+                                                    <Icon name="box" size={13}/>
                                                 </button>
-                                            )}
+
+                                                {/* Delete Hero Button */}
+                                                {(role === 'dm' || isOwnerOf(p)) && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={(e) => handleDelete(p.id, e)}
+                                                        className="p-1.5 rounded-lg text-slate-400 hover:bg-red-600/30 hover:text-red-400 transition-colors"
+                                                        title="Delete Hero"
+                                                    >
+                                                        <Icon name="trash-2" size={13}/>
+                                                    </button>
+                                                )}
+                                            </div>
+
+                                            {/* Level Badge */}
+                                            <div className="bg-amber-600 text-white text-xs font-mono font-extrabold px-2.5 py-1 rounded-xl shadow-md border border-amber-400/80 flex items-center gap-1">
+                                                <span>LVL</span> {p.level || 1}
+                                            </div>
                                         </div>
                                     </div>
 
@@ -1521,25 +1509,31 @@ export const PartyView = ({
                                             </td>
 
                                             {/* Actions */}
-                                            <td className="p-3.5 text-right space-x-1.5">
+                                            <td className="p-3.5 text-right space-x-1.5" onClick={(e) => e.stopPropagation()}>
+                                                <button
+                                                    type="button"
+                                                    onClick={(e) => { e.stopPropagation(); setRefreshCharacter(p); }}
+                                                    className={`p-1.5 rounded-lg border border-slate-700 transition-colors ${
+                                                        p.dndBeyondId 
+                                                            ? 'bg-slate-800 hover:bg-blue-600 text-blue-300 hover:text-white' 
+                                                            : 'bg-slate-800 hover:bg-blue-600 text-slate-400 hover:text-white'
+                                                    }`}
+                                                    title={p.dndBeyondId ? "Refresh from D&D Beyond" : "Link & Sync D&D Beyond"}
+                                                >
+                                                    <Icon name="refresh-cw" size={14}/>
+                                                </button>
                                                 <button
                                                     type="button"
                                                     onClick={(e) => { e.stopPropagation(); openModelPickerForExisting(p.id); }}
-                                                    className="p-1.5 bg-slate-800 hover:bg-amber-600 text-slate-300 hover:text-white rounded-lg border border-slate-700 transition-colors"
-                                                    title="3D Mini"
+                                                    className={`p-1.5 rounded-lg border border-slate-700 transition-colors ${
+                                                        p.model3d 
+                                                            ? 'bg-slate-800 hover:bg-amber-600 text-amber-300 hover:text-white' 
+                                                            : 'bg-slate-800 hover:bg-amber-600 text-slate-400 hover:text-white'
+                                                    }`}
+                                                    title={p.model3d ? "Change or Remove 3D Mini" : "Assign 3D Mini"}
                                                 >
                                                     <Icon name="box" size={14}/>
                                                 </button>
-                                                {p.dndBeyondId && (
-                                                    <button
-                                                        type="button"
-                                                        onClick={(e) => { e.stopPropagation(); setRefreshCharacter(p); }}
-                                                        className="p-1.5 bg-slate-800 hover:bg-blue-600 text-slate-300 hover:text-white rounded-lg border border-slate-700 transition-colors"
-                                                        title="Sync D&D Beyond"
-                                                    >
-                                                        <Icon name="refresh-cw" size={14}/>
-                                                    </button>
-                                                )}
                                                 {(role === 'dm' || isOwnerOf(p)) && (
                                                     <button
                                                         type="button"
@@ -1641,7 +1635,7 @@ export const PartyView = ({
             {refreshCharacter && (
                 <div className="fixed inset-0 z-[70] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
                     <div className="max-w-md w-full bg-slate-900 rounded-xl overflow-hidden shadow-2xl border border-slate-700 p-6 relative">
-                        <button onClick={() => setRefreshCharacter(null)} className="absolute top-4 right-4 text-slate-400 hover:text-white"><Icon name="x" size={24}/></button>
+                        <button onClick={() => { setRefreshCharacter(null); setManualDndId(''); }} className="absolute top-4 right-4 text-slate-400 hover:text-white"><Icon name="x" size={24}/></button>
                         <h3 className="text-xl font-bold text-white mb-2 flex items-center gap-2"><Icon name="refresh-cw" className="text-blue-400"/> Refresh {refreshCharacter.name}</h3>
                         
                         {isImporting ? (
@@ -1651,13 +1645,30 @@ export const PartyView = ({
                             </div>
                         ) : (
                             <>
-                                <p className="text-sm text-slate-400 mb-6">How would you like to apply the fresh data from D&D Beyond?</p>
-                                <div className="space-y-4">
-                                    <button onClick={() => handleRefreshDndBeyond('combine')} className="w-full text-left bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded-lg p-4 group transition-colors">
+                                <p className="text-sm text-slate-400 mb-4">Pull updated stats, inventory, and spells from D&D Beyond.</p>
+
+                                {!refreshCharacter.dndBeyondId && (
+                                    <div className="mb-4 bg-slate-950/70 p-3 rounded-xl border border-slate-800">
+                                        <label className="block text-xs font-bold text-slate-300 mb-1 flex items-center gap-1.5">
+                                            <Icon name="link" size={13} className="text-blue-400"/> D&D Beyond Character ID or URL
+                                        </label>
+                                        <input
+                                            type="text"
+                                            autoFocus
+                                            value={manualDndId}
+                                            onChange={e => setManualDndId(e.target.value)}
+                                            placeholder="e.g. 12345678 or https://www.dndbeyond.com/characters/12345678"
+                                            className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-blue-500"
+                                        />
+                                    </div>
+                                )}
+
+                                <div className="space-y-3">
+                                    <button onClick={() => handleRefreshDndBeyond('combine')} className="w-full text-left bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded-lg p-3.5 group transition-colors">
                                         <div className="font-bold text-white group-hover:text-blue-400 flex items-center gap-2 mb-1"><Icon name="git-merge" size={16}/> Combine (Recommended)</div>
                                         <p className="text-xs text-slate-400">Updates stats, spells, and features but keeps your current Inventory, HP, and Conditions.</p>
                                     </button>
-                                    <button onClick={() => handleRefreshDndBeyond('overwrite')} className="w-full text-left bg-slate-800 hover:bg-red-900/50 border border-slate-600 hover:border-red-500/50 rounded-lg p-4 group transition-colors">
+                                    <button onClick={() => handleRefreshDndBeyond('overwrite')} className="w-full text-left bg-slate-800 hover:bg-red-900/50 border border-slate-600 hover:border-red-500/50 rounded-lg p-3.5 group transition-colors">
                                         <div className="font-bold text-white group-hover:text-red-400 flex items-center gap-2 mb-1"><Icon name="alert-triangle" size={16}/> Overwrite</div>
                                         <p className="text-xs text-slate-400">Completely replaces this character with the D&D Beyond sheet. You will lose local inventory changes.</p>
                                     </button>
@@ -1826,82 +1837,18 @@ export const PartyView = ({
                 </div>
             )}
 
-            {/* 3D Mini Model Picker Modal */}
+            {/* 3D Mini Studio & Forge Modal */}
             {showModelPicker && characterForModelSelection && (
-                <div className="fixed inset-0 z-[10000] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
-                    <div className="max-w-2xl w-full bg-slate-900 rounded-xl border border-slate-700 shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
-                        <div className="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-800">
-                            <h3 className="font-bold text-white flex items-center gap-2"><Icon name="box" size={18}/> Select 3D Mini: {characterForModelSelection.name}</h3>
-                            <button onClick={() => { setCharacterForModelSelection(null); setShowModelPicker(false); }} className="text-slate-400 hover:text-white"><Icon name="x" size={20}/></button>
-                        </div>
-                        <div className="p-4 border-b border-slate-700 bg-slate-900 flex gap-2">
-                            <input 
-                                autoFocus
-                                value={miniSearchQuery} 
-                                onChange={e => setMiniSearchQuery(e.target.value)} 
-                                onKeyDown={e => e.key === 'Enter' && handleMiniSearch()}
-                                placeholder="Search 3D Models (e.g. Knight, Wizard, Elf)..." 
-                                className="flex-1 bg-slate-950 border border-slate-600 rounded px-3 py-2 text-white outline-none focus:border-amber-500"
-                            />
-                            <button 
-                                onClick={() => handleMiniSearch()} 
-                                disabled={isSearchingMinis} 
-                                className="bg-amber-600 hover:bg-amber-500 px-4 rounded text-white font-bold flex items-center justify-center"
-                            >
-                                {isSearchingMinis ? <Icon name="loader" size={18} className="animate-spin"/> : <Icon name="search" size={18}/>}
-                            </button>
-                        </div>
-                        <div className="p-6 overflow-y-auto custom-scroll bg-slate-950 flex-1">
-                            {isSearchingMinis ? (
-                                <div className="text-center py-10 text-amber-500"><Icon name="loader" size={32} className="animate-spin mx-auto mb-2"/> Searching Repository...</div>
-                            ) : isForging3D ? (
-                                <div className="text-center py-10 text-purple-500">
-                                    <Icon name="loader-2" size={48} className="animate-spin mx-auto mb-4"/>
-                                    <p className="font-bold animate-pulse">{forge3DStatus}</p>
-                                </div>
-                            ) : (
-                                <>
-                                    <p className="text-slate-400 mb-4 text-sm">Found {availableModels.length} compatible 3D models.</p>
-                                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                                        {availableModels.map((model, i) => (
-                                            <div key={i} className="bg-slate-800 border border-slate-700 rounded-lg p-2 flex flex-col justify-between transition-all group">
-                                                <div>
-                                                    <div className="aspect-square bg-slate-900 rounded-md mb-2 overflow-hidden border border-slate-700 relative">
-                                                        {model.thumb ? <img src={model.thumb} className="w-full h-full object-cover" alt="" /> : <Icon name="box" size={32} className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-slate-600"/>}
-                                                    </div>
-                                                    <div className="font-bold text-sm text-slate-200 truncate">{model.name}</div>
-                                                    <div className="text-[10px] text-slate-500 truncate">Scale: {model.scale}x</div>
-                                                </div>
-                                                <div className="flex gap-2 mt-2">
-                                                    <button onClick={() => handleModelSelect(model)} className="flex-1 text-center text-xs px-2 py-1.5 bg-amber-700 hover:bg-amber-600 rounded text-white font-bold transition-colors">Select</button>
-                                                    <button onClick={() => handleModelSelect(model, true)} className="text-center text-xs p-1.5 bg-slate-700 hover:bg-slate-600 rounded text-slate-300 hover:text-white transition-colors" title="Select as stone statue">
-                                                        <Icon name="gem" size={14}/>
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        ))}
-                                        
-                                        <div onClick={() => handleForge3D(characterForModelSelection)} className="bg-slate-800 border border-purple-500/50 border-dashed rounded-lg p-2 cursor-pointer hover:border-purple-500 hover:bg-slate-700 transition-all group flex flex-col items-center justify-center shadow-[0_0_15px_rgba(168,85,247,0.15)] hover:shadow-[0_0_20px_rgba(168,85,247,0.3)]">
-                                            <div className="w-16 h-16 bg-slate-900 rounded-full mb-2 flex items-center justify-center border border-purple-500/30 group-hover:border-purple-500 group-hover:scale-110 transition-transform">
-                                                <Icon name="sparkles" size={24} className="text-purple-500 group-hover:text-purple-400"/>
-                                            </div>
-                                            <div className="font-bold text-sm text-purple-400 group-hover:text-purple-300 text-center">Forge 3D Mini</div>
-                                            <div className="text-[10px] text-purple-500/70 text-center">AI Generate (Free)</div>
-                                        </div>
-                                        
-                                        <div onClick={() => handleModelSelect(null)} className="bg-slate-800 border border-slate-700 border-dashed rounded-lg p-2 cursor-pointer hover:border-blue-500 hover:bg-slate-700 transition-all group flex flex-col items-center justify-center">
-                                            <div className="w-16 h-16 bg-slate-900 rounded-full mb-2 flex items-center justify-center border border-slate-700 group-hover:border-blue-500/50">
-                                                <Icon name="image" size={24} className="text-slate-500 group-hover:text-blue-400"/>
-                                            </div>
-                                            <div className="font-bold text-sm text-slate-200 group-hover:text-blue-400 text-center">2D Token Only</div>
-                                            <div className="text-[10px] text-slate-500 text-center">Skip 3D Model</div>
-                                        </div>
-                                    </div>
-                                </>
-                            )}
-                        </div>
-                    </div>
-                </div>
+                <ModelPickerModal
+                    isOpen={showModelPicker}
+                    entity={characterForModelSelection}
+                    onClose={() => {
+                        setShowModelPicker(false);
+                        setCharacterForModelSelection(null);
+                    }}
+                    onSave={handleSaveModelConfig}
+                    onDeleteModel={handleDeleteModel}
+                />
             )}
 
         </div>

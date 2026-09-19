@@ -22,18 +22,32 @@ const SideSheet = ({ characterId, onClose, role, onDiceRoll, onOpenDiceTray }) =
     const tokenId = isVirtual ? characterId.tokenId : null;
     const initialTab = isVirtual ? characterId.initialTab : null;
 
-    const isPc = useMemo(() => {
-        if (typeof characterId === 'object' && characterId?.isPc !== undefined) {
-            return !!characterId.isPc;
+    const character = useMemo(() => {
+        if (!data) return null;
+        const allChars = [...(data.players || []), ...(data.npcs || [])];
+        return allChars.find(c => String(c.id) === String(actualCharId));
+    }, [actualCharId, data]);
+
+    // An entity is an NPC if explicitly in data.npcs, has type === 'npc', has CR, or is explicitly flagged isPc: false
+    const isNpc = useMemo(() => {
+        if (data?.npcs?.some(n => String(n.id) === String(actualCharId))) {
+            return true;
         }
-        return !!data?.players?.some(p => String(p.id) === String(actualCharId));
-    }, [data?.players, actualCharId, characterId]);
+        if (character?.type === 'npc' || character?.isNpc || character?.cr !== undefined) {
+            return true;
+        }
+        if (typeof characterId === 'object' && characterId !== null && characterId.isPc === false) {
+            return true;
+        }
+        return false;
+    }, [data?.npcs, actualCharId, character, characterId]);
+
+    const isPc = useMemo(() => {
+        return !isNpc;
+    }, [isNpc]);
 
     const [sheetMode, setSheetMode] = useState(() => {
-        const isPlayerChar = typeof characterId === 'object' && characterId?.isPc !== undefined
-            ? !!characterId.isPc
-            : data?.players?.some(p => String(p.id) === String(actualCharId));
-        if (isPlayerChar) return 'sheet';
+        if (isPc) return 'sheet';
         if (typeof characterId === 'object' && characterId?.defaultMode) {
             return characterId.defaultMode;
         }
@@ -52,6 +66,7 @@ const SideSheet = ({ characterId, onClose, role, onDiceRoll, onOpenDiceTray }) =
     
     const [liveHp, setLiveHp] = useState(null);
     const [isSharedControl, setIsSharedControl] = useState(false);
+    const [tokenOwnerId, setTokenOwnerId] = useState(null);
     const [showModelPicker, setShowModelPicker] = useState(false);
     const [availableModels, setAvailableModels] = useState([]);
     const [miniSearchQuery, setMiniSearchQuery] = useState("");
@@ -66,12 +81,42 @@ const SideSheet = ({ characterId, onClose, role, onDiceRoll, onOpenDiceTray }) =
         return () => window.dispatchEvent(new CustomEvent('sidesheet-resize', { detail: 0 }));
     }, [sheetWidth]);
 
-    // START CHANGE: Enhance isOwner logic to correctly identify the DM and the assigned player
-    const isOwner = role === 'dm' || 
-                    isSharedControl ||
-                    String(data?.assignments?.[user?.uid]) === String(actualCharId) || 
-                    data?.players?.some(p => String(p.id) === String(actualCharId) && p.ownerId === user?.uid);
-    // END CHANGE
+    const myCharId = data?.assignments?.[user?.uid] || data?.players?.find(p => p.ownerId === user?.uid)?.id;
+
+    // Enhance isOwner logic to correctly identify DM, token shared control, and player ownership of PCs and NPCs
+    const isOwner = useMemo(() => {
+        if (role === 'dm' || isSharedControl) return true;
+        if (!user) return false;
+        
+        // Assigned directly to user
+        if (String(data?.assignments?.[user?.uid]) === String(actualCharId)) return true;
+        
+        // Player character owned by user
+        if (data?.players?.some(p => String(p.id) === String(actualCharId) && (p.ownerId === user?.uid || (myCharId && p.ownerId === myCharId)))) {
+            return true;
+        }
+        
+        // NPC owned by user or by player's character
+        if (data?.npcs?.some(n => String(n.id) === String(actualCharId) && (n.ownerId === user?.uid || (myCharId && n.ownerId === myCharId)))) {
+            return true;
+        }
+
+        // Direct character object ownerId
+        if (character?.ownerId && (String(character.ownerId) === String(user?.uid) || (myCharId && String(character.ownerId) === String(myCharId)))) {
+            return true;
+        }
+
+        // Token ownerId
+        if (tokenOwnerId && (String(tokenOwnerId) === String(user?.uid) || (myCharId && String(tokenOwnerId) === String(myCharId)))) {
+            return true;
+        }
+
+        if (typeof characterId === 'object' && characterId?.ownerId && (String(characterId.ownerId) === String(user?.uid) || (myCharId && String(characterId.ownerId) === String(myCharId)))) {
+            return true;
+        }
+
+        return false;
+    }, [role, isSharedControl, user, data?.assignments, data?.players, data?.npcs, actualCharId, myCharId, character?.ownerId, tokenOwnerId, characterId]);
 
     const handleMouseDown = useCallback((e) => {
         if (e.cancelable) e.preventDefault();
@@ -111,15 +156,18 @@ const SideSheet = ({ characterId, onClose, role, onDiceRoll, onOpenDiceTray }) =
     useEffect(() => {
         setLiveHp(null);
         setIsSharedControl(false);
+        setTokenOwnerId(null);
         if (!isVirtual || !tokenId || !gameParams?.code || !activeMapId) return;
 
         const unsub = subscribeToMap(gameParams.code, activeMapId, (map) => {
             if (map?.tokens?.[tokenId]) {
                 setLiveHp(map.tokens[tokenId].hp || null);
                 setIsSharedControl(!!map.tokens[tokenId].isSharedControl);
+                setTokenOwnerId(map.tokens[tokenId].ownerId || null);
             } else {
                 setLiveHp(null);
                 setIsSharedControl(false);
+                setTokenOwnerId(null);
             }
         });
         return () => unsub();
@@ -147,12 +195,6 @@ const SideSheet = ({ characterId, onClose, role, onDiceRoll, onOpenDiceTray }) =
             }
         }
     }, [isVirtual, tokenId, activeMapId, gameParams?.code, data, updateCampaign, actualCharId]);
-
-    const character = useMemo(() => {
-        if (!data) return null;
-        const allChars = [...(data.players || []), ...(data.npcs || [])];
-        return allChars.find(c => String(c.id) === String(actualCharId));
-    }, [actualCharId, data]);
 
     useEffect(() => {
         if (character) {

@@ -195,6 +195,23 @@ const HeaderStats = ({
                             >
                                 <Icon name="sparkles" size={13} />
                             </button>
+
+                            {/* 3D Miniature Studio Modal Trigger */}
+                            {onOpenModelPicker && (
+                                <button 
+                                    type="button"
+                                    onClick={onOpenModelPicker} 
+                                    className={`transition-all px-2 py-1 rounded-lg border text-xs cursor-pointer flex items-center gap-1.5 ${
+                                        character.modelUrl || character.model3d 
+                                            ? 'text-purple-300 bg-purple-950/40 border-purple-500/40 hover:bg-purple-900/60 shadow-[0_0_8px_rgba(168,85,247,0.2)]' 
+                                            : 'text-slate-400 hover:text-purple-300 hover:bg-slate-800 border-slate-700/60'
+                                    }`}
+                                    title={character.modelUrl || character.model3d ? "Customize 3D Miniature, Scale & Material" : "Assign 3D Miniature or Forge"}
+                                >
+                                    <Icon name="box" size={13} className={character.modelUrl || character.model3d ? "text-purple-400" : ""} />
+                                    <span className="text-[10px] font-bold hidden sm:inline">3D Mini</span>
+                                </button>
+                            )}
                         </div>
                         <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                             <span className="text-[11px] font-mono font-semibold px-2 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/30 text-amber-300">

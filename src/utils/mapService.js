@@ -1,4 +1,4 @@
-import { doc, getDoc, setDoc, updateDoc, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, onSnapshot, deleteField } from 'firebase/firestore';
 import { db, appId } from '../firebase';
 
 // =================================================================
@@ -47,16 +47,46 @@ export const createMap = (campaignCode, mapId, mapData) => {
  * @param {Object} updates - For new maps, this should be the full map object. For existing maps, a partial object with fields to update.
  */
 export const updateMap = async (campaignCode, mapId, updates) => {
-    const ref = getMapRef(campaignCode, mapId);
-    const docSnap = await getDoc(ref);
+    if (!campaignCode || !mapId || !updates || typeof updates !== 'object') return;
 
-    if (docSnap.exists()) {
-        // Document exists, so update it.
-        await updateDoc(ref, updates);
-    } else {
-        // Document does not exist, so create it.
-        // We assume 'updates' contains the full initial map data.
-        await setDoc(ref, updates);
+    // Sanitize updates to prevent Firestore field path syntax errors and ghost fields
+    const sanitizedUpdates = {};
+    for (const [key, val] of Object.entries(updates)) {
+        if (!key || typeof key !== 'string') continue;
+        const trimmed = key.trim();
+        // Prevent invalid field paths (trailing/leading dots, empty segments, or undefined tokens)
+        if (!trimmed || trimmed.startsWith('.') || trimmed.endsWith('.') || trimmed.includes('..')) continue;
+        if (trimmed === 'tokens.undefined' || trimmed === 'tokens.null' || trimmed === 'tokens.') continue;
+        if (val === undefined) continue;
+
+        // In Firestore updateDoc, deleteField() is required to genuinely delete fields
+        sanitizedUpdates[trimmed] = val === null ? deleteField() : val;
+    }
+
+    if (Object.keys(sanitizedUpdates).length === 0) return;
+
+    const ref = getMapRef(campaignCode, mapId);
+    try {
+        const docSnap = await getDoc(ref);
+
+        if (docSnap.exists()) {
+            // Document exists, so update it.
+            await updateDoc(ref, sanitizedUpdates);
+        } else {
+            // Document does not exist, so create it.
+            // Filter out deleteField() sentinels on new document creation
+            const initialData = {};
+            for (const [k, v] of Object.entries(sanitizedUpdates)) {
+                // If it's a deleteField sentinel, ignore for setDoc
+                if (typeof v !== 'object' || v === null || !v._methodName) {
+                    initialData[k] = v;
+                }
+            }
+            await setDoc(ref, initialData);
+        }
+    } catch (err) {
+        console.error(`[mapService] Failed to updateMap (${campaignCode}/${mapId}):`, err);
+        throw err;
     }
 };
 

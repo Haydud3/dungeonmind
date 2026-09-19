@@ -272,7 +272,7 @@ function SheetContainer({
                     />
                 )}
                 {activeTab === 'bio' && (
-                    <BioTab onOpenModelPicker={onOpenModelPicker} />
+                    <BioTab />
                 )}
                 {activeTab === 'dmNotes' && role === 'dm' && (
                     <DmNotesTab />

@@ -901,7 +901,10 @@ const Token3D = ({
           <group ref={rotationRef}>
             {showModel && (
               <Suspense fallback={null}>
-                <group position={[0, 0.0075 + ((token.modelYOffset || 0) * safeSize), 0]}>
+                <group 
+                  position={[0, 0.0075 + ((token.modelYOffset || 0) * safeSize), 0]}
+                  rotation={[0, ((token.modelRotation || 0) * Math.PI) / 180, 0]}
+                >
                   <CharacterModel modelUrl={token.modelUrl} scale={(token.modelScale || 1) * safeSize} forceStatue={token.forceStatue} opacity={opacity} materialStyle={token.materialStyle} />
                 </group>
               </Suspense>
@@ -958,8 +961,10 @@ const Token3D = ({
           </group>
 
           {/* ── Nameplate ──────────────────────────────────────────────── */}
-          {showNameplates && (() => {
-            const nameText = token.name || 'Unknown';
+          {showNameplates && !((token.hideName || token.hideNameplate) && role !== 'dm') && (() => {
+            const rawName = token.name || 'Unknown';
+            const isNameHiddenFromPlayers = Boolean(token.hideName || token.hideNameplate);
+            const nameText = (role === 'dm' && isNameHiddenFromPlayers) ? `${rawName} [Hidden]` : rawName;
             const textWidthApprox = Math.max(safeSize * 1.4, nameText.length * safeSize * 0.14 * 0.6 + safeSize * 0.4);
             return (
               <Billboard position={nameplatePos}>
@@ -1048,7 +1053,7 @@ const areTokensEqual = (prev, next) => {
     return true;
   }
   const pt = prev.token, nt = next.token;
-  if (pt.id !== nt.id || pt.x !== nt.x || pt.y !== nt.y || pt.z !== nt.z || pt.size !== nt.size || pt.rotationY !== nt.rotationY || pt.elevationOffset !== nt.elevationOffset || pt.isHidden !== nt.isHidden || pt.modelUrl !== nt.modelUrl || pt.image !== nt.image) return false;
+  if (pt.id !== nt.id || pt.x !== nt.x || pt.y !== nt.y || pt.z !== nt.z || pt.size !== nt.size || pt.rotationY !== nt.rotationY || pt.elevationOffset !== nt.elevationOffset || pt.isHidden !== nt.isHidden || pt.hideName !== nt.hideName || pt.modelUrl !== nt.modelUrl || pt.image !== nt.image || pt.modelScale !== nt.modelScale || pt.modelYOffset !== nt.modelYOffset || pt.modelRotation !== nt.modelRotation || pt.materialStyle !== nt.materialStyle || pt.forceStatue !== nt.forceStatue) return false;
   if ((pt.conditions || []).join(',') !== (nt.conditions || []).join(',')) return false;
   if (prev.isSelected !== next.isSelected || prev.role !== next.role || prev.gridSize !== next.gridSize || prev.isSnapToGrid !== next.isSnapToGrid || prev.isTerrainReady !== next.isTerrainReady || prev.activeTool !== next.activeTool || prev.draggedTokenId !== next.draggedTokenId || prev.viewMode !== next.viewMode || prev.showNameplates !== next.showNameplates || prev.isActiveTurn !== next.isActiveTurn || prev.canControl !== next.canControl || prev.isInteractive !== next.isInteractive || prev.orientation !== next.orientation || prev.baseVisibility !== next.baseVisibility || prev.alwaysVisible !== next.alwaysVisible || prev.fowEnabled !== next.fowEnabled || prev.getTerrainHeight !== next.getTerrainHeight || prev.tokenBaseOffset !== next.tokenBaseOffset || prev.hideBaseIf3D !== next.hideBaseIf3D || prev.isGlobalHovered !== next.isGlobalHovered || prev.isSpaceDown !== next.isSpaceDown) return false;
   return true;

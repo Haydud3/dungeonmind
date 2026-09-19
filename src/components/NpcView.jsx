@@ -8,6 +8,7 @@ import { enrichCharacter } from '../utils/srdEnricher.js';
 
 import { useNewCampaign } from '../contexts/NewCampaignProvider';
 import { searchGithubModels } from '../utils/miniManifest';
+import ModelPickerModal from './ModelPickerModal';
 import { Client } from "@gradio/client";
 import { retrieveChunkedMap, storeChunkedMap, fileToBase64 } from '../utils/storageUtils';
 import ResolvedImage from './ResolvedImage';
@@ -744,31 +745,51 @@ ${pasteTextContent}`;
         if (!npc) return;
         setNpcForModelSelection(npc);
         setIsNewNpc(false);
-        setAvailableModels([]);
         setShowModelPicker(true);
-        setMiniSearchQuery(npc.name);
-        handleMiniSearch(npc.name, npc.race);
     };
 
-    const handleModelSelect = (model, forceStatue = false) => {
-        const finalNpc = { ...npcForModelSelection };
-        if (model) {
-            finalNpc.modelUrl = model.url;
-            finalNpc.modelScale = 1;
-            finalNpc.modelYOffset = 0;
-            finalNpc.forceStatue = forceStatue;
-        } else {
-            delete finalNpc.modelUrl;
-            delete finalNpc.modelScale;
-            delete finalNpc.modelYOffset;
-            delete finalNpc.forceStatue;
-        }
+    const handleSaveModelConfig = (config) => {
+        if (!npcForModelSelection) return;
+        const finalNpc = { 
+            ...npcForModelSelection,
+            modelUrl: config.modelUrl,
+            model3d: config.modelUrl,
+            modelScale: config.modelScale || 1,
+            modelYOffset: config.modelYOffset || 0,
+            modelRotation: config.modelRotation || 0,
+            materialStyle: config.materialStyle || 'original',
+            forceStatue: !!config.forceStatue
+        };
         if (isNewNpc) {
             handleNpcComplete(finalNpc);
             toast(`Successfully summoned ${finalNpc.name}!`, "success");
         } else {
             handleSheetSave(finalNpc);
             toast(`Updated 3D model for ${finalNpc.name}!`, "success");
+            if (viewingNpcId === finalNpc.id) {
+                useCharacterStore.getState().loadCharacter(finalNpc);
+            }
+        }
+        setNpcForModelSelection(null);
+        setShowModelPicker(false);
+    };
+
+    const handleDeleteModel = () => {
+        if (!npcForModelSelection) return;
+        const finalNpc = { 
+            ...npcForModelSelection,
+            modelUrl: null,
+            model3d: null,
+            modelScale: 1,
+            modelYOffset: 0,
+            modelRotation: 0,
+            materialStyle: 'original'
+        };
+        delete finalNpc.forceStatue;
+        if (isNewNpc) {
+            handleNpcComplete(finalNpc);
+        } else {
+            handleSheetSave(finalNpc);
             if (viewingNpcId === finalNpc.id) {
                 useCharacterStore.getState().loadCharacter(finalNpc);
             }
@@ -943,76 +964,17 @@ ${pasteTextContent}`;
                         onOpenDiceTray={onOpenDiceTray}
                     />
                     {showModelPicker && npcForModelSelection && (
-                        <div className="absolute inset-0 z-[10000] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
-                        <div className="max-w-2xl w-full bg-slate-900 rounded-xl border border-slate-700 shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
-                            <div className="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-800">
-                                <h3 className="font-bold text-white flex items-center gap-2"><Icon name="box" size={18}/> Select 3D Mini: {npcForModelSelection.name}</h3>
-                                <button onClick={() => { setNpcForModelSelection(null); setShowModelPicker(false); }} className="text-slate-400 hover:text-white"><Icon name="x" size={20}/></button>
-                            </div>
-                            <div className="p-4 border-b border-slate-700 bg-slate-900 flex gap-2">
-                                <input 
-                                    autoFocus
-                                    value={miniSearchQuery} 
-                                    onChange={e => setMiniSearchQuery(e.target.value)} 
-                                    onKeyDown={e => e.key === 'Enter' && handleMiniSearch()}
-                                    placeholder="Search 3D Models (e.g. Dragon, Goblin)..." 
-                                    className="flex-1 bg-slate-950 border border-slate-600 rounded px-3 py-2 text-white outline-none focus:border-amber-500"
-                                />
-                                <button 
-                                    onClick={() => handleMiniSearch()} 
-                                    disabled={isSearchingMinis} 
-                                    className="bg-amber-600 hover:bg-amber-500 px-4 rounded text-white font-bold flex items-center justify-center"
-                                >
-                                    {isSearchingMinis ? <Icon name="loader" size={18} className="animate-spin"/> : <Icon name="search" size={18}/>}
-                                </button>
-                            </div>
-                            <div className="p-6 overflow-y-auto custom-scroll bg-slate-950 flex-1">
-                                {isSearchingMinis ? (
-                                    <div className="text-center py-10 text-amber-500"><Icon name="loader" size={32} className="animate-spin mx-auto mb-2"/> Searching the Repository...</div>
-                                ) : (
-                                    <>
-                                        <p className="text-slate-400 mb-4 text-sm">We found {availableModels.length} compatible 3D models.</p>
-                                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                                    {availableModels.map((model, i) => (
-                                        <div key={i} className="bg-slate-800 border border-slate-700 rounded-lg p-2 flex flex-col justify-between transition-all group">
-                                            <div>
-                                                <div className="aspect-square bg-slate-900 rounded-md mb-2 overflow-hidden border border-slate-700 relative">
-                                                {model.thumb ? <img src={model.thumb} className="w-full h-full object-cover" /> : <Icon name="box" size={32} className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-slate-600"/>}
-                                            </div>
-                                                <div className="font-bold text-sm text-slate-200 truncate">{model.name}</div>
-                                                <div className="text-[10px] text-slate-500 truncate">Scale: {model.scale}x</div>
-                                            </div>
-                                            <div className="flex gap-2 mt-2">
-                                                <button onClick={() => handleModelSelect(model)} className="flex-1 text-center text-xs px-2 py-1.5 bg-amber-700 hover:bg-amber-600 rounded text-white font-bold transition-colors">Select</button>
-                                                <button onClick={() => handleModelSelect(model, true)} className="text-center text-xs p-1.5 bg-slate-700 hover:bg-slate-600 rounded text-slate-300 hover:text-white transition-colors" title="Select as stone statue">
-                                                    <Icon name="gem" size={14}/>
-                                                </button>
-                                            </div>
-                                        </div>
-                                    ))}
-                                    
-                                    <div onClick={() => handleForge3D(npcForModelSelection)} className="bg-slate-800 border border-purple-500/50 border-dashed rounded-lg p-2 cursor-pointer hover:border-purple-500 hover:bg-slate-700 transition-all group flex flex-col items-center justify-center shadow-[0_0_15px_rgba(168,85,247,0.15)] hover:shadow-[0_0_20px_rgba(168,85,247,0.3)]">
-                                        <div className="w-16 h-16 bg-slate-900 rounded-full mb-2 flex items-center justify-center border border-purple-500/30 group-hover:border-purple-500 group-hover:scale-110 transition-transform">
-                                            <Icon name="sparkles" size={24} className="text-purple-500 group-hover:text-purple-400"/>
-                                        </div>
-                                        <div className="font-bold text-sm text-purple-400 group-hover:text-purple-300 text-center">Forge 3D Mini</div>
-                                        <div className="text-[10px] text-purple-500/70 text-center flex items-center gap-1">AI Generate <a href="https://huggingface.co/spaces/VAST-AI/TripoSG" target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} className="hover:text-purple-300" title="Powered by VAST-AI/TripoSG"><Icon name="external-link" size={10} /></a></div>
-                                    </div>
-                                
-                                <div onClick={() => handleModelSelect(null)} className="bg-slate-800 border border-slate-700 border-dashed rounded-lg p-2 cursor-pointer hover:border-blue-500 hover:bg-slate-700 transition-all group flex flex-col items-center justify-center">
-                                        <div className="w-16 h-16 bg-slate-900 rounded-full mb-2 flex items-center justify-center border border-slate-700 group-hover:border-blue-500/50">
-                                            <Icon name="image" size={24} className="text-slate-500 group-hover:text-blue-400"/>
-                                        </div>
-                                        <div className="font-bold text-sm text-slate-200 group-hover:text-blue-400 text-center">2D Token Only</div>
-                                        <div className="text-[10px] text-slate-500 text-center">Skip 3D Model</div>
-                                    </div>
-                                </div>
-                                    </>
-                                )}
-                            </div>
-                        </div>
-                    </div>
-                )}
+                        <ModelPickerModal
+                            isOpen={showModelPicker}
+                            entity={npcForModelSelection}
+                            onClose={() => {
+                                setShowModelPicker(false);
+                                setNpcForModelSelection(null);
+                            }}
+                            onSave={handleSaveModelConfig}
+                            onDeleteModel={handleDeleteModel}
+                        />
+                    )}
             </div>
             </div>
         );
@@ -2068,73 +2030,18 @@ ${pasteTextContent}`;
                 />
             )}
             
+            {/* 3D Mini Studio & Forge Modal */}
             {showModelPicker && npcForModelSelection && (
-                <div className="fixed inset-0 z-[110] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
-                    <div className="max-w-2xl w-full bg-slate-900 rounded-xl border border-slate-700 shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
-                        <div className="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-800">
-                            <h3 className="font-bold text-white flex items-center gap-2"><Icon name="box" size={18}/> Select 3D Mini: {npcForModelSelection.name}</h3>
-                            <button onClick={() => { setNpcForModelSelection(null); setShowModelPicker(false); }} className="text-slate-400 hover:text-white"><Icon name="x" size={20}/></button>
-                        </div>
-                        <div className="p-4 border-b border-slate-700 bg-slate-900 flex gap-2">
-                            <input 
-                                autoFocus
-                                value={miniSearchQuery} 
-                                onChange={e => setMiniSearchQuery(e.target.value)} 
-                                onKeyDown={e => e.key === 'Enter' && handleMiniSearch()}
-                                placeholder="Search 3D Models (e.g. Dragon, Goblin)..." 
-                                className="flex-1 bg-slate-950 border border-slate-600 rounded px-3 py-2 text-white outline-none focus:border-amber-500"
-                            />
-                            <button 
-                                onClick={() => handleMiniSearch()} 
-                                disabled={isSearchingMinis} 
-                                className="bg-amber-600 hover:bg-amber-500 px-4 rounded text-white font-bold flex items-center justify-center"
-                            >
-                                {isSearchingMinis ? <Icon name="loader" size={18} className="animate-spin"/> : <Icon name="search" size={18}/>}
-                            </button>
-                        </div>
-                        <div className="p-6 overflow-y-auto custom-scroll bg-slate-950 flex-1">
-                            {isSearchingMinis ? (
-                                <div className="text-center py-10 text-amber-500"><Icon name="loader" size={32} className="animate-spin mx-auto mb-2"/> Searching the Repository...</div>
-                            ) : isForging3D ? (
-                                <div className="text-center py-10 text-purple-500">
-                                    <Icon name="loader-2" size={48} className="animate-spin mx-auto mb-4"/>
-                                    <p className="font-bold animate-pulse">{forge3DStatus}</p>
-                                </div>
-                            ) : (
-                                <>
-                                    <p className="text-slate-400 mb-4 text-sm">We found {availableModels.length} compatible 3D models.</p>
-                            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                                {availableModels.map((model, i) => (
-                                    <div key={i} onClick={() => handleModelSelect(model)} className="bg-slate-800 border border-slate-700 rounded-lg p-2 cursor-pointer hover:border-amber-500 hover:bg-slate-700 transition-all group">
-                                        <div className="aspect-square bg-slate-900 rounded-md mb-2 overflow-hidden border border-slate-700 group-hover:border-amber-500/50 relative">
-                                            {model.thumb ? <img src={model.thumb} className="w-full h-full object-cover" /> : <Icon name="box" size={32} className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-slate-600"/>}
-                                        </div>
-                                        <div className="font-bold text-sm text-slate-200 group-hover:text-amber-400 truncate">{model.name}</div>
-                                        <div className="text-[10px] text-slate-500 truncate">Scale: {model.scale}x</div>
-                                    </div>
-                                ))}
-                                
-                                <div onClick={() => handleForge3D(npcForModelSelection)} className="bg-slate-800 border border-purple-500/50 border-dashed rounded-lg p-2 cursor-pointer hover:border-purple-500 hover:bg-slate-700 transition-all group flex flex-col items-center justify-center shadow-[0_0_15px_rgba(168,85,247,0.15)] hover:shadow-[0_0_20px_rgba(168,85,247,0.3)]">
-                                    <div className="w-16 h-16 bg-slate-900 rounded-full mb-2 flex items-center justify-center border border-purple-500/30 group-hover:border-purple-500 group-hover:scale-110 transition-transform">
-                                        <Icon name="sparkles" size={24} className="text-purple-500 group-hover:text-purple-400"/>
-                                    </div>
-                                    <div className="font-bold text-sm text-purple-400 group-hover:text-purple-300 text-center">Forge 3D Mini</div>
-                                    <div className="text-[10px] text-purple-500/70 text-center flex items-center gap-1">AI Generate <a href="https://huggingface.co/spaces/VAST-AI/TripoSG" target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} className="hover:text-purple-300" title="Powered by VAST-AI/TripoSG"><Icon name="external-link" size={10} /></a></div>
-                                </div>
-                                
-                                <div onClick={() => handleModelSelect(null)} className="bg-slate-800 border border-slate-700 border-dashed rounded-lg p-2 cursor-pointer hover:border-blue-500 hover:bg-slate-700 transition-all group flex flex-col items-center justify-center">
-                                    <div className="w-16 h-16 bg-slate-900 rounded-full mb-2 flex items-center justify-center border border-slate-700 group-hover:border-blue-500/50">
-                                        <Icon name="image" size={24} className="text-slate-500 group-hover:text-blue-400"/>
-                                    </div>
-                                    <div className="font-bold text-sm text-slate-200 group-hover:text-blue-400 text-center">2D Token Only</div>
-                                    <div className="text-[10px] text-slate-500 text-center">Skip 3D Model</div>
-                                </div>
-                            </div>
-                                </>
-                            )}
-                        </div>
-                    </div>
-                </div>
+                <ModelPickerModal
+                    isOpen={showModelPicker}
+                    entity={npcForModelSelection}
+                    onClose={() => {
+                        setShowModelPicker(false);
+                        setNpcForModelSelection(null);
+                    }}
+                    onSave={handleSaveModelConfig}
+                    onDeleteModel={handleDeleteModel}
+                />
             )}
             {/* Quick Actor Modal (Name & Photo Only) */}
             {quickActorModal && (
