@@ -15,6 +15,7 @@ import ModelPickerModal from './ModelPickerModal';
 import { Client } from "@gradio/client";
 import PartyPassivesModal from './PartyPassivesModal';
 import PartyCreationHubModal from './PartyCreationHubModal';
+import PartyRestModal from './modals/PartyRestModal';
 
 import * as fb from '../firebase';
 import { collection, addDoc } from 'firebase/firestore';
@@ -137,6 +138,7 @@ export const PartyView = ({
     const [isSearchingMinis, setIsSearchingMinis] = useState(false);
     const [isForging3D, setIsForging3D] = useState(false);
     const [forge3DStatus, setForge3DStatus] = useState("");
+    const [restModalState, setRestModalState] = useState(null); // null | { type: 'short' | 'long' }
 
     // Stale state fix
     const dataRef = useRef(data);
@@ -291,65 +293,81 @@ export const PartyView = ({
     }, [playersList, searchQuery, filterType, sortBy, data?.activeUsers]);
 
     // Short Rest
-    const handlePartyShortRest = async () => {
-        const confirmed = await dialog.confirm("Take a Short Rest for the entire party? This resets short-rest abilities (Warlock spell slots, Action Surge, Ki, etc.).");
-        if (!confirmed) return;
-
-        const updated = playersList.map(p => {
-            const clean = JSON.parse(JSON.stringify(p));
-            // Reset warlock slots if present
-            if (clean.spellSlots && clean.class?.toLowerCase().includes('warlock')) {
-                Object.keys(clean.spellSlots).forEach(lvl => {
-                    clean.spellSlots[lvl].current = clean.spellSlots[lvl].max;
-                });
+    const handlePartyShortRest = () => {
+        setRestModalState({ type: 'short' });
+        updateCampaign({
+            activeRest: {
+                type: 'short',
+                startedAt: Date.now(),
+                initiatedBy: user?.displayName || 'DM',
+                restedHeroIds: {}
             }
-            return clean;
         });
-
-        updateCampaign({ players: updated });
-        onLogAction?.("The party completed a Short Rest. (Hit Dice & short-rest features refreshed)");
-        toast("The party completed a Short Rest.", "success");
     };
 
     // Long Rest
-    const handlePartyLongRest = async () => {
-        const confirmed = await dialog.confirm("Take a Long Rest for the entire party? This restores all heroes to 100% HP, resets all spell slots to maximum, and clears death saves & temporary unconsciousness.");
-        if (!confirmed) return;
-
-        const updated = playersList.map(p => {
-            const clean = JSON.parse(JSON.stringify(p));
-            const max = typeof clean.hp === 'object' ? (clean.hp?.max || 20) : (clean.maxHp || 20);
-            
-            if (typeof clean.hp === 'object') {
-                clean.hp.current = max;
-                clean.hp.temp = 0;
-            } else {
-                clean.hp = max;
+    const handlePartyLongRest = () => {
+        setRestModalState({ type: 'long' });
+        updateCampaign({
+            activeRest: {
+                type: 'long',
+                startedAt: Date.now(),
+                initiatedBy: user?.displayName || 'DM',
+                restedHeroIds: {}
             }
+        });
+    };
 
-            // Reset all spell slots
-            if (clean.spellSlots && typeof clean.spellSlots === 'object') {
-                Object.keys(clean.spellSlots).forEach(lvl => {
-                    if (clean.spellSlots[lvl]) {
-                        clean.spellSlots[lvl].current = clean.spellSlots[lvl].max;
-                    }
-                });
+    const handleApplyPartyRest = (updatedPlayers, summaryMsg) => {
+        updateCampaign({
+            players: updatedPlayers,
+            activeRest: null
+        });
+        if (summaryMsg) {
+            onLogAction?.(summaryMsg);
+            toast(summaryMsg, "success");
+        }
+        setRestModalState(null);
+    };
+
+    const handleSaveHeroRest = (updatedHero, summaryMsg) => {
+        const currentData = dataRef.current || {};
+        const pList = currentData.players || data?.players || [];
+        const newPlayers = pList.map(p => String(p.id) === String(updatedHero.id) ? updatedHero : p);
+        
+        const heroId = String(updatedHero.id);
+        const existingActiveRest = currentData.activeRest || data?.activeRest || {};
+        const updatedActiveRest = {
+            ...existingActiveRest,
+            restedHeroIds: {
+                ...(existingActiveRest.restedHeroIds || {}),
+                [heroId]: {
+                    timestamp: Date.now(),
+                    heroName: updatedHero.name
+                }
             }
+        };
 
-            // Reset death saves
-            clean.deathSaves = { successes: 0, failures: 0 };
-
-            // Clear unconscious condition if downed
-            if (Array.isArray(clean.conditions)) {
-                clean.conditions = clean.conditions.filter(c => c !== 'Unconscious');
-            }
-
-            return clean;
+        updateCampaign({
+            players: newPlayers,
+            activeRest: updatedActiveRest
         });
 
-        updateCampaign({ players: updated });
-        onLogAction?.("The party completed a Long Rest. All heroes restored to full HP and spell slots.");
-        toast("The party completed a Long Rest! All heroes restored.", "success");
+        if (String(viewingCharacterId) === heroId) {
+            useCharacterStore.getState().loadCharacter(updatedHero);
+        }
+
+        if (summaryMsg) {
+            onLogAction?.(summaryMsg);
+            toast(summaryMsg, "success");
+        }
+    };
+
+    const handleCloseRestModal = () => {
+        setRestModalState(null);
+        if (role === 'dm') {
+            updateCampaign({ activeRest: null });
+        }
     };
 
     // Heroic Inspiration Toggle
@@ -754,6 +772,36 @@ export const PartyView = ({
                         onOpenDiceTray={onOpenDiceTray}
                     />
                 </div>
+
+                {/* 3D Mini Studio & Forge Modal inside Sheet View */}
+                {showModelPicker && characterForModelSelection && (
+                    <ModelPickerModal
+                        isOpen={showModelPicker}
+                        entity={characterForModelSelection}
+                        onClose={() => {
+                            setShowModelPicker(false);
+                            setCharacterForModelSelection(null);
+                        }}
+                        onSave={handleSaveModelConfig}
+                        onDeleteModel={handleDeleteModel}
+                    />
+                )}
+
+                {/* Party Rest Modal inside Sheet View */}
+                {restModalState && (
+                    <PartyRestModal
+                        isOpen={!!restModalState}
+                        restType={restModalState.type}
+                        role={role}
+                        currentUser={user}
+                        players={playersList}
+                        activeRest={data?.activeRest}
+                        onClose={handleCloseRestModal}
+                        onApplyRest={handleApplyPartyRest}
+                        onSaveHero={handleSaveHeroRest}
+                        onDiceRoll={onDiceRoll}
+                    />
+                )}
             </div>
         );
     }
@@ -847,8 +895,8 @@ export const PartyView = ({
                                 )}
                             </div>
 
-                            {/* Rest Controls (DM Only) */}
-                            {role === 'dm' && (
+                            {/* Rest Controls (DM & Player Active Rest) */}
+                            {role === 'dm' ? (
                                 <div className="flex items-center bg-slate-950/80 rounded-xl p-1 border border-slate-800 shadow-inner">
                                     <button
                                         type="button"
@@ -868,7 +916,20 @@ export const PartyView = ({
                                         <Icon name="moon" size={14}/> <span>Long Rest</span>
                                     </button>
                                 </div>
-                            )}
+                            ) : data?.activeRest ? (
+                                <button
+                                    type="button"
+                                    onClick={() => setRestModalState({ type: data.activeRest.type })}
+                                    className={`px-3.5 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2 shadow-lg animate-pulse ${
+                                        data.activeRest.type === 'short'
+                                            ? 'bg-gradient-to-r from-amber-600 to-amber-500 text-slate-950 shadow-amber-950/40'
+                                            : 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-indigo-950/40'
+                                    }`}
+                                >
+                                    <Icon name={data.activeRest.type === 'short' ? "coffee" : "moon"} size={14} />
+                                    <span>Take {data.activeRest.type === 'short' ? "Short" : "Long"} Rest</span>
+                                </button>
+                            ) : null}
 
                             {/* Summon Hero Hub Button */}
                             <button
@@ -1633,24 +1694,26 @@ export const PartyView = ({
 
             {/* Refresh from D&D Beyond Modal */}
             {refreshCharacter && (
-                <div className="fixed inset-0 z-[70] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
-                    <div className="max-w-md w-full bg-slate-900 rounded-xl overflow-hidden shadow-2xl border border-slate-700 p-6 relative">
-                        <button onClick={() => { setRefreshCharacter(null); setManualDndId(''); }} className="absolute top-4 right-4 text-slate-400 hover:text-white"><Icon name="x" size={24}/></button>
-                        <h3 className="text-xl font-bold text-white mb-2 flex items-center gap-2"><Icon name="refresh-cw" className="text-blue-400"/> Refresh {refreshCharacter.name}</h3>
+                <div className="fixed inset-0 z-[70] bg-black/85 flex items-center justify-center p-4 backdrop-blur-md animate-in fade-in duration-200">
+                    <div className="max-w-md w-full bg-slate-900/95 rounded-2xl overflow-hidden shadow-[0_0_50px_rgba(0,0,0,0.8)] border border-amber-500/30 p-6 relative">
+                        <button onClick={() => { setRefreshCharacter(null); setManualDndId(''); }} className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors"><Icon name="x" size={20}/></button>
+                        <h3 className="text-xl font-bold text-white mb-2 flex items-center gap-2 fantasy-font tracking-wide">
+                            <Icon name="refresh-cw" className="text-amber-400"/> Refresh {refreshCharacter.name}
+                        </h3>
                         
                         {isImporting ? (
                             <div className="py-8 text-center">
-                                <Icon name="loader-2" size={48} className="animate-spin text-blue-500 mx-auto mb-4"/>
-                                <p className="text-blue-400 font-bold animate-pulse">{importStatus}</p>
+                                <Icon name="loader-2" size={48} className="animate-spin text-amber-500 mx-auto mb-4"/>
+                                <p className="text-amber-400 font-bold animate-pulse">{importStatus}</p>
                             </div>
                         ) : (
                             <>
-                                <p className="text-sm text-slate-400 mb-4">Pull updated stats, inventory, and spells from D&D Beyond.</p>
+                                <p className="text-xs text-slate-400 mb-4 leading-relaxed">Pull updated stats, inventory, and spells from D&D Beyond.</p>
 
                                 {!refreshCharacter.dndBeyondId && (
-                                    <div className="mb-4 bg-slate-950/70 p-3 rounded-xl border border-slate-800">
-                                        <label className="block text-xs font-bold text-slate-300 mb-1 flex items-center gap-1.5">
-                                            <Icon name="link" size={13} className="text-blue-400"/> D&D Beyond Character ID or URL
+                                    <div className="mb-4 bg-slate-950/80 p-3 rounded-xl border border-slate-800">
+                                        <label className="block text-[11px] font-bold uppercase tracking-wider text-amber-400/90 mb-1.5 flex items-center gap-1.5">
+                                            <Icon name="link" size={13} className="text-amber-400"/> D&D Beyond Character ID or URL
                                         </label>
                                         <input
                                             type="text"
@@ -1658,19 +1721,19 @@ export const PartyView = ({
                                             value={manualDndId}
                                             onChange={e => setManualDndId(e.target.value)}
                                             placeholder="e.g. 12345678 or https://www.dndbeyond.com/characters/12345678"
-                                            className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-blue-500"
+                                            className="w-full bg-slate-900 border border-slate-700/80 rounded-xl px-3.5 py-2 text-xs text-white outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500/50"
                                         />
                                     </div>
                                 )}
 
                                 <div className="space-y-3">
-                                    <button onClick={() => handleRefreshDndBeyond('combine')} className="w-full text-left bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded-lg p-3.5 group transition-colors">
-                                        <div className="font-bold text-white group-hover:text-blue-400 flex items-center gap-2 mb-1"><Icon name="git-merge" size={16}/> Combine (Recommended)</div>
-                                        <p className="text-xs text-slate-400">Updates stats, spells, and features but keeps your current Inventory, HP, and Conditions.</p>
+                                    <button onClick={() => handleRefreshDndBeyond('combine')} className="w-full text-left bg-slate-950/80 hover:bg-slate-800 border border-slate-700/80 hover:border-amber-500/50 rounded-xl p-4 group transition-all shadow-md">
+                                        <div className="font-bold text-white group-hover:text-amber-400 flex items-center gap-2 mb-1 text-sm"><Icon name="git-merge" size={16} className="text-amber-400"/> Combine (Recommended)</div>
+                                        <p className="text-xs text-slate-400 leading-relaxed">Updates stats, spells, and features but keeps your current Inventory, HP, and Conditions.</p>
                                     </button>
-                                    <button onClick={() => handleRefreshDndBeyond('overwrite')} className="w-full text-left bg-slate-800 hover:bg-red-900/50 border border-slate-600 hover:border-red-500/50 rounded-lg p-3.5 group transition-colors">
-                                        <div className="font-bold text-white group-hover:text-red-400 flex items-center gap-2 mb-1"><Icon name="alert-triangle" size={16}/> Overwrite</div>
-                                        <p className="text-xs text-slate-400">Completely replaces this character with the D&D Beyond sheet. You will lose local inventory changes.</p>
+                                    <button onClick={() => handleRefreshDndBeyond('overwrite')} className="w-full text-left bg-slate-950/80 hover:bg-red-950/40 border border-slate-700/80 hover:border-red-500/50 rounded-xl p-4 group transition-all shadow-md">
+                                        <div className="font-bold text-white group-hover:text-red-400 flex items-center gap-2 mb-1 text-sm"><Icon name="alert-triangle" size={16} className="text-red-400"/> Overwrite</div>
+                                        <p className="text-xs text-slate-400 leading-relaxed">Completely replaces this character with the D&D Beyond sheet. You will lose local inventory changes.</p>
                                     </button>
                                 </div>
                             </>
@@ -1848,6 +1911,22 @@ export const PartyView = ({
                     }}
                     onSave={handleSaveModelConfig}
                     onDeleteModel={handleDeleteModel}
+                />
+            )}
+
+            {/* Party Rest Modal */}
+            {restModalState && (
+                <PartyRestModal
+                    isOpen={!!restModalState}
+                    restType={restModalState.type}
+                    role={role}
+                    currentUser={user}
+                    players={playersList}
+                    activeRest={data?.activeRest}
+                    onClose={handleCloseRestModal}
+                    onApplyRest={handleApplyPartyRest}
+                    onSaveHero={handleSaveHeroRest}
+                    onDiceRoll={onDiceRoll}
                 />
             )}
 

@@ -14,7 +14,7 @@ import { useDialog } from './DialogProvider';
 import { useToast } from './ToastProvider';
 import { useNewCampaign } from '../contexts/NewCampaignProvider';
 
-const LoreView = ({ aiHelper, role }) => {
+const LoreView = ({ aiHelper, role, onOpenHandouts, handoutsCount = 0 }) => {
     const dialog = useDialog();
     const toast = useToast();
     const context = useNewCampaign();
@@ -545,8 +545,25 @@ const LoreView = ({ aiHelper, role }) => {
                     </button>
                 </div>
 
-                {/* Top Action Buttons (DM Upload & Add) */}
+                {/* Top Action Buttons (Handouts, DM Upload & Add) */}
                 <div className="flex items-center gap-2 ml-auto sm:ml-0">
+                    {onOpenHandouts && (
+                        <button
+                            type="button"
+                            onClick={onOpenHandouts}
+                            className="bg-gradient-to-r from-amber-500/20 via-amber-600/10 to-transparent hover:from-amber-500/30 px-3 py-1.5 rounded-lg border border-amber-500/40 text-amber-300 hover:text-amber-200 text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm active:scale-95 cursor-pointer"
+                            title="Open Handout Creator & Library"
+                        >
+                            <Icon name="scroll" size={14} className="text-amber-400" />
+                            <span>Handouts</span>
+                            {handoutsCount > 0 && (
+                                <span className="bg-amber-950/90 text-amber-300 text-[10px] font-black px-1.5 py-0.2 rounded border border-amber-500/40">
+                                    {handoutsCount}
+                                </span>
+                            )}
+                        </button>
+                    )}
+
                     {role === 'dm' && (
                         <>
                             <button

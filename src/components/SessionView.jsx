@@ -11,6 +11,8 @@ import { getDoc } from 'firebase/firestore';
 import { useResolvedUrl } from '../utils/useResolvedUrl';
 import { useNewCampaign } from '../contexts/NewCampaignProvider';
 import GroupRollCard from './chat/GroupRollCard';
+import { ChatActionBar, SKILL_LIST, SAVING_THROWS } from './chat/ChatActionBar';
+import DamageTargetModal from './modals/DamageTargetModal';
 
 const SafeAvatar = ({ src, alt }) => {
     const resolved = useResolvedUrl(src);
@@ -119,16 +121,89 @@ const SessionView = ({
     onSendMessage, onEditMessage, onDeleteMessage, 
     showTools, setShowTools, diceLog, handleDiceRoll,
     possessedNpcId, onSavePage,
-    compact, role
+    compact, role,
+    rollMode, setRollMode
 }) => {
     const toast = useToast();
     const dialog = useDialog();
     const context = useNewCampaign();
     if (!context) return null;
 
-    const { campaign, chatLog, user, gameParams, sendMessage, editMessage, deleteMessage, clearChat, saveJournalPage } = context;
+    const { campaign, chatLog, user, gameParams, sendMessage, editMessage, deleteMessage, clearChat, saveJournalPage, updateCampaign } = context;
     const data = campaign || {};
     const myCharId = data?.assignments?.[user?.uid];
+
+    // Permissions Filter (Room Security)
+    const allPermittedMessages = useMemo(() => {
+        return (chatLog || []).filter(msg => {
+            if (msg.role === 'system') return true;
+            if (msg.type === 'chat-public' || msg.type === 'chat-emote' || msg.type === 'chat-desc' || msg.type === 'chat-ooc' || msg.type === 'boxed') return true;
+            if (msg.type === 'roll-public' || msg.type === 'group-roll') return true;
+            if (role === 'dm') return true;
+            if (msg.type === 'chat-private') {
+                return msg.senderId === user?.uid || msg.targetId === user?.uid;
+            }
+            if (msg.type === 'roll-private') {
+                return msg.senderId === user?.uid;
+            }
+            return false;
+        });
+    }, [chatLog, user?.uid, role]);
+
+    const hiddenRolls = useMemo(() => {
+        return allPermittedMessages.filter(m => m.type === 'roll-private');
+    }, [allPermittedMessages]);
+
+    // Batch Reveal All Hidden Rolls
+    const handleRevealAllHiddenRolls = useCallback(async () => {
+        const editFn = onEditMessage || editMessage;
+        if (!editFn) return;
+        const targets = allPermittedMessages.filter(m => m.type === 'roll-private');
+        if (targets.length === 0) {
+            toast("No hidden rolls to reveal.", "info");
+            return;
+        }
+        const count = targets.length;
+        try {
+            await Promise.all(targets.map(m => editFn(m.id, { type: 'roll-public' })));
+            toast(`Revealed ${count} hidden roll${count === 1 ? '' : 's'} to players!`, "success");
+        } catch (e) {
+            console.error("Failed to batch reveal rolls:", e);
+            toast("Failed to reveal some rolls.", "error");
+        }
+    }, [allPermittedMessages, onEditMessage, editMessage, toast]);
+
+    // Batch Hide All Public Rolls
+    const handleHideAllRolls = useCallback(async () => {
+        const editFn = onEditMessage || editMessage;
+        if (!editFn) return;
+        const targets = allPermittedMessages.filter(m => m.type === 'roll-public');
+        if (targets.length === 0) {
+            toast("No public rolls to hide.", "info");
+            return;
+        }
+        const count = targets.length;
+        try {
+            await Promise.all(targets.map(m => editFn(m.id, { type: 'roll-private' })));
+            toast(`Hid ${count} roll${count === 1 ? '' : 's'} from players.`, "info");
+        } catch (e) {
+            console.error("Failed to batch hide rolls:", e);
+            toast("Failed to hide some rolls.", "error");
+        }
+    }, [allPermittedMessages, onEditMessage, editMessage, toast]);
+
+    // Single Roll Visibility Toggle
+    const handleToggleRollVisibility = useCallback(async (msgId, currentType) => {
+        const editFn = onEditMessage || editMessage;
+        if (!editFn) return;
+        const nextType = currentType === 'roll-private' ? 'roll-public' : 'roll-private';
+        try {
+            await editFn(msgId, { type: nextType });
+            toast(nextType === 'roll-public' ? 'Roll revealed to players!' : 'Roll hidden from players.', 'info');
+        } catch (e) {
+            console.error("Failed to toggle roll visibility:", e);
+        }
+    }, [onEditMessage, editMessage, toast]);
 
     // Channels state: 'all', 'rp', 'dice', 'whisper', 'pinned'
     const [activeChannel, setActiveChannel] = useState('all');
@@ -144,6 +219,7 @@ const SessionView = ({
     const [showScrollBottom, setShowScrollBottom] = useState(false);
     const [isUploading, setIsUploading] = useState(false);
     const [bannerManualRoll, setBannerManualRoll] = useState('');
+    const [damageTargetModal, setDamageTargetModal] = useState(null);
 
     const chatEndRef = useRef(null);
     const scrollContainerRef = useRef(null);
@@ -227,6 +303,18 @@ const SessionView = ({
     // Available Personas
     const availablePersonas = useMemo(() => {
         const list = [];
+        const isDm = role === 'dm' || data?.dmIds?.includes(user?.uid);
+
+        if (isDm) {
+            list.push({
+                id: 'dm',
+                name: 'Dungeon Master',
+                type: 'dm',
+                image: null,
+                badge: 'DM / Narrator'
+            });
+        }
+
         const myChar = data?.players?.find(p => String(p.id) === String(myCharId) || p.ownerId === user?.uid);
         if (myChar) {
             list.push({
@@ -234,17 +322,22 @@ const SessionView = ({
                 name: myChar.name,
                 type: 'character',
                 image: myChar.image,
-                badge: `${myChar.class || 'Adventurer'} Lvl ${myChar.level || 1}`
+                badge: `${myChar.class || 'Adventurer'} Lvl ${myChar.level || 1} (My Hero)`
             });
         }
 
-        if (role === 'dm' || data?.dmIds?.includes(user?.uid)) {
-            list.push({
-                id: 'dm',
-                name: 'Dungeon Master',
-                type: 'dm',
-                image: null,
-                badge: 'DM / Narrator'
+        // If DM, also provide all party characters to speak on their behalf or roleplay
+        if (isDm && data?.players && data.players.length > 0) {
+            data.players.forEach(p => {
+                if (!list.some(item => item.id === `char-${p.id}`)) {
+                    list.push({
+                        id: `char-${p.id}`,
+                        name: p.name,
+                        type: 'character',
+                        image: p.image,
+                        badge: `${p.class || 'Hero'} Lvl ${p.level || 1} (Party Member)`
+                    });
+                }
             });
         }
 
@@ -274,15 +367,15 @@ const SessionView = ({
         }
 
         // Campaign NPCs for DM
-        if (role === 'dm' && data?.npcs && data.npcs.length > 0) {
-            data.npcs.slice(0, 15).forEach(npc => {
+        if (isDm && data?.npcs && data.npcs.length > 0) {
+            data.npcs.slice(0, 50).forEach(npc => {
                 if (!list.some(p => p.id === `npc-${npc.id}` || p.name === npc.name)) {
                     list.push({
                         id: `npc-${npc.id}`,
                         name: npc.name,
                         type: 'npc',
                         image: npc.image || npc.tokenImage,
-                        badge: 'Campaign NPC'
+                        badge: npc.cr ? `NPC (CR ${npc.cr})` : 'Campaign NPC'
                     });
                 }
             });
@@ -320,6 +413,81 @@ const SessionView = ({
         };
     }, [availablePersonas, selectedPersonaId, cachedPersona, role, user]);
 
+    // Post Custom Message
+    const postCustomMessage = useCallback(({ content, type = 'chat-public', targetId = null, targetName = null }) => {
+        const isDm = role === 'dm' || data?.dmIds?.includes(user?.uid);
+        const senderRole = isDm ? 'dm' : 'player';
+
+        const msgObj = {
+            content,
+            type,
+            role: senderRole,
+            senderId: user?.uid || 'anon',
+            senderName: activePersona.name,
+            personaType: activePersona.type,
+            targetId: targetId || null,
+            targetName: targetName || null,
+            timestamp: Date.now(),
+            reactions: {},
+            isPinned: false
+        };
+        if (activePersona.image) {
+            msgObj.senderAvatar = activePersona.image;
+        }
+        sendMessage(msgObj);
+    }, [role, data?.dmIds, user?.uid, activePersona, sendMessage]);
+
+    // Active Character Sheet linked to Active Persona (or user assigned PC)
+    const activeCharacter = useMemo(() => {
+        const allChars = [...(data?.players || []), ...(data?.npcs || [])];
+        if (activePersona?.name && activePersona.type !== 'dm' && activePersona.type !== 'ooc') {
+            const found = allChars.find(c => c.name === activePersona.name);
+            if (found) return found;
+        }
+        if (myCharId) {
+            const myChar = data?.players?.find(p => String(p.id) === String(myCharId));
+            if (myChar) return myChar;
+        }
+        return null;
+    }, [activePersona, data?.players, data?.npcs, myCharId]);
+
+    // Quick HP / Damage / Heal Handler
+    const handleApplyHpChange = useCallback((delta) => {
+        if (!activeCharacter) return;
+        const currentHp = Number(activeCharacter.hp?.current ?? activeCharacter.hp ?? 0);
+        const maxHp = Number(activeCharacter.hp?.max ?? 10);
+        const newHp = Math.max(0, Math.min(maxHp, currentHp + delta));
+        const isHeal = delta > 0;
+        const amount = Math.abs(delta);
+
+        if (updateCampaign) {
+            const isPlayer = (data?.players || []).some(p => String(p.id) === String(activeCharacter.id));
+            if (isPlayer) {
+                const updatedPlayers = (data.players || []).map(p => 
+                    String(p.id) === String(activeCharacter.id)
+                        ? { ...p, hp: typeof p.hp === 'object' ? { ...p.hp, current: newHp } : newHp }
+                        : p
+                );
+                updateCampaign({ players: updatedPlayers });
+            } else {
+                const updatedNpcs = (data.npcs || []).map(n => 
+                    String(n.id) === String(activeCharacter.id)
+                        ? { ...n, hp: typeof n.hp === 'object' ? { ...n.hp, current: newHp } : newHp }
+                        : n
+                );
+                updateCampaign({ npcs: updatedNpcs });
+            }
+        }
+
+        postCustomMessage({
+            content: isHeal 
+                ? `regains **${amount} HP** (${newHp}/${maxHp} HP).` 
+                : `takes **${amount} damage** (${newHp}/${maxHp} HP).`,
+            type: 'chat-emote'
+        });
+        toast(`${activeCharacter.name} HP: ${newHp}/${maxHp}`, "info");
+    }, [activeCharacter, data?.players, data?.npcs, updateCampaign, postCustomMessage, toast]);
+
     // Save to Journal
     const saveMessageToJournal = useCallback((content) => {
         const newPageId = Date.now().toString();
@@ -355,14 +523,73 @@ const SessionView = ({
         e.target.value = null;
     };
 
-    // Apply Damage
-    const handleApplyDamage = useCallback(async (amount) => {
-        const { selectedTokenIds } = useCharacterStore.getState();
-        if (!selectedTokenIds || selectedTokenIds.length === 0) return toast("No target selected!", "warning");
+    // Apply Damage / Healing to specific target IDs (used by DamageTargetModal)
+    const handleApplyDamageToTargets = useCallback(async ({ selectedIds, amount, isHeal = false, damageType = '' }) => {
+        if (!selectedIds || selectedIds.length === 0 || amount <= 0) return;
 
-        const activeMapId = data?.activeMapId;
         const code = gameParams?.code;
+        const activeMapId = data?.activeMapId;
+        const targetNames = [];
+        const hpSummaries = [];
 
+        // 1. Update Campaign Players
+        const newPlayers = (data.players || []).map(p => {
+            if (selectedIds.includes(String(p.id))) {
+                targetNames.push(p.name);
+                let current = Number(p.hp?.current ?? p.hp ?? 0);
+                const max = Number(p.hp?.max ?? 10);
+                let temp = Number(p.hp?.temp ?? p.hp?.temporary ?? 0);
+                let newHp = current;
+
+                if (isHeal) {
+                    newHp = Math.min(max, current + amount);
+                } else {
+                    let remainingDmg = amount;
+                    if (temp > 0) {
+                        if (remainingDmg <= temp) {
+                            temp -= remainingDmg;
+                            remainingDmg = 0;
+                        } else {
+                            remainingDmg -= temp;
+                            temp = 0;
+                        }
+                    }
+                    newHp = Math.max(0, current - remainingDmg);
+                }
+
+                hpSummaries.push(`${p.name}: ${newHp}/${max} HP`);
+                return {
+                    ...p,
+                    hp: typeof p.hp === 'object' 
+                        ? { ...p.hp, current: newHp, max, ...(temp !== undefined ? { temp } : {}) }
+                        : newHp
+                };
+            }
+            return p;
+        });
+
+        // 2. Update Campaign NPCs
+        const newNpcs = (data.npcs || []).map(n => {
+            if (selectedIds.includes(String(n.id))) {
+                targetNames.push(n.name);
+                const current = Number(n.hp?.current ?? n.hp ?? 0);
+                const max = Number(n.hp?.max ?? 10);
+                const newHp = isHeal ? Math.min(max, current + amount) : Math.max(0, current - amount);
+                hpSummaries.push(`${n.name}: ${newHp}/${max} HP`);
+                return {
+                    ...n,
+                    hp: typeof n.hp === 'object' ? { ...n.hp, current: newHp, max } : newHp
+                };
+            }
+            return n;
+        });
+
+        // 3. Persist Campaign Updates
+        if (updateCampaign) {
+            updateCampaign({ players: newPlayers, npcs: newNpcs });
+        }
+
+        // 4. Update Map Tokens if active map exists
         if (activeMapId && code) {
             try {
                 const mapRef = getMapRef(code, activeMapId);
@@ -370,71 +597,147 @@ const SessionView = ({
                 if (mapSnap.exists()) {
                     const mapData = mapSnap.data();
                     const updates = {};
-                    
-                    selectedTokenIds.forEach(id => {
-                        const token = mapData.tokens?.[id];
-                        if (token) {
-                            const char = [...(data?.players || []), ...(data?.npcs || [])].find(c => String(c.id) === String(token.characterId));
-                            
-                            let currentHp = 0;
-                            let maxHp = 10;
-                            
-                            if (token.hp && token.hp.current !== undefined) {
-                                currentHp = token.hp.current;
-                                maxHp = token.hp.max || 10;
-                            } else if (char && char.hp && char.hp.current !== undefined) {
-                                currentHp = char.hp.current;
-                                maxHp = char.hp.max || 10;
-                            } else {
-                                return;
+                    Object.entries(mapData.tokens || {}).forEach(([tId, token]) => {
+                        if (selectedIds.includes(String(token.characterId)) || selectedIds.includes(String(tId))) {
+                            const char = [...newPlayers, ...newNpcs].find(c => String(c.id) === String(token.characterId));
+                            if (char) {
+                                const current = Number(char.hp?.current ?? char.hp ?? 0);
+                                const max = Number(char.hp?.max ?? 10);
+                                updates[`tokens.${tId}.hp`] = { ...token.hp, current, max };
                             }
-                            
-                            const newHp = Math.max(0, currentHp - amount);
-                            updates[`tokens.${id}.hp`] = { ...token.hp, current: newHp, max: maxHp };
                         }
                     });
-                    
                     if (Object.keys(updates).length > 0) {
                         await updateMap(code, activeMapId, updates);
-                        
-                        const newPlayers = [...(data.players || [])];
-                        const newNpcs = [...(data.npcs || [])];
-                        let campaignUpdated = false;
-                        
-                        selectedTokenIds.forEach(id => {
-                             const token = mapData.tokens?.[id];
-                             if (token) {
-                                 const pIdx = newPlayers.findIndex(p => String(p.id) === String(token.characterId));
-                                 if (pIdx > -1) {
-                                     newPlayers[pIdx] = { ...newPlayers[pIdx], hp: { ...newPlayers[pIdx].hp, current: Math.max(0, (newPlayers[pIdx].hp.current || 0) - amount) } };
-                                     campaignUpdated = true;
-                                 } else {
-                                     const nIdx = newNpcs.findIndex(n => String(n.id) === String(token.characterId));
-                                     if (nIdx > -1) {
-                                         newNpcs[nIdx] = { ...newNpcs[nIdx], hp: { ...newNpcs[nIdx].hp, current: Math.max(0, (newNpcs[nIdx].hp.current || 0) - amount) } };
-                                         campaignUpdated = true;
-                                     }
-                                 }
-                             }
-                        });
-                        
-                        if (campaignUpdated) {
-                            context.updateCampaign({ players: newPlayers, npcs: newNpcs });
-                        }
-                        
-                        toast(`Applied ${amount} damage`, "success");
-                    } else {
-                        toast("Selected tokens do not have HP tracking enabled.", "warning");
                     }
                 }
-            } catch(e) {
-                console.error("Failed to apply damage", e);
-                toast("Failed to apply damage. See console.", "error");
+            } catch (err) {
+                console.warn("Map token HP sync error:", err);
             }
-        } else {
-            toast("No active map found.", "error");
         }
-    }, [data, gameParams, context, toast]);
+
+        // 5. Post Chat Announcement Emote
+        const actionLabel = isHeal ? 'heals' : 'deals';
+        const typeLabel = damageType ? ` ${damageType}` : '';
+        const summaryText = hpSummaries.length > 0 ? ` (${hpSummaries.join(', ')})` : '';
+        postCustomMessage({
+            content: `${actionLabel} **${amount}${typeLabel} ${isHeal ? 'healing' : 'damage'}** to **${targetNames.join(', ')}**${summaryText}.`,
+            type: 'chat-emote'
+        });
+
+        toast(`Applied ${amount} ${isHeal ? 'healing' : 'damage'} to ${targetNames.length} target(s)`, "success");
+    }, [data.players, data.npcs, data.activeMapId, gameParams?.code, updateCampaign, postCustomMessage, toast]);
+
+    // Apply Damage (from chat cards, macros, or slash commands)
+    const handleApplyDamage = useCallback(async (amount, options = {}) => {
+        const { selectedTokenIds } = useCharacterStore.getState();
+        const hasVttTarget = selectedTokenIds && selectedTokenIds.length > 0;
+        const hasChatTarget = Boolean(activeCharacter && activeCharacter.hp !== undefined);
+
+        // If DM has no target selected in VTT or Chat (or explicitly requested targets picker modal):
+        if (options.forceModal || (!hasVttTarget && !hasChatTarget)) {
+            setDamageTargetModal({
+                amount: Math.abs(amount),
+                isHalf: Boolean(options.isHalf),
+                damageType: options.damageType || '',
+                isHeal: Boolean(options.isHeal)
+            });
+            return;
+        }
+
+        // If target IS selected in VTT:
+        if (hasVttTarget) {
+            const activeMapId = data?.activeMapId;
+            const code = gameParams?.code;
+
+            if (activeMapId && code) {
+                try {
+                    const mapRef = getMapRef(code, activeMapId);
+                    const mapSnap = await getDoc(mapRef);
+                    if (mapSnap.exists()) {
+                        const mapData = mapSnap.data();
+                        const updates = {};
+                        const targetNames = [];
+                        const hpSummaries = [];
+
+                        selectedTokenIds.forEach(id => {
+                            const token = mapData.tokens?.[id];
+                            if (token) {
+                                const char = [...(data?.players || []), ...(data?.npcs || [])].find(c => String(c.id) === String(token.characterId));
+                                let currentHp = 0;
+                                let maxHp = 10;
+                                if (token.hp && token.hp.current !== undefined) {
+                                    currentHp = token.hp.current;
+                                    maxHp = token.hp.max || 10;
+                                } else if (char && char.hp && char.hp.current !== undefined) {
+                                    currentHp = char.hp.current;
+                                    maxHp = char.hp.max || 10;
+                                } else {
+                                    return;
+                                }
+
+                                const newHp = Math.max(0, currentHp - amount);
+                                updates[`tokens.${id}.hp`] = { ...token.hp, current: newHp, max: maxHp };
+                                const name = token.name || char?.name || 'Target';
+                                targetNames.push(name);
+                                hpSummaries.push(`${name}: ${newHp}/${maxHp} HP`);
+                            }
+                        });
+
+                        if (Object.keys(updates).length > 0) {
+                            await updateMap(code, activeMapId, updates);
+
+                            const newPlayers = [...(data.players || [])];
+                            const newNpcs = [...(data.npcs || [])];
+                            let campaignUpdated = false;
+
+                            selectedTokenIds.forEach(id => {
+                                const token = mapData.tokens?.[id];
+                                if (token) {
+                                    const pIdx = newPlayers.findIndex(p => String(p.id) === String(token.characterId));
+                                    if (pIdx > -1) {
+                                        newPlayers[pIdx] = { 
+                                            ...newPlayers[pIdx], 
+                                            hp: { ...newPlayers[pIdx].hp, current: Math.max(0, (newPlayers[pIdx].hp.current || 0) - amount) } 
+                                        };
+                                        campaignUpdated = true;
+                                    } else {
+                                        const nIdx = newNpcs.findIndex(n => String(n.id) === String(token.characterId));
+                                        if (nIdx > -1) {
+                                            newNpcs[nIdx] = { 
+                                                ...newNpcs[nIdx], 
+                                                hp: { ...newNpcs[nIdx].hp, current: Math.max(0, (newNpcs[nIdx].hp.current || 0) - amount) } 
+                                            };
+                                            campaignUpdated = true;
+                                        }
+                                    }
+                                }
+                            });
+
+                            if (campaignUpdated && updateCampaign) {
+                                updateCampaign({ players: newPlayers, npcs: newNpcs });
+                            }
+
+                            postCustomMessage({
+                                content: `deals **${amount} damage** to **${targetNames.join(', ')}**${hpSummaries.length > 0 ? ` (${hpSummaries.join(', ')})` : ''}.`,
+                                type: 'chat-emote'
+                            });
+
+                            toast(`Applied ${amount} damage to ${targetNames.length} token(s)`, "success");
+                            return;
+                        }
+                    }
+                } catch(e) {
+                    console.error("Failed to apply damage", e);
+                }
+            }
+        }
+
+        // If target IS selected in Chat:
+        if (hasChatTarget) {
+            handleApplyHpChange(options.isHeal ? amount : -amount);
+        }
+    }, [activeCharacter, handleApplyHpChange, data, gameParams, updateCampaign, toast, postCustomMessage]);
 
     // Roll Save Handler
     const handleRollSave = useCallback((dcData, targetsToRoll, advMode = 'normal') => {
@@ -506,30 +809,6 @@ const SessionView = ({
         return formatted;
     }, []);
 
-    // Post Custom Message
-    const postCustomMessage = useCallback(({ content, type = 'chat-public', targetId = null, targetName = null }) => {
-        const isDm = role === 'dm' || data?.dmIds?.includes(user?.uid);
-        const senderRole = isDm ? 'dm' : 'player';
-
-        const msgObj = {
-            content,
-            type,
-            role: senderRole,
-            senderId: user?.uid || 'anon',
-            senderName: activePersona.name,
-            personaType: activePersona.type,
-            targetId: targetId || null,
-            targetName: targetName || null,
-            timestamp: Date.now(),
-            reactions: {},
-            isPinned: false
-        };
-        if (activePersona.image) {
-            msgObj.senderAvatar = activePersona.image;
-        }
-        sendMessage(msgObj);
-    }, [role, data?.dmIds, user?.uid, activePersona, sendMessage]);
-
     // Slash Commands Engine
     const handleSlashCommand = useCallback((rawText) => {
         const trimmed = rawText.trim();
@@ -541,6 +820,9 @@ const SessionView = ({
             const helpContent = `**VTT Chat Slash Commands:**
 - **/r [formula]** or **/roll [formula]** (or **!r**) - Roll dice (e.g. \`/r 1d20+5\`, \`/r 2d6+3\`)
 - **/m [number]** or **/manual [number]** - Log physical / manual dice roll (e.g. \`/m 18\` or \`/m 14+3\`)
+- **/reveal** or **/reveal all** - Reveal all hidden rolls to players (DM only)
+- **/hide [all]** - Set DM rolls to Secret, or hide all public rolls (DM only)
+- **/public** - Set DM rolls to Public (DM only)
 - **/w [player] [msg]** or **/whisper [player] [msg]** - Secret whisper to player
 - **/gm [msg]** or **/dm [msg]** - Send private whisper directly to the Dungeon Master
 - **/me [action]** - In-character narrative emote (e.g. \`/me bows gracefully\`)
@@ -601,7 +883,7 @@ const SessionView = ({
                         isFumble: isFumble,
                         alias: `${activePersona.name} (Manual Roll)`,
                         isManual: true,
-                        type: sendMode === 'chat-private' ? 'roll-private' : 'roll-public'
+                        type: (sendMode === 'chat-private' || (role === 'dm' && rollMode === 'private')) ? 'roll-private' : 'roll-public'
                     };
                     if (sendMessage) {
                         sendMessage({
@@ -712,6 +994,224 @@ const SessionView = ({
             return true;
         }
 
+        if (cmd === '/a' || cmd === '/attack') {
+            const diceFn = handleDiceRoll || onDiceRoll;
+            if (!diceFn) return true;
+            const allAtks = [];
+            (activeCharacter?.inventory || [])
+                .filter(i => (i.combat || i.equipped) && (i.hit || i.dmg || i.combat?.hit || i.combat?.dmg))
+                .forEach(i => {
+                    const c = i.combat || {};
+                    allAtks.push({ name: i.name, hit: i.hit || c.hit || '+0', dmg: i.dmg || c.dmg || '1d6', damageType: i.damageType || c.damageType || '' });
+                });
+            if (Array.isArray(activeCharacter?.actions)) {
+                activeCharacter.actions.forEach(a => {
+                    const hitMatch = (a.desc || '').match(/([+-]\d+)\s+to\s+hit/i);
+                    const dmgMatch = (a.desc || '').match(/(\d+d\d+(?:\s*[+-]\s*\d+)?)\s*([a-zA-Z]+)?\s*damage/i);
+                    allAtks.push({
+                        name: a.name,
+                        hit: a.attack_bonus !== undefined ? (a.attack_bonus >= 0 ? `+${a.attack_bonus}` : `${a.attack_bonus}`) : (hitMatch ? hitMatch[1] : '+0'),
+                        dmg: a.damage_dice || (dmgMatch ? dmgMatch[1] : '1d6'),
+                        damageType: dmgMatch ? dmgMatch[2] : ''
+                    });
+                });
+            }
+            let chosenAtk = null;
+            if (args) {
+                const q = args.toLowerCase();
+                chosenAtk = allAtks.find(a => a.name.toLowerCase().includes(q));
+            }
+            if (!chosenAtk && allAtks.length > 0) chosenAtk = allAtks[0];
+            if (!chosenAtk) chosenAtk = { name: 'Basic Attack', hit: '+0', dmg: '1d6', damageType: '' };
+
+            const hitStr = String(chosenAtk.hit || '+0').replace(/[^0-9+-]/g, '');
+            const hitMod = parseInt(hitStr) || 0;
+            const formula = `1d20${hitMod !== 0 ? (hitMod > 0 ? `+${hitMod}` : `${hitMod}`) : ''}`;
+            diceFn(formula, {
+                actionType: 'attack',
+                weaponName: chosenAtk.name,
+                alias: `${chosenAtk.name} Attack`,
+                characterName: activePersona.name,
+                damageRoll: chosenAtk.dmg,
+                damageType: chosenAtk.damageType || ''
+            });
+            setInputText('');
+            return true;
+        }
+
+        if (cmd === '/cast' || cmd === '/spell') {
+            const diceFn = handleDiceRoll || onDiceRoll;
+            const spellList = activeCharacter?.spells || [];
+            if (!args) {
+                toast("Usage: /cast [spell name] (e.g. /cast Fireball or /cast Cure Wounds)", "warning");
+                return true;
+            }
+            const q = args.toLowerCase();
+            const matchedSpell = spellList.find(s => s.name.toLowerCase().includes(q));
+            if (!matchedSpell) {
+                toast(`Spell "${args}" not found on ${activePersona.name}'s sheet.`, "warning");
+                return true;
+            }
+            const lvl = Number(matchedSpell.level || 0);
+            const lvlLabel = lvl === 0 ? 'Cantrip' : `Level ${lvl}`;
+            if (matchedSpell.hit) {
+                const hitStr = String(matchedSpell.hit).replace(/[^0-9+-]/g, '');
+                const hitMod = parseInt(hitStr) || 0;
+                const formula = `1d20${hitMod !== 0 ? (hitMod > 0 ? `+${hitMod}` : `${hitMod}`) : ''}`;
+                diceFn?.(formula, {
+                    actionType: 'spell',
+                    weaponName: matchedSpell.name,
+                    alias: `${matchedSpell.name} (${lvlLabel})`,
+                    characterName: activePersona.name,
+                    damageRoll: matchedSpell.dmg,
+                    damageType: matchedSpell.school || 'Spell',
+                    description: matchedSpell.desc
+                });
+            } else if (matchedSpell.dmg) {
+                diceFn?.(matchedSpell.dmg, {
+                    actionType: 'damage',
+                    weaponName: matchedSpell.name,
+                    alias: `${matchedSpell.name} (${lvlLabel})`,
+                    characterName: activePersona.name,
+                    damageType: matchedSpell.school || 'Spell',
+                    description: matchedSpell.desc
+                });
+            } else {
+                postCustomMessage({
+                    content: `casts **${matchedSpell.name}** (${lvlLabel})${matchedSpell.desc ? `\n> *${matchedSpell.desc.slice(0, 160)}${matchedSpell.desc.length > 160 ? '...' : ''}*` : ''}`,
+                    type: 'chat-emote'
+                });
+            }
+            setInputText('');
+            return true;
+        }
+
+        if (cmd === '/check' || cmd === '/c') {
+            const diceFn = handleDiceRoll || onDiceRoll;
+            if (!args) {
+                toast("Usage: /check [skill] (e.g. /check stealth, /check perception)", "warning");
+                return true;
+            }
+            const q = args.toLowerCase();
+            const matched = SKILL_LIST.find(s => s.name.toLowerCase().includes(q) || s.name.toLowerCase().startsWith(q));
+            if (!matched) {
+                toast(`Skill "${args}" not recognized (e.g. athletics, stealth, perception).`, "warning");
+                return true;
+            }
+            const statVal = (activeCharacter?.stats || {})[matched.stat] || 10;
+            const statMod = Math.floor((statVal - 10) / 2);
+            const profBonus = Math.floor(((Number(activeCharacter?.level) || 1) - 1) / 4) + 2;
+            const skillProf = activeCharacter?.skills?.[matched.name] || activeCharacter?.skills?.[matched.name.toLowerCase()];
+            let totalMod = statMod;
+            if (skillProf === 'expertise' || skillProf === 2) totalMod += profBonus * 2;
+            else if (skillProf) totalMod += profBonus;
+            const formula = `1d20${totalMod !== 0 ? (totalMod > 0 ? `+${totalMod}` : `${totalMod}`) : ''}`;
+            diceFn?.(formula, {
+                alias: `${matched.name} Check`,
+                characterName: activePersona.name,
+                actionType: 'check'
+            });
+            setInputText('');
+            return true;
+        }
+
+        if (cmd === '/save' || cmd === '/s') {
+            const diceFn = handleDiceRoll || onDiceRoll;
+            if (!args) {
+                toast("Usage: /save [stat] (e.g. /save dex, /save con, /save wis)", "warning");
+                return true;
+            }
+            const q = args.toLowerCase().slice(0, 3);
+            const matched = SAVING_THROWS.find(s => s.key === q || s.label.toLowerCase().startsWith(q));
+            if (!matched) {
+                toast(`Saving throw "${args}" not recognized (use str, dex, con, int, wis, cha).`, "warning");
+                return true;
+            }
+            const statVal = (activeCharacter?.stats || {})[matched.key] || 10;
+            const statMod = Math.floor((statVal - 10) / 2);
+            const profBonus = Math.floor(((Number(activeCharacter?.level) || 1) - 1) / 4) + 2;
+            const isProf = Boolean(activeCharacter?.savingThrows?.[matched.key] || activeCharacter?.saves?.[matched.key]);
+            const totalMod = isProf ? statMod + profBonus : statMod;
+            const formula = `1d20${totalMod !== 0 ? (totalMod > 0 ? `+${totalMod}` : `${totalMod}`) : ''}`;
+            diceFn?.(formula, {
+                alias: `${matched.label} Saving Throw`,
+                characterName: activePersona.name,
+                actionType: 'save'
+            });
+            setInputText('');
+            return true;
+        }
+
+        if (cmd === '/hp' || cmd === '/heal' || cmd === '/damage') {
+            if (!args) {
+                toast("Usage: /hp [+10 or -5], /heal 10, or /damage 5", "warning");
+                return true;
+            }
+            let delta = parseInt(args);
+            if (isNaN(delta)) {
+                toast("Invalid amount. Example: /hp -5 or /heal 10", "warning");
+                return true;
+            }
+            if (cmd === '/damage') delta = -Math.abs(delta);
+            if (cmd === '/heal') delta = Math.abs(delta);
+
+            if (!activeCharacter) {
+                if (role === 'dm' || data?.dmIds?.includes(user?.uid)) {
+                    setDamageTargetModal({
+                        amount: Math.abs(delta),
+                        isHeal: delta > 0,
+                        damageType: ''
+                    });
+                    setInputText('');
+                    return true;
+                }
+                toast("No active character selected for HP adjustment.", "warning");
+                return true;
+            }
+
+            handleApplyHpChange(delta);
+            setInputText('');
+            return true;
+        }
+
+        if (cmd === '/reveal') {
+            if (role !== 'dm' && !data?.dmIds?.includes(user?.uid)) {
+                toast("Only the DM can reveal hidden rolls.", "warning");
+                return true;
+            }
+            handleRevealAllHiddenRolls();
+            setInputText('');
+            return true;
+        }
+
+        if (cmd === '/hide' || cmd === '/secret') {
+            if (role !== 'dm' && !data?.dmIds?.includes(user?.uid)) {
+                toast("Only the DM can adjust roll privacy.", "warning");
+                return true;
+            }
+            if (args === 'all') {
+                handleHideAllRolls();
+            } else {
+                if (setRollMode) setRollMode('private');
+                localStorage.setItem('roll_mode', 'private');
+                toast("DM rolls set to Secret (Hidden from players).", "info");
+            }
+            setInputText('');
+            return true;
+        }
+
+        if (cmd === '/public') {
+            if (role !== 'dm' && !data?.dmIds?.includes(user?.uid)) {
+                toast("Only the DM can adjust roll privacy.", "warning");
+                return true;
+            }
+            if (setRollMode) setRollMode('public');
+            localStorage.setItem('roll_mode', 'public');
+            toast("DM rolls set to Public (Visible to players).", "info");
+            setInputText('');
+            return true;
+        }
+
         if (cmd === '/clear') {
             if (role === 'dm' || data?.dmIds?.includes(user?.uid)) {
                 clearChat();
@@ -723,7 +1223,7 @@ const SessionView = ({
         }
 
         return false;
-    }, [handleDiceRoll, postCustomMessage, activePersona, data, role, user?.uid, clearChat, toast, sendMessage, setInputText]);
+    }, [handleDiceRoll, postCustomMessage, activePersona, activeCharacter, data, role, user?.uid, clearChat, toast, sendMessage, setInputText, handleApplyHpChange, handleRevealAllHiddenRolls, handleHideAllRolls, rollMode, setRollMode]);
 
     // Send Message
     const handleSend = () => {
@@ -810,23 +1310,6 @@ const SessionView = ({
         toast(newPinned ? "Message pinned to ⭐ Pinned tab" : "Message unpinned", "info");
     }, [chatLog, onEditMessage, toast]);
 
-    // Permissions Filter (Room Security)
-    const allPermittedMessages = useMemo(() => {
-        return chatLog.filter(msg => {
-            if (msg.role === 'system') return true;
-            if (msg.type === 'chat-public' || msg.type === 'chat-emote' || msg.type === 'chat-desc' || msg.type === 'chat-ooc' || msg.type === 'boxed') return true;
-            if (msg.type === 'roll-public' || msg.type === 'group-roll') return true;
-            if (role === 'dm') return true;
-            if (msg.type === 'chat-private') {
-                return msg.senderId === user?.uid || msg.targetId === user?.uid;
-            }
-            if (msg.type === 'roll-private') {
-                return msg.senderId === user?.uid;
-            }
-            return false;
-        });
-    }, [chatLog, user?.uid, role]);
-
     // Channel Counts
     const channelCounts = useMemo(() => {
         let rp = 0, dice = 0, whisper = 0, pinned = 0;
@@ -877,31 +1360,73 @@ const SessionView = ({
             try { parsedRollData = JSON.parse(msg.content); } catch (e) {}
         }
         
-        let charName = null;
+        // 1. Determine explicit sender / character name
+        let effectiveName = null;
         if (parsedRollData?.characterName && parsedRollData.characterName !== 'Dungeon Master') {
-            charName = parsedRollData.characterName;
+            effectiveName = parsedRollData.characterName;
+        } else if (msg.senderName && msg.senderName !== 'Dungeon Master') {
+            effectiveName = msg.senderName;
         }
 
-        if (charName) {
-            const char = [...(data.players || []), ...(data.npcs || [])].find(c => c.name === charName);
-            return { name: charName, character: char, isDm: false, avatar: char?.image };
+        // 2. If it's a character, NPC, token, or custom persona (not Dungeon Master)
+        if (effectiveName) {
+            const allChars = [...(data.players || []), ...(data.npcs || [])];
+            const matchedChar = allChars.find(c => c.name === effectiveName);
+            const avatar = msg.senderAvatar || matchedChar?.image || matchedChar?.tokenImage || null;
+            return { 
+                name: effectiveName, 
+                character: matchedChar || null, 
+                isDm: false, 
+                avatar: avatar,
+                personaType: msg.personaType || (matchedChar ? 'character' : 'custom')
+            };
         }
 
-        if (data.dmIds?.includes(msg.senderId) || msg.senderName === 'Dungeon Master') {
-            return { name: 'Dungeon Master', character: null, isDm: true, avatar: null };
+        // 3. Explicitly Dungeon Master (or DM default roll)
+        if (msg.senderName === 'Dungeon Master' || msg.personaType === 'dm' || parsedRollData?.isDmRoll) {
+            return { 
+                name: 'Dungeon Master', 
+                character: null, 
+                isDm: true, 
+                avatar: null,
+                personaType: 'dm'
+            };
         }
 
+        // 4. Message has custom sender avatar
         if (msg.senderAvatar) {
-            return { name: msg.senderName || 'Player', character: null, isDm: false, avatar: msg.senderAvatar };
+            return { 
+                name: msg.senderName || 'Player', 
+                character: null, 
+                isDm: false, 
+                avatar: msg.senderAvatar,
+                personaType: msg.personaType || 'player'
+            };
         }
-        
-        const charId = data.assignments?.[msg.senderId];
-        const assignedCharacter = data.players?.find(p => String(p.id) === String(charId));
+
+        // 5. Fallback for legacy messages that did not record senderName:
+        if (!msg.senderName) {
+            if (data.dmIds?.includes(msg.senderId)) {
+                return { name: 'Dungeon Master', character: null, isDm: true, avatar: null, personaType: 'dm' };
+            }
+            const charId = data.assignments?.[msg.senderId];
+            const assignedCharacter = data.players?.find(p => String(p.id) === String(charId));
+            return { 
+                name: assignedCharacter ? assignedCharacter.name : 'Player', 
+                character: assignedCharacter || null, 
+                isDm: false, 
+                avatar: assignedCharacter?.image || null,
+                personaType: 'character'
+            };
+        }
+
+        // 6. Default fallback
         return { 
-            name: assignedCharacter ? assignedCharacter.name : (msg.senderName || 'Player'), 
-            character: assignedCharacter, 
+            name: msg.senderName || 'Player', 
+            character: null, 
             isDm: false, 
-            avatar: assignedCharacter?.image 
+            avatar: null,
+            personaType: msg.personaType || 'player'
         };
     }, [data.dmIds, data.assignments, data.players, data.npcs]);
 
@@ -1089,18 +1614,87 @@ const SessionView = ({
                     })}
                 </div>
 
-                {/* DM Clear Button */}
-                {role === 'dm' && !compact && (
-                    <button 
-                        onClick={clearChat} 
-                        className="bg-red-950/40 hover:bg-red-900/70 border border-red-500/40 hover:border-red-400/60 text-red-300 hover:text-red-100 px-3 py-1.5 rounded-full text-xs font-semibold shadow-sm flex items-center gap-1.5 transition-all cursor-pointer shrink-0 active:scale-95"
-                        title="Clear Chat History"
-                    >
-                        <Icon name="trash-2" size={12}/>
-                        <span>Clear</span>
-                    </button>
-                )}
+                {/* Top Bar Actions: DM Reveal All + DM Clear */}
+                <div className="flex items-center gap-1.5 shrink-0">
+                    {role === 'dm' && hiddenRolls.length > 0 && (
+                        <button 
+                            type="button"
+                            onClick={handleRevealAllHiddenRolls} 
+                            className="bg-amber-500/20 hover:bg-amber-500/35 border border-amber-500/60 hover:border-amber-400 text-amber-200 hover:text-white px-2.5 py-1.5 rounded-full text-xs font-bold shadow-md flex items-center gap-1.5 transition-all cursor-pointer shrink-0 active:scale-95 animate-pulse"
+                            title={`Reveal all ${hiddenRolls.length} hidden DM roll(s) to players`}
+                        >
+                            <Icon name="eye" size={13} className="text-amber-300"/>
+                            <span>Reveal All ({hiddenRolls.length})</span>
+                        </button>
+                    )}
+
+                    {/* DM Clear Button */}
+                    {role === 'dm' && !compact && (
+                        <button 
+                            onClick={clearChat} 
+                            className="bg-red-950/40 hover:bg-red-900/70 border border-red-500/40 hover:border-red-400/60 text-red-300 hover:text-red-100 px-3 py-1.5 rounded-full text-xs font-semibold shadow-sm flex items-center gap-1.5 transition-all cursor-pointer shrink-0 active:scale-95"
+                            title="Clear Chat History"
+                        >
+                            <Icon name="trash-2" size={12}/>
+                            <span>Clear</span>
+                        </button>
+                    )}
+                </div>
             </div>
+
+            {/* Active Combat Turn Ribbon (Unobtrusive: Only visible during active battle) */}
+            {data?.campaign?.combat?.active && Boolean(data?.campaign?.combat?.combatants?.length) && (
+                <div className="bg-slate-900/90 border-b border-amber-500/30 px-3 py-1.5 flex items-center justify-between gap-2 shrink-0 z-10 shadow-sm animate-in fade-in text-xs">
+                    <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
+                        <span className="px-2 py-0.5 rounded-lg bg-amber-500/20 text-amber-300 font-mono font-bold text-[11px] border border-amber-500/30 shrink-0 flex items-center gap-1">
+                            <Icon name="swords" size={11} className="text-amber-400" />
+                            <span>Rnd {data.campaign.combat.round || 1}</span>
+                        </span>
+                        {(() => {
+                            const combatants = data.campaign.combat.combatants || [];
+                            const turn = data.campaign.combat.turn || 0;
+                            const activeIndex = combatants.length > 0 ? turn % combatants.length : 0;
+                            const activeCombatant = combatants[activeIndex];
+                            const isMyTurn = activeCombatant && (
+                                (activeCharacter && String(activeCombatant.characterId) === String(activeCharacter.id)) ||
+                                (activeCombatant.name === activePersona.name)
+                            );
+                            return (
+                                <div className="flex items-center gap-1.5 truncate">
+                                    <span className="text-[11px] text-slate-400">Current Turn:</span>
+                                    <span className={`font-bold truncate ${isMyTurn ? 'text-amber-300 animate-pulse' : 'text-slate-200'}`}>
+                                        {activeCombatant?.name || 'Combatant'}
+                                    </span>
+                                    {isMyTurn && (
+                                        <span className="text-[9px] bg-amber-500/30 text-amber-200 px-1.5 py-0.2 rounded font-bold uppercase tracking-wider shrink-0">
+                                            Your Turn!
+                                        </span>
+                                    )}
+                                </div>
+                            );
+                        })()}
+                    </div>
+
+                    {/* Turn Advance Button (DM only) */}
+                    {(role === 'dm' || data?.dmIds?.includes(user?.uid)) && (
+                        <button
+                            type="button"
+                            onClick={() => {
+                                const combat = data.campaign.combat;
+                                const combatants = combat.combatants || [];
+                                const nextTurn = (combat.turn || 0) + 1;
+                                const nextRound = combatants.length > 0 ? Math.floor(nextTurn / combatants.length) + 1 : (combat.round || 1);
+                                updateCampaign({ campaign: { ...data.campaign, combat: { ...combat, turn: nextTurn, round: nextRound } } });
+                            }}
+                            className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-amber-500/20 text-slate-300 hover:text-amber-300 border border-slate-700 hover:border-amber-500/40 text-[11px] font-bold flex items-center gap-1 shrink-0 transition-all cursor-pointer shadow-sm active:scale-95"
+                            title="Advance Turn"
+                        >
+                            <span>Next Turn</span>
+                            <Icon name="chevron-right" size={12}/>
+                        </button>
+                    )}
+                </div>
+            )}
 
             {/* Chat Messages Stream */}
             <div className="flex-1 flex flex-col h-full relative overflow-hidden bg-gradient-to-b from-slate-950 via-slate-900/50 to-slate-950">
@@ -1134,6 +1728,8 @@ const SessionView = ({
                         const showHeader = i === 0 || 
                                            prevMsg.senderId !== msg.senderId || 
                                            (prevSenderInfo && prevSenderInfo.name !== resolvedSenderName) ||
+                                           (prevSenderInfo && prevSenderInfo.personaType !== senderInfo.personaType) ||
+                                           (prevSenderInfo && prevSenderInfo.isDm !== senderInfo.isDm) ||
                                            (msg.timestamp - prevMsg.timestamp > 60000);
                         
                         const canEdit = role === 'dm' || msg.senderId === user?.uid;
@@ -1379,18 +1975,25 @@ const SessionView = ({
                                                                         <div className="mt-2.5 pt-2 border-t border-slate-700/60 w-full flex items-center gap-2 flex-wrap">
                                                                             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">DM Apply:</span>
                                                                             <button 
-                                                                                onClick={() => handleApplyDamage(finalTotal)}
+                                                                                onClick={() => handleApplyDamage(finalTotal, { damageType: rollData.damageType || '' })}
                                                                                 className="inline-flex items-center gap-1.5 bg-red-950/70 hover:bg-red-800/80 border border-red-500/50 text-[11px] font-bold text-red-200 hover:text-white px-2.5 py-1 rounded-lg cursor-pointer transition-all shadow-sm active:scale-95"
-                                                                                title={`Apply ${finalTotal} full damage to selected token`}
+                                                                                title={selectedTokenIds.length > 0 ? `Apply ${finalTotal} full damage to selected token` : `Apply ${finalTotal} full damage (opens target picker if none selected)`}
                                                                             >
                                                                                 <Icon name="sword" size={11}/> -{finalTotal} Full
                                                                             </button>
                                                                             <button 
-                                                                                onClick={() => handleApplyDamage(halfTotal)}
+                                                                                onClick={() => handleApplyDamage(halfTotal, { isHalf: true, damageType: rollData.damageType || '' })}
                                                                                 className="inline-flex items-center gap-1.5 bg-amber-950/70 hover:bg-amber-800/80 border border-amber-500/50 text-[11px] font-bold text-amber-200 hover:text-white px-2.5 py-1 rounded-lg cursor-pointer transition-all shadow-sm active:scale-95"
-                                                                                title={`Apply ${halfTotal} half damage to selected token`}
+                                                                                title={selectedTokenIds.length > 0 ? `Apply ${halfTotal} half damage to selected token` : `Apply ${halfTotal} half damage (opens target picker if none selected)`}
                                                                             >
                                                                                 <Icon name="shield" size={11}/> -{halfTotal} Half
+                                                                            </button>
+                                                                            <button 
+                                                                                onClick={() => handleApplyDamage(finalTotal, { forceModal: true, damageType: rollData.damageType || '' })}
+                                                                                className="inline-flex items-center gap-1 bg-slate-800 hover:bg-slate-750 border border-slate-700 hover:border-amber-500/40 text-[11px] font-bold text-slate-300 hover:text-amber-300 px-2 py-1 rounded-lg cursor-pointer transition-all shadow-sm active:scale-95"
+                                                                                title="Choose targets from party list"
+                                                                            >
+                                                                                <Icon name="crosshair" size={11} className="text-amber-400"/> Pick Targets
                                                                             </button>
                                                                         </div>
                                                                     );
@@ -1468,13 +2071,23 @@ const SessionView = ({
                                                                 return (
                                                                     <div className="bg-gradient-to-b from-slate-900/95 to-slate-950/95 border border-slate-700/80 rounded-xl p-3.5 w-full max-w-md shadow-2xl backdrop-blur-md flex flex-col items-start text-left relative overflow-hidden">
                                                                         {msg.type === 'roll-private' && (
-                                                                            <button 
-                                                                                onClick={() => role === 'dm' && onEditMessage(msg.id, { type: 'roll-public' })}
-                                                                                className={`absolute top-2.5 right-2.5 ${role === 'dm' ? 'text-amber-500 hover:text-amber-400 cursor-pointer' : 'text-slate-500 cursor-default'}`} 
-                                                                                title={role === 'dm' ? "Click to reveal roll to players" : "Private DM Roll"}
-                                                                            >
-                                                                                <Icon name="eye-off" size={14} />
-                                                                            </button>
+                                                                            <div className="absolute top-2.5 right-2.5 flex items-center gap-1.5 z-10">
+                                                                                {role === 'dm' ? (
+                                                                                    <button 
+                                                                                        type="button"
+                                                                                        onClick={(e) => { e.stopPropagation(); handleToggleRollVisibility(msg.id, msg.type); }}
+                                                                                        className="flex items-center gap-1 bg-amber-500/20 hover:bg-amber-500/35 border border-amber-500/50 hover:border-amber-400 text-amber-300 hover:text-white text-[10px] font-bold px-2 py-0.5 rounded-full transition-all cursor-pointer shadow-sm active:scale-95" 
+                                                                                        title="Click to reveal this roll to players"
+                                                                                    >
+                                                                                        <Icon name="eye-off" size={11} className="text-amber-400" />
+                                                                                        <span>Hidden • Reveal</span>
+                                                                                    </button>
+                                                                                ) : (
+                                                                                    <span className="text-[10px] text-slate-500 flex items-center gap-1 bg-slate-900/60 px-2 py-0.5 rounded-full border border-slate-800">
+                                                                                        <Icon name="eye-off" size={11} /> Secret
+                                                                                    </span>
+                                                                                )}
+                                                                            </div>
                                                                         )}
                                                                         <div className="text-[11px] uppercase font-bold tracking-wider text-amber-500/90">{displayCharName}</div>
                                                                         <div className="font-bold text-amber-300 text-base flex items-center gap-1.5 mt-0.5">
@@ -1501,13 +2114,23 @@ const SessionView = ({
                                                                 return (
                                                                     <div className={`${cardBorderClass} border rounded-xl p-3.5 w-full max-w-md shadow-2xl flex flex-col items-start text-left relative overflow-hidden transition-all`}>
                                                                         {msg.type === 'roll-private' && (
-                                                                            <button 
-                                                                                onClick={() => role === 'dm' && onEditMessage(msg.id, { type: 'roll-public' })}
-                                                                                className={`absolute top-2.5 right-2.5 ${role === 'dm' ? 'text-amber-500 hover:text-amber-400 cursor-pointer' : 'text-slate-500 cursor-default'}`} 
-                                                                                title={role === 'dm' ? "Click to reveal roll to players" : "Private DM Roll"}
-                                                                            >
-                                                                                <Icon name="eye-off" size={14} />
-                                                                            </button>
+                                                                            <div className="absolute top-2.5 right-2.5 flex items-center gap-1.5 z-10">
+                                                                                {role === 'dm' ? (
+                                                                                    <button 
+                                                                                        type="button"
+                                                                                        onClick={(e) => { e.stopPropagation(); handleToggleRollVisibility(msg.id, msg.type); }}
+                                                                                        className="flex items-center gap-1 bg-amber-500/20 hover:bg-amber-500/35 border border-amber-500/50 hover:border-amber-400 text-amber-300 hover:text-white text-[10px] font-bold px-2 py-0.5 rounded-full transition-all cursor-pointer shadow-sm active:scale-95" 
+                                                                                        title="Click to reveal this roll to players"
+                                                                                    >
+                                                                                        <Icon name="eye-off" size={11} className="text-amber-400" />
+                                                                                        <span>Hidden • Reveal</span>
+                                                                                    </button>
+                                                                                ) : (
+                                                                                    <span className="text-[10px] text-slate-500 flex items-center gap-1 bg-slate-900/60 px-2 py-0.5 rounded-full border border-slate-800">
+                                                                                        <Icon name="eye-off" size={11} /> Secret
+                                                                                    </span>
+                                                                                )}
+                                                                            </div>
                                                                         )}
                                                                         {renderCritBadge()}
                                                                         <div className="font-bold text-amber-400 mb-2 text-sm flex items-center gap-1.5">
@@ -1533,13 +2156,23 @@ const SessionView = ({
                                                                 return (
                                                                     <div className={`${cardBorderClass} border rounded-xl p-3.5 w-full max-w-md shadow-2xl flex flex-col items-start text-left relative overflow-hidden transition-all`}>
                                                                         {msg.type === 'roll-private' && (
-                                                                            <button 
-                                                                                onClick={() => role === 'dm' && onEditMessage(msg.id, { type: 'roll-public' })}
-                                                                                className={`absolute top-2.5 right-2.5 ${role === 'dm' ? 'text-amber-500 hover:text-amber-400 cursor-pointer' : 'text-slate-500 cursor-default'}`} 
-                                                                                title={role === 'dm' ? "Click to reveal roll to players" : "Private DM Roll"}
-                                                                            >
-                                                                                <Icon name="eye-off" size={14} />
-                                                                            </button>
+                                                                            <div className="absolute top-2.5 right-2.5 flex items-center gap-1.5 z-10">
+                                                                                {role === 'dm' ? (
+                                                                                    <button 
+                                                                                        type="button"
+                                                                                        onClick={(e) => { e.stopPropagation(); handleToggleRollVisibility(msg.id, msg.type); }}
+                                                                                        className="flex items-center gap-1 bg-amber-500/20 hover:bg-amber-500/35 border border-amber-500/50 hover:border-amber-400 text-amber-300 hover:text-white text-[10px] font-bold px-2 py-0.5 rounded-full transition-all cursor-pointer shadow-sm active:scale-95" 
+                                                                                        title="Click to reveal this roll to players"
+                                                                                    >
+                                                                                        <Icon name="eye-off" size={11} className="text-amber-400" />
+                                                                                        <span>Hidden • Reveal</span>
+                                                                                    </button>
+                                                                                ) : (
+                                                                                    <span className="text-[10px] text-slate-500 flex items-center gap-1 bg-slate-900/60 px-2 py-0.5 rounded-full border border-slate-800">
+                                                                                        <Icon name="eye-off" size={11} /> Secret
+                                                                                    </span>
+                                                                                )}
+                                                                            </div>
                                                                         )}
                                                                         {renderCritBadge()}
                                                                         <div className="text-[11px] uppercase font-bold tracking-wider text-amber-500/90">{displayCharName}</div>
@@ -1572,13 +2205,23 @@ const SessionView = ({
                                                             return (
                                                                 <div className={`${cardBorderClass} border rounded-xl p-3 w-full max-w-md flex flex-col items-start relative overflow-hidden transition-all shadow-2xl`}>
                                                                     {msg.type === 'roll-private' && (
-                                                                        <button 
-                                                                            onClick={() => role === 'dm' && onEditMessage(msg.id, { type: 'roll-public' })}
-                                                                            className={`absolute top-2.5 right-2.5 ${role === 'dm' ? 'text-amber-500 hover:text-amber-400 cursor-pointer' : 'text-slate-500 cursor-default'}`} 
-                                                                            title={role === 'dm' ? "Click to reveal roll to players" : "Private DM Roll"}
-                                                                        >
-                                                                            <Icon name="eye-off" size={13} />
-                                                                        </button>
+                                                                        <div className="absolute top-2.5 right-2.5 flex items-center gap-1.5 z-10">
+                                                                            {role === 'dm' ? (
+                                                                                <button 
+                                                                                    type="button"
+                                                                                    onClick={(e) => { e.stopPropagation(); handleToggleRollVisibility(msg.id, msg.type); }}
+                                                                                    className="flex items-center gap-1 bg-amber-500/20 hover:bg-amber-500/35 border border-amber-500/50 hover:border-amber-400 text-amber-300 hover:text-white text-[10px] font-bold px-2 py-0.5 rounded-full transition-all cursor-pointer shadow-sm active:scale-95" 
+                                                                                    title="Click to reveal this roll to players"
+                                                                                >
+                                                                                    <Icon name="eye-off" size={11} className="text-amber-400" />
+                                                                                    <span>Hidden • Reveal</span>
+                                                                                </button>
+                                                                            ) : (
+                                                                                <span className="text-[10px] text-slate-500 flex items-center gap-1 bg-slate-900/60 px-2 py-0.5 rounded-full border border-slate-800">
+                                                                                    <Icon name="eye-off" size={11} /> Secret
+                                                                                </span>
+                                                                            )}
+                                                                        </div>
                                                                     )}
                                                                     {renderCritBadge()}
                                                                     <div className="text-slate-400 text-xs"><strong className="text-slate-200">{displayCharName}</strong> rolled <span className="font-mono text-amber-300">{rollData.formula}</span></div>
@@ -1618,7 +2261,7 @@ const SessionView = ({
                                     {renderReactions(msg, handleToggleReaction, user?.uid)}
 
                                     {/* Action Hover Bar */}
-                                    {renderActionBar({ msg, canEdit, isPinned, setEditingId, setEditContent, onDeleteMessage, saveMessageToJournal, handleTogglePin, setActiveReactionMsgId, activeReactionMsgId, handleToggleReaction })}
+                                    {renderActionBar({ msg, canEdit, isPinned, setEditingId, setEditContent, onDeleteMessage, saveMessageToJournal, handleTogglePin, setActiveReactionMsgId, activeReactionMsgId, handleToggleReaction, role, handleToggleRollVisibility })}
                                 </div>
                             </div>
                         );
@@ -1718,6 +2361,9 @@ const SessionView = ({
                             {[
                                 { cmd: '/r 1d20+5', desc: 'Roll any dice formula directly' },
                                 { cmd: '/m 18', desc: 'Log manual physical dice result' },
+                                { cmd: '/reveal', desc: 'Reveal all hidden rolls to players (DM)' },
+                                { cmd: '/hide', desc: 'Set DM rolls to Secret, or /hide all' },
+                                { cmd: '/public', desc: 'Set DM rolls to Public (DM)' },
                                 { cmd: '/w [player] [msg]', desc: 'Whisper privately to a player' },
                                 { cmd: '/gm [msg]', desc: 'Whisper directly to the DM' },
                                 { cmd: '/me [action]', desc: 'In-character narrative action' },
@@ -1746,14 +2392,14 @@ const SessionView = ({
                 <div className="p-3 bg-slate-950/95 backdrop-blur-xl border-t border-slate-800/90 flex flex-col gap-2.5 shrink-0 z-20 shadow-[0_-8px_24px_rgba(0,0,0,0.6)]">
                     {/* Controls Row: Speaking As Persona + Mode Dropdown + Dice Launcher */}
                     <div className="flex items-center gap-2 flex-wrap">
-                        {/* "Speaking As..." Persona Switcher */}
+                        {/* "Play As / Speaking As..." Persona Switcher */}
                         <div className="relative">
                             <button 
                                 onClick={() => setShowPersonaMenu(!showPersonaMenu)}
                                 className="flex items-center gap-2 bg-slate-900/90 hover:bg-slate-850 border border-slate-700/80 hover:border-amber-500/40 rounded-xl px-3 py-1.5 text-xs transition-all shadow-sm cursor-pointer"
-                                title="Change Persona"
+                                title="Change Persona / Play As"
                             >
-                                <span className="text-slate-400 text-[10px] uppercase font-bold tracking-wider">As:</span>
+                                <span className="text-slate-400 text-[10px] uppercase font-bold tracking-wider">Play As:</span>
                                 {activePersona.image ? (
                                     <img src={activePersona.image} alt={activePersona.name} className="w-4 h-4 rounded-full object-cover ring-1 ring-amber-500/40"/>
                                 ) : activePersona.type === 'dm' ? (
@@ -1768,8 +2414,9 @@ const SessionView = ({
                             {/* Persona Dropdown */}
                             {showPersonaMenu && (
                                 <div className="absolute left-0 bottom-full mb-2 w-64 bg-slate-950/95 border border-slate-700/80 rounded-2xl shadow-2xl p-2 z-50 backdrop-blur-xl animate-in fade-in zoom-in-95 duration-150">
-                                    <div className="text-[10px] uppercase font-bold tracking-widest text-amber-400/80 px-2.5 py-1.5 border-b border-slate-800/80 mb-1">
-                                        Speaking As:
+                                    <div className="text-[10px] uppercase font-bold tracking-widest text-amber-400/80 px-2.5 py-1.5 border-b border-slate-800/80 mb-1 flex items-center justify-between">
+                                        <span>Play / Speak As:</span>
+                                        <span className="text-[9px] text-slate-500 font-mono lowercase">in-game chat</span>
                                     </div>
                                     <div className="space-y-1 max-h-52 overflow-y-auto custom-scroll">
                                         {availablePersonas.map(persona => {
@@ -1839,6 +2486,28 @@ const SessionView = ({
                             </select>
                         )}
 
+                        {/* DM Roll Mode Toggle (Public vs Secret) */}
+                        {role === 'dm' && (
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    const nextMode = (rollMode === 'private') ? 'public' : 'private';
+                                    if (setRollMode) setRollMode(nextMode);
+                                    localStorage.setItem('roll_mode', nextMode);
+                                    toast(nextMode === 'private' ? 'DM Rolls set to Secret (Hidden from players)' : 'DM Rolls set to Public (Visible to players)', 'info');
+                                }}
+                                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer shadow-sm active:scale-95 ${
+                                    rollMode === 'private'
+                                        ? 'bg-purple-950/70 border-purple-500/60 text-purple-200 hover:bg-purple-900/70 shadow-[0_0_10px_rgba(168,85,247,0.25)]'
+                                        : 'bg-emerald-950/60 border-emerald-500/60 text-emerald-200 hover:bg-emerald-900/60 shadow-[0_0_10px_rgba(16,185,129,0.2)]'
+                                }`}
+                                title={`DM Rolls are currently ${rollMode === 'private' ? 'SECRET (hidden from players)' : 'PUBLIC (visible to players)'}. Click to switch.`}
+                            >
+                                <Icon name={rollMode === 'private' ? 'eye-off' : 'eye'} size={13} className={rollMode === 'private' ? 'text-purple-400' : 'text-emerald-400'} />
+                                <span>Rolls: {rollMode === 'private' ? 'Secret' : 'Public'}</span>
+                            </button>
+                        )}
+
                         <div className="ml-auto flex items-center gap-1.5">
                             {/* Slash Command Helper Button */}
                             <button 
@@ -1863,6 +2532,17 @@ const SessionView = ({
                             </button>
                         </div>
                     </div>
+
+                    {/* Character Action Macros / Play-by-Post Quick Bar */}
+                    <ChatActionBar 
+                        activePersona={activePersona}
+                        activeCharacter={activeCharacter}
+                        onDiceRoll={handleDiceRoll}
+                        postCustomMessage={postCustomMessage}
+                        onApplyHpChange={handleApplyHpChange}
+                        onOpenDamageModal={() => setDamageTargetModal({ amount: 10, isHeal: false })}
+                        role={role}
+                    />
                     
                     {/* Text Input & Actions */}
                     <div className={`relative flex gap-2 items-end rounded-2xl p-2.5 border transition-all ${
@@ -1909,6 +2589,20 @@ const SessionView = ({
                         </button>
                     </div>
                 </div>
+
+                {/* Damage Target Selection Modal (when DM damages targets without selection in VTT or Chat) */}
+                {damageTargetModal && (
+                    <DamageTargetModal
+                        isOpen={Boolean(damageTargetModal)}
+                        onClose={() => setDamageTargetModal(null)}
+                        initialAmount={damageTargetModal.amount}
+                        initialIsHalf={damageTargetModal.isHalf}
+                        initialDamageType={damageTargetModal.damageType}
+                        players={data.players || []}
+                        npcs={data.npcs || []}
+                        onApplyDamage={handleApplyDamageToTargets}
+                    />
+                )}
             </div>
         </div>
     );
@@ -1946,11 +2640,27 @@ function renderReactions(msg, handleToggleReaction, currentUid) {
 }
 
 // Helper: Render Hover Action Bar
-function renderActionBar({ msg, canEdit, isPinned, setEditingId, setEditContent, onDeleteMessage, saveMessageToJournal, handleTogglePin, setActiveReactionMsgId, activeReactionMsgId, handleToggleReaction }) {
+function renderActionBar({ msg, canEdit, isPinned, setEditingId, setEditContent, onDeleteMessage, saveMessageToJournal, handleTogglePin, setActiveReactionMsgId, activeReactionMsgId, handleToggleReaction, role, handleToggleRollVisibility }) {
     const isPickerOpen = activeReactionMsgId === msg.id;
+    const isRollMsg = msg?.type?.startsWith('roll-');
 
     return (
         <div className="absolute right-2 top-2 opacity-0 group-hover:opacity-100 flex items-center gap-1 bg-slate-950/90 border border-slate-750 rounded-xl p-1 shadow-2xl transition-all z-10 backdrop-blur-md">
+            {/* DM Roll Visibility Quick Toggle */}
+            {role === 'dm' && isRollMsg && handleToggleRollVisibility && (
+                <button
+                    onClick={() => handleToggleRollVisibility(msg.id, msg.type)}
+                    className={`p-1.5 rounded-lg transition-all cursor-pointer ${
+                        msg.type === 'roll-private' 
+                            ? 'text-amber-400 hover:text-amber-200 hover:bg-slate-850' 
+                            : 'text-slate-400 hover:text-purple-300 hover:bg-slate-850'
+                    }`}
+                    title={msg.type === 'roll-private' ? "Reveal this roll to players" : "Hide this roll from players"}
+                >
+                    <Icon name={msg.type === 'roll-private' ? "eye" : "eye-off"} size={13}/>
+                </button>
+            )}
+
             {/* Quick Reactions Trigger */}
             <div className="relative">
                 <button

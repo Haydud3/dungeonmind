@@ -40,7 +40,7 @@ const Walls = lazy(() => import('./3d/Walls').then(m => ({ default: m.Walls })))
 const CombatTrackerSidebar = lazy(() => import('./ui/CombatTrackerSidebar').then(m => ({ default: m.CombatTrackerSidebar })));
 const CombatRibbon = lazy(() => import('./ui/CombatTrackerSidebar').then(m => ({ default: m.CombatRibbon })));
 const InitiativePrompt = lazy(() => import('./ui/CombatTrackerSidebar').then(m => ({ default: m.InitiativePrompt })));
-import { getInitiativeBonus } from '../utils/initiativeUtils';
+import { getInitiativeBonus } from './ui/CombatTrackerSidebar';
 import InitiativeClashOverlay from './ui/InitiativeClashOverlay';
 import MapForgePanel from './tactical/MapForgePanel';
 import QuickRollMenu from './QuickRollMenu';
@@ -668,14 +668,9 @@ export default React.memo(function TacticalMapView({ isActive = true, campaignCo
       updateCampaign({ players: [...currentPlayers, newChar] });
   }, [data?.players, dialog, updateCampaign]);
 
-  const handleDeleteMapToken = useCallback(async (tokenId, e) => {
+  const handleDeleteMapToken = useCallback((tokenId, e) => {
       if (e) e.stopPropagation();
-      if (!tokenId || tokenId === 'undefined' || tokenId === 'null') return;
-      try {
-        await updateMap(campaignCode, activeMapId, { [`tokens.${tokenId}`]: null });
-      } catch (err) {
-        console.error('[TacticalMapView] Failed to delete map token:', err);
-      }
+      updateMap(campaignCode, activeMapId, { [`tokens.${tokenId}`]: null });
       setSelectedTokenIds(prev => (Array.isArray(prev) ? prev.filter(id => id !== tokenId) : []));
   }, [campaignCode, activeMapId, updateMap, setSelectedTokenIds]);
 
@@ -1624,21 +1619,7 @@ export default React.memo(function TacticalMapView({ isActive = true, campaignCo
   const [topHoveredTokenId, setTopHoveredTokenId] = useState(null);
 
   const tokensList = useMemo(() => {
-    const rawTokens = tokens || {};
-    // Extract valid token entries, ensuring every token has a non-empty unique id
-    const list = Object.entries(rawTokens)
-      .filter(([k, v]) => v && typeof v === 'object')
-      .map(([k, v]) => {
-        const resolvedId = v.id || k;
-        return {
-          ...v,
-          id: String(resolvedId),
-          _mapKey: String(k), // Guarantee exact key in mapData.tokens
-          name: v.name || 'Token'
-        };
-      })
-      .filter(t => t.id && t.id !== 'undefined' && t.id !== 'null' && t._mapKey !== 'undefined' && t._mapKey !== 'null');
-
+    const list = Object.values(tokens).filter(Boolean);
     // Ensure the dragged or hovered token renders on top (last in array = rendered last = on top in WebGL).
     // This matters both visually and for raycasting so overlapping tokens don't compete.
     const topId = draggedTokenId || topHoveredTokenId;
@@ -1647,25 +1628,7 @@ export default React.memo(function TacticalMapView({ isActive = true, campaignCo
     }
     return list;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tokens, draggedTokenId, topHoveredTokenId]);
-
-  // Auto-clean corrupted token keys (like 'undefined' or 'null') from Firestore
-  useEffect(() => {
-    if (!tokens || typeof tokens !== 'object' || effectiveRole !== 'dm' || !campaignCode || !activeMapId) return;
-    const badKeys = Object.keys(tokens).filter(k => 
-      !k || k === 'undefined' || k === 'null' || !tokens[k] || typeof tokens[k] !== 'object' || tokens[k].id === 'undefined' || tokens[k].id === 'null'
-    );
-    if (badKeys.length > 0) {
-      console.warn('[TacticalMapView] Purging corrupted token keys from map:', badKeys);
-      const cleanupUpdates = {};
-      badKeys.forEach(k => {
-        if (k) cleanupUpdates[`tokens.${k}`] = null;
-      });
-      if (Object.keys(cleanupUpdates).length > 0) {
-        updateMap(campaignCode, activeMapId, cleanupUpdates).catch(e => console.error('[TacticalMapView] Cleanup failed:', e));
-      }
-    }
-  }, [tokens, campaignCode, activeMapId, effectiveRole, updateMap]);
+  }, [tokens, draggedTokenId, topHoveredTokenId]); // Filter out null/undefined tokens
 
   // Stabilize context objects that secretly bust React caches on every UI click
   const playersStr = JSON.stringify(data?.players || []);
@@ -2707,16 +2670,13 @@ ${pasteTextContent}`;
     const myCharAssigned = myCharId && String(token.characterId) === String(myCharId);
     const canControl = effectiveRole === 'dm' || isOwner || myCharAssigned || token.isSharedControl;
 
-    const resolvedTokenId = token.id || token._mapKey;
     setContextMenu({
       x: e.clientX,
       y: e.clientY,
-      tokenId: resolvedTokenId,
-      _mapKey: token._mapKey || resolvedTokenId,
+      tokenId: token.id,
       characterId: token.characterId,
       elevationOffset: token.elevationOffset,
       isHidden: token.isHidden,
-      hideName: token.hideName,
       isSharedControl: token.isSharedControl,
       size: token.size || 1,
       name: token.name,
@@ -3196,16 +3156,15 @@ ${pasteTextContent}`;
       if (e.key === 'Delete' || e.key === 'Backspace') {
           if (activeTool) return;
           const currentSelectedIds = useCharacterStore.getState().selectedTokenIds || selectedTokenIds || [];
-          const validIds = currentSelectedIds.filter(id => id && id !== 'undefined' && id !== 'null');
-          if (validIds.length > 0) {
+          if (currentSelectedIds.length > 0) {
               const updates = {};
               if (effectiveRole === 'dm') {
-                  validIds.forEach(id => {
+                  currentSelectedIds.forEach(id => {
                       updates[`tokens.${id}`] = null;
                   });
               } else {
-                  validIds.forEach(id => {
-                      const t = latestTokensRef.current?.[id] || (tokensList || []).find(tok => tok.id === id);
+                  currentSelectedIds.forEach(id => {
+                      const t = latestTokensRef.current?.[id];
                       if (!t) return;
                       const allChars = [...(data?.players || []), ...(data?.npcs || [])];
                       const character = allChars.find(c => String(c.id) === String(t.characterId));
@@ -3214,7 +3173,7 @@ ${pasteTextContent}`;
                   });
               }
               if (Object.keys(updates).length > 0) {
-                  updateMap(campaignCode, activeMapId, updates).catch(err => console.error('[TacticalMapView] Keyboard delete failed:', err));
+                  updateMap(campaignCode, activeMapId, updates);
               }
               setSelectedTokenIds([]);
           }
@@ -3394,12 +3353,12 @@ ${pasteTextContent}`;
   const propsJSX = useMemo(() => {
       if (!mapData || !mapData.props || !isAspectReady || (mapData.heightmapUrl && !terrainData)) return null;
 
-      return Object.values(mapData.props).filter(Boolean).map((prop, propIdx) => {
+      return Object.values(mapData.props).filter(Boolean).map(prop => {
           if ((effectiveRole !== 'dm' || isCastMode) && !visiblePropIds.has(prop.id)) {
               return null;
           }
           return (
-              <ErrorBoundary key={prop.id || `prop_${propIdx}`} fallback={null}>
+              <ErrorBoundary key={prop.id} fallback={null}>
                   <MapProp
                       propData={prop}
                       isSelected={false} 
@@ -3417,7 +3376,7 @@ ${pasteTextContent}`;
   const tokensJSX = useMemo(() => {
       if (!mapData || !isAspectReady || (mapData.heightmapUrl && !terrainData)) return null;
 
-      return tokensList.map((token, tokenIdx) => {
+      return tokensList.map(token => {
           if ((effectiveRole !== 'dm' || isCastMode) && token.isHidden) {
               return null;
           }
@@ -3474,7 +3433,7 @@ ${pasteTextContent}`;
           const isInteractive = true;
 
           return (
-              <ErrorBoundary key={token.id || token._mapKey || `token_${tokenIdx}`} fallback={null}>
+              <ErrorBoundary key={token.id} fallback={null}>
                   <Token3D
                       token={displayToken}                      updateTokenPosition={handleUpdateTokenPosition}
                       gridSize={gridSize}
@@ -4265,7 +4224,7 @@ ${pasteTextContent}`;
                   {showInitiativeTracker && !isCastMode && (
                     <div className="w-full mt-2 pointer-events-none flex justify-start">
                         <Suspense fallback={null}>
-                          <CombatTrackerSidebar combat={data?.combat || data?.campaign?.combat} updateCampaign={updateCampaign} updateMap={updateMap} showNameplates={showNameplates} tokens={tokensList} role={effectiveRole} campaignCode={campaignCode} activeMapId={activeMapId} campaignData={data?.campaign || data || {}} allCharacters={allCharacters} data={data} onOpenSheet={onOpenSheet} className={uiOpacityClass} onClose={() => setShowInitiativeTracker(false)} onDiceRoll={onDiceRoll} onCallInitiative={() => setShowClashAnimation(true)} />
+                          <CombatTrackerSidebar combat={data?.campaign?.combat} updateCampaign={updateCampaign} tokens={tokensList} role={effectiveRole} campaignCode={campaignCode} activeMapId={activeMapId} campaignData={data?.campaign} allCharacters={allCharacters} data={data} onOpenSheet={onOpenSheet} className={uiOpacityClass} onClose={() => setShowInitiativeTracker(false)} onDiceRoll={onDiceRoll} onCallInitiative={() => setShowClashAnimation(true)} />
                         </Suspense>
                     </div>
                   )}
@@ -4278,8 +4237,8 @@ ${pasteTextContent}`;
       )}
 
       <Suspense fallback={null}>
-        {!isCastMode && <CombatRibbon combat={data?.combat || data?.campaign?.combat} updateCampaign={updateCampaign} tokens={tokensList} role={effectiveRole} campaignData={data?.campaign || data || {}} allCharacters={allCharacters} user={user} assignments={stableAssignments} onOpenSheet={onOpenSheet} className={uiOpacityClass} showNameplates={showNameplates} />}
-        {!isCastMode && <InitiativePrompt combat={data?.combat || data?.campaign?.combat} updateCampaign={updateCampaign} tokens={tokensList} role={effectiveRole} campaignData={data?.campaign || data || {}} allCharacters={allCharacters} user={user} assignments={stableAssignments} sendMessage={sendMessage} campaignCode={campaignCode} onDiceRoll={onDiceRoll} isClashing={showClashAnimation} />}
+        {!isCastMode && <CombatRibbon combat={data?.campaign?.combat} updateCampaign={updateCampaign} tokens={tokensList} role={effectiveRole} campaignData={data?.campaign} allCharacters={allCharacters} user={user} assignments={stableAssignments} onOpenSheet={onOpenSheet} className={uiOpacityClass} />}
+        {!isCastMode && <InitiativePrompt combat={data?.campaign?.combat} updateCampaign={updateCampaign} tokens={tokensList} role={effectiveRole} campaignData={data?.campaign} allCharacters={allCharacters} user={user} assignments={stableAssignments} sendMessage={sendMessage} campaignCode={campaignCode} onDiceRoll={onDiceRoll} isClashing={showClashAnimation} />}
       </Suspense>
 
       {/* Primary Right Dock */}
@@ -5071,153 +5030,144 @@ ${pasteTextContent}`;
           >
             {(() => {
               const token = (tokensList || []).find(t => t?.id === contextMenu.tokenId);
-              const charId = contextMenu.characterId || token?.characterId;
-              const char = allCharacters.find(c => String(c.id) === String(charId));
-              const isSimpleActor = Boolean(char?.isSimple || char?.noSheet || token?.isSimple || (!charId && !char));
-              const isNpc = Boolean(
-                  char?.type === 'npc' ||
-                  char?.isNpc ||
-                  token?.isNpc ||
-                  token?.type === 'npc' ||
-                  (data?.npcs || []).some(n => String(n.id) === String(charId))
-              );
-              const isPc = !isNpc;
-              const myCharId = stableAssignments?.[user?.uid];
-              const isOwner = Boolean(
-                  (user?.uid && (
-                      (token?.ownerId && String(token.ownerId) === String(user.uid)) ||
-                      (char?.ownerId && String(char.ownerId) === String(user.uid))
-                  )) ||
-                  (myCharId && (
-                      (token?.ownerId && String(token.ownerId) === String(myCharId)) ||
-                      (char?.ownerId && String(char.ownerId) === String(myCharId)) ||
-                      (String(charId) === String(myCharId))
-                  ))
-              );
-              const canOpenNpcStatblock = effectiveRole === 'dm' || token?.isSharedControl || isOwner;
+              const char = allCharacters.find(c => String(c.id) === String(contextMenu.characterId));
+              const isSimpleActor = Boolean(char?.isSimple || char?.noSheet || token?.isSimple || (!contextMenu.characterId && !char));
+              const isPc = (data?.players || []).some(p => String(p.id) === String(contextMenu.characterId));
 
               return (
                 <>
-                  {/* Sheet or Statblock Action */}
-                  {(charId || char) && onOpenSheet && (
-                    isPc ? (
+                  {isSimpleActor ? (
+                    <>
                       <button 
-                        className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors flex items-center gap-2 text-indigo-300 font-medium"
+                        className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors flex items-center gap-2 text-sky-400 font-bold"
                         onClick={() => {
-                          if (onOpenSheet) {
-                              const hp = token?.hp?.current ?? char?.hp?.current ?? null;
-                              const maxHp = token?.hp?.max ?? char?.hp?.max ?? null;
-                              onOpenSheet({ isToken: true, tokenId: contextMenu.tokenId, characterId: charId || char?.id, hp, maxHp, isPc: true, defaultMode: 'sheet' });
-                          }
+                          setPhotoEditModal({
+                            isOpen: true,
+                            tokenId: contextMenu.tokenId,
+                            characterId: contextMenu.characterId,
+                            name: token?.name || contextMenu.name || 'Token',
+                            image: token?.image || contextMenu.image || ''
+                          });
                           setContextMenu(null);
                         }}
                       >
-                        <Icon name="file-text" size={14} className="text-indigo-400" /> Open Sheet
+                        <Icon name="image" size={14} /> Change Photo
                       </button>
-                    ) : (
-                      canOpenNpcStatblock ? (
-                        <>
+                      {effectiveRole === 'dm' && (
+                        <button 
+                          className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors flex items-center gap-2 text-amber-300"
+                          onClick={() => {
+                            setQuickActorModal({
+                              isOpen: true,
+                              category: isPc ? 'pc' : 'npc',
+                              editId: contextMenu.characterId || null,
+                              tokenId: contextMenu.tokenId,
+                              name: token?.name || char?.name || contextMenu.name || '',
+                              image: token?.image || char?.image || '',
+                              size: token?.size || char?.size || 1,
+                              ownerId: token?.ownerId || char?.ownerId || null
+                            });
+                            setContextMenu(null);
+                          }}
+                        >
+                          <Icon name="edit-2" size={14} /> Edit Token
+                        </button>
+                      )}
+                      {effectiveRole === 'dm' && (
+                        <button 
+                          className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors flex items-center gap-2 text-purple-300 font-semibold"
+                          onClick={() => {
+                            setEditingModelToken({ token, character: char });
+                            setContextMenu(null);
+                          }}
+                        >
+                          <Icon name="box" size={14} className="text-purple-400" /> 3D Mini Studio
+                        </button>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      {contextMenu.characterId && onOpenSheet && (
+                        isPc ? (
                           <button 
-                            className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors flex items-center gap-2 text-amber-300 font-medium"
+                            className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors flex items-center gap-2 text-indigo-300 font-medium"
                             onClick={() => {
                               if (onOpenSheet) {
                                   const hp = token?.hp?.current ?? char?.hp?.current ?? null;
                                   const maxHp = token?.hp?.max ?? char?.hp?.max ?? null;
-                                  onOpenSheet({
-                                      isToken: true,
-                                      tokenId: contextMenu.tokenId,
-                                      characterId: charId || char?.id,
-                                      hp,
-                                      maxHp,
-                                      isPc: false,
-                                      defaultMode: 'statblock',
-                                      ownerId: token?.ownerId || char?.ownerId
-                                  });
+                                  onOpenSheet({ isToken: true, tokenId: contextMenu.tokenId, characterId: contextMenu.characterId, hp, maxHp, isPc: true, defaultMode: 'sheet' });
                               }
                               setContextMenu(null);
                             }}
                           >
-                            <Icon name="scroll" size={14} className="text-amber-400" /> Open Statblock
+                            <Icon name="file-text" size={14} className="text-indigo-400" /> Open Sheet
                           </button>
-                          {effectiveRole === 'dm' && (
-                            <button 
-                              className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors flex items-center gap-2 text-slate-300 hover:text-white"
-                              onClick={() => {
-                                if (onOpenSheet) {
-                                    const hp = token?.hp?.current ?? char?.hp?.current ?? null;
-                                    const maxHp = token?.hp?.max ?? char?.hp?.max ?? null;
-                                    onOpenSheet({
-                                        isToken: true,
-                                        tokenId: contextMenu.tokenId,
-                                        characterId: charId || char?.id,
-                                        hp,
-                                        maxHp,
-                                        isPc: false,
-                                        defaultMode: 'sheet',
-                                        ownerId: token?.ownerId || char?.ownerId
-                                    });
-                                }
-                                setContextMenu(null);
-                              }}
-                            >
-                              <Icon name="file-text" size={14} className="text-indigo-400" /> Full Sheet
-                            </button>
-                          )}
-                        </>
-                      ) : null
-                    )
-                  )}
+                        ) : (
+                          (effectiveRole === 'dm' || token?.isSharedControl) ? (
+                            <>
+                              <button 
+                                className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors flex items-center gap-2 text-amber-300 font-medium"
+                                onClick={() => {
+                                  if (onOpenSheet) {
+                                      const hp = token?.hp?.current ?? char?.hp?.current ?? null;
+                                      const maxHp = token?.hp?.max ?? char?.hp?.max ?? null;
+                                      onOpenSheet({ isToken: true, tokenId: contextMenu.tokenId, characterId: contextMenu.characterId, hp, maxHp, isPc: false, defaultMode: 'statblock' });
+                                  }
+                                  setContextMenu(null);
+                                }}
+                              >
+                                <Icon name="scroll" size={14} className="text-amber-400" /> Open Statblock
+                              </button>
+                              {effectiveRole === 'dm' && (
+                                <button 
+                                  className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors flex items-center gap-2"
+                                  onClick={() => {
+                                    if (onOpenSheet) {
+                                        const hp = token?.hp?.current ?? char?.hp?.current ?? null;
+                                        const maxHp = token?.hp?.max ?? char?.hp?.max ?? null;
+                                        onOpenSheet({ isToken: true, tokenId: contextMenu.tokenId, characterId: contextMenu.characterId, hp, maxHp, isPc: false, defaultMode: 'sheet' });
+                                    }
+                                    setContextMenu(null);
+                                  }}
+                                >
+                                  <Icon name="file-text" size={14} className="text-indigo-400" /> Full Sheet
+                                </button>
+                              )}
+                            </>
+                          ) : null
+                        )
+                      )}
 
-                  {/* Token photo & visual customization */}
-                  {(effectiveRole === 'dm' || isOwner) && (
-                    <button 
-                      className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors flex items-center gap-2 text-sky-400 font-medium"
-                      onClick={() => {
-                        setPhotoEditModal({
-                          isOpen: true,
-                          tokenId: contextMenu.tokenId,
-                          characterId: charId,
-                          name: token?.name || contextMenu.name || 'Token',
-                          image: token?.image || contextMenu.image || ''
-                        });
-                        setContextMenu(null);
-                      }}
-                    >
-                      <Icon name="image" size={14} /> Change Photo
-                    </button>
-                  )}
+                      {effectiveRole === 'dm' && (
+                        <button 
+                          className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors flex items-center gap-2 text-purple-300 font-semibold"
+                          onClick={() => {
+                            setEditingModelToken({ token, character: char });
+                            setContextMenu(null);
+                          }}
+                        >
+                          <Icon name="box" size={14} className="text-purple-400" /> 3D Mini Studio
+                        </button>
+                      )}
 
-                  {effectiveRole === 'dm' && isSimpleActor && (
-                    <button 
-                      className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors flex items-center gap-2 text-amber-300"
-                      onClick={() => {
-                        setQuickActorModal({
-                          isOpen: true,
-                          category: isPc ? 'pc' : 'npc',
-                          editId: charId || null,
-                          tokenId: contextMenu.tokenId,
-                          name: token?.name || char?.name || contextMenu.name || '',
-                          image: token?.image || char?.image || '',
-                          size: token?.size || char?.size || 1,
-                          ownerId: token?.ownerId || char?.ownerId || null
-                        });
-                        setContextMenu(null);
-                      }}
-                    >
-                      <Icon name="edit-2" size={14} /> Edit Token
-                    </button>
-                  )}
-
-                  {effectiveRole === 'dm' && (
-                    <button 
-                      className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors flex items-center gap-2 text-purple-300 font-semibold"
-                      onClick={() => {
-                        setEditingModelToken({ token, character: char });
-                        setContextMenu(null);
-                      }}
-                    >
-                      <Icon name="box" size={14} className="text-purple-400" /> 3D Mini Studio
-                    </button>
+                      {effectiveRole === 'dm' && (
+                        <button 
+                          className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors flex items-center gap-2 text-sky-400"
+                          onClick={() => {
+                            setPhotoEditModal({
+                              isOpen: true,
+                              tokenId: contextMenu.tokenId,
+                              characterId: contextMenu.characterId,
+                              name: token?.name || contextMenu.name || 'Token',
+                              image: token?.image || contextMenu.image || ''
+                            });
+                            setContextMenu(null);
+                          }}
+                        >
+                          <Icon name="image" size={14} /> Change Photo
+                        </button>
+                      )}
+                    </>
                   )}
                 </>
               );
@@ -5413,19 +5363,6 @@ ${pasteTextContent}`;
                 >
                   {contextMenu.isHidden ? "Reveal to Players" : "Hide from Players"}
                 </button>
-                <button 
-                  className="w-full text-left px-4 py-2 hover:bg-slate-700 transition-colors flex items-center gap-1.5 text-purple-300 hover:text-purple-200"
-                  onClick={() => {
-                    const idsToUpdate = selectedTokenIds.includes(contextMenu.tokenId) && selectedTokenIds.length > 1 ? selectedTokenIds : [contextMenu.tokenId];
-                    const updates = {};
-                    idsToUpdate.forEach(id => updates[`tokens.${id}.hideName`] = !contextMenu.hideName);
-                    updateMap(campaignCode, activeMapId, updates);
-                    setContextMenu(null);
-                  }}
-                >
-                  <Icon name={contextMenu.hideName ? "eye" : "eye-off"} size={13} className="text-purple-400 shrink-0" />
-                  <span>{contextMenu.hideName ? "Reveal Name to Players" : "Hide Name from Players"}</span>
-                </button>
               </>
             )}
 
@@ -5581,29 +5518,17 @@ ${pasteTextContent}`;
                 
                 <button 
                   className="w-full text-left px-4 py-2 hover:bg-red-900/50 text-red-400 transition-colors"
-                  onClick={async () => {
-                    const targetId = contextMenu.tokenId || contextMenu._mapKey;
-                    if (!targetId || targetId === 'undefined' || targetId === 'null') {
-                      setContextMenu(null);
-                      return;
-                    }
+                  onClick={() => {
                     const updates = {};
-                    if (selectedTokenIds.includes(targetId) && selectedTokenIds.length > 1) {
+                    if (selectedTokenIds.includes(contextMenu.tokenId) && selectedTokenIds.length > 1) {
                         selectedTokenIds.forEach(id => {
-                            if (id && id !== 'undefined' && id !== 'null') updates[`tokens.${id}`] = null;
+                            updates[`tokens.${id}`] = null;
                         });
                         setSelectedTokenIds([]);
                     } else {
-                        updates[`tokens.${targetId}`] = null;
-                        if (contextMenu._mapKey && contextMenu._mapKey !== targetId) {
-                            updates[`tokens.${contextMenu._mapKey}`] = null;
-                        }
+                        updates[`tokens.${contextMenu.tokenId}`] = null;
                     }
-                    try {
-                      await updateMap(campaignCode, activeMapId, updates);
-                    } catch (err) {
-                      console.error('[TacticalMapView] Failed to delete token:', err);
-                    }
+                    updateMap(campaignCode, activeMapId, updates);
                     setContextMenu(null);
                   }}
                 >

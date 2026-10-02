@@ -113,6 +113,9 @@ export const storeMapWithThumbnail = async (fullBase64, thumbBase64, name) => {
 // Phase 2: Retrieve and assemble chunks directly into a Blob
 export const retrieveChunkedMap = async (chunkedId, signal) => {
     if (!chunkedId) return null;
+    if (typeof chunkedId === 'string' && !chunkedId.startsWith('chunked:')) {
+        return chunkedId;
+    }
     const startTime = performance.now();
 
     const docId = chunkedId.replace('chunked:', '').trim().replace(/['"]/g, '');

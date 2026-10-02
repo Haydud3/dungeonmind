@@ -66,7 +66,7 @@ const SettingsView = ({
     setHideInviteCode,
     joinRequests = []
 }) => {
-    const { campaign, updateCampaign, kickPlayer, banPlayer, unbanPlayer, clearChat } = useNewCampaign();
+    const { campaign, updateCampaign, kickPlayer, banPlayer, unbanPlayer, approveJoinRequest, denyJoinRequest, clearChat } = useNewCampaign();
     const data = campaign || {};
     const toast = useToast();
     const dialog = useDialog();
@@ -1043,14 +1043,26 @@ const SettingsView = ({
                                                                         </button>
                                                                     )}
                                                                     <button 
-                                                                        onClick={() => kickPlayer(uid)} 
-                                                                        className="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1 rounded-lg font-bold"
+                                                                        onClick={async () => {
+                                                                            const pName = data.activeUsers?.[uid] || 'Player';
+                                                                            if (await dialog.confirm(`Kick ${pName} from this session? They will be immediately disconnected and require approval to rejoin.`)) {
+                                                                                await kickPlayer(uid);
+                                                                                toast(`Kicked ${pName} from session.`, "info");
+                                                                            }
+                                                                        }} 
+                                                                        className="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white px-3 py-1 rounded-lg font-bold transition-colors"
                                                                     >
                                                                         Kick
                                                                     </button>
                                                                     <button 
-                                                                        onClick={() => banPlayer(uid)} 
-                                                                        className="text-xs bg-red-950/40 hover:bg-red-900/60 text-red-400 border border-red-800/40 px-3 py-1 rounded-lg font-bold"
+                                                                        onClick={async () => {
+                                                                            const pName = data.activeUsers?.[uid] || 'Player';
+                                                                            if (await dialog.confirm(`Permanently ban ${pName} from this realm? They will be immediately disconnected and blocked from entering.`)) {
+                                                                                await banPlayer(uid);
+                                                                                toast(`Banned ${pName} from realm.`, "error");
+                                                                            }
+                                                                        }} 
+                                                                        className="text-xs bg-red-950/40 hover:bg-red-900/60 text-red-400 border border-red-800/40 px-3 py-1 rounded-lg font-bold transition-colors"
                                                                     >
                                                                         Ban
                                                                     </button>
@@ -1107,13 +1119,19 @@ const SettingsView = ({
                                                         </div>
                                                         <div className="flex gap-2">
                                                             <button 
-                                                                onClick={() => updateDoc(doc(db, 'artifacts', appId || 'dungeonmind', 'public', 'data', 'campaigns', code, 'joinRequests', req.id), { status: 'approved' })} 
+                                                                onClick={async () => {
+                                                                    await approveJoinRequest(req.id);
+                                                                    toast(`Approved ${req.name} to join.`, "success");
+                                                                }} 
                                                                 className="bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold px-4 py-1.5 rounded-lg transition-colors shadow"
                                                             >
                                                                 Approve
                                                             </button>
                                                             <button 
-                                                                onClick={() => updateDoc(doc(db, 'artifacts', appId || 'dungeonmind', 'public', 'data', 'campaigns', code, 'joinRequests', req.id), { status: 'denied' })} 
+                                                                onClick={async () => {
+                                                                    await denyJoinRequest(req.id);
+                                                                    toast(`Denied ${req.name}'s request.`, "info");
+                                                                }} 
                                                                 className="bg-slate-800 hover:bg-red-900/80 text-slate-300 hover:text-white border border-slate-700 text-xs font-bold px-3 py-1.5 rounded-lg transition-colors"
                                                             >
                                                                 Deny

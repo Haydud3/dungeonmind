@@ -254,56 +254,95 @@ const DiceTray = ({ diceLog = [], handleDiceRoll, onClose, role, rollMode, setRo
                 </form>
 
                 {/* HERO DIE: D20 (Tabletop Centerpiece) */}
-                <div className="bg-slate-900/80 rounded-2xl border border-amber-500/40 p-3 shadow-md relative overflow-hidden group">
-                    <div className="absolute right-0 top-0 bottom-0 w-32 bg-gradient-to-l from-amber-500/10 to-transparent pointer-events-none" />
-                    <div className="flex items-center justify-between">
-                        <div 
-                            onClick={() => addDie(20)} 
-                            onContextMenu={(e) => { e.preventDefault(); removeDie(20); }}
-                            className="flex items-center gap-3 cursor-pointer flex-1 py-1"
-                            title="Click to add d20 (Right-click to remove)"
-                        >
-                            <div className="w-12 h-12 rounded-xl bg-gradient-to-b from-amber-500/25 to-amber-950/40 border border-amber-400/80 text-amber-300 flex items-center justify-center shadow-[0_0_12px_rgba(245,158,11,0.3)] group-hover:scale-105 transition-transform shrink-0">
-                                <DiceIcon sides={20} className="w-8 h-8" />
-                            </div>
-                            <div>
-                                <div className="text-sm font-bold text-white flex items-center gap-2">
-                                    <span>d20</span>
-                                    <span className="text-[10px] font-normal text-amber-400 uppercase tracking-widest font-mono">Core Die</span>
-                                </div>
-                                <div className="text-[11px] text-slate-400">Attacks, Saves & Checks</div>
-                            </div>
-                        </div>
+                <div>
+                    <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider mb-2">
+                        <span className="text-amber-400 flex items-center gap-1.5 font-black">
+                            <Icon name="sparkles" size={12} className="text-amber-400" />
+                            Primary Die (d20)
+                        </span>
+                        <span className="text-slate-400 font-mono text-[9px] lowercase">tap to add or quick roll</span>
+                    </div>
 
-                        <div className="flex items-center gap-1.5 z-10">
-                            {pool[20] > 0 ? (
-                                <div className="flex items-center gap-1 bg-slate-950 border border-amber-500/40 rounded-xl px-2 py-1 shadow">
-                                    <button
-                                        type="button"
-                                        onClick={() => removeDie(20)}
-                                        className="w-6 h-6 rounded-lg bg-slate-800 hover:bg-red-900/50 text-slate-300 hover:text-white flex items-center justify-center text-xs font-bold transition-colors"
-                                    >
-                                        -
-                                    </button>
-                                    <span className="w-6 text-center font-mono font-bold text-amber-300 text-sm">{pool[20]}</span>
-                                    <button
-                                        type="button"
-                                        onClick={() => addDie(20)}
-                                        className="w-6 h-6 rounded-lg bg-slate-800 hover:bg-green-900/50 text-slate-300 hover:text-white flex items-center justify-center text-xs font-bold transition-colors"
-                                    >
-                                        +
-                                    </button>
+                    <div className={`rounded-2xl border-2 transition-all p-3.5 shadow-lg relative overflow-hidden group ${
+                        pool[20] > 0 
+                            ? 'bg-gradient-to-r from-amber-950/60 via-slate-900 to-amber-950/50 border-amber-400 shadow-[0_0_20px_rgba(245,158,11,0.25)] ring-1 ring-amber-400/40' 
+                            : 'bg-gradient-to-r from-slate-900 via-amber-950/20 to-slate-900 border-amber-500/60 hover:border-amber-400 shadow-[0_4px_20px_rgba(0,0,0,0.5)]'
+                    }`}>
+                        <div className="absolute right-0 top-0 bottom-0 w-36 bg-gradient-to-l from-amber-500/15 via-amber-500/5 to-transparent pointer-events-none" />
+
+                        <div className="flex items-center justify-between gap-3 relative z-10">
+                            {/* Tap left area to add d20 */}
+                            <button
+                                type="button"
+                                onClick={() => addDie(20)}
+                                onContextMenu={(e) => { e.preventDefault(); removeDie(20); }}
+                                className="flex items-center gap-3 cursor-pointer text-left flex-1 group-hover:scale-[1.01] transition-transform"
+                                title="Tap to add d20 to staged roll"
+                            >
+                                <div className="w-13 h-13 rounded-2xl bg-gradient-to-br from-amber-400 via-amber-500 to-amber-700 text-slate-950 flex items-center justify-center shadow-[0_0_16px_rgba(245,158,11,0.4)] group-hover:shadow-[0_0_20px_rgba(245,158,11,0.6)] transition-all shrink-0 ring-2 ring-amber-300/40">
+                                    <DiceIcon sides={20} className="w-8 h-8 stroke-[2.2] drop-shadow" />
                                 </div>
-                            ) : (
-                                <button
-                                    type="button"
-                                    onClick={() => handleDiceRoll('1d20', { alias: 'Quick d20' })}
-                                    className="px-3 py-1.5 bg-amber-500/15 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 rounded-xl text-xs font-bold flex items-center gap-1 transition-colors"
-                                    title="Roll 1d20 immediately"
-                                >
-                                    <span>Roll 1d20</span>
-                                </button>
-                            )}
+                                <div className="min-w-0">
+                                    <div className="text-base font-black text-white flex items-center gap-2 fantasy-font tracking-wide">
+                                        <span>D20</span>
+                                        <span className="text-[10px] font-sans font-black bg-amber-500/25 text-amber-300 border border-amber-500/40 px-2 py-0.5 rounded-full uppercase tracking-wider">
+                                            Core Roll
+                                        </span>
+                                    </div>
+                                    <div className="text-xs text-amber-200/80 mt-0.5 font-medium">
+                                        Attacks • Checks • Saves
+                                    </div>
+                                </div>
+                            </button>
+
+                            {/* Action Buttons: Add & Quick Roll */}
+                            <div className="flex items-center gap-2 shrink-0">
+                                {pool[20] > 0 ? (
+                                    <div className="flex items-center gap-1.5 bg-slate-950/95 border-2 border-amber-400/80 rounded-xl px-2.5 py-1.5 shadow-lg shadow-amber-950/40">
+                                        <button
+                                            type="button"
+                                            onClick={() => removeDie(20)}
+                                            className="w-7 h-7 rounded-lg bg-slate-800 hover:bg-rose-950 hover:text-rose-300 text-slate-300 flex items-center justify-center text-sm font-black transition-colors active:scale-95 cursor-pointer"
+                                            title="Remove 1 d20"
+                                        >
+                                            -
+                                        </button>
+                                        <div className="px-1 text-center font-mono font-black text-amber-300 text-base min-w-[24px]">
+                                            {pool[20]}
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => addDie(20)}
+                                            className="w-7 h-7 rounded-lg bg-amber-500/20 hover:bg-amber-500 text-amber-300 hover:text-slate-950 flex items-center justify-center text-sm font-black transition-colors active:scale-95 cursor-pointer"
+                                            title="Add another d20"
+                                        >
+                                            +
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <div className="flex items-center gap-1.5">
+                                        <button
+                                            type="button"
+                                            onClick={() => addDie(20)}
+                                            className="px-3 py-2 bg-slate-800/90 hover:bg-slate-750 text-slate-200 hover:text-white border border-slate-700 hover:border-amber-500/60 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm active:scale-95 cursor-pointer"
+                                            title="Add 1d20 to staged roll pool"
+                                        >
+                                            <Icon name="plus" size={13} className="text-amber-400" />
+                                            <span>Add</span>
+                                        </button>
+
+                                        <button
+                                            type="button"
+                                            onClick={() => handleDiceRoll('1d20', { alias: 'Quick d20' })}
+                                            className="px-3.5 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black rounded-xl text-xs flex items-center gap-1.5 shadow-[0_0_12px_rgba(245,158,11,0.35)] hover:shadow-[0_0_18px_rgba(245,158,11,0.5)] transition-all active:scale-95 cursor-pointer"
+                                            title="Roll 1d20 immediately to chat"
+                                        >
+                                            <Icon name="zap" size={13} className="fill-slate-950" />
+                                            <span>Roll 1d20</span>
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
                         </div>
                     </div>
                 </div>

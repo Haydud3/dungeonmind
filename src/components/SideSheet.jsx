@@ -1,8 +1,8 @@
 import React, { useMemo, useEffect, useState, useCallback } from 'react';
 import SheetContainer from './character-sheet/SheetContainer';
+import ModelPickerModal from './ModelPickerModal';
 import { useCharacterStore } from '../stores/useCharacterStore';
 import { useNewCampaign } from '../contexts/NewCampaignProvider';
-import { searchGithubModels } from '../utils/miniManifest';
 import Icon from './Icon';
 import { useToast } from './ToastProvider';
 import { useDialog } from './DialogProvider';
@@ -68,9 +68,6 @@ const SideSheet = ({ characterId, onClose, role, onDiceRoll, onOpenDiceTray }) =
     const [isSharedControl, setIsSharedControl] = useState(false);
     const [tokenOwnerId, setTokenOwnerId] = useState(null);
     const [showModelPicker, setShowModelPicker] = useState(false);
-    const [availableModels, setAvailableModels] = useState([]);
-    const [miniSearchQuery, setMiniSearchQuery] = useState("");
-    const [isSearchingMinis, setIsSearchingMinis] = useState(false);
     const [editableName, setEditableName] = useState('');
     const [sheetWidth, setSheetWidth] = useState(550);
     const [showRefreshModal, setShowRefreshModal] = useState(false);
@@ -142,16 +139,6 @@ const SideSheet = ({ characterId, onClose, role, onDiceRoll, onOpenDiceTray }) =
         document.addEventListener('touchmove', handleMouseMove, { passive: false });
         document.addEventListener('touchend', handleMouseUp);
     }, [sheetWidth]);
-
-    const handleMiniSearch = async (overrideQuery, typeFallback) => {
-        const q = overrideQuery !== undefined ? overrideQuery : miniSearchQuery;
-        if (!q) return;
-        setIsSearchingMinis(true);
-        let results = await searchGithubModels(q);
-        if (results.length === 0 && typeFallback) results = await searchGithubModels(typeFallback);
-        setAvailableModels(results);
-        setIsSearchingMinis(false);
-    };
 
     useEffect(() => {
         setLiveHp(null);
@@ -252,28 +239,7 @@ const SideSheet = ({ characterId, onClose, role, onDiceRoll, onOpenDiceTray }) =
 
     const handleOpenModelPicker = () => {
         if (!character) return;
-        setAvailableModels([]);
         setShowModelPicker(true);
-        setMiniSearchQuery(character.name || '');
-        handleMiniSearch(character.name || '', character.race);
-    };
-
-    const handleModelSelect = (model, forceStatue = false) => {
-        if (!character) return;
-        const finalChar = { ...character };
-        if (model) {
-            finalChar.modelUrl = model.url;
-            finalChar.modelScale = 1;
-            finalChar.modelYOffset = 0;
-            finalChar.forceStatue = forceStatue;
-        } else {
-            delete finalChar.modelUrl;
-            delete finalChar.modelScale;
-            delete finalChar.modelYOffset;
-            delete finalChar.forceStatue;
-        }
-        handleSave(finalChar);
-        setShowModelPicker(false);
     };
 
     const modifiedData = useMemo(() => {
@@ -439,97 +405,71 @@ const SideSheet = ({ characterId, onClose, role, onDiceRoll, onOpenDiceTray }) =
                         onDiceRoll={onDiceRoll}
                         onLogAction={(msg) => addLogEntry({ message: msg, id: Date.now() })}
                         isOwner={isOwner}
-                        onOpenModelPicker={role === 'dm' ? handleOpenModelPicker : undefined}
+                        onOpenModelPicker={isOwner || role === 'dm' ? handleOpenModelPicker : undefined}
                         onOpenDiceTray={onOpenDiceTray}
                     />
                 )}
                 {showModelPicker && character && (
-                <div className="fixed inset-0 z-[110] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
-                    <div className="max-w-2xl w-full bg-slate-900 rounded-xl border border-slate-700 shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
-                        <div className="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-800">
-                            <h3 className="font-bold text-white flex items-center gap-2"><Icon name="box" size={18}/> Select 3D Mini: {character.name}</h3>
-                            <button onClick={() => setShowModelPicker(false)} className="text-slate-400 hover:text-white"><Icon name="x" size={20}/></button>
-                        </div>
-                        <div className="p-4 border-b border-slate-700 bg-slate-900 flex gap-2">
-                            <input 
-                                autoFocus
-                                value={miniSearchQuery} 
-                                onChange={e => setMiniSearchQuery(e.target.value)} 
-                                onKeyDown={e => e.key === 'Enter' && handleMiniSearch()}
-                                placeholder="Search 3D Models (e.g. Dragon, Goblin)..." 
-                                className="flex-1 bg-slate-950 border border-slate-600 rounded px-3 py-2 text-white outline-none focus:border-amber-500"
-                            />
-                            <button 
-                                onClick={() => handleMiniSearch()} 
-                                disabled={isSearchingMinis} 
-                                className="bg-amber-600 hover:bg-amber-500 px-4 rounded text-white font-bold flex items-center justify-center"
-                            >
-                                {isSearchingMinis ? <Icon name="loader" size={18} className="animate-spin"/> : <Icon name="search" size={18}/>}
-                            </button>
-                        </div>
-                        <div className="p-6 overflow-y-auto custom-scroll bg-slate-950 flex-1">
-                            {isSearchingMinis ? (
-                                <div className="text-center py-10 text-amber-500"><Icon name="loader" size={32} className="animate-spin mx-auto mb-2"/> Searching the Repository...</div>
-                            ) : (
-                                <>
-                                    <p className="text-slate-400 mb-4 text-sm">We found {availableModels.length} compatible 3D models.</p>
-                            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                                {availableModels.map((model, i) => (
-                                    <div key={i} className="bg-slate-800 border border-slate-700 rounded-lg p-2 flex flex-col justify-between transition-all group">
-                                        <div>
-                                            <div className="aspect-square bg-slate-900 rounded-md mb-2 overflow-hidden border border-slate-700 relative">
-                                            {model.thumb ? <img src={model.thumb} className="w-full h-full object-cover" /> : <Icon name="box" size={32} className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-slate-600"/>}
-                                        </div>
-                                            <div className="font-bold text-sm text-slate-200 truncate">{model.name}</div>
-                                            <div className="text-[10px] text-slate-500 truncate">Scale: {model.scale}x</div>
-                                        </div>
-                                        <div className="flex gap-2 mt-2">
-                                            <button onClick={() => handleModelSelect(model)} className="flex-1 text-center text-xs px-2 py-1.5 bg-amber-700 hover:bg-amber-600 rounded text-white font-bold transition-colors">Select</button>
-                                            <button onClick={() => handleModelSelect(model, true)} className="text-center text-xs p-1.5 bg-slate-700 hover:bg-slate-600 rounded text-slate-300 hover:text-white transition-colors" title="Select as stone statue">
-                                                <Icon name="gem" size={14}/>
-                                            </button>
-                                        </div>
-                                    </div>
-                                ))}
-                                
-                                <div onClick={() => handleModelSelect(null)} className="bg-slate-800 border border-slate-700 border-dashed rounded-lg p-2 cursor-pointer hover:border-blue-500 hover:bg-slate-700 transition-all group flex flex-col items-center justify-center">
-                                    <div className="w-16 h-16 bg-slate-900 rounded-full mb-2 flex items-center justify-center border border-slate-700 group-hover:border-blue-500/50">
-                                        <Icon name="image" size={24} className="text-slate-500 group-hover:text-blue-400"/>
-                                    </div>
-                                    <div className="font-bold text-sm text-slate-200 group-hover:text-blue-400 text-center">2D Token Only</div>
-                                    <div className="text-[10px] text-slate-500 text-center">Skip 3D Model</div>
-                                </div>
-                            </div>
-                                </>
-                            )}
-                        </div>
-                    </div>
-                </div>
+                    <ModelPickerModal
+                        isOpen={showModelPicker}
+                        entity={character}
+                        onClose={() => setShowModelPicker(false)}
+                        onSave={(config) => {
+                            const finalChar = { 
+                                ...character,
+                                model3d: config.modelUrl || null,
+                                modelUrl: config.modelUrl || null,
+                                modelScale: config.modelScale !== undefined ? config.modelScale : 1,
+                                modelYOffset: config.modelYOffset !== undefined ? config.modelYOffset : 0,
+                                modelRotation: config.modelRotation !== undefined ? config.modelRotation : 0,
+                                materialStyle: config.materialStyle || 'original',
+                                forceStatue: !!config.forceStatue
+                            };
+                            handleSave(finalChar);
+                            setShowModelPicker(false);
+                        }}
+                        onDeleteModel={() => {
+                            const finalChar = { 
+                                ...character,
+                                model3d: null,
+                                modelUrl: null,
+                                modelScale: 1,
+                                modelYOffset: 0,
+                                modelRotation: 0,
+                                materialStyle: 'original'
+                            };
+                            delete finalChar.forceStatue;
+                            handleSave(finalChar);
+                            setShowModelPicker(false);
+                        }}
+                    />
                 )}
                 
                 {/* Refresh Character Modal */}
                 {showRefreshModal && character && (
-                    <div className="fixed inset-0 z-[110] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
-                        <div className="max-w-md w-full bg-slate-900 rounded-xl overflow-hidden shadow-2xl border border-slate-700 p-6 relative">
-                            <button onClick={() => setShowRefreshModal(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white"><Icon name="x" size={24}/></button>
-                            <h3 className="text-xl font-bold text-white mb-2 flex items-center gap-2"><Icon name="refresh-cw" className="text-blue-400"/> Refresh {character.name}</h3>
+                    <div className="fixed inset-0 z-[110] bg-black/85 flex items-center justify-center p-4 backdrop-blur-md animate-in fade-in duration-200">
+                        <div className="max-w-md w-full bg-slate-900/95 rounded-2xl overflow-hidden shadow-[0_0_50px_rgba(0,0,0,0.8)] border border-amber-500/30 p-6 relative">
+                            <button onClick={() => setShowRefreshModal(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors"><Icon name="x" size={20}/></button>
+                            <h3 className="text-xl font-bold text-white mb-2 flex items-center gap-2 fantasy-font tracking-wide">
+                                <Icon name="refresh-cw" className="text-amber-400"/> Refresh {character.name}
+                            </h3>
                             
                             {isRefreshing ? (
                                 <div className="py-8 text-center">
-                                    <Icon name="loader-2" size={48} className="animate-spin text-blue-500 mx-auto mb-4"/>
-                                    <p className="text-blue-400 font-bold animate-pulse">Fetching from D&D Beyond...</p>
+                                    <Icon name="loader-2" size={48} className="animate-spin text-amber-500 mx-auto mb-4"/>
+                                    <p className="text-amber-400 font-bold animate-pulse">Fetching from D&D Beyond...</p>
                                 </div>
                             ) : (
                                 <>
-                                    <p className="text-sm text-slate-400 mb-6">How would you like to apply the fresh data from D&D Beyond?</p>
-                                    <div className="space-y-4">
-                                        <button onClick={() => handleRefreshDndBeyond('combine')} className="w-full text-left bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded-lg p-4 group transition-colors">
-                                            <div className="font-bold text-white group-hover:text-blue-400 flex items-center gap-2 mb-1"><Icon name="git-merge" size={16}/> Combine (Recommended)</div>
-                                            <p className="text-xs text-slate-400">Updates stats, spells, and features but keeps your current Inventory, HP, and Conditions.</p>
+                                    <p className="text-xs text-slate-400 mb-5 leading-relaxed">How would you like to apply fresh updates from D&D Beyond?</p>
+                                    <div className="space-y-3">
+                                        <button onClick={() => handleRefreshDndBeyond('combine')} className="w-full text-left bg-slate-950/80 hover:bg-slate-800 border border-slate-700/80 hover:border-amber-500/50 rounded-xl p-4 group transition-all shadow-md">
+                                            <div className="font-bold text-white group-hover:text-amber-400 flex items-center gap-2 mb-1 text-sm"><Icon name="git-merge" size={16} className="text-amber-400"/> Combine (Recommended)</div>
+                                            <p className="text-xs text-slate-400 leading-relaxed">Updates stats, spells, and features but keeps your current inventory, live HP, and conditions.</p>
                                         </button>
-                                        <button onClick={() => handleRefreshDndBeyond('overwrite')} className="w-full text-left bg-slate-800 hover:bg-red-900/50 border border-slate-600 hover:border-red-500/50 rounded-lg p-4 group transition-colors">
-                                            <div className="font-bold text-white group-hover:text-red-400 flex items-center gap-2 mb-1"><Icon name="alert-triangle" size={16}/> Overwrite</div>
-                                            <p className="text-xs text-slate-400">Completely replaces this character with the D&D Beyond sheet. You will lose local inventory changes.</p>
+                                        <button onClick={() => handleRefreshDndBeyond('overwrite')} className="w-full text-left bg-slate-950/80 hover:bg-red-950/40 border border-slate-700/80 hover:border-red-500/50 rounded-xl p-4 group transition-all shadow-md">
+                                            <div className="font-bold text-white group-hover:text-red-400 flex items-center gap-2 mb-1 text-sm"><Icon name="alert-triangle" size={16} className="text-red-400"/> Overwrite Sheet</div>
+                                            <p className="text-xs text-slate-400 leading-relaxed">Completely replaces this character with the D&D Beyond sheet. Local inventory updates will be reset.</p>
                                         </button>
                                     </div>
                                 </>

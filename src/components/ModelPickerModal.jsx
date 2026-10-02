@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import Icon from './Icon';
 import ModelViewer from './ModelViewer';
 import { searchGithubModels, getAvailableCategories } from '../utils/miniManifest';
@@ -518,7 +519,7 @@ const ModelPickerModal = ({
 
     if (!isOpen || !entity) return null;
 
-    return (
+    const modalContent = (
         <div className="fixed inset-0 z-[10000] bg-black/85 flex items-center justify-center p-2 sm:p-4 backdrop-blur-md animate-in fade-in">
             <div className="max-w-6xl w-full bg-slate-900 rounded-2xl border border-slate-700/80 shadow-[0_0_50px_rgba(0,0,0,0.8)] overflow-hidden flex flex-col h-[94vh] max-h-[900px]">
                 
@@ -1318,6 +1319,11 @@ const ModelPickerModal = ({
             </div>
         </div>
     );
+
+    if (typeof document !== 'undefined') {
+        return createPortal(modalContent, document.body);
+    }
+    return modalContent;
 };
 
 export default ModelPickerModal;

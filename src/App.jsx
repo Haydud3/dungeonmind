@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import * as fb from './firebase'; 
 import Icon from './components/Icon';
 import Sidebar from './components/Sidebar';
@@ -30,6 +30,7 @@ import { collection, query, where, onSnapshot, doc, updateDoc } from 'firebase/f
 
 import SheetContainer from './components/character-sheet/SheetContainer';
 import SideSheet from './components/SideSheet';
+import PartyRestModal from './components/modals/PartyRestModal';
 
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -100,6 +101,7 @@ function DungeonMindApp() {
     const { 
         campaign: data, gameParams, joinCampaign, leaveCampaign, user,
         updateCampaign, updateToken,
+        approveJoinRequest, denyJoinRequest,
         sendMessage, editMessage, deleteMessage
     } = context;
     const toast = useToast();
@@ -184,8 +186,28 @@ function DungeonMindApp() {
   const [showHandoutCreator, setShowHandoutCreator] = useState(false);
   const [rollingDice, setRollingDice] = useState(null);
   const [isFullscreenImage, setIsFullscreenImage] = useState(false);
+  const [fullscreenZoom, setFullscreenZoom] = useState(1);
+
+  useEffect(() => {
+      if (!isFullscreenImage) {
+          setFullscreenZoom(1);
+          return;
+      }
+      const handleKeyDown = (e) => {
+          if (e.key === 'Escape') setIsFullscreenImage(false);
+      };
+      window.addEventListener('keydown', handleKeyDown);
+      return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isFullscreenImage]);
+
   const [activeTemplate, setActiveTemplate] = useState(null); // NEW: Track active spell template
-  const [rollMode, setRollMode] = useState(() => localStorage.getItem('roll_mode'));
+  const [rollMode, setRollMode] = useState(() => localStorage.getItem('roll_mode') || 'public');
+  const handleSetRollMode = useCallback((mode) => {
+      setRollMode(mode);
+      try {
+          localStorage.setItem('roll_mode', mode);
+      } catch (e) {}
+  }, []);
   const addLogEntry = useCharacterStore((state) => state.addLogEntry);
   const rollTimeoutRef = useRef(null);
 
@@ -197,6 +219,69 @@ function DungeonMindApp() {
     gameParams?.role === 'dm' || 
     (data?.dmIds && user?.uid && data.dmIds.map(id => String(id)).includes(String(user.uid)))
   ) ? 'dm' : 'player';
+
+  // Global Party Rest synchronization
+  const [showGlobalRestModal, setShowGlobalRestModal] = useState(false);
+  const prevActiveRestTimestampRef = useRef(null);
+
+  useEffect(() => {
+      const activeRest = data?.activeRest;
+      if (activeRest && activeRest.startedAt && activeRest.startedAt !== prevActiveRestTimestampRef.current) {
+          prevActiveRestTimestampRef.current = activeRest.startedAt;
+          setShowGlobalRestModal(true);
+      } else if (!activeRest) {
+          prevActiveRestTimestampRef.current = null;
+          setShowGlobalRestModal(false);
+      }
+  }, [data?.activeRest]);
+
+  const handleGlobalApplyPartyRest = (updatedPlayers, summaryMsg) => {
+      updateCampaign({
+          players: updatedPlayers,
+          activeRest: null
+      });
+      if (summaryMsg) {
+          sendChatMessage(summaryMsg, 'chat-public');
+          toast(summaryMsg, "success");
+      }
+      setShowGlobalRestModal(false);
+  };
+
+  const handleGlobalSaveHeroRest = (updatedHero, summaryMsg) => {
+      const pList = data?.players || [];
+      const newPlayers = pList.map(p => String(p.id) === String(updatedHero.id) ? updatedHero : p);
+      const heroId = String(updatedHero.id);
+      const existingActiveRest = data?.activeRest || {};
+      const updatedActiveRest = {
+          ...existingActiveRest,
+          restedHeroIds: {
+              ...(existingActiveRest.restedHeroIds || {}),
+              [heroId]: {
+                  timestamp: Date.now(),
+                  heroName: updatedHero.name
+              }
+          }
+      };
+
+      updateCampaign({
+          players: newPlayers,
+          activeRest: updatedActiveRest
+      });
+
+      const loadedChar = useCharacterStore.getState().character;
+      if (loadedChar && String(loadedChar.id) === heroId) {
+          useCharacterStore.getState().loadCharacter(updatedHero);
+      }
+
+      if (summaryMsg) {
+          sendChatMessage(summaryMsg, 'chat-public');
+          toast(summaryMsg, "success");
+      }
+  };
+
+  const handleCloseGlobalRestModal = () => {
+      setShowGlobalRestModal(false);
+  };
 
   // DM Waiting Room Listener
   useEffect(() => {
@@ -359,7 +444,7 @@ function DungeonMindApp() {
           const safeResult = Number.isFinite(totalNatural + mod) ? (totalNatural + mod) : 0;
 
           let isRollPrivate = false;
-          const currentRollMode = rollMode || (effectiveRole === 'dm' ? 'private' : 'public');
+          const currentRollMode = rollMode || 'public';
           if (options.isPrivate !== undefined) {
               isRollPrivate = options.isPrivate;
           } else {
@@ -402,7 +487,7 @@ function DungeonMindApp() {
               modifier: mod,
               total: safeResult,
               characterName: derivedCharacterName,
-              isDmRoll: isDm,
+              isDmRoll: isDm && (!derivedCharacterName || derivedCharacterName === 'Dungeon Master'),
               actionType: options.actionType || null,
               weaponName: options.weaponName || null,
               damageType: options.damageType || null,
@@ -981,46 +1066,46 @@ ${MONSTER_STATBLOCK_SCHEMA}`;
     <div className={`fixed inset-0 w-full h-full flex flex-col md:flex-row bg-slate-900 text-slate-200 font-sans overflow-hidden ${currentView === 'map' || isCastMode ? '' : 'pt-safe pb-safe pl-safe pr-safe'}`}>
        {!isCastMode && currentView !== 'map' && <Sidebar view={currentView} setView={setCurrentView} onExit={leaveCampaign} />}
        <main className="flex-1 flex flex-col overflow-hidden relative w-full h-full">
-           {currentView !== 'map' && !isCastMode && (
-               <div className="shrink-0 bg-slate-950/85 backdrop-blur-xl border-b border-slate-800/80 shadow-[0_4px_25px_rgba(0,0,0,0.5)] pt-safe z-50">
-                   <div className="h-16 flex items-center justify-between px-3 sm:px-6 gap-2">
-                       
-                       {/* DM Join Requests Toasts */}
-                       {joinRequests.length > 0 && effectiveRole === 'dm' && (
-                           <div className="absolute top-16 right-4 z-[999] flex flex-col gap-2 pointer-events-none">
-                               {joinRequests.map(req => (
-                                   <div key={req.id} className="pointer-events-auto bg-slate-950/95 border border-indigo-500/80 rounded-2xl p-3.5 shadow-2xl w-80 animate-in slide-in-from-top-4 backdrop-blur-xl ring-1 ring-indigo-500/30">
-                                       <div className="flex items-center gap-3 mb-2.5">
-                                           <div className="w-9 h-9 rounded-xl bg-indigo-950/80 border border-indigo-500/40 flex items-center justify-center text-indigo-400 shrink-0 shadow-inner">
-                                               <Icon name="user" size={16} />
-                                           </div>
-                                           <div className="min-w-0 flex-1">
-                                               <div className="font-black text-sm text-white fantasy-font tracking-wide">Knock knock!</div>
-                                               <div className="text-xs text-slate-300 truncate">
-                                                   <span className="text-indigo-400 font-bold">{req.name?.includes('@') ? req.name.split('@')[0] : req.name}</span> wants to join.
-                                               </div>
-                                               {req.characterName && <div className="text-[10px] text-amber-400/80 mt-0.5 font-medium truncate">As: {req.characterName}</div>}
-                                           </div>
-                                       </div>
-                                       <div className="flex gap-2">
-                                           <button 
-                                               onClick={() => updateDoc(doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'joinRequests', req.id), { status: 'approved' })} 
-                                               className="flex-1 bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white text-xs font-black py-2 rounded-xl transition-all shadow-md active:scale-95"
-                                           >
-                                               Let In
-                                           </button>
-                                           <button 
-                                               onClick={() => updateDoc(doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'joinRequests', req.id), { status: 'denied' })} 
-                                               className="flex-1 bg-slate-900 hover:bg-rose-950/80 border border-slate-700/80 hover:border-rose-800 text-slate-300 hover:text-rose-400 text-xs font-bold py-2 rounded-xl transition-all active:scale-95"
-                                           >
-                                               Deny
-                                           </button>
-                                       </div>
+           {/* DM Join Requests Toasts */}
+           {joinRequests.length > 0 && effectiveRole === 'dm' && (
+               <div className="fixed top-4 md:top-16 right-4 z-[999] flex flex-col gap-2 pointer-events-none">
+                   {joinRequests.map(req => (
+                       <div key={req.id} className="pointer-events-auto bg-slate-950/95 border border-indigo-500/80 rounded-2xl p-3.5 shadow-2xl w-80 animate-in slide-in-from-top-4 backdrop-blur-xl ring-1 ring-indigo-500/30">
+                           <div className="flex items-center gap-3 mb-2.5">
+                               <div className="w-9 h-9 rounded-xl bg-indigo-950/80 border border-indigo-500/40 flex items-center justify-center text-indigo-400 shrink-0 shadow-inner">
+                                   <Icon name="user" size={16} />
+                               </div>
+                               <div className="min-w-0 flex-1">
+                                   <div className="font-black text-sm text-white fantasy-font tracking-wide">Knock knock!</div>
+                                   <div className="text-xs text-slate-300 truncate">
+                                       <span className="text-indigo-400 font-bold">{req.name?.includes('@') ? req.name.split('@')[0] : req.name}</span> wants to join.
                                    </div>
-                               ))}
+                                   {req.characterName && <div className="text-[10px] text-amber-400/80 mt-0.5 font-medium truncate">As: {req.characterName}</div>}
+                               </div>
                            </div>
-                       )}
+                           <div className="flex gap-2">
+                               <button 
+                                   onClick={() => approveJoinRequest(req.id)} 
+                                   className="flex-1 bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white text-xs font-black py-2 rounded-xl transition-all shadow-md active:scale-95 cursor-pointer"
+                               >
+                                   Let In
+                               </button>
+                               <button 
+                                   onClick={() => denyJoinRequest(req.id)} 
+                                   className="flex-1 bg-slate-900 hover:bg-rose-950/80 border border-slate-700/80 hover:border-rose-800 text-slate-300 hover:text-rose-400 text-xs font-bold py-2 rounded-xl transition-all active:scale-95 cursor-pointer"
+                               >
+                                   Deny
+                               </button>
+                           </div>
+                       </div>
+                   ))}
+               </div>
+           )}
 
+           {/* Top Navigation Menu Bar (Hidden on Mobile in Chat View) */}
+           {currentView !== 'map' && !isCastMode && (
+               <div className={`shrink-0 bg-slate-950/85 backdrop-blur-xl border-b border-slate-800/80 shadow-[0_4px_25px_rgba(0,0,0,0.5)] pt-safe z-50 ${currentView === 'session' ? 'hidden md:block' : ''}`}>
+                   <div className="h-16 flex items-center justify-between px-3 sm:px-6 gap-2">
                        {/* Left: Mobile Brand + Realm Code Capsule + Location */}
                        <div className="flex items-center gap-2 sm:gap-3.5 min-w-0">
                            {/* Mobile Brand Emblem (hidden on desktop where sidebar exists) */}
@@ -1039,11 +1124,11 @@ ${MONSTER_STATBLOCK_SCHEMA}`;
                            <div className="bg-slate-900/90 border border-slate-700/80 rounded-xl px-2.5 sm:px-3 py-1.5 flex items-center gap-2 shadow-inner ring-1 ring-slate-800/60 shrink-0">
                                <div 
                                    className={`w-2 h-2 rounded-full ${
-                                       gameParams?.isOffline || !isConnected 
+                                       !isConnected 
                                            ? 'bg-slate-500' 
                                            : 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.9)] animate-pulse'
                                    }`}
-                                   title={gameParams?.isOffline || !isConnected ? "Offline" : "Connected to Realm"}
+                                   title={!isConnected ? "Disconnected" : "Connected to Realm"}
                                />
                                <span className="text-[10px] font-black uppercase tracking-wider text-amber-400/80 hidden xs:inline">
                                    Realm
@@ -1104,6 +1189,57 @@ ${MONSTER_STATBLOCK_SCHEMA}`;
                </div>
            )}
 
+           {/* Active Party Rest Global Banner */}
+           {!isCastMode && data?.activeRest && (
+               <div className={`w-full px-4 py-2.5 flex items-center justify-between gap-3 text-xs sm:text-sm font-medium z-30 transition-all shadow-lg shrink-0 border-b backdrop-blur-md ${
+                   data.activeRest.type === 'long'
+                       ? 'bg-gradient-to-r from-indigo-950/95 via-slate-900/95 to-indigo-950/95 border-indigo-500/40 text-indigo-200'
+                       : 'bg-gradient-to-r from-amber-950/95 via-slate-900/95 to-amber-950/95 border-amber-500/40 text-amber-200'
+               }`}>
+                   <div className="flex items-center gap-2.5 truncate">
+                       <span className={`w-2.5 h-2.5 rounded-full animate-ping shrink-0 ${
+                           data.activeRest.type === 'long' ? 'bg-indigo-400' : 'bg-amber-400'
+                       }`} />
+                       <Icon name={data.activeRest.type === 'long' ? 'moon' : 'coffee'} size={17} className={
+                           data.activeRest.type === 'long' ? 'text-indigo-400 shrink-0' : 'text-amber-400 shrink-0'
+                       } />
+                       <span className="truncate">
+                           <strong className="font-black tracking-wide">
+                               {data.activeRest.type === 'long' ? 'Party Long Rest' : 'Party Short Rest'}
+                           </strong>
+                           <span className="opacity-80 hidden sm:inline ml-1.5">
+                               • {Object.keys(data.activeRest.restedHeroIds || {}).length} of {data?.players?.length || 0} rested
+                           </span>
+                       </span>
+                   </div>
+
+                   <div className="flex items-center gap-2 shrink-0">
+                       <button
+                           type="button"
+                           onClick={() => setShowGlobalRestModal(true)}
+                           className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 shadow-md active:scale-95 cursor-pointer ${
+                               data.activeRest.type === 'long'
+                                   ? 'bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white shadow-indigo-950/60'
+                                   : 'bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 shadow-amber-950/60'
+                           }`}
+                       >
+                           <Icon name="sparkles" size={13} />
+                           <span>{effectiveRole === 'dm' ? 'Manage Rest' : 'Take Rest / Roll'}</span>
+                       </button>
+                       {effectiveRole === 'dm' && (
+                           <button
+                               type="button"
+                               onClick={() => updateCampaign({ activeRest: null })}
+                               className="p-1.5 text-slate-400 hover:text-slate-100 rounded-lg hover:bg-slate-800/80 transition-colors cursor-pointer"
+                               title="Dismiss Rest"
+                           >
+                               <Icon name="x" size={14} />
+                           </button>
+                       )}
+                   </div>
+               </div>
+           )}
+
            {/* Responsive view wrapper: padding-bottom for MobileNav on mobile, 0 on desktop */}
              <div 
                  className={`flex-1 overflow-hidden relative p-0 ${
@@ -1128,6 +1264,9 @@ ${MONSTER_STATBLOCK_SCHEMA}`;
                        diceLog={diceLog} 
                        handleDiceRoll={handleDiceRoll} 
                        role={effectiveRole}
+                       possessedNpcId={possessedNpcId}
+                       rollMode={rollMode || 'public'}
+                       setRollMode={handleSetRollMode}
                    />
                )}
                
@@ -1248,8 +1387,15 @@ ${MONSTER_STATBLOCK_SCHEMA}`;
                    </div>
                )}
 
-                {/* 6. LORE (Archives) */}
-                {currentView === 'lore' && <LoreView aiHelper={queryAiService} role={effectiveRole} />}
+                {/* 6. LORE (Archives / Codex) */}
+                {currentView === 'lore' && (
+                    <LoreView 
+                        aiHelper={queryAiService} 
+                        role={effectiveRole} 
+                        onOpenHandouts={() => setShowHandoutCreator(true)}
+                        handoutsCount={data?.campaign?.handouts?.length || 0}
+                    />
+                )}
 
                {/* MODULE HUB */}
                {currentView === 'module' && <ModuleHub data={data} updateCampaign={updateCampaign} aiHelper={queryAiService} loreChunks={context.loreChunks} campaignCode={gameParams?.code} generateNpc={generateNpc} setView={setCurrentView} />}
@@ -1320,6 +1466,9 @@ ${MONSTER_STATBLOCK_SCHEMA}`;
                                handleDiceRoll={handleDiceRoll} 
                                role={effectiveRole}
                                compact={true}
+                               possessedNpcId={possessedNpcId}
+                               rollMode={rollMode || 'public'}
+                               setRollMode={handleSetRollMode}
                            />
                        </div>
                    </div>
@@ -1352,7 +1501,11 @@ ${MONSTER_STATBLOCK_SCHEMA}`;
            return (
                <div className="fixed inset-0 z-[110] bg-black/85 flex items-center justify-center p-3 sm:p-6 backdrop-blur-md overflow-hidden animate-in fade-in" onClick={() => { setShowHandout(false); setLocalHandout(null); }}>
                    <div 
-                       className={`max-w-4xl w-full rounded-2xl shadow-2xl relative flex flex-col max-h-[90vh] overflow-hidden transition-all ${themeClass}`} 
+                        className={`w-full rounded-2xl shadow-2xl relative flex flex-col max-h-[90vh] overflow-hidden transition-all ${
+                            activeH.imageLayout === 'map' || (!activeH.content || activeH.content === '<p><br></p>')
+                                ? 'max-w-5xl'
+                                : 'max-w-4xl'
+                        } ${themeClass}`} 
                        onClick={e => e.stopPropagation()}
                    >
                        <div className="flex-1 overflow-y-auto custom-scroll w-full h-full relative flex flex-col p-6 sm:p-10">
@@ -1372,46 +1525,101 @@ ${MONSTER_STATBLOCK_SCHEMA}`;
                                </div>
                            )}
 
-                           {/* Primary Header/Artwork Image */}
-                           {activeHandoutImageUrl && (
-                               <div className="w-full flex justify-center pb-6">
-                                   {activeH.imageLayout === 'frame' ? (
-                                       <div className="relative inline-block p-2 bg-black/10 border-2 border-current/40 rounded-xl shadow-xl max-w-sm w-full">
-                                           <img src={activeHandoutImageUrl} className="w-full max-h-[50vh] object-cover rounded-lg" alt="Handout Image" />
-                                           <button 
-                                               onClick={(e) => { e.stopPropagation(); setIsFullscreenImage(true); }} 
-                                               className="absolute top-4 right-4 bg-black/60 hover:bg-black/90 text-white rounded p-1.5 transition-colors backdrop-blur-sm shadow-md border border-white/10 cursor-pointer"
-                                               title="View Fullscreen"
-                                           >
-                                               <Icon name="maximize" size={16} />
-                                           </button>
-                                       </div>
-                                   ) : activeH.imageLayout === 'contained' ? (
-                                       <div className="relative inline-block max-w-full">
-                                           <img src={activeHandoutImageUrl} className="max-w-full max-h-[60vh] object-contain drop-shadow-2xl rounded-xl" alt="Handout Image" />
-                                           <button 
-                                               onClick={(e) => { e.stopPropagation(); setIsFullscreenImage(true); }} 
-                                               className="absolute top-2 right-2 bg-black/60 hover:bg-black/90 text-white rounded p-1.5 transition-colors backdrop-blur-sm shadow-md border border-white/10 cursor-pointer"
-                                               title="View Fullscreen"
-                                           >
-                                               <Icon name="maximize" size={16} />
-                                           </button>
-                                       </div>
-                                   ) : (
-                                       // Hero Banner
-                                       <div className="relative inline-block w-full max-w-2xl rounded-xl overflow-hidden shadow-xl">
-                                           <img src={activeHandoutImageUrl} className="w-full max-h-[55vh] object-cover rounded-xl" alt="Handout Image" />
-                                           <button 
-                                               onClick={(e) => { e.stopPropagation(); setIsFullscreenImage(true); }} 
-                                               className="absolute top-3 right-3 bg-black/60 hover:bg-black/90 text-white rounded p-1.5 transition-colors backdrop-blur-sm shadow-md border border-white/10 cursor-pointer"
-                                               title="View Fullscreen"
-                                           >
-                                               <Icon name="maximize" size={16} />
-                                           </button>
-                                       </div>
-                                   )}
-                               </div>
-                           )}
+                            {/* Primary Header/Artwork Image */}
+                            {activeHandoutImageUrl && (
+                                <div className="w-full flex justify-center pb-6">
+                                    {activeH.imageLayout === 'map' ? (
+                                        <div className="w-full flex flex-col items-center">
+                                            <div 
+                                                className="relative inline-block w-full rounded-2xl overflow-hidden border border-slate-700/80 shadow-2xl bg-slate-950/90 group cursor-zoom-in"
+                                                onClick={() => setIsFullscreenImage(true)}
+                                            >
+                                                <div className="w-full flex items-center justify-between px-3.5 py-2 bg-slate-900/90 border-b border-slate-800 text-xs text-slate-300 font-bold">
+                                                    <span className="flex items-center gap-1.5 text-amber-400">
+                                                        <Icon name="map" size={15} />
+                                                        <span>Tactical Map / Location</span>
+                                                    </span>
+                                                    <span className="text-[11px] text-amber-400/90 flex items-center gap-1 font-semibold group-hover:text-amber-300 transition-colors">
+                                                        <Icon name="maximize" size={13} />
+                                                        <span>Click to Inspect Fullscreen</span>
+                                                    </span>
+                                                </div>
+                                                <img 
+                                                    src={activeHandoutImageUrl} 
+                                                    className="w-full max-h-[70vh] object-contain block mx-auto transition-transform duration-200 group-hover:scale-[1.01] p-1.5" 
+                                                    alt="Map Handout" 
+                                                />
+                                            </div>
+                                        </div>
+                                    ) : activeH.imageLayout === 'portrait' ? (
+                                        <div className="w-full flex flex-col items-center">
+                                            <div 
+                                                className="relative inline-block max-w-sm sm:max-w-md w-full rounded-2xl overflow-hidden border-2 border-amber-500/50 shadow-2xl bg-slate-950/95 group cursor-zoom-in"
+                                                onClick={() => setIsFullscreenImage(true)}
+                                            >
+                                                <div className="w-full flex items-center justify-between px-3.5 py-2 bg-amber-950/40 border-b border-amber-500/30 text-xs text-amber-300 font-bold">
+                                                    <span className="flex items-center gap-1.5">
+                                                        <Icon name="user" size={15} />
+                                                        <span>Character / Creature Portrait</span>
+                                                    </span>
+                                                    <span className="text-[11px] text-amber-300/90 flex items-center gap-1 font-semibold group-hover:text-amber-200 transition-colors">
+                                                        <Icon name="maximize" size={13} />
+                                                        <span>Click to Enlarge</span>
+                                                    </span>
+                                                </div>
+                                                <img 
+                                                    src={activeHandoutImageUrl} 
+                                                    className="w-full max-h-[64vh] object-contain block mx-auto transition-transform duration-200 group-hover:scale-[1.01] p-2" 
+                                                    alt="Character Portrait" 
+                                                />
+                                            </div>
+                                        </div>
+                                    ) : activeH.imageLayout === 'frame' ? (
+                                        <div 
+                                            className="relative inline-block p-2 bg-black/10 border-2 border-current/40 rounded-xl shadow-xl max-w-sm w-full group cursor-zoom-in"
+                                            onClick={() => setIsFullscreenImage(true)}
+                                        >
+                                            <img src={activeHandoutImageUrl} className="w-full max-h-[55vh] object-contain rounded-lg" alt="Handout Image" />
+                                            <button 
+                                                onClick={(e) => { e.stopPropagation(); setIsFullscreenImage(true); }} 
+                                                className="absolute top-4 right-4 bg-black/60 hover:bg-black/90 text-white rounded p-1.5 transition-colors backdrop-blur-sm shadow-md border border-white/10 cursor-pointer"
+                                                title="View Fullscreen"
+                                            >
+                                                <Icon name="maximize" size={16} />
+                                            </button>
+                                        </div>
+                                    ) : activeH.imageLayout === 'contained' ? (
+                                        <div 
+                                            className="relative inline-block max-w-full group cursor-zoom-in"
+                                            onClick={() => setIsFullscreenImage(true)}
+                                        >
+                                            <img src={activeHandoutImageUrl} className="max-w-full max-h-[64vh] object-contain drop-shadow-2xl rounded-xl" alt="Handout Image" />
+                                            <button 
+                                                onClick={(e) => { e.stopPropagation(); setIsFullscreenImage(true); }} 
+                                                className="absolute top-2 right-2 bg-black/60 hover:bg-black/90 text-white rounded p-1.5 transition-colors backdrop-blur-sm shadow-md border border-white/10 cursor-pointer"
+                                                title="View Fullscreen"
+                                            >
+                                                <Icon name="maximize" size={16} />
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        // Hero Banner
+                                        <div 
+                                            className="relative inline-block w-full max-w-3xl rounded-xl overflow-hidden shadow-xl bg-black/30 group cursor-zoom-in"
+                                            onClick={() => setIsFullscreenImage(true)}
+                                        >
+                                            <img src={activeHandoutImageUrl} className="w-full max-h-[58vh] object-contain rounded-xl" alt="Handout Image" />
+                                            <button 
+                                                onClick={(e) => { e.stopPropagation(); setIsFullscreenImage(true); }} 
+                                                className="absolute top-3 right-3 bg-black/60 hover:bg-black/90 text-white rounded p-1.5 transition-colors backdrop-blur-sm shadow-md border border-white/10 cursor-pointer"
+                                                title="View Fullscreen"
+                                            >
+                                                <Icon name="maximize" size={16} />
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
 
                            {/* Body Content Stream */}
                            {activeH.content && activeH.content !== '<p><br></p>' && (
@@ -1474,26 +1682,145 @@ ${MONSTER_STATBLOCK_SCHEMA}`;
            );
        })()}
                
-               {/* Fullscreen Image Overlay */}
-               {isFullscreenImage && (
-                   <div 
-                       className="fixed inset-0 z-[60] bg-black/95 flex items-center justify-center p-4 cursor-pointer animate-in fade-in"
-                       onClick={(e) => { e.stopPropagation(); setIsFullscreenImage(false); }}
-                   >
-                       <img 
-                           src={activeHandoutImageUrl} 
-                           className="max-w-full max-h-full object-contain drop-shadow-2xl animate-in zoom-in-95 duration-200" 
-                           alt="Fullscreen Handout"
-                       />
-                       <button 
-                           onClick={(e) => { e.stopPropagation(); setIsFullscreenImage(false); }} 
-                           className="absolute top-6 right-6 top-safe right-safe bg-black/50 hover:bg-white/20 text-white rounded-full p-3 transition-colors border border-white/20"
+               {/* Fullscreen Image & Map Inspection Overlay */}
+               {isFullscreenImage && activeHandoutImageUrl && (() => {
+                   const activeH = localHandout || data?.activeHandout;
+                   return (
+                       <div 
+                           className="fixed inset-0 z-[150] bg-black/95 backdrop-blur-xl flex flex-col justify-between p-3 sm:p-6 animate-in fade-in select-none"
+                           onClick={(e) => { e.stopPropagation(); setIsFullscreenImage(false); }}
                        >
-                           <Icon name="x" size={28}/>
-                       </button>
-                   </div>
-               )}
-       <div className="fixed inset-0 pointer-events-none z-[99999]"><DiceOverlay roll={rollingDice} /></div>
+                           {/* Top Inspection HUD */}
+                           <div className="w-full flex items-center justify-between text-white shrink-0 z-10 px-2" onClick={e => e.stopPropagation()}>
+                               <div className="flex items-center gap-3">
+                                   <span className="p-2 rounded-xl bg-white/10 text-amber-400 border border-white/10">
+                                       <Icon name={activeH?.imageLayout === 'map' ? 'map' : activeH?.imageLayout === 'portrait' ? 'user' : 'image'} size={18} />
+                                   </span>
+                                   <div>
+                                       <h3 className="font-bold text-sm sm:text-base text-slate-100 truncate max-w-xs sm:max-w-md">
+                                           {activeH?.title || 'Artwork Inspection'}
+                                       </h3>
+                                       <p className="text-[11px] text-slate-400">
+                                           {activeH?.imageLayout === 'map' ? 'Tactical Map / Location' : activeH?.imageLayout === 'portrait' ? 'Character / Creature Portrait' : 'Handout Image'}
+                                           {fullscreenZoom > 1 ? ` • Zoom ${Math.round(fullscreenZoom * 100)}% (Drag to Pan)` : ' • Click image to zoom'}
+                                       </p>
+                                   </div>
+                               </div>
+
+                               <div className="flex items-center gap-2">
+                                   {/* Download image button */}
+                                   <a
+                                       href={activeHandoutImageUrl}
+                                       download={`dungeonmind_${activeH?.title ? activeH.title.replace(/\s+/g, '_').toLowerCase() : 'handout'}.png`}
+                                       onClick={e => e.stopPropagation()}
+                                       className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white transition-colors border border-white/10 cursor-pointer"
+                                       title="Download Image"
+                                   >
+                                       <Icon name="download" size={18} />
+                                   </a>
+
+                                   {/* Close Button */}
+                                   <button 
+                                       type="button"
+                                       onClick={(e) => { e.stopPropagation(); setIsFullscreenImage(false); }} 
+                                       className="p-2 rounded-xl bg-white/10 hover:bg-rose-600 text-white transition-colors border border-white/10 cursor-pointer"
+                                       title="Close Inspection (Esc)"
+                                   >
+                                       <Icon name="x" size={20} />
+                                   </button>
+                               </div>
+                           </div>
+
+                           {/* Viewport & Image Canvas */}
+                           <div 
+                               className="flex-1 w-full h-full min-h-0 flex items-center justify-center overflow-auto custom-scroll relative p-2 my-2 cursor-grab active:cursor-grabbing"
+                               onClick={(e) => {
+                                   if (e.target === e.currentTarget) {
+                                       setIsFullscreenImage(false);
+                                   }
+                               }}
+                           >
+                               <img 
+                                   src={activeHandoutImageUrl} 
+                                   onClick={(e) => {
+                                       e.stopPropagation();
+                                       setFullscreenZoom(z => z === 1 ? 1.75 : 1);
+                                   }}
+                                   style={{
+                                       transform: `scale(${fullscreenZoom})`,
+                                       transformOrigin: 'center center',
+                                       transition: 'transform 0.15s ease-out'
+                                   }}
+                                   className={`max-w-full max-h-full object-contain drop-shadow-2xl rounded-lg ${
+                                       fullscreenZoom > 1 ? 'cursor-grab active:cursor-grabbing' : 'cursor-zoom-in'
+                                   }`}
+                                   alt="Fullscreen Handout Inspection" 
+                               />
+                           </div>
+
+                           {/* Floating Zoom & Controls HUD Bar */}
+                           <div className="w-full flex justify-center shrink-0 z-10" onClick={e => e.stopPropagation()}>
+                               <div className="bg-slate-900/90 border border-slate-700/80 rounded-2xl px-3 py-1.5 shadow-2xl backdrop-blur-md flex items-center gap-2 text-xs">
+                                   <button
+                                       type="button"
+                                       onClick={() => setFullscreenZoom(z => Math.max(0.5, +(z - 0.25).toFixed(2)))}
+                                       className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer"
+                                       title="Zoom Out"
+                                   >
+                                       <Icon name="minus" size={14} />
+                                   </button>
+
+                                   <button
+                                       type="button"
+                                       onClick={() => setFullscreenZoom(1)}
+                                       className="px-2.5 py-1 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-amber-400 font-mono font-bold text-xs transition-colors cursor-pointer"
+                                       title="Reset to 100% Fit"
+                                   >
+                                       {Math.round(fullscreenZoom * 100)}% Fit
+                                   </button>
+
+                                   <button
+                                       type="button"
+                                       onClick={() => setFullscreenZoom(z => Math.min(3.5, +(z + 0.25).toFixed(2)))}
+                                       className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer"
+                                       title="Zoom In"
+                                   >
+                                       <Icon name="plus" size={14} />
+                                   </button>
+
+                                   <div className="w-px h-4 bg-slate-700 mx-1" />
+
+                                   <button
+                                       type="button"
+                                       onClick={() => setFullscreenZoom(2)}
+                                       className={`px-2 py-1 rounded-lg font-bold text-[11px] transition-colors cursor-pointer ${
+                                           fullscreenZoom === 2 ? 'bg-amber-500 text-slate-950' : 'bg-slate-800 text-slate-300 hover:text-white'
+                                       }`}
+                                   >
+                                       2x Detail
+                                   </button>
+                               </div>
+                           </div>
+                       </div>
+                   );
+               })()}
+               <div className="fixed inset-0 pointer-events-none z-[99999]"><DiceOverlay roll={rollingDice} /></div>
+       
+       {/* Global Party Rest Modal */}
+       {showGlobalRestModal && data?.activeRest && (
+           <PartyRestModal
+               isOpen={showGlobalRestModal}
+               restType={data.activeRest.type}
+               role={effectiveRole}
+               currentUser={user}
+               players={data?.players || []}
+               activeRest={data.activeRest}
+               onClose={handleCloseGlobalRestModal}
+               onApplyRest={handleGlobalApplyPartyRest}
+               onSaveHero={handleGlobalSaveHeroRest}
+               onDiceRoll={handleDiceRoll}
+           />
+       )}
        
        {/* Global Dice Tray Sidebar */}
        {!isCastMode && showTools && (
@@ -1503,17 +1830,23 @@ ${MONSTER_STATBLOCK_SCHEMA}`;
                    handleDiceRoll={handleDiceRoll} 
                    onClose={() => setShowTools(false)} 
                    role={effectiveRole}
-                   rollMode={rollMode || (effectiveRole === 'dm' ? 'private' : 'public')}
-                   setRollMode={(mode) => {
-                       setRollMode(mode);
-                       localStorage.setItem('roll_mode', mode);
-                   }}
+                   rollMode={rollMode || 'public'}
+                   setRollMode={handleSetRollMode}
                />
            </div>
        )}
 
-       {/* UPDATED: Pass compact prop */}
-       {!isCastMode && currentView !== 'map' && <MobileNav view={currentView} setView={setCurrentView} compact={data.config?.mobileCompact} />}
+       {/* Mobile Bottom Navigation with Codex Handouts & Code Drawer */}
+       {!isCastMode && currentView !== 'map' && (
+           <MobileNav 
+               view={currentView} 
+               setView={setCurrentView} 
+               compact={data.config?.mobileCompact}
+               onOpenHandouts={() => setShowHandoutCreator(true)}
+               handoutsCount={data?.campaign?.handouts?.length || 0}
+               gameCode={gameParams?.code}
+           />
+       )}
        {!isCastMode && effectiveRole === 'dm' && !data.onboardingComplete && (
            <OnboardingWizard 
                onComplete={(wizData) => {

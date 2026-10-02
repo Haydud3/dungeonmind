@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react';
 import { useCharacterStore, calcAC } from '../../stores/useCharacterStore';
 import Icon from '../Icon';
 import LevelUpModal from './LevelUpModal';
+import PartyRestModal from '../modals/PartyRestModal';
 
 const fileToBase64 = (file) => new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -39,6 +40,7 @@ const HeaderStats = ({
     const [showCalculator, setShowCalculator] = useState(false);
     const [customDelta, setCustomDelta] = useState('');
     const [tempHpInput, setTempHpInput] = useState('');
+    const [sheetRestType, setSheetRestType] = useState(null); // 'short' | 'long' | null
     const fileInputRef = useRef(null);
 
     const handleAvatarUpload = async (e) => {
@@ -200,7 +202,10 @@ const HeaderStats = ({
                             {onOpenModelPicker && (
                                 <button 
                                     type="button"
-                                    onClick={onOpenModelPicker} 
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        onOpenModelPicker();
+                                    }} 
                                     className={`transition-all px-2 py-1 rounded-lg border text-xs cursor-pointer flex items-center gap-1.5 ${
                                         character.modelUrl || character.model3d 
                                             ? 'text-purple-300 bg-purple-950/40 border-purple-500/40 hover:bg-purple-900/60 shadow-[0_0_8px_rgba(168,85,247,0.2)]' 
@@ -705,7 +710,7 @@ const HeaderStats = ({
                     <div className="flex items-center justify-end gap-2 pt-1 border-t border-slate-800/80">
                         <button
                             type="button"
-                            onClick={takeShortRest}
+                            onClick={() => setSheetRestType('short')}
                             className="px-3.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer"
                         >
                             <Icon name="coffee" size={13} className="text-amber-400" />
@@ -713,7 +718,7 @@ const HeaderStats = ({
                         </button>
                         <button
                             type="button"
-                            onClick={takeLongRest}
+                            onClick={() => setSheetRestType('long')}
                             className="px-3.5 py-1.5 rounded-lg bg-indigo-700 hover:bg-indigo-600 text-white text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer shadow-md"
                         >
                             <Icon name="moon" size={13} />
@@ -724,6 +729,30 @@ const HeaderStats = ({
             )}
 
             {showLevelUp && <LevelUpModal character={character} onClose={() => setShowLevelUp(false)} />}
+
+            {sheetRestType && (
+                <PartyRestModal
+                    isOpen={!!sheetRestType}
+                    restType={sheetRestType}
+                    role="player"
+                    currentUser={{ uid: character.ownerId || 'me' }}
+                    players={[character]}
+                    onClose={() => setSheetRestType(null)}
+                    onSaveHero={(updatedHero, msg) => {
+                        useCharacterStore.getState().loadCharacter(updatedHero);
+                        if (msg) onLogAction?.(msg);
+                        setSheetRestType(null);
+                    }}
+                    onApplyRest={(updatedList, msg) => {
+                        if (updatedList[0]) {
+                            useCharacterStore.getState().loadCharacter(updatedList[0]);
+                        }
+                        if (msg) onLogAction?.(msg);
+                        setSheetRestType(null);
+                    }}
+                    onDiceRoll={onDiceRoll}
+                />
+            )}
         </div>
     );
 };

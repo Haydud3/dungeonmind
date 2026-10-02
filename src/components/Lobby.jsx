@@ -8,9 +8,10 @@ import { doc, getDoc, setDoc, collection, getDocs, addDoc, deleteDoc, updateDoc,
 import SheetContainer from './character-sheet/SheetContainer';
 import DndBeyondImporter from './character-sheet/DndBeyondImporter';
 import CharacterBuilder from '../utils/CharacterBuilder';
+import ModelPickerModal from './ModelPickerModal';
 
 const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
-    const { joinCampaign } = useNewCampaign();
+    const { joinCampaign, setLocalGuestUser } = useNewCampaign();
     const toast = useToast();
     const dialog = useDialog();
     const [joinCode, setJoinCode] = useState("");
@@ -19,6 +20,7 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
     const [activeTab, setActiveTab] = useState('campaigns'); // 'campaigns' | 'characters'
     const [characters, setCharacters] = useState([]);
     const [editingCharacter, setEditingCharacter] = useState(null);
+    const [showLobbyModelPicker, setShowLobbyModelPicker] = useState(false);
     const [isCreatingCampaign, setIsCreatingCampaign] = useState(false);
     const [editingRealm, setEditingRealm] = useState(null);
     const [isGeneratingEditImage, setIsGeneratingEditImage] = useState(false);
@@ -94,10 +96,34 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
     const [emailInvites, setEmailInvites] = useState([]);
     const [isRecovering, setIsRecovering] = useState(false);
 
+    // Auth Portal State
+    const [authMode, setAuthMode] = useState('signin'); // 'signin' | 'signup' | 'forgot' | 'code'
+    const [authEmail, setAuthEmail] = useState('');
+    const [authPassword, setAuthPassword] = useState('');
+    const [authConfirmPassword, setAuthConfirmPassword] = useState('');
+    const [authDisplayName, setAuthDisplayName] = useState('');
+    const [showAuthPassword, setShowAuthPassword] = useState(false);
+    const [authError, setAuthError] = useState(null);
+    const [authSuccess, setAuthSuccess] = useState(null);
+    const [isAuthSubmitting, setIsAuthSubmitting] = useState(false);
+    const [directCode, setDirectCode] = useState('');
+    const [directName, setDirectName] = useState('');
+
+    // Account Linking State
+    const [isLinking, setIsLinking] = useState(false);
+    const [showLinkPasswordModal, setShowLinkPasswordModal] = useState(false);
+    const [linkEmail, setLinkEmail] = useState('');
+    const [linkPassword, setLinkPassword] = useState('');
+    const [linkPasswordConfirm, setLinkPasswordConfirm] = useState('');
+    const [showLinkPassword, setShowLinkPassword] = useState(false);
+
     useEffect(() => {
         if (user) {
             setLocalDisplayName(user.displayName || 'Adventurer');
             setLocalPhotoUrl(user.photoURL || '');
+            if (user.email && !linkEmail) {
+                setLinkEmail(user.email);
+            }
         }
     }, [user]);
 
@@ -110,7 +136,11 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
         const newName = editProfileData.displayName.trim() || 'Adventurer';
         const newPhoto = editProfileData.photoURL.trim();
         try {
-            await user.updateProfile({ displayName: newName, photoURL: newPhoto });
+            if (fb.auth.currentUser) {
+                await fb.updateProfile(fb.auth.currentUser, { displayName: newName, photoURL: newPhoto });
+            } else if (setLocalGuestUser && user) {
+                setLocalGuestUser({ ...user, displayName: newName, photoURL: newPhoto });
+            }
             setLocalDisplayName(newName);
             setLocalPhotoUrl(newPhoto);
             toast("Profile updated successfully!", "success");
@@ -120,41 +150,142 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
         }
     };
     
-    // Waiting Room State
+    // Waiting Room & Join Flow State
     const [isJoiningCampaign, setIsJoiningCampaign] = useState(false);
     const [joiningCode, setJoiningCode] = useState("");
     const [selectedCharacterId, setSelectedCharacterId] = useState(null);
     const [isInWaitingRoom, setIsInWaitingRoom] = useState(false);
+    const [pendingInvite, setPendingInvite] = useState(() => {
+        try {
+            const saved = sessionStorage.getItem('dm_pending_invite');
+            return saved ? JSON.parse(saved) : null;
+        } catch(e) {
+            return null;
+        }
+    });
+    const [joiningCampaignDetails, setJoiningCampaignDetails] = useState(null);
 
-    // Auto-join logic based on URL parameter
+    const resolveCampaignPreview = async (code) => {
+        if (!code) return null;
+        const formattedCode = code.toUpperCase();
+        try {
+            const campDoc = await getDoc(doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', formattedCode));
+            if (campDoc.exists()) {
+                const cData = campDoc.data();
+                return {
+                    code: formattedCode,
+                    name: cData.campaign?.genesis?.campaignName || cData.campaignName || `Realm ${formattedCode}`,
+                    coverImage: cData.campaign?.genesis?.coverImage || cData.coverImage || null,
+                    theme: cData.campaign?.genesis?.tone || cData.tone || 'Heroic Fantasy',
+                    hostName: cData.activeUsers?.[cData.hostId] || 'Dungeon Master',
+                    bannedUsers: cData.bannedUsers || [],
+                    kickedUsers: cData.kickedUsers || {}
+                };
+            }
+        } catch (e) {
+            console.error("Failed to resolve campaign preview", e);
+        }
+        return {
+            code: formattedCode,
+            name: `Realm ${formattedCode}`,
+            coverImage: null,
+            theme: 'Heroic Fantasy',
+            hostName: 'Dungeon Master',
+            bannedUsers: [],
+            kickedUsers: {}
+        };
+    };
+
+    const openJoinFlow = async (code, preview = null) => {
+        if (!code) return;
+        const formattedCode = code.toUpperCase();
+        
+        let meta = preview;
+        if (!meta) {
+            meta = await resolveCampaignPreview(formattedCode);
+        }
+
+        if (user?.uid && meta?.bannedUsers?.includes(user.uid)) {
+            dialog.alert("You have been banned from this realm by the Dungeon Master.");
+            const filteredRecents = recents.filter(r => r.code !== formattedCode);
+            setRecents(filteredRecents);
+            try {
+                localStorage.setItem('dm_recents', JSON.stringify(filteredRecents));
+                localStorage.removeItem('dm_last_session');
+            } catch(e){}
+            return;
+        }
+
+        setJoiningCode(formattedCode);
+        setJoiningCampaignDetails(meta);
+        setIsJoiningCampaign(true);
+
+        if (characters.length > 0 && !selectedCharacterId) {
+            setSelectedCharacterId(characters[0].id);
+        }
+    };
+
+    // Auto-join & invite link parsing logic
     useEffect(() => {
         const checkInviteParams = async () => {
             const urlParams = new URLSearchParams(window.location.search);
             const joinCodeParam = urlParams.get('join');
             const inviteTokenParam = urlParams.get('invite');
             
+            let resolvedCode = null;
+
             if (joinCodeParam) {
-                handleJoinClick(joinCodeParam);
-                urlParams.delete('join');
-                const newSearch = urlParams.toString() ? '?' + urlParams.toString() : '';
-                window.history.replaceState({}, document.title, window.location.pathname + newSearch + window.location.hash);
+                resolvedCode = joinCodeParam.toUpperCase();
             } else if (inviteTokenParam) {
                 try {
-                    const q = query(collection(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns'), where('campaign.inviteToken', '==', inviteTokenParam));
-                    const snapshot = await getDocs(q);
+                    let q = query(collection(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns'), where('campaign.inviteToken', '==', inviteTokenParam));
+                    let snapshot = await getDocs(q);
+                    if (snapshot.empty) {
+                        q = query(collection(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns'), where('inviteToken', '==', inviteTokenParam));
+                        snapshot = await getDocs(q);
+                    }
                     if (!snapshot.empty) {
-                        const campaignDoc = snapshot.docs[0];
-                        handleJoinClick(campaignDoc.id);
+                        resolvedCode = snapshot.docs[0].id.toUpperCase();
                     } else {
-                        dialog.alert("This invite link is invalid or has been reset by the Dungeon Master.");
+                        dialog.alert("This invite link is invalid or has expired.");
                     }
                 } catch (e) {
                     console.error("Failed to resolve invite link", e);
                 }
+            }
+
+            if (resolvedCode) {
+                urlParams.delete('join');
                 urlParams.delete('invite');
                 const newSearch = urlParams.toString() ? '?' + urlParams.toString() : '';
                 window.history.replaceState({}, document.title, window.location.pathname + newSearch + window.location.hash);
-            } else if (localStorage.getItem('dm_auto_join') === 'true' && user) {
+
+                const preview = await resolveCampaignPreview(resolvedCode);
+                setPendingInvite(preview);
+                setDirectCode(resolvedCode);
+                try {
+                    sessionStorage.setItem('dm_pending_invite', JSON.stringify(preview));
+                } catch(e){}
+
+                if (user) {
+                    openJoinFlow(resolvedCode, preview);
+                }
+                return;
+            }
+
+            // If user just logged in / joined as guest and had a pending invite waiting:
+            if (user && pendingInvite) {
+                const inviteToOpen = pendingInvite;
+                setPendingInvite(null);
+                try {
+                    sessionStorage.removeItem('dm_pending_invite');
+                } catch(e){}
+                openJoinFlow(inviteToOpen.code, inviteToOpen);
+                return;
+            }
+
+            // Auto-join to last session if flag enabled
+            if (localStorage.getItem('dm_auto_join') === 'true' && user) {
                 try {
                     const lastSessionStr = localStorage.getItem('dm_last_session');
                     if (lastSessionStr) {
@@ -190,7 +321,7 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
             }
         };
         checkInviteParams();
-    }, [user]); // We re-run this when 'user' state changes so it works after login
+    }, [user]);
 
     const generateCoverImage = async () => {
         if (!newCampaignData.name) return;
@@ -283,6 +414,12 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                     const campDoc = await getDoc(doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', r.code));
                     if (campDoc.exists()) {
                         const cData = campDoc.data();
+                        // If user is banned from this realm, remove from recents
+                        if (user?.uid && cData.bannedUsers?.includes(user.uid)) {
+                            needsCloudSync = true;
+                            return null;
+                        }
+
                         const freshName = cData.campaign?.genesis?.campaignName || cData.campaignName || r.name;
                         const freshCover = cData.campaign?.genesis?.coverImage || cData.coverImage || r.coverImage;
                         const freshTheme = cData.campaign?.genesis?.tone || cData.tone || r.theme;
@@ -302,6 +439,7 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                 }
                 return r;
             }));
+            localRecents = localRecents.filter(Boolean);
             setRecents(localRecents);
             localStorage.setItem('dm_recents', JSON.stringify(localRecents));
             if (needsCloudSync && user?.uid) {
@@ -326,15 +464,26 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
             const docRef = await addDoc(charRef, newChar);
             const savedChar = { id: docRef.id, ...newChar };
             setCharacters(prev => [...prev, savedChar]);
+            setSelectedCharacterId(savedChar.id);
             setShowDndBeyondImport(false);
+            toast(`Imported ${savedChar.name || 'character'}!`, 'success');
         } catch(e) {
-            console.error("Failed to import character", e);
+            console.warn("Failed to import character to cloud, storing locally:", e);
+            const localId = 'char_' + Date.now();
+            const savedChar = { id: localId, ...charData, dateCreated: Date.now() };
+            setCharacters(prev => [...prev, savedChar]);
+            setSelectedCharacterId(localId);
+            try {
+                const existing = JSON.parse(localStorage.getItem('dm_local_characters') || '[]');
+                localStorage.setItem('dm_local_characters', JSON.stringify([...existing, savedChar]));
+            } catch(err){}
+            setShowDndBeyondImport(false);
+            toast(`Imported ${savedChar.name || 'character'}!`, 'success');
         }
     };
 
     const handleCreateCharacter = async () => {
         if (!user) return;
-        // Launch the Native Character Builder wizard
         setShowBuilder(true);
     };
 
@@ -346,9 +495,21 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
             const docRef = await addDoc(charRef, newChar);
             const savedChar = { id: docRef.id, ...newChar };
             setCharacters(prev => [...prev, savedChar]);
+            setSelectedCharacterId(savedChar.id);
             setShowBuilder(false);
+            toast(`Created ${savedChar.name || 'character'}!`, 'success');
         } catch(e) {
-            console.error("Failed to save built character", e);
+            console.warn("Failed to save built character to cloud, storing locally:", e);
+            const localId = 'char_' + Date.now();
+            const savedChar = { id: localId, ...charData, dateCreated: Date.now() };
+            setCharacters(prev => [...prev, savedChar]);
+            setSelectedCharacterId(localId);
+            try {
+                const existing = JSON.parse(localStorage.getItem('dm_local_characters') || '[]');
+                localStorage.setItem('dm_local_characters', JSON.stringify([...existing, savedChar]));
+            } catch(err){}
+            setShowBuilder(false);
+            toast(`Created ${savedChar.name || 'character'}!`, 'success');
         }
     };
 
@@ -416,12 +577,278 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
         }
     };
 
-    const handleLogin = async () => {
-        if(!fb) return;
-        setIsLoggingIn(true);
+    const getAuthErrorMessage = (err) => {
+        if (!err) return "An unexpected error occurred.";
+        const code = err.code || "";
+        switch (code) {
+            case "auth/invalid-credential":
+            case "auth/user-not-found":
+            case "auth/wrong-password":
+                return "Incorrect email or password. Please verify your credentials.";
+            case "auth/email-already-in-use":
+                return "An account with this email already exists. Try signing in or resetting your password.";
+            case "auth/weak-password":
+                return "Password is too weak. Please choose at least 6 characters.";
+            case "auth/invalid-email":
+                return "Please provide a valid email address.";
+            case "auth/missing-email":
+                return "Please enter your email address.";
+            case "auth/missing-password":
+                return "Please enter your password.";
+            case "auth/user-disabled":
+                return "This account has been disabled. Please contact support.";
+            case "auth/popup-closed-by-user":
+                return "Sign-in popup was closed before completing.";
+            case "auth/credential-already-in-use":
+                return "This account credential is already linked to another DungeonMind user.";
+            case "auth/requires-recent-login":
+                return "For security, this action requires a recent sign-in. Please log out and back in.";
+            case "auth/too-many-requests":
+                return "Too many unsuccessful attempts. Please wait a moment before trying again.";
+            case "auth/network-request-failed":
+                return "Network connection issue. Please check your internet connection.";
+            case "auth/admin-restricted-operation":
+            case "auth/operation-not-allowed":
+                return "Anonymous Sign-in is not enabled in Firebase Console (Authentication > Sign-in method > Anonymous).";
+            default:
+                return err.message || "An authentication error occurred.";
+        }
+    };
+
+    const handleGoogleLogin = async () => {
+        if (!fb) return;
+        setIsAuthSubmitting(true);
+        setAuthError(null);
         try {
             await fb.signInWithPopup(fb.auth, fb.googleProvider);
-        } catch (e) { dialog.alert("Login Error: " + e.message); setIsLoggingIn(false); }
+        } catch (e) {
+            if (e.code !== "auth/popup-closed-by-user") {
+                setAuthError(getAuthErrorMessage(e));
+            }
+        } finally {
+            setIsAuthSubmitting(false);
+        }
+    };
+
+    const handleLogin = handleGoogleLogin;
+
+    const handleEmailSignIn = async (e) => {
+        if (e) e.preventDefault();
+        const trimmedEmail = authEmail.trim();
+        if (!trimmedEmail || !authPassword) {
+            setAuthError("Please provide both email and password.");
+            return;
+        }
+        setIsAuthSubmitting(true);
+        setAuthError(null);
+        setAuthSuccess(null);
+        try {
+            await fb.signInWithEmailAndPassword(fb.auth, trimmedEmail, authPassword);
+        } catch (err) {
+            setAuthError(getAuthErrorMessage(err));
+        } finally {
+            setIsAuthSubmitting(false);
+        }
+    };
+
+    const handleEmailSignUp = async (e) => {
+        if (e) e.preventDefault();
+        const trimmedEmail = authEmail.trim();
+        const trimmedName = authDisplayName.trim() || 'Adventurer';
+        if (!trimmedEmail || !authPassword) {
+            setAuthError("Please provide an email and password.");
+            return;
+        }
+        if (authPassword.length < 6) {
+            setAuthError("Password must be at least 6 characters long.");
+            return;
+        }
+        if (authPassword !== authConfirmPassword) {
+            setAuthError("Passwords do not match.");
+            return;
+        }
+        setIsAuthSubmitting(true);
+        setAuthError(null);
+        setAuthSuccess(null);
+        try {
+            const cred = await fb.createUserWithEmailAndPassword(fb.auth, trimmedEmail, authPassword);
+            await fb.updateProfile(cred.user, { displayName: trimmedName });
+            await setDoc(doc(fb.db, 'users', cred.user.uid), {
+                displayName: trimmedName,
+                email: trimmedEmail,
+                createdAt: Date.now(),
+                recents: []
+            }, { merge: true });
+        } catch (err) {
+            setAuthError(getAuthErrorMessage(err));
+        } finally {
+            setIsAuthSubmitting(false);
+        }
+    };
+
+    const handleForgotPassword = async (e) => {
+        if (e) e.preventDefault();
+        const trimmedEmail = authEmail.trim();
+        if (!trimmedEmail) {
+            setAuthError("Please enter your registered email address.");
+            return;
+        }
+        setIsAuthSubmitting(true);
+        setAuthError(null);
+        setAuthSuccess(null);
+        try {
+            await fb.sendPasswordResetEmail(fb.auth, trimmedEmail);
+            setAuthSuccess(`Password reset email sent to ${trimmedEmail}! Check your inbox and spam folder.`);
+        } catch (err) {
+            setAuthError(getAuthErrorMessage(err));
+        } finally {
+            setIsAuthSubmitting(false);
+        }
+    };
+
+    const handleGuestLogin = async (customName = null) => {
+        setIsAuthSubmitting(true);
+        setAuthError(null);
+        const name = (customName && customName.trim()) ? customName.trim() : 'Guest Adventurer';
+        try {
+            const cred = await fb.signInAnonymously(fb.auth);
+            await fb.updateProfile(cred.user, { displayName: name });
+            toast(`Welcome, ${name}! Entering realm as Guest.`, "info");
+        } catch (err) {
+            console.warn("Firebase Anonymous Auth warning:", err);
+            if (err.code === "auth/admin-restricted-operation" || err.code === "auth/operation-not-allowed") {
+                // Seamless fallback to local guest session so the user is never blocked
+                const guestObj = {
+                    uid: 'guest_' + Math.random().toString(36).substring(2, 9),
+                    displayName: name,
+                    email: null,
+                    photoURL: '',
+                    isAnonymous: true,
+                    providerData: []
+                };
+                if (setLocalGuestUser) setLocalGuestUser(guestObj);
+                toast(`Welcome, ${name}! Playing as Guest.`, "info");
+            } else {
+                setAuthError(getAuthErrorMessage(err));
+            }
+        } finally {
+            setIsAuthSubmitting(false);
+        }
+    };
+
+    const handleDirectCodeJoin = async (e) => {
+        if (e) e.preventDefault();
+        const code = directCode.trim().toUpperCase();
+        if (!code) {
+            setAuthError("Please enter a Realm code.");
+            return;
+        }
+        const name = directName.trim() || 'Guest Adventurer';
+        setIsAuthSubmitting(true);
+        setAuthError(null);
+        try {
+            const preview = await resolveCampaignPreview(code);
+            setPendingInvite(preview);
+            try {
+                sessionStorage.setItem('dm_pending_invite', JSON.stringify(preview));
+            } catch(e){}
+
+            const cred = await fb.signInAnonymously(fb.auth);
+            await fb.updateProfile(cred.user, { displayName: name });
+        } catch (err) {
+            if (err.code === "auth/admin-restricted-operation" || err.code === "auth/operation-not-allowed") {
+                const guestObj = {
+                    uid: 'guest_' + Math.random().toString(36).substring(2, 9),
+                    displayName: name,
+                    email: null,
+                    photoURL: '',
+                    isAnonymous: true,
+                    providerData: []
+                };
+                if (setLocalGuestUser) setLocalGuestUser(guestObj);
+            } else {
+                setAuthError(getAuthErrorMessage(err));
+                setIsAuthSubmitting(false);
+            }
+        }
+    };
+
+    // Account Linking Handlers
+    const handleLinkGoogle = async () => {
+        if (!fb.auth.currentUser) return;
+        setIsLinking(true);
+        try {
+            await fb.linkWithPopup(fb.auth.currentUser, fb.googleProvider);
+            toast("Google account successfully linked!", "success");
+        } catch (err) {
+            console.error("Link Google error:", err);
+            toast(getAuthErrorMessage(err), "error");
+        } finally {
+            setIsLinking(false);
+        }
+    };
+
+    const handleLinkPassword = async (e) => {
+        if (e) e.preventDefault();
+        if (!fb.auth.currentUser) return;
+        const trimmedEmail = linkEmail.trim() || user?.email;
+        if (!trimmedEmail || !linkPassword) {
+            toast("Please provide both email and password.", "warning");
+            return;
+        }
+        if (linkPassword.length < 6) {
+            toast("Password must be at least 6 characters.", "warning");
+            return;
+        }
+        if (linkPassword !== linkPasswordConfirm) {
+            toast("Passwords do not match.", "warning");
+            return;
+        }
+        setIsLinking(true);
+        try {
+            const credential = fb.EmailAuthProvider.credential(trimmedEmail, linkPassword);
+            await fb.linkWithCredential(fb.auth.currentUser, credential);
+            toast("DungeonMind email and password successfully linked!", "success");
+            setShowLinkPasswordModal(false);
+            setLinkPassword('');
+            setLinkPasswordConfirm('');
+        } catch (err) {
+            console.error("Link password error:", err);
+            toast(getAuthErrorMessage(err), "error");
+        } finally {
+            setIsLinking(false);
+        }
+    };
+
+    const handleSendProfilePasswordReset = async () => {
+        const targetEmail = user?.providerData?.find(p => p.providerId === 'password')?.email || user?.email;
+        if (!targetEmail) {
+            toast("No email address found for this account.", "error");
+            return;
+        }
+        try {
+            await fb.sendPasswordResetEmail(fb.auth, targetEmail);
+            toast(`Password reset instructions sent to ${targetEmail}!`, "success");
+        } catch (err) {
+            toast(getAuthErrorMessage(err), "error");
+        }
+    };
+
+    const handleUnlinkProvider = async (providerId) => {
+        if (!fb.auth.currentUser) return;
+        if (fb.auth.currentUser.providerData.length <= 1) {
+            toast("Cannot unlink: You must keep at least one login method attached to your account.", "warning");
+            return;
+        }
+        const providerName = providerId === 'google.com' ? 'Google' : 'DungeonMind Password';
+        if (await dialog.confirm(`Are you sure you want to unlink ${providerName}? You will not be able to log in with this method unless you re-link it.`)) {
+            try {
+                await fb.unlink(fb.auth.currentUser, providerId);
+                toast(`${providerName} unlinked successfully.`, "info");
+            } catch (err) {
+                toast(getAuthErrorMessage(err), "error");
+            }
+        }
     };
 
     const addToRecents = async (code, role, campaignName = null, coverImage = null, theme = null) => {
@@ -501,27 +928,28 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
         await joinCampaign(newCode, 'dm', user.uid, true, initialData);
     };
 
-    const handleJoinClick = (code, role = 'player') => {
+    const handleJoinClick = async (code, role = 'player') => {
         if (!code) return;
         const formattedCode = code.toUpperCase();
         
-        if (!user) {
-            joinCampaign(formattedCode, role, 'anon');
-            return;
-        }
-
         if (role === 'dm') {
             addToRecents(formattedCode, 'dm');
             localStorage.setItem('dm_last_session', JSON.stringify({ code: formattedCode, role: 'dm' }));
-            joinCampaign(formattedCode, 'dm', user.uid);
+            joinCampaign(formattedCode, 'dm', user ? user.uid : 'anon');
             return;
         }
 
-        setJoiningCode(formattedCode);
-        setIsJoiningCampaign(true);
-        if (characters.length > 0 && !selectedCharacterId) {
-            setSelectedCharacterId(characters[0].id);
+        if (!user) {
+            const preview = await resolveCampaignPreview(formattedCode);
+            setPendingInvite(preview);
+            setDirectCode(formattedCode);
+            try {
+                sessionStorage.setItem('dm_pending_invite', JSON.stringify(preview));
+            } catch(e){}
+            return;
         }
+
+        openJoinFlow(formattedCode);
     };
 
     const finalizeJoin = async () => {
@@ -530,20 +958,37 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
         let selectedChar = characters.find(c => c.id === selectedCharacterId) || null;
         let finalCharId = selectedCharacterId;
         
-        let campaignName = null;
-        let coverImage = null;
-        let tone = null;
+        let campaignName = joiningCampaignDetails?.name || null;
+        let coverImage = joiningCampaignDetails?.coverImage || null;
+        let tone = joiningCampaignDetails?.theme || null;
         
         try {
             const campDoc = await getDoc(doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', joiningCode));
             if (campDoc.exists()) {
                 const cData = campDoc.data();
-                campaignName = cData.campaign?.genesis?.campaignName || cData.campaignName || "Unknown Campaign";
-                coverImage = cData.campaign?.genesis?.coverImage || cData.coverImage;
-                tone = cData.campaign?.genesis?.tone || cData.tone;
+
+                // 1. Check if user is banned
+                if (user?.uid && cData.bannedUsers?.includes(user.uid)) {
+                    dialog.alert("You have been banned from this realm by the Dungeon Master.");
+                    const filteredRecents = recents.filter(r => r.code !== joiningCode);
+                    setRecents(filteredRecents);
+                    try {
+                        localStorage.setItem('dm_recents', JSON.stringify(filteredRecents));
+                        localStorage.removeItem('dm_last_session');
+                    } catch(e){}
+                    return;
+                }
+
+                // 2. Check if user was kicked
+                const isKicked = user?.uid && cData.kickedUsers && Boolean(cData.kickedUsers[user.uid]);
+                const requiresApproval = Boolean(cData.campaign?.requireApproval) || isKicked;
+
+                campaignName = cData.campaign?.genesis?.campaignName || cData.campaignName || campaignName || "Unknown Campaign";
+                coverImage = cData.campaign?.genesis?.coverImage || cData.coverImage || coverImage;
+                tone = cData.campaign?.genesis?.tone || cData.tone || tone;
                 
                 // Clone the character to tie it uniquely to this campaign if it isn't already
-                if (selectedChar && selectedChar.campaignId !== joiningCode) {
+                if (selectedChar && selectedChar.campaignId !== joiningCode && user?.uid && !user.uid.startsWith('guest_')) {
                     try {
                         const { id, ...charWithoutId } = selectedChar;
                         const clonedChar = {
@@ -558,7 +1003,7 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                     } catch (err) {
                         console.error("Failed to clone character for campaign", err);
                     }
-                } else if (selectedChar && selectedChar.campaignId === joiningCode && selectedChar.campaignName !== campaignName) {
+                } else if (selectedChar && selectedChar.campaignId === joiningCode && selectedChar.campaignName !== campaignName && user?.uid && !user.uid.startsWith('guest_')) {
                     // Update campaign name if it changed
                     try {
                         await updateDoc(doc(fb.db, 'users', user.uid, 'characters', selectedChar.id), { campaignName });
@@ -566,13 +1011,15 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                     } catch(e){}
                 }
 
-                if (cData.campaign?.requireApproval) {
+                if (requiresApproval) {
                     const reqRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', joiningCode, 'joinRequests', user.uid);
                     
-                    // Check if this player was already approved — don't re-prompt the DM
                     const existingSnap = await getDoc(reqRef);
-                    if (existingSnap.exists() && existingSnap.data().status === 'approved') {
-                        // Already approved — join directly without going through the waiting room
+                    const kickTimestamp = isKicked ? (cData.kickedUsers[user.uid] || 0) : 0;
+                    const reqTimestamp = existingSnap.exists() ? (existingSnap.data().timestamp || 0) : 0;
+
+                    // If they were kicked, any old approval created BEFORE the kick is invalid
+                    if (existingSnap.exists() && existingSnap.data().status === 'approved' && (!isKicked || reqTimestamp > kickTimestamp)) {
                         addToRecents(joiningCode, 'player', campaignName, coverImage, tone);
                         localStorage.setItem('dm_last_session', JSON.stringify({ code: joiningCode, role: 'player', characterId: finalCharId }));
                         joinCampaign(joiningCode, 'player', user.uid, false, {}, selectedChar);
@@ -585,7 +1032,7 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                         uid: user.uid,
                         name: user.displayName || 'Player',
                         characterId: finalCharId || null,
-                        characterName: selectedChar ? selectedChar.name : null,
+                        characterName: selectedChar ? selectedChar.name : 'Spectator',
                         status: 'pending',
                         timestamp: Date.now()
                     });
@@ -609,9 +1056,6 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                     return;
                 }
             }
-            
-
-
         } catch (e) {
             console.error("Failed to check approval setting", e);
         }
@@ -627,9 +1071,12 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
             const campRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', invite.code);
             await updateDoc(campRef, { pendingEmailInvites: arrayRemove(user.email.toLowerCase()) });
             setEmailInvites(prev => prev.filter(i => i.code !== invite.code));
-            addToRecents(invite.code, 'player', invite.name, invite.coverImage, invite.theme);
-            localStorage.setItem('dm_last_session', JSON.stringify({ code: invite.code, role: 'player', characterId: null }));
-            joinCampaign(invite.code, 'player', user.uid, false, {}, null);
+            openJoinFlow(invite.code, {
+                code: invite.code,
+                name: invite.name,
+                coverImage: invite.coverImage,
+                theme: invite.theme
+            });
         } catch(err) {
             console.error("Failed to accept invite", err);
             toast("Failed to accept invite.", "error");
@@ -686,30 +1133,448 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
         }
     };
 
-    // --- LOGGED OUT VIEW ---
+    // --- LOGGED OUT AUTH PORTAL VIEW ---
     if (!user) {
         return (
-            <div className="h-screen w-full flex items-center justify-center bg-[url('https://images.unsplash.com/photo-1519074069444-1ba4fff66d16?q=80&w=2544&auto=format&fit=crop')] bg-cover bg-center relative">
-                <div className="absolute inset-0 bg-slate-900/80 backdrop-blur-md"></div>
-                <div className="relative z-10 w-full max-w-md p-8 glass-panel md:rounded-2xl shadow-2xl border-none md:border border-slate-700/50 flex flex-col justify-center items-center bg-slate-900/60 backdrop-blur-xl">
-                    <div className="text-center mb-8 flex flex-col items-center">
+            <div className="fixed inset-0 z-50 overflow-y-auto custom-scroll bg-[url('https://images.unsplash.com/photo-1519074069444-1ba4fff66d16?q=80&w=2544&auto=format&fit=crop')] bg-cover bg-center bg-fixed touch-pan-y">
+                <div className="fixed inset-0 bg-slate-950/85 backdrop-blur-md pointer-events-none"></div>
+                <div className="min-h-full w-full flex items-center justify-center p-4 sm:p-6 py-8 sm:py-12 relative z-10">
+                    <div className="relative w-full max-w-lg my-auto p-6 sm:p-8 rounded-2xl shadow-2xl border border-slate-700/60 flex flex-col justify-center bg-slate-900/90 backdrop-blur-xl animate-in fade-in duration-300">
+                    
+                    {/* Header & Logo */}
+                    <div className="text-center mb-6 flex flex-col items-center">
                         <img 
                             src={`${import.meta.env.BASE_URL}logo.png`} 
-                            className="w-28 h-28 rounded-full border-4 border-amber-500/30 shadow-[0_0_40px_rgba(217,119,6,0.2)] mb-6 object-cover" 
-                            alt="Logo"
+                            className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl border-2 border-amber-500/50 shadow-[0_0_35px_rgba(217,119,6,0.35)] mb-4 object-cover" 
+                            alt="DungeonMind Logo"
                         />
-                        <h1 className="text-5xl fantasy-font text-amber-500 mb-3 text-shadow tracking-wide">DungeonMind</h1>
-                        <p className="text-slate-300 text-sm font-medium tracking-wide">The AI-Powered VTT & Campaign Manager</p>
+                        <h1 className="text-4xl sm:text-5xl fantasy-font text-amber-500 mb-2 text-shadow tracking-wide">DungeonMind</h1>
+                        <p className="text-slate-300 text-xs sm:text-sm font-medium tracking-wide">The Modern Virtual Tabletop & Campaign Manager</p>
                     </div>
 
-                    <button onClick={handleLogin} disabled={isLoggingIn} className="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-4 rounded-xl font-bold text-lg mb-4 flex justify-center items-center gap-3 transition-all shadow-lg hover:shadow-indigo-500/25">
-                        {isLoggingIn ? "Connecting to realm..." : <><Icon name="log-in" size={24}/> Continue with Google</>}
-                    </button>
-                    <p className="text-xs text-slate-500 mt-4 text-center">By continuing, you agree to roll with the punches.</p>
+                    {/* Pending Session Invite Banner */}
+                    {pendingInvite && (
+                        <div className="mb-6 p-4 rounded-2xl bg-gradient-to-r from-amber-950/70 via-slate-900 to-indigo-950/70 border border-amber-500/50 shadow-xl text-left flex items-center gap-4 animate-in fade-in slide-in-from-top-3 duration-300">
+                            {pendingInvite.coverImage ? (
+                                <img 
+                                    src={pendingInvite.coverImage} 
+                                    alt="Campaign Cover" 
+                                    className="w-16 h-16 sm:w-20 sm:h-20 rounded-xl object-cover border border-amber-500/40 shadow-md shrink-0" 
+                                />
+                            ) : (
+                                <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center shrink-0 text-amber-400 shadow-md">
+                                    <Icon name="castle" size={28} />
+                                </div>
+                            )}
+                            <div className="flex-1 min-w-0">
+                                <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 text-[10px] font-bold uppercase tracking-wider mb-1 border border-amber-500/30">
+                                    <Icon name="ticket" size={11} /> Realm Invitation
+                                </div>
+                                <h2 className="text-base sm:text-lg font-bold text-white truncate text-shadow">
+                                    {pendingInvite.name}
+                                </h2>
+                                <div className="flex items-center gap-2 text-xs text-slate-300 mt-0.5">
+                                    <span className="font-mono text-amber-400 font-bold tracking-wider">#{pendingInvite.code}</span>
+                                    <span>•</span>
+                                    <span className="text-slate-400 truncate">{pendingInvite.theme || 'Heroic Fantasy'}</span>
+                                </div>
+                                <p className="text-[11px] text-slate-400 mt-1">
+                                    Choose how to enter below (sign in, forge account, or play as guest):
+                                </p>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Navigation Tabs (Hidden when in Forgot Password sub-mode) */}
+                    {authMode !== 'forgot' ? (
+                        <div className="flex bg-slate-950/80 p-1 rounded-xl mb-6 border border-slate-800 text-xs sm:text-sm font-bold">
+                            <button
+                                type="button"
+                                onClick={() => { setAuthMode('signin'); setAuthError(null); setAuthSuccess(null); }}
+                                className={`flex-1 py-2 sm:py-2.5 rounded-lg transition-all text-center flex items-center justify-center gap-1.5 ${
+                                    authMode === 'signin' 
+                                        ? 'bg-amber-600 text-white shadow-md shadow-amber-900/30' 
+                                        : 'text-slate-400 hover:text-white hover:bg-slate-850'
+                                }`}
+                            >
+                                <Icon name="log-in" size={15} /> Sign In
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => { setAuthMode('signup'); setAuthError(null); setAuthSuccess(null); }}
+                                className={`flex-1 py-2 sm:py-2.5 rounded-lg transition-all text-center flex items-center justify-center gap-1.5 ${
+                                    authMode === 'signup' 
+                                        ? 'bg-amber-600 text-white shadow-md shadow-amber-900/30' 
+                                        : 'text-slate-400 hover:text-white hover:bg-slate-850'
+                                }`}
+                            >
+                                <Icon name="sparkles" size={15} /> Forge Account
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => { setAuthMode('code'); setAuthError(null); setAuthSuccess(null); }}
+                                className={`flex-1 py-2 sm:py-2.5 rounded-lg transition-all text-center flex items-center justify-center gap-1.5 ${
+                                    authMode === 'code' 
+                                        ? 'bg-indigo-600 text-white shadow-md shadow-indigo-900/30' 
+                                        : 'text-slate-400 hover:text-white hover:bg-slate-850'
+                                }`}
+                            >
+                                <Icon name="hash" size={15} /> Join Code
+                            </button>
+                        </div>
+                    ) : null}
+
+                    {/* Error Notice */}
+                    {authError && (
+                        <div className="mb-4 p-3.5 rounded-xl bg-red-950/60 border border-red-500/50 flex items-start gap-2.5 text-xs sm:text-sm text-red-200 animate-in fade-in">
+                            <Icon name="alert-triangle" size={18} className="text-red-400 shrink-0 mt-0.5" />
+                            <div className="flex-1 leading-relaxed">{authError}</div>
+                        </div>
+                    )}
+
+                    {/* Success Notice */}
+                    {authSuccess && (
+                        <div className="mb-4 p-3.5 rounded-xl bg-emerald-950/60 border border-emerald-500/50 flex items-start gap-2.5 text-xs sm:text-sm text-emerald-200 animate-in fade-in">
+                            <Icon name="check-circle" size={18} className="text-emerald-400 shrink-0 mt-0.5" />
+                            <div className="flex-1 leading-relaxed">{authSuccess}</div>
+                        </div>
+                    )}
+
+                    {/* --- TAB 1: SIGN IN --- */}
+                    {authMode === 'signin' && (
+                        <form onSubmit={handleEmailSignIn} className="space-y-4">
+                            <div>
+                                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Email Address</label>
+                                <div className="relative flex items-center">
+                                    <div className="absolute left-3.5 text-slate-500 pointer-events-none">
+                                        <Icon name="mail" size={16} />
+                                    </div>
+                                    <input 
+                                        type="email"
+                                        required
+                                        autoComplete="email"
+                                        value={authEmail}
+                                        onChange={(e) => setAuthEmail(e.target.value)}
+                                        placeholder="adventurer@dungeonmind.net"
+                                        className="w-full bg-slate-950/90 border border-slate-700/80 rounded-xl py-2.5 pl-10 pr-3 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-amber-500/70 focus:ring-1 focus:ring-amber-500/50 transition-all"
+                                    />
+                                </div>
+                            </div>
+
+                            <div>
+                                <div className="flex items-center justify-between mb-1.5">
+                                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400">Password</label>
+                                    <button 
+                                        type="button" 
+                                        onClick={() => { setAuthMode('forgot'); setAuthError(null); setAuthSuccess(null); }}
+                                        className="text-[11px] text-amber-400 hover:text-amber-300 font-semibold transition-colors"
+                                    >
+                                        Forgot Password?
+                                    </button>
+                                </div>
+                                <div className="relative flex items-center">
+                                    <div className="absolute left-3.5 text-slate-500 pointer-events-none">
+                                        <Icon name="lock" size={16} />
+                                    </div>
+                                    <input 
+                                        type={showAuthPassword ? "text" : "password"}
+                                        required
+                                        autoComplete="current-password"
+                                        value={authPassword}
+                                        onChange={(e) => setAuthPassword(e.target.value)}
+                                        placeholder="••••••••"
+                                        className="w-full bg-slate-950/90 border border-slate-700/80 rounded-xl py-2.5 pl-10 pr-10 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-amber-500/70 focus:ring-1 focus:ring-amber-500/50 transition-all font-mono"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowAuthPassword(!showAuthPassword)}
+                                        className="absolute right-3 text-slate-500 hover:text-slate-300 transition-colors p-1"
+                                        title={showAuthPassword ? "Hide password" : "Show password"}
+                                    >
+                                        <Icon name={showAuthPassword ? "eye-off" : "eye"} size={16} />
+                                    </button>
+                                </div>
+                            </div>
+
+                            <button
+                                type="submit"
+                                disabled={isAuthSubmitting}
+                                className="w-full bg-amber-600 hover:bg-amber-500 disabled:opacity-50 disabled:cursor-not-allowed text-white py-3 rounded-xl font-bold text-sm sm:text-base flex justify-center items-center gap-2.5 shadow-lg shadow-amber-900/30 transition-all"
+                            >
+                                {isAuthSubmitting ? (
+                                    <>
+                                        <Icon name="loader-2" size={18} className="animate-spin" /> Unlocking Realm...
+                                    </>
+                                ) : (
+                                    <>
+                                        <Icon name="log-in" size={18} /> Enter DungeonMind
+                                    </>
+                                )}
+                            </button>
+                        </form>
+                    )}
+
+                    {/* --- TAB 2: FORGE ACCOUNT --- */}
+                    {authMode === 'signup' && (
+                        <form onSubmit={handleEmailSignUp} className="space-y-3.5">
+                            <div>
+                                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Adventurer Name</label>
+                                <div className="relative flex items-center">
+                                    <div className="absolute left-3.5 text-slate-500 pointer-events-none">
+                                        <Icon name="user" size={16} />
+                                    </div>
+                                    <input 
+                                        type="text"
+                                        value={authDisplayName}
+                                        onChange={(e) => setAuthDisplayName(e.target.value)}
+                                        placeholder="e.g. Thorin Oakenshield"
+                                        className="w-full bg-slate-950/90 border border-slate-700/80 rounded-xl py-2.5 pl-10 pr-3 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-amber-500/70 focus:ring-1 focus:ring-amber-500/50 transition-all"
+                                    />
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Email Address</label>
+                                <div className="relative flex items-center">
+                                    <div className="absolute left-3.5 text-slate-500 pointer-events-none">
+                                        <Icon name="mail" size={16} />
+                                    </div>
+                                    <input 
+                                        type="email"
+                                        required
+                                        autoComplete="email"
+                                        value={authEmail}
+                                        onChange={(e) => setAuthEmail(e.target.value)}
+                                        placeholder="adventurer@dungeonmind.net"
+                                        className="w-full bg-slate-950/90 border border-slate-700/80 rounded-xl py-2.5 pl-10 pr-3 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-amber-500/70 focus:ring-1 focus:ring-amber-500/50 transition-all"
+                                    />
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Password</label>
+                                <div className="relative flex items-center">
+                                    <div className="absolute left-3.5 text-slate-500 pointer-events-none">
+                                        <Icon name="lock" size={16} />
+                                    </div>
+                                    <input 
+                                        type={showAuthPassword ? "text" : "password"}
+                                        required
+                                        autoComplete="new-password"
+                                        value={authPassword}
+                                        onChange={(e) => setAuthPassword(e.target.value)}
+                                        placeholder="At least 6 characters"
+                                        className="w-full bg-slate-950/90 border border-slate-700/80 rounded-xl py-2.5 pl-10 pr-10 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-amber-500/70 focus:ring-1 focus:ring-amber-500/50 transition-all font-mono"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowAuthPassword(!showAuthPassword)}
+                                        className="absolute right-3 text-slate-500 hover:text-slate-300 transition-colors p-1"
+                                        title={showAuthPassword ? "Hide password" : "Show password"}
+                                    >
+                                        <Icon name={showAuthPassword ? "eye-off" : "eye"} size={16} />
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Confirm Password</label>
+                                <div className="relative flex items-center">
+                                    <div className="absolute left-3.5 text-slate-500 pointer-events-none">
+                                        <Icon name="check" size={16} />
+                                    </div>
+                                    <input 
+                                        type={showAuthPassword ? "text" : "password"}
+                                        required
+                                        autoComplete="new-password"
+                                        value={authConfirmPassword}
+                                        onChange={(e) => setAuthConfirmPassword(e.target.value)}
+                                        placeholder="Re-enter password"
+                                        className="w-full bg-slate-950/90 border border-slate-700/80 rounded-xl py-2.5 pl-10 pr-3 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-amber-500/70 focus:ring-1 focus:ring-amber-500/50 transition-all font-mono"
+                                    />
+                                </div>
+                            </div>
+
+                            <button
+                                type="submit"
+                                disabled={isAuthSubmitting}
+                                className="w-full bg-amber-600 hover:bg-amber-500 disabled:opacity-50 disabled:cursor-not-allowed text-white py-3 rounded-xl font-bold text-sm sm:text-base flex justify-center items-center gap-2.5 shadow-lg shadow-amber-900/30 transition-all mt-1"
+                            >
+                                {isAuthSubmitting ? (
+                                    <>
+                                        <Icon name="loader-2" size={18} className="animate-spin" /> Forging Account...
+                                    </>
+                                ) : (
+                                    <>
+                                        <Icon name="sparkles" size={18} /> Forge Account & Begin
+                                    </>
+                                )}
+                            </button>
+                        </form>
+                    )}
+
+                    {/* --- TAB 3: DIRECT JOIN WITH CODE --- */}
+                    {authMode === 'code' && (
+                        <form onSubmit={handleDirectCodeJoin} className="space-y-4">
+                            <div className="p-3 bg-indigo-950/40 border border-indigo-500/30 rounded-xl text-xs text-indigo-200">
+                                Enter your Dungeon Master's invite code to join immediately as a guest. No account required!
+                            </div>
+
+                            <div>
+                                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Realm Invite Code</label>
+                                <div className="relative flex items-center">
+                                    <div className="absolute left-3.5 text-slate-500 pointer-events-none">
+                                        <Icon name="hash" size={16} />
+                                    </div>
+                                    <input 
+                                        type="text"
+                                        required
+                                        maxLength={8}
+                                        value={directCode}
+                                        onChange={(e) => setDirectCode(e.target.value.toUpperCase())}
+                                        placeholder="CODE"
+                                        className="w-full bg-slate-950/90 border border-slate-700/80 rounded-xl py-2.5 pl-10 pr-3 text-base text-center text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500/70 focus:ring-1 focus:ring-indigo-500/50 transition-all font-mono tracking-widest uppercase font-bold"
+                                    />
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Your Adventurer Name</label>
+                                <div className="relative flex items-center">
+                                    <div className="absolute left-3.5 text-slate-500 pointer-events-none">
+                                        <Icon name="user" size={16} />
+                                    </div>
+                                    <input 
+                                        type="text"
+                                        value={directName}
+                                        onChange={(e) => setDirectName(e.target.value)}
+                                        placeholder="e.g. Robin the Bard"
+                                        className="w-full bg-slate-950/90 border border-slate-700/80 rounded-xl py-2.5 pl-10 pr-3 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500/70 focus:ring-1 focus:ring-indigo-500/50 transition-all"
+                                    />
+                                </div>
+                            </div>
+
+                            <button
+                                type="submit"
+                                disabled={isAuthSubmitting}
+                                className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white py-3 rounded-xl font-bold text-sm sm:text-base flex justify-center items-center gap-2.5 shadow-lg shadow-indigo-900/30 transition-all"
+                            >
+                                {isAuthSubmitting ? (
+                                    <>
+                                        <Icon name="loader-2" size={18} className="animate-spin" /> Entering Realm...
+                                    </>
+                                ) : (
+                                    <>
+                                        <Icon name="arrow-right" size={18} /> Join Realm Directly
+                                    </>
+                                )}
+                            </button>
+                        </form>
+                    )}
+
+                    {/* --- SUB-MODE: FORGOT PASSWORD --- */}
+                    {authMode === 'forgot' && (
+                        <form onSubmit={handleForgotPassword} className="space-y-4">
+                            <div className="text-left mb-2">
+                                <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                                    <Icon name="key" size={18} className="text-amber-400" /> Password Recovery
+                                </h3>
+                                <p className="text-xs text-slate-400 mt-1">
+                                    Enter your account email address below. We'll send an official Firebase recovery link to safely reset your password.
+                                </p>
+                            </div>
+
+                            <div>
+                                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Registered Email</label>
+                                <div className="relative flex items-center">
+                                    <div className="absolute left-3.5 text-slate-500 pointer-events-none">
+                                        <Icon name="mail" size={16} />
+                                    </div>
+                                    <input 
+                                        type="email"
+                                        required
+                                        autoComplete="email"
+                                        value={authEmail}
+                                        onChange={(e) => setAuthEmail(e.target.value)}
+                                        placeholder="adventurer@dungeonmind.net"
+                                        className="w-full bg-slate-950/90 border border-slate-700/80 rounded-xl py-2.5 pl-10 pr-3 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-amber-500/70 focus:ring-1 focus:ring-amber-500/50 transition-all"
+                                    />
+                                </div>
+                            </div>
+
+                            <button
+                                type="submit"
+                                disabled={isAuthSubmitting}
+                                className="w-full bg-amber-600 hover:bg-amber-500 disabled:opacity-50 disabled:cursor-not-allowed text-white py-3 rounded-xl font-bold text-sm sm:text-base flex justify-center items-center gap-2.5 shadow-lg shadow-amber-900/30 transition-all"
+                            >
+                                {isAuthSubmitting ? (
+                                    <>
+                                        <Icon name="loader-2" size={18} className="animate-spin" /> Sending Link...
+                                    </>
+                                ) : (
+                                    <>
+                                        <Icon name="send" size={18} /> Send Password Reset Link
+                                    </>
+                                )}
+                            </button>
+
+                            <button
+                                type="button"
+                                onClick={() => { setAuthMode('signin'); setAuthError(null); setAuthSuccess(null); }}
+                                className="w-full py-2 text-slate-400 hover:text-white text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
+                            >
+                                <Icon name="arrow-left" size={14} /> Back to Sign In
+                            </button>
+                        </form>
+                    )}
+
+                    {/* Divider & Social / Guest Options */}
+                    <div className="relative my-6">
+                        <div className="absolute inset-0 flex items-center">
+                            <div className="w-full border-t border-slate-800"></div>
+                        </div>
+                        <div className="relative flex justify-center text-[10px] uppercase tracking-widest font-mono">
+                            <span className="bg-slate-900 px-3 text-slate-500">or connect via</span>
+                        </div>
+                    </div>
+
+                    <div className="space-y-3">
+                        {/* Google Sign In */}
+                        <button 
+                            type="button"
+                            onClick={handleGoogleLogin} 
+                            disabled={isAuthSubmitting} 
+                            className="w-full bg-slate-950 hover:bg-slate-800 border border-slate-700/80 hover:border-slate-600 text-white py-3 px-4 rounded-xl font-bold text-sm flex justify-center items-center gap-3 transition-all shadow-md group disabled:opacity-50"
+                        >
+                            <svg className="w-4 h-4 shrink-0 transition-transform group-hover:scale-110" viewBox="0 0 24 24">
+                                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                                <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
+                                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
+                            </svg>
+                            <span>Continue with Google</span>
+                        </button>
+
+                        {/* Play as Guest */}
+                        <button 
+                            type="button"
+                            onClick={() => handleGuestLogin()} 
+                            disabled={isAuthSubmitting} 
+                            className="w-full bg-slate-900 hover:bg-slate-800/80 border border-slate-800 hover:border-slate-700 text-slate-300 hover:text-white py-2.5 px-4 rounded-xl font-bold text-xs sm:text-sm flex justify-center items-center gap-2 transition-all disabled:opacity-50"
+                        >
+                            <Icon name="user-check" size={16} className="text-amber-500" />
+                            <span>{pendingInvite ? "Join Session as Guest (No account needed)" : "Play as Guest (Explore without account)"}</span>
+                        </button>
+                    </div>
+
+                    <p className="text-[11px] text-slate-500 mt-6 text-center">
+                        By continuing, you agree to roll with the punches.
+                    </p>
                 </div>
             </div>
-        );
-    }
+        </div>
+    );
+}
 
     // --- LOGGED IN DASHBOARD VIEW ---
     return (
@@ -718,7 +1583,7 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
             {/* Sidebar Navigation */}
             <aside className="w-full md:w-64 bg-slate-900 border-b md:border-b-0 md:border-r border-slate-800 flex flex-col shrink-0 z-20">
                 <div className="p-4 md:p-6 flex items-center justify-center md:justify-start gap-3 border-b border-slate-800 shrink-0">
-                    <img src={`${import.meta.env.BASE_URL}logo.png`} className="w-8 h-8 md:w-10 md:h-10 rounded-full shadow-[0_0_15px_rgba(217,119,6,0.3)] object-cover" alt="Logo" />
+                    <img src={`${import.meta.env.BASE_URL}logo.png`} className="w-8 h-8 md:w-10 md:h-10 rounded-xl border border-amber-500/40 shadow-[0_0_15px_rgba(217,119,6,0.3)] object-cover" alt="DungeonMind" />
                     <span className="text-lg md:text-xl fantasy-font text-amber-500 tracking-wide text-shadow">DungeonMind</span>
                 </div>
                 
@@ -786,12 +1651,9 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                         <span className="text-[10px] uppercase tracking-widest">{autoJoin ? 'ON' : 'OFF'}</span>
                     </button>
 
-                    <button onClick={() => fb.signOut(fb.auth)} className="w-full flex items-center justify-center gap-2 py-2 rounded bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-red-400 transition-colors text-sm font-bold">
+                    <button onClick={() => { if (setLocalGuestUser) setLocalGuestUser(null); fb.signOut(fb.auth); }} className="w-full flex items-center justify-center gap-2 py-2 rounded bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-red-400 transition-colors text-sm font-bold">
                         <Icon name="log-out" size={14} /> Sign Out
                     </button>
-                    <div className="mt-4 text-center">
-                        <button onClick={() => joinCampaign('LOCAL', 'dm', 'admin', true)} className="text-[10px] text-slate-600 font-mono hover:text-slate-400 transition-colors">Launch Offline Mode</button>
-                    </div>
                 </div>
             </aside>
 
@@ -1126,14 +1988,244 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                                         </div>
                                     </button>
                                     
-                                    <button onClick={() => fb.signOut(fb.auth)} className="w-full flex items-center justify-center gap-2 py-3 rounded-lg bg-red-900/20 border border-red-900/50 hover:bg-red-900/40 text-red-400 transition-colors text-sm font-bold">
+                                    <button onClick={() => { if (setLocalGuestUser) setLocalGuestUser(null); fb.signOut(fb.auth); }} className="w-full flex items-center justify-center gap-2 py-3 rounded-lg bg-red-900/20 border border-red-900/50 hover:bg-red-900/40 text-red-400 transition-colors text-sm font-bold">
                                         <Icon name="log-out" size={18} /> Sign Out
                                     </button>
-                                <div className="mt-4 text-center md:hidden">
-                                    <button onClick={() => joinCampaign('LOCAL', 'dm', 'admin', true)} className="text-[10px] text-slate-600 font-mono hover:text-slate-400 transition-colors">Launch Offline Mode</button>
-                                </div>
                                 </div>
                             </div>
+
+                            {/* Account Security & Linked Logins */}
+                            <div className="bg-slate-900 p-6 md:p-8 rounded-xl border border-slate-800 shadow-xl space-y-6">
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                                            <Icon name="shield-check" size={20} className="text-amber-500" /> Account Security & Linked Logins
+                                        </h3>
+                                        <p className="text-xs text-slate-400 mt-1">
+                                            Link both Google and DungeonMind logins to access your characters from any device.
+                                        </p>
+                                    </div>
+                                    {user?.isAnonymous && (
+                                        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded bg-amber-950/60 border border-amber-500/50 text-amber-300">
+                                            Guest Profile
+                                        </span>
+                                    )}
+                                </div>
+
+                                {user?.isAnonymous && (
+                                    <div className="p-4 rounded-xl bg-amber-950/40 border border-amber-500/40 flex items-start gap-3">
+                                        <Icon name="alert-triangle" size={20} className="text-amber-400 shrink-0 mt-0.5" />
+                                        <div className="text-xs sm:text-sm text-amber-200/90 leading-relaxed">
+                                            <span className="font-bold text-amber-300">You are currently playing as a Guest. </span>
+                                            Your campaigns and characters are only preserved on this browser. Link your Google account or create a DungeonMind password below so you can sign in anytime and never lose your adventures!
+                                        </div>
+                                    </div>
+                                )}
+
+                                <div className="space-y-4">
+                                    {/* Google Provider Card */}
+                                    {(() => {
+                                        const hasGoogle = (user?.providerData || []).some(p => p.providerId === 'google.com');
+                                        const googleEmail = user?.providerData?.find(p => p.providerId === 'google.com')?.email || (hasGoogle ? user?.email : null);
+                                        return (
+                                            <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                                                <div className="flex items-center gap-3 min-w-0">
+                                                    <div className="w-10 h-10 rounded-lg bg-slate-900 border border-slate-800 flex items-center justify-center shrink-0">
+                                                        <svg className="w-5 h-5" viewBox="0 0 24 24">
+                                                            <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                                                            <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                                                            <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
+                                                            <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
+                                                        </svg>
+                                                    </div>
+                                                    <div className="min-w-0">
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="font-bold text-sm text-white">Google Account</span>
+                                                            {hasGoogle && (
+                                                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-950 border border-emerald-500/40 text-emerald-400 flex items-center gap-1">
+                                                                    <Icon name="check" size={10} /> Linked
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        <p className="text-xs text-slate-400 font-mono truncate mt-0.5">
+                                                            {hasGoogle ? (googleEmail || 'Connected') : 'Not linked to this profile'}
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                                <div className="flex items-center gap-2 shrink-0">
+                                                    {hasGoogle ? (
+                                                        (user?.providerData?.length > 1) && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleUnlinkProvider('google.com')}
+                                                                className="px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-red-400 border border-slate-800 transition-colors"
+                                                            >
+                                                                Unlink
+                                                            </button>
+                                                        )
+                                                    ) : (
+                                                        <button
+                                                            type="button"
+                                                            disabled={isLinking}
+                                                            onClick={handleLinkGoogle}
+                                                            className="px-4 py-2 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white flex items-center gap-1.5 transition-all shadow-md shadow-indigo-900/20 disabled:opacity-50"
+                                                        >
+                                                            <Icon name="link" size={14} /> Link Google
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        );
+                                    })()}
+
+                                    {/* DungeonMind Password Provider Card */}
+                                    {(() => {
+                                        const hasPassword = (user?.providerData || []).some(p => p.providerId === 'password');
+                                        const passEmail = user?.providerData?.find(p => p.providerId === 'password')?.email || (hasPassword ? user?.email : null);
+                                        return (
+                                            <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                                                <div className="flex items-center gap-3 min-w-0">
+                                                    <div className="w-10 h-10 rounded-lg bg-slate-900 border border-slate-800 flex items-center justify-center shrink-0 text-amber-400">
+                                                        <Icon name="key" size={20} />
+                                                    </div>
+                                                    <div className="min-w-0">
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="font-bold text-sm text-white">DungeonMind Password</span>
+                                                            {hasPassword && (
+                                                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-950 border border-emerald-500/40 text-emerald-400 flex items-center gap-1">
+                                                                    <Icon name="check" size={10} /> Active
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        <p className="text-xs text-slate-400 font-mono truncate mt-0.5">
+                                                            {hasPassword ? (passEmail || 'Configured') : 'No password configured for direct email login'}
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                                <div className="flex items-center gap-2 shrink-0">
+                                                    {hasPassword ? (
+                                                        <>
+                                                            <button
+                                                                type="button"
+                                                                onClick={handleSendProfilePasswordReset}
+                                                                className="px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-900 hover:bg-slate-800 text-amber-400 hover:text-amber-300 border border-slate-800 transition-colors flex items-center gap-1.5"
+                                                            >
+                                                                <Icon name="send" size={12} /> Reset Password
+                                                            </button>
+                                                            {(user?.providerData?.length > 1) && (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleUnlinkProvider('password')}
+                                                                    className="px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-red-400 border border-slate-800 transition-colors"
+                                                                >
+                                                                    Unlink
+                                                                </button>
+                                                            )}
+                                                        </>
+                                                    ) : (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                setLinkEmail(user?.email || '');
+                                                                setLinkPassword('');
+                                                                setLinkPasswordConfirm('');
+                                                                setShowLinkPasswordModal(true);
+                                                            }}
+                                                            className="px-4 py-2 rounded-lg text-xs font-bold bg-amber-600 hover:bg-amber-500 text-white flex items-center gap-1.5 transition-all shadow-md shadow-amber-900/20"
+                                                        >
+                                                            <Icon name="lock" size={14} /> Set DungeonMind Password
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        );
+                                    })()}
+                                </div>
+                            </div>
+
+                            {/* Set DungeonMind Password Modal */}
+                            {showLinkPasswordModal && (
+                                <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+                                    <div className="bg-slate-900 border border-slate-700/80 rounded-2xl max-w-md w-full p-6 shadow-2xl animate-in zoom-in-95">
+                                        <div className="flex items-center justify-between mb-4">
+                                            <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                                                <Icon name="lock" size={18} className="text-amber-500" /> Set DungeonMind Password
+                                            </h3>
+                                            <button
+                                                type="button"
+                                                onClick={() => setShowLinkPasswordModal(false)}
+                                                className="text-slate-400 hover:text-white p-1 rounded-lg"
+                                            >
+                                                <Icon name="x" size={18} />
+                                            </button>
+                                        </div>
+                                        <p className="text-xs text-slate-400 mb-4">
+                                            Attach an email address and password to your profile so you can log in directly without needing Google.
+                                        </p>
+                                        <form onSubmit={handleLinkPassword} className="space-y-3.5">
+                                            <div>
+                                                <label className="block text-[11px] font-bold uppercase text-slate-400 mb-1">Account Email</label>
+                                                <input
+                                                    type="email"
+                                                    required
+                                                    value={linkEmail}
+                                                    onChange={(e) => setLinkEmail(e.target.value)}
+                                                    placeholder="adventurer@dungeonmind.net"
+                                                    className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-sm text-white outline-none focus:border-amber-500 font-mono"
+                                                />
+                                            </div>
+                                            <div>
+                                                <label className="block text-[11px] font-bold uppercase text-slate-400 mb-1">New Password</label>
+                                                <div className="relative flex items-center">
+                                                    <input
+                                                        type={showLinkPassword ? "text" : "password"}
+                                                        required
+                                                        value={linkPassword}
+                                                        onChange={(e) => setLinkPassword(e.target.value)}
+                                                        placeholder="At least 6 characters"
+                                                        className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 pr-10 text-sm text-white outline-none focus:border-amber-500 font-mono"
+                                                    />
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setShowLinkPassword(!showLinkPassword)}
+                                                        className="absolute right-3 text-slate-500 hover:text-slate-300"
+                                                    >
+                                                        <Icon name={showLinkPassword ? "eye-off" : "eye"} size={16} />
+                                                    </button>
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <label className="block text-[11px] font-bold uppercase text-slate-400 mb-1">Confirm Password</label>
+                                                <input
+                                                    type={showLinkPassword ? "text" : "password"}
+                                                    required
+                                                    value={linkPasswordConfirm}
+                                                    onChange={(e) => setLinkPasswordConfirm(e.target.value)}
+                                                    placeholder="Re-enter password"
+                                                    className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-sm text-white outline-none focus:border-amber-500 font-mono"
+                                                />
+                                            </div>
+                                            <div className="flex items-center justify-end gap-3 pt-3">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setShowLinkPasswordModal(false)}
+                                                    className="px-4 py-2 rounded-lg text-xs font-bold text-slate-400 hover:text-white"
+                                                >
+                                                    Cancel
+                                                </button>
+                                                <button
+                                                    type="submit"
+                                                    disabled={isLinking}
+                                                    className="px-5 py-2 rounded-lg text-xs font-bold bg-amber-600 hover:bg-amber-500 text-white flex items-center gap-1.5 shadow-md disabled:opacity-50"
+                                                >
+                                                    {isLinking ? <Icon name="loader-2" size={14} className="animate-spin" /> : <Icon name="save" size={14} />}
+                                                    Save & Link
+                                                </button>
+                                            </div>
+                                        </form>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     </div>
                 )}
@@ -1154,8 +2246,47 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                                 isOwner={true}
                                 role="player"
                                 onDiceRoll={() => {}} 
+                                onOpenModelPicker={() => setShowLobbyModelPicker(true)}
                             />
                         </div>
+
+                        {showLobbyModelPicker && editingCharacter && (
+                            <ModelPickerModal
+                                isOpen={showLobbyModelPicker}
+                                entity={editingCharacter}
+                                onClose={() => setShowLobbyModelPicker(false)}
+                                onSave={(config) => {
+                                    const updated = {
+                                        ...editingCharacter,
+                                        model3d: config.modelUrl || null,
+                                        modelUrl: config.modelUrl || null,
+                                        modelScale: config.modelScale !== undefined ? config.modelScale : 1,
+                                        modelYOffset: config.modelYOffset !== undefined ? config.modelYOffset : 0,
+                                        modelRotation: config.modelRotation !== undefined ? config.modelRotation : 0,
+                                        materialStyle: config.materialStyle || 'original',
+                                        forceStatue: !!config.forceStatue
+                                    };
+                                    handleSaveCharacter(updated);
+                                    setEditingCharacter(updated);
+                                    setShowLobbyModelPicker(false);
+                                }}
+                                onDeleteModel={() => {
+                                    const updated = {
+                                        ...editingCharacter,
+                                        model3d: null,
+                                        modelUrl: null,
+                                        modelScale: 1,
+                                        modelYOffset: 0,
+                                        modelRotation: 0,
+                                        materialStyle: 'original'
+                                    };
+                                    delete updated.forceStatue;
+                                    handleSaveCharacter(updated);
+                                    setEditingCharacter(updated);
+                                    setShowLobbyModelPicker(false);
+                                }}
+                            />
+                        )}
                     </div>
                 )}
 
@@ -1332,63 +2463,226 @@ const Lobby = ({ user, hideInviteCode, setHideInviteCode }) => {
                         </div>
                     </div>
                 )}
-                {/* Waiting Room Modal */}
+                {/* Campaign Session Join & Character Selection Modal */}
                 {isJoiningCampaign && (
-                    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setIsJoiningCampaign(false)}>
-                        <div className="bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
-                            <div className="p-6 border-b border-slate-800 bg-slate-950 flex justify-between items-center">
-                                <div>
-                                    <h2 className="text-2xl font-black text-indigo-400 tracking-wider">Waiting Room</h2>
-                                    <p className="text-sm text-slate-400">Realm Code: <span className="font-mono text-amber-500">{hideInviteCode ? '••••••' : joiningCode}</span></p>
-                                </div>
-                                <button onClick={() => setIsJoiningCampaign(false)} className="text-slate-500 hover:text-white p-2 rounded-full hover:bg-slate-800 transition-colors">
-                                    <Icon name="x" size={24} />
-                                </button>
-                            </div>
+                    <div className="fixed inset-0 z-[60] bg-black/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 overflow-y-auto custom-scroll" onClick={() => setIsJoiningCampaign(false)}>
+                        <div className="bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl w-full max-w-3xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 my-auto flex flex-col max-h-[90vh]" onClick={e => e.stopPropagation()}>
                             
-                            <div className="p-6 bg-slate-950">
-                                <h3 className="text-lg font-bold text-white mb-4">Select Your Character</h3>
-                                {characters.length === 0 ? (
-                                    <div className="text-center py-8 bg-slate-900 rounded-xl border border-slate-800">
-                                        <p className="text-slate-400 mb-4">You don't have any characters in your vault.</p>
-                                        <button onClick={() => { setIsJoiningCampaign(false); setActiveTab('characters'); }} className="text-indigo-400 hover:text-indigo-300 font-bold underline">
-                                            Go to Character Vault
-                                        </button>
-                                        <p className="text-xs text-slate-500 mt-4">(Or join without a character and the DM can assign one)</p>
-                                    </div>
-                                ) : (
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-h-64 overflow-y-auto custom-scroll pr-2">
-                                        {characters.map(char => (
-                                            <div 
-                                                key={char.id} 
-                                                onClick={() => setSelectedCharacterId(char.id)}
-                                                className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${selectedCharacterId === char.id ? 'bg-indigo-600/20 border-indigo-500' : 'bg-slate-900 border-slate-700 hover:border-slate-500'}`}
-                                            >
-                                                <div className="w-12 h-12 rounded-full bg-slate-800 overflow-hidden shrink-0 flex items-center justify-center">
-                                                    {char.avatarUrl ? <img src={char.avatarUrl} className="w-full h-full object-cover" alt="Avatar" referrerPolicy="no-referrer" /> : <Icon name="user" size={16} className="text-slate-500" />}
-                                                </div>
-                                                <div className="flex-1 min-w-0">
-                                                    <div className="font-bold text-white truncate">{char.name}</div>
-                                                    <div className="text-xs text-slate-400 truncate">Lvl {char.level || 1} {char.class}</div>
-                                                    {char.campaignName && (
-                                                        <div className="text-[10px] text-indigo-400/80 truncate mt-0.5">Campaign: {char.campaignName}</div>
-                                                    )}
-                                                </div>
-                                                {selectedCharacterId === char.id && <Icon name="check-circle" size={20} className="text-indigo-400 shrink-0" />}
-                                            </div>
-                                        ))}
+                            {/* Campaign Session Preview Header */}
+                            <div className="relative border-b border-slate-800 bg-slate-950 overflow-hidden shrink-0">
+                                {joiningCampaignDetails?.coverImage && (
+                                    <div className="absolute inset-0 z-0 opacity-25">
+                                        <img src={joiningCampaignDetails.coverImage} alt="Cover" className="w-full h-full object-cover filter blur-xs" />
+                                        <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/80 to-transparent"></div>
                                     </div>
                                 )}
+                                <div className="relative z-10 p-5 sm:p-6 flex justify-between items-start gap-4">
+                                    <div className="flex items-center gap-4 min-w-0">
+                                        {joiningCampaignDetails?.coverImage ? (
+                                            <img 
+                                                src={joiningCampaignDetails.coverImage} 
+                                                alt="Cover Thumb" 
+                                                className="w-14 h-14 sm:w-16 sm:h-16 rounded-xl object-cover border-2 border-amber-500/50 shadow-md shrink-0 hidden sm:block" 
+                                            />
+                                        ) : (
+                                            <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-xl bg-amber-500/10 border-2 border-amber-500/30 flex items-center justify-center shrink-0 text-amber-400 hidden sm:flex">
+                                                <Icon name="castle" size={28} />
+                                            </div>
+                                        )}
+                                        <div className="min-w-0">
+                                            <div className="flex items-center gap-2 mb-1">
+                                                <span className="px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 text-[10px] font-bold uppercase tracking-wider border border-indigo-500/30">
+                                                    Joining Session
+                                                </span>
+                                                <span className="text-xs font-mono text-amber-400 font-bold">
+                                                    #{hideInviteCode ? '••••••' : joiningCode}
+                                                </span>
+                                            </div>
+                                            <h2 className="text-xl sm:text-2xl font-black text-white truncate fantasy-font tracking-wide">
+                                                {joiningCampaignDetails?.name || `Realm ${joiningCode}`}
+                                            </h2>
+                                            <p className="text-xs text-slate-400 truncate mt-0.5">
+                                                Theme: <span className="text-slate-300">{joiningCampaignDetails?.theme || 'Heroic Fantasy'}</span>
+                                                {joiningCampaignDetails?.hostName && (
+                                                    <> • Host: <span className="text-slate-300">{joiningCampaignDetails.hostName}</span></>
+                                                )}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <button 
+                                        onClick={() => setIsJoiningCampaign(false)} 
+                                        className="text-slate-400 hover:text-white p-2 rounded-xl hover:bg-slate-800 transition-colors shrink-0"
+                                        title="Cancel"
+                                    >
+                                        <Icon name="x" size={20} />
+                                    </button>
+                                </div>
                             </div>
                             
-                            <div className="p-6 border-t border-slate-800 bg-slate-900 flex justify-end gap-3">
-                                <button onClick={() => setIsJoiningCampaign(false)} className="px-6 py-2 rounded-lg font-bold text-slate-400 hover:text-white hover:bg-slate-800 transition-colors">
-                                    Cancel
-                                </button>
-                                <button onClick={finalizeJoin} className="px-8 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-bold shadow-lg shadow-indigo-900/20 transition-all flex items-center gap-2">
-                                    Ready to Play <Icon name="arrow-right" size={18} />
-                                </button>
+                            {/* Modal Body: Character Sheet Gate */}
+                            <div className="p-5 sm:p-6 bg-slate-950 overflow-y-auto flex-1 custom-scroll space-y-5">
+                                <div>
+                                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+                                        <div>
+                                            <h3 className="text-base font-bold text-white flex items-center gap-2">
+                                                <Icon name="user" size={18} className="text-amber-500" />
+                                                Choose Your Character Sheet
+                                            </h3>
+                                            <p className="text-xs text-slate-400 mt-0.5">
+                                                Select a hero from your vault, forge a new adventurer, or join as a spectator.
+                                            </p>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <button 
+                                                onClick={handleCreateCharacter} 
+                                                className="px-3 py-1.5 bg-indigo-600/30 hover:bg-indigo-600 border border-indigo-500/50 text-indigo-200 hover:text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm"
+                                            >
+                                                <Icon name="plus" size={14} /> New Sheet
+                                            </button>
+                                            <button 
+                                                onClick={() => setShowDndBeyondImport(true)} 
+                                                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 hover:text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm"
+                                            >
+                                                <Icon name="download" size={14} /> Import Beyond
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    {/* Spectator Mode Option */}
+                                    <div 
+                                        onClick={() => setSelectedCharacterId(null)}
+                                        className={`p-3.5 rounded-xl border cursor-pointer transition-all mb-4 flex items-center justify-between ${
+                                            selectedCharacterId === null 
+                                                ? 'bg-amber-600/15 border-amber-500 shadow-md shadow-amber-950/30 ring-1 ring-amber-500/50' 
+                                                : 'bg-slate-900/60 border-slate-800 hover:border-slate-700 hover:bg-slate-900'
+                                        }`}
+                                    >
+                                        <div className="flex items-center gap-3">
+                                            <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${
+                                                selectedCharacterId === null ? 'bg-amber-500/20 text-amber-400' : 'bg-slate-800 text-slate-500'
+                                            }`}>
+                                                <Icon name="eye" size={20} />
+                                            </div>
+                                            <div>
+                                                <div className="text-sm font-bold text-white flex items-center gap-2">
+                                                    Join without Character (Spectator)
+                                                    {selectedCharacterId === null && (
+                                                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 uppercase font-mono font-bold">Selected</span>
+                                                    )}
+                                                </div>
+                                                <div className="text-xs text-slate-400">
+                                                    Observe the map, chat, and roll dice without assigning a character sheet now.
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div className={`w-5 h-5 rounded-full border flex items-center justify-center shrink-0 ${
+                                            selectedCharacterId === null ? 'border-amber-500 bg-amber-500 text-black font-bold' : 'border-slate-700'
+                                        }`}>
+                                            {selectedCharacterId === null && <Icon name="check" size={12} />}
+                                        </div>
+                                    </div>
+
+                                    {/* Characters Vault List */}
+                                    {characters.length === 0 ? (
+                                        <div className="text-center py-7 px-4 bg-slate-900/40 rounded-xl border border-dashed border-slate-800 flex flex-col items-center">
+                                            <div className="w-12 h-12 rounded-full bg-slate-800/80 text-slate-500 flex items-center justify-center mb-2.5">
+                                                <Icon name="scroll" size={22} />
+                                            </div>
+                                            <p className="text-sm text-slate-300 font-medium mb-1">No character sheets in your vault</p>
+                                            <p className="text-xs text-slate-500 mb-4 max-w-sm">
+                                                Build a character in 60 seconds with our wizard, import from D&D Beyond, or join directly as a spectator.
+                                            </p>
+                                            <div className="flex flex-wrap items-center justify-center gap-2">
+                                                <button 
+                                                    onClick={handleCreateCharacter} 
+                                                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold flex items-center gap-2 shadow-md transition-all"
+                                                >
+                                                    <Icon name="wand-2" size={14} /> Forge Character Sheet
+                                                </button>
+                                                <button 
+                                                    onClick={() => setShowDndBeyondImport(true)} 
+                                                    className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-bold flex items-center gap-2 border border-slate-700 transition-all"
+                                                >
+                                                    <Icon name="download" size={14} /> Import Beyond Sheet
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div>
+                                            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2.5">
+                                                Your Vault Characters ({characters.length})
+                                            </div>
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-72 overflow-y-auto custom-scroll pr-1">
+                                                {characters.map(char => {
+                                                    const isSelected = selectedCharacterId === char.id;
+                                                    return (
+                                                        <div 
+                                                            key={char.id} 
+                                                            onClick={() => setSelectedCharacterId(char.id)}
+                                                            className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
+                                                                isSelected 
+                                                                    ? 'bg-indigo-600/20 border-indigo-500 shadow-md shadow-indigo-950/40 ring-1 ring-indigo-500' 
+                                                                    : 'bg-slate-900 border-slate-800 hover:border-slate-600 hover:bg-slate-850'
+                                                            }`}
+                                                        >
+                                                            <div className="w-12 h-12 rounded-xl bg-slate-800 border border-slate-700 overflow-hidden shrink-0 flex items-center justify-center">
+                                                                {char.avatarUrl ? (
+                                                                    <img src={char.avatarUrl} className="w-full h-full object-cover" alt="Avatar" referrerPolicy="no-referrer" />
+                                                                ) : (
+                                                                    <Icon name="user" size={18} className="text-slate-500" />
+                                                                )}
+                                                            </div>
+                                                            <div className="flex-1 min-w-0">
+                                                                <div className="font-bold text-white text-sm truncate">
+                                                                    {char.name}
+                                                                </div>
+                                                                <div className="text-xs text-slate-400 truncate">
+                                                                    Lvl {char.level || 1} {char.race || ''} {char.class || 'Adventurer'}
+                                                                </div>
+                                                                {char.campaignName && (
+                                                                    <div className="text-[10px] text-indigo-400/80 truncate mt-0.5">
+                                                                        Realm: {char.campaignName}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                            <div className={`w-5 h-5 rounded-full border flex items-center justify-center shrink-0 ${
+                                                                isSelected ? 'border-indigo-500 bg-indigo-500 text-white' : 'border-slate-700'
+                                                            }`}>
+                                                                {isSelected && <Icon name="check" size={12} />}
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
                             </div>
+                            
+                            {/* Modal Footer with Enter Realm CTA */}
+                            <div className="p-4 sm:p-5 border-t border-slate-800 bg-slate-900 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
+                                <div className="text-xs text-slate-400 text-center sm:text-left">
+                                    {selectedCharacterId 
+                                        ? <>Entering with: <strong className="text-indigo-400">{characters.find(c => c.id === selectedCharacterId)?.name || 'Selected Character'}</strong></> 
+                                        : <>Entering as: <strong className="text-amber-400">Spectator (No Character)</strong></>
+                                    }
+                                </div>
+                                <div className="flex items-center gap-2 w-full sm:w-auto">
+                                    <button 
+                                        onClick={() => setIsJoiningCampaign(false)} 
+                                        className="flex-1 sm:flex-none px-5 py-2.5 rounded-xl font-bold text-slate-400 hover:text-white hover:bg-slate-800 transition-colors text-sm"
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button 
+                                        onClick={finalizeJoin} 
+                                        className="flex-1 sm:flex-none px-7 py-2.5 bg-gradient-to-r from-amber-600 to-indigo-600 hover:from-amber-500 hover:to-indigo-500 text-white rounded-xl font-bold shadow-lg shadow-indigo-900/30 transition-all flex items-center justify-center gap-2 text-sm"
+                                    >
+                                        Enter Realm <Icon name="arrow-right" size={16} />
+                                    </button>
+                                </div>
+                            </div>
+
                         </div>
                     </div>
                 )}

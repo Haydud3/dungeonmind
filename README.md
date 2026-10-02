@@ -43,9 +43,17 @@
 * **Zero-Setup Multiplayer:** Built on real-time database sync—no dedicated server hosting, port-forwarding, or account requirements for players.
 * **Initiative Ribbon & Combat Tracker:** Manage encounters with automated initiative sorting, active turn indicators, real-time HP bars, and status effects.
 * **Campaign Journals & Handouts:** Write lore in a rich-text editor and push visual handouts and notes directly to players' screens.
-* **In-Person & Mobile Friendly:** Players sitting at a physical table can easily use DungeonMind on their smartphones or tablets as a companion character sheet and dice roller.
+* **In-Person & Mobile Friendly:** Players sitting at a physical table can easily use DungeonMind on their smartphones or tablets as a companion character sheet and dice roller with streamlined mobile navigation.
+* **Global Party Rests:** Coordinated short and long rest management with hit dice rolling and automated HP/spell slot recovery.
 
-### 🪄 5. Smart Assistant Utilities *(Optional)*
+### 💬 5. Play-by-Post & Theater of the Mind Chat Engine
+* **Chat Action Macros:** Execute weapon attacks, spell casts, skill checks, saving throws, and party rests directly from an unobtrusive quick bar in chat without needing map tokens.
+* **Discord-Style Slash Commands:** Full support for `/attack` (`/a`), `/cast`, `/check`, `/save`, `/hp`, `/heal`, `/damage`, `/r`, `/manual`, `/whisper`, `/me`, `/desc`, and `/ooc`.
+* **Dynamic Persona Switcher:** Seamlessly switch between speaking as the DM, your active character, fellow party members, or possessed NPCs.
+* **Smart Target Selection Modal:** Automatically presents a multi-target party picker for applying damage or healing when no tokens are actively selected on the tactical map.
+* **DM Roll Visibility Controls:** Total control over public vs. secret GM rolls with a 1-click chat toggle (`[Rolls: Public/Secret]`), slash commands (`/reveal`, `/hide`, `/public`), and a one-click batch `[Reveal All]` action for hidden rolls.
+
+### 🪄 6. Smart Assistant Utilities *(Optional)*
 * Optional GM assistance tools to speed up prep: generate NPC backstories, draft session recaps, or auto-detect walls on battlemap images when desired. Easily powered by free Puter.js or your own OpenAI/Gemini API keys.
 
 ---

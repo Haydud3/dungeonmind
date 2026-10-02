@@ -26,15 +26,39 @@ export const NewCampaignProvider = ({ children }) => {
     const [user, setUser] = useState(undefined);
 
     useEffect(() => {
-        const unsubscribe = fb.onAuthStateChanged(fb.auth, setUser);
+        const unsubscribe = fb.onAuthStateChanged(fb.auth, (firebaseUser) => {
+            if (firebaseUser) {
+                localStorage.removeItem('dm_guest_user');
+                setUser(firebaseUser);
+            } else {
+                try {
+                    const guestData = localStorage.getItem('dm_guest_user');
+                    if (guestData) {
+                        setUser(JSON.parse(guestData));
+                        return;
+                    }
+                } catch (e) {}
+                setUser(null);
+            }
+        });
         return unsubscribe;
     }, []);
+
+    const setLocalGuestUser = (guestObj) => {
+        if (guestObj) {
+            localStorage.setItem('dm_guest_user', JSON.stringify(guestObj));
+            setUser(guestObj);
+        } else {
+            localStorage.removeItem('dm_guest_user');
+            setUser(null);
+        }
+    };
 
     const [loreChunks, setLoreChunks] = useState([]);
     const [loreVolumes, setLoreVolumes] = useState([]);
 
     useEffect(() => {
-        if (!gameParams || gameParams.isOffline) {
+        if (!gameParams?.code) {
             setCampaign(null);
             setChatLog([]);
             setJournalPages({});
@@ -72,9 +96,40 @@ export const NewCampaignProvider = ({ children }) => {
             }
         };
 
-        const unsubCampaign = onSnapshot(campaignRef, (doc) => {
-            if (doc.exists()) {
-                localCampaign = doc.data();
+        const unsubCampaign = onSnapshot(campaignRef, (docSnap) => {
+            if (docSnap.exists()) {
+                const cData = docSnap.data();
+
+                // Active Eviction Check: Kick or Ban
+                const currentUid = gameParams?.uid || user?.uid;
+                if (currentUid && currentUid !== 'anon') {
+                    const isBanned = cData.bannedUsers && cData.bannedUsers.includes(currentUid);
+                    const isKicked = cData.kickedUsers && Boolean(cData.kickedUsers[currentUid]);
+
+                    if (isBanned) {
+                        try {
+                            localStorage.removeItem('dm_last_session');
+                            localStorage.removeItem('dungeonmind_last_campaign');
+                        } catch(e){}
+                        setGameParams(null);
+                        setCampaign(null);
+                        dialog.alert("You have been banned from this realm by the Dungeon Master.");
+                        return;
+                    }
+
+                    if (isKicked) {
+                        try {
+                            localStorage.removeItem('dm_last_session');
+                            localStorage.removeItem('dungeonmind_last_campaign');
+                        } catch(e){}
+                        setGameParams(null);
+                        setCampaign(null);
+                        dialog.alert("You were kicked from this session by the Dungeon Master.");
+                        return;
+                    }
+                }
+
+                localCampaign = cData;
                 setError(null);
                 updateMergedCampaign();
             } else {
@@ -130,8 +185,8 @@ export const NewCampaignProvider = ({ children }) => {
     }, [gameParams]);
 
     const updateCampaign = async (updates) => {
-        if (!gameParams || gameParams.isOffline) {
-            console.error("Cannot update campaign: no active campaign or in offline mode.");
+        if (!gameParams?.code) {
+            console.error("Cannot update campaign: no active campaign.");
             return;
         }
         const campaignRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code);
@@ -223,24 +278,70 @@ export const NewCampaignProvider = ({ children }) => {
     };
 
     const kickPlayer = async (targetUid) => {
-        if (!gameParams?.code || gameParams.isOffline) return;
+        if (!gameParams?.code || !targetUid) return;
         const campaignRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code);
-        await updateDoc(campaignRef, { [`activeUsers.${targetUid}`]: deleteField() });
+        const reqRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'joinRequests', targetUid);
+        try {
+            await updateDoc(campaignRef, { 
+                [`activeUsers.${targetUid}`]: deleteField(),
+                [`assignments.${targetUid}`]: deleteField(),
+                [`kickedUsers.${targetUid}`]: Date.now()
+            });
+            await deleteDoc(reqRef).catch(() => {});
+        } catch(e) {
+            console.error("Failed to kick player:", e);
+        }
     };
 
     const banPlayer = async (targetUid) => {
-        if (!gameParams?.code || gameParams.isOffline) return;
+        if (!gameParams?.code || !targetUid) return;
         const campaignRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code);
-        await updateDoc(campaignRef, { 
-            [`activeUsers.${targetUid}`]: deleteField(),
-            bannedUsers: arrayUnion(targetUid)
-        });
+        const reqRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'joinRequests', targetUid);
+        try {
+            await updateDoc(campaignRef, { 
+                [`activeUsers.${targetUid}`]: deleteField(),
+                [`assignments.${targetUid}`]: deleteField(),
+                bannedUsers: arrayUnion(targetUid)
+            });
+            await setDoc(reqRef, { status: 'denied', reason: 'banned', timestamp: Date.now() }, { merge: true }).catch(() => {});
+        } catch(e) {
+            console.error("Failed to ban player:", e);
+        }
     };
 
     const unbanPlayer = async (targetUid) => {
-        if (!gameParams?.code || gameParams.isOffline) return;
+        if (!gameParams?.code || !targetUid) return;
         const campaignRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code);
-        await updateDoc(campaignRef, { bannedUsers: arrayRemove(targetUid) });
+        try {
+            await updateDoc(campaignRef, { 
+                bannedUsers: arrayRemove(targetUid),
+                [`kickedUsers.${targetUid}`]: deleteField()
+            });
+        } catch(e) {
+            console.error("Failed to unban player:", e);
+        }
+    };
+
+    const approveJoinRequest = async (reqId) => {
+        if (!gameParams?.code || !reqId) return;
+        const reqRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'joinRequests', reqId);
+        const campaignRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code);
+        try {
+            await updateDoc(reqRef, { status: 'approved' });
+            await updateDoc(campRef, { [`kickedUsers.${reqId}`]: deleteField() });
+        } catch(e) {
+            console.error("Failed to approve join request:", e);
+        }
+    };
+
+    const denyJoinRequest = async (reqId) => {
+        if (!gameParams?.code || !reqId) return;
+        const reqRef = doc(fb.db, 'artifacts', fb.appId || 'dungeonmind', 'public', 'data', 'campaigns', gameParams.code, 'joinRequests', reqId);
+        try {
+            await updateDoc(reqRef, { status: 'denied' });
+        } catch(e) {
+            console.error("Failed to deny join request:", e);
+        }
     };
 
     const sendMessage = async (message) => {
@@ -490,7 +591,7 @@ export const NewCampaignProvider = ({ children }) => {
     };
 
     return (
-        <NewCampaignContext.Provider value={{ user, campaign, chatLog, journal_pages, loreChunks, loreVolumes, error, gameParams, joinCampaign, leaveCampaign, updateCampaign, kickPlayer, banPlayer, unbanPlayer, sendMessage, editMessage, deleteMessage, clearChat, saveJournalPage, deleteJournalPage, uploadLore, deleteLoreDoc, clearAllLore, addCustomLoreEntry, deleteHandout }}>
+        <NewCampaignContext.Provider value={{ user, setLocalGuestUser, campaign, chatLog, journal_pages, loreChunks, loreVolumes, error, gameParams, joinCampaign, leaveCampaign, updateCampaign, kickPlayer, banPlayer, unbanPlayer, approveJoinRequest, denyJoinRequest, sendMessage, editMessage, deleteMessage, clearChat, saveJournalPage, deleteJournalPage, uploadLore, deleteLoreDoc, clearAllLore, addCustomLoreEntry, deleteHandout }}>
             {children}
         </NewCampaignContext.Provider>
     );

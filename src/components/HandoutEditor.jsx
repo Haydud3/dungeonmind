@@ -150,7 +150,9 @@ export default function HandoutEditor({ onCancel, onLocalReveal }) {
     const [theme, setTheme] = useState('parchment');
     const [imageUrl, setImageUrl] = useState('');
     const [resolvedImageUrl, setResolvedImageUrl] = useState('');
-    const [imageLayout, setImageLayout] = useState('hero'); // 'hero' | 'contained' | 'frame'
+    const [imageLayout, setImageLayout] = useState('map'); // 'map' | 'portrait' | 'contained' | 'hero' | 'frame'
+    const [isDragging, setIsDragging] = useState(false);
+    const [customUrlInput, setCustomUrlInput] = useState('');
     const [content, setContent] = useState('');
     const [resolvedContent, setResolvedContent] = useState('');
     const [secretNotes, setSecretNotes] = useState('');
@@ -272,23 +274,128 @@ export default function HandoutEditor({ onCancel, onLocalReveal }) {
         };
     };
 
-    // Handle primary image upload
-    const handleFileUpload = async (e) => {
-        const file = e.target.files?.[0];
+    // Unified image processor for browse, drag-drop, and clipboard paste
+    const processAndSetImage = async (file, fileName = '') => {
         if (!file) return;
-
         setIsUploading(true);
         try {
-            const compressedBase64 = await compressImage(file, 1200);
-            const chunkedId = await storeChunkedMap(compressedBase64, `handout_${file.name}`);
+            toast("Optimizing artwork for players...", "info");
+            // Compress with 2560px ceiling for crystal clear maps and character portraits
+            const compressedBase64 = await compressImage(file, 2560);
+            const chunkedId = await storeChunkedMap(compressedBase64, `handout_${fileName || Date.now()}`);
             setImageUrl(chunkedId);
-            toast("Primary image processed and attached", "success");
+            
+            // Auto-populate title if currently blank
+            if (!title.trim() && fileName) {
+                const cleanName = fileName
+                    .replace(/\.[^/.]+$/, "")
+                    .replace(/[-_]/g, " ")
+                    .replace(/\b\w/g, l => l.toUpperCase());
+                if (cleanName && !cleanName.toLowerCase().startsWith('image') && !cleanName.toLowerCase().startsWith('pasted')) {
+                    setTitle(cleanName);
+                }
+            }
+
+            // Auto-detect optimal layout based on image aspect ratio or filename
+            const img = new Image();
+            img.src = compressedBase64;
+            img.onload = () => {
+                const lower = (fileName || '').toLowerCase();
+                const ratio = img.width / img.height;
+                if (lower.includes('map') || ratio >= 1.25) {
+                    setImageLayout('map');
+                } else if (lower.includes('portrait') || lower.includes('character') || lower.includes('npc') || lower.includes('token') || ratio < 0.95) {
+                    setImageLayout('portrait');
+                } else {
+                    setImageLayout('contained');
+                }
+            };
+
+            toast("Image attached! Ready to preview and share.", "success");
         } catch (err) {
-            console.error(err);
-            toast("Primary image upload failed", "error");
+            console.error("Image processing error:", err);
+            toast("Image processing failed", "error");
+        } finally {
+            setIsUploading(false);
         }
-        setIsUploading(false);
     };
+
+    // Handle primary image upload via file dialog
+    const handleFileUpload = async (e) => {
+        const file = e.target.files?.[0];
+        if (file) {
+            await processAndSetImage(file, file.name);
+        }
+        e.target.value = '';
+    };
+
+    const handleAttachUrl = (urlToAttach = customUrlInput) => {
+        const cleanUrl = urlToAttach.trim();
+        if (!cleanUrl) return;
+        setImageUrl(cleanUrl);
+        setCustomUrlInput('');
+        if (!title.trim()) {
+            try {
+                const urlObj = new URL(cleanUrl);
+                const pathParts = urlObj.pathname.split('/');
+                const last = pathParts[pathParts.length - 1];
+                if (last) {
+                    const clean = last.replace(/\.[^/.]+$/, "").replace(/[-_]/g, " ");
+                    if (clean && clean.length > 2 && clean.length < 40) {
+                        setTitle(clean.replace(/\b\w/g, l => l.toUpperCase()));
+                    }
+                }
+            } catch (e) {
+                // Ignore URL parse error
+            }
+        }
+        toast("Image URL attached", "success");
+    };
+
+    const handleDragOver = (e) => {
+        e.preventDefault();
+        setIsDragging(true);
+    };
+
+    const handleDragLeave = (e) => {
+        e.preventDefault();
+        setIsDragging(false);
+    };
+
+    const handleDrop = async (e) => {
+        e.preventDefault();
+        setIsDragging(false);
+        const file = e.dataTransfer?.files?.[0];
+        if (file && file.type.startsWith('image/')) {
+            await processAndSetImage(file, file.name);
+        }
+    };
+
+    // Clipboard paste listener for direct Cmd+V / Ctrl+V
+    useEffect(() => {
+        if (activeTab !== 'compose') return;
+        const handlePaste = async (e) => {
+            const target = e.target;
+            // Don't intercept if user is typing into an input, textarea, or the Quill editor
+            if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.classList?.contains('ql-editor'))) {
+                return;
+            }
+            if (!e.clipboardData) return;
+            const items = e.clipboardData.items;
+            for (let i = 0; i < items.length; i++) {
+                if (items[i].type.indexOf('image') !== -1) {
+                    const file = items[i].getAsFile();
+                    if (file) {
+                        e.preventDefault();
+                        await processAndSetImage(file, 'Pasted Map or Art');
+                        break;
+                    }
+                }
+            }
+        };
+        window.addEventListener('paste', handlePaste);
+        return () => window.removeEventListener('paste', handlePaste);
+    }, [activeTab, title]);
 
     // Save or Reveal Handout
     const handleSubmit = (reveal = false) => {
@@ -699,233 +806,336 @@ export default function HandoutEditor({ onCancel, onLocalReveal }) {
                                         </div>
                                     ) : (
                                         <>
-                                            {/* 1. Quick Starter Templates */}
-                                            <div>
-                                        <div className="text-[11px] uppercase font-bold text-slate-400 mb-2 flex items-center justify-between">
-                                            <span className="flex items-center gap-1.5">
-                                                <Icon name="sparkles" size={13} className="text-amber-400" />
-                                                Starter Templates (1-Click Fill)
-                                            </span>
-                                            {id && (
-                                                <button
-                                                    onClick={handleNewHandout}
-                                                    className="text-[10px] text-amber-400 hover:text-amber-300 underline font-semibold cursor-pointer"
-                                                >
-                                                    + New Blank
-                                                </button>
-                                            )}
-                                        </div>
-                                        <div className="flex flex-wrap gap-1.5">
-                                            {STARTER_TEMPLATES.map(tpl => (
-                                                <button
-                                                    key={tpl.name}
-                                                    onClick={() => handleApplyTemplate(tpl)}
-                                                    className="px-2.5 py-1.5 rounded-lg bg-slate-800/90 hover:bg-slate-700 text-slate-200 hover:text-amber-300 border border-slate-700/80 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer active:scale-95 shadow-sm"
-                                                >
-                                                    <Icon name={tpl.icon} size={13} className="text-amber-400" />
-                                                    <span>{tpl.name}</span>
-                                                </button>
-                                            ))}
-                                        </div>
-                                    </div>
-
-                                    {/* 2. Visual Theme Picker */}
-                                    <div>
-                                        <label className="text-[11px] uppercase font-bold text-slate-400 mb-2 block">
-                                            Handout Theme & Texture
-                                        </label>
-                                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                                            {THEMES.map(t => (
-                                                <button
-                                                    key={t.id}
-                                                    onClick={() => setTheme(t.id)}
-                                                    className={`p-2 rounded-xl border text-left flex flex-col gap-1 transition-all cursor-pointer ${
-                                                        theme === t.id
-                                                            ? 'border-amber-500 bg-amber-500/10 text-amber-200 shadow-md ring-1 ring-amber-500/40'
-                                                            : 'border-slate-800 bg-slate-900/80 text-slate-400 hover:border-slate-700 hover:text-slate-200'
-                                                    }`}
-                                                >
-                                                    <div className="flex items-center gap-1.5 font-bold text-xs">
-                                                        <Icon name={t.icon} size={14} className={theme === t.id ? 'text-amber-400' : 'text-slate-400'} />
-                                                        <span>{t.name}</span>
+                                            {/* 1. Primary Artwork, Map & Character Visuals Studio */}
+                                            <div className={`p-3.5 sm:p-4 rounded-2xl border transition-all ${
+                                                isDragging 
+                                                    ? 'border-amber-400 bg-amber-500/10 shadow-xl shadow-amber-950/40 ring-2 ring-amber-400/50' 
+                                                    : imageUrl 
+                                                        ? 'border-amber-500/40 bg-slate-900/90 shadow-md' 
+                                                        : 'border-slate-800 bg-slate-900/60 hover:border-slate-700'
+                                            }`}>
+                                                <div className="flex items-center justify-between mb-2.5">
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="p-1 rounded-lg bg-amber-500/20 text-amber-400">
+                                                            <Icon name="image" size={14} />
+                                                        </span>
+                                                        <span className="text-xs font-black uppercase tracking-wider text-slate-200">
+                                                            Map, Character Art & Artwork
+                                                        </span>
                                                     </div>
-                                                    <span className="text-[10px] text-slate-500 leading-tight">
-                                                        {t.description}
-                                                    </span>
-                                                </button>
-                                            ))}
-                                        </div>
-                                    </div>
-
-                                    {/* 3. Title & Subtitle */}
-                                    <div className="space-y-3">
-                                        <div>
-                                            <label className="text-[11px] uppercase font-bold text-slate-400 mb-1 block">
-                                                Document Title / Header
-                                            </label>
-                                            <input
-                                                value={title}
-                                                onChange={e => setTitle(e.target.value)}
-                                                className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-white font-serif text-sm focus:border-amber-500 focus:ring-1 focus:ring-amber-500 outline-none transition-all placeholder:text-slate-600"
-                                                placeholder="e.g. Royal Decree of Neverwinter"
-                                            />
-                                        </div>
-                                        <div>
-                                            <label className="text-[11px] uppercase font-bold text-slate-400 mb-1 block">
-                                                Subtitle / Caption (Optional)
-                                            </label>
-                                            <input
-                                                value={subtitle}
-                                                onChange={e => setSubtitle(e.target.value)}
-                                                className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 text-white text-xs focus:border-amber-500 outline-none transition-all placeholder:text-slate-600"
-                                                placeholder="e.g. By Order of the Lord Protector, 3rd Day of Eleint"
-                                            />
-                                        </div>
-                                    </div>
-
-                                    {/* 4. DM's Eyes Only (Secret Notes & Clues) */}
-                                    <div ref={secretNotesSectionRef} className="border-2 border-amber-500/50 rounded-xl overflow-hidden bg-amber-950/20 shadow-md transition-all">
-                                        <button
-                                            type="button"
-                                            onClick={() => setIsSecretNotesOpen(o => !o)}
-                                            className="w-full p-3 flex items-center justify-between text-left cursor-pointer hover:bg-amber-950/30 transition-colors"
-                                        >
-                                            <div className="flex items-center gap-2 font-bold text-xs text-amber-400">
-                                                <span className="p-1 rounded bg-amber-500/20 border border-amber-500/40 text-amber-300">
-                                                    <Icon name="lock" size={13} />
-                                                </span>
-                                                <span>DM's Eyes Only (Secret Notes & Clues)</span>
-                                                {secretNotes.trim() ? (
-                                                    <span className="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono px-1.5 py-0.5 rounded font-bold">
-                                                        ✓ Active Note
-                                                    </span>
-                                                ) : (
-                                                    <span className="text-[10px] text-amber-400/60 font-normal">
-                                                        (Click to add secret DC checks / puzzle clues)
-                                                    </span>
-                                                )}
-                                            </div>
-                                            <div className="flex items-center gap-2">
-                                                <span className="text-[10px] text-amber-400/80 font-mono uppercase font-semibold">
-                                                    {isSecretNotesOpen ? 'Hide' : 'Expand'}
-                                                </span>
-                                                <Icon name={isSecretNotesOpen ? 'chevron-up' : 'chevron-down'} size={14} className="text-amber-400" />
-                                            </div>
-                                        </button>
-
-                                        {isSecretNotesOpen && (
-                                            <div className="p-3.5 pt-0 space-y-2 border-t border-amber-500/25 animate-in fade-in duration-150">
-                                                <p className="text-[11px] text-amber-300/80 italic">
-                                                    These notes are <strong>strictly hidden from players</strong> when revealed. Use for puzzle solutions, check DCs, or NPC motivations.
-                                                </p>
-                                                <textarea
-                                                    ref={secretNotesInputRef}
-                                                    value={secretNotes}
-                                                    onChange={e => setSecretNotes(e.target.value)}
-                                                    rows={3}
-                                                    placeholder="e.g. DC 14 History reveals the seal is from an extinct house. Hidden cache is under the floorboards."
-                                                    className="w-full bg-slate-950 border border-amber-500/40 rounded-lg p-2.5 text-xs text-amber-200 outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400/40 placeholder:text-amber-900/60 leading-relaxed font-sans"
-                                                />
-                                            </div>
-                                        )}
-                                    </div>
-
-                                    {/* 5. Standalone / Header Image */}
-                                    <div className="space-y-2">
-                                        <div className="flex items-center justify-between">
-                                            <label className="text-[11px] uppercase font-bold text-slate-400 flex items-center gap-1.5">
-                                                <Icon name="image" size={13} className="text-amber-400" />
-                                                Header / Artwork Image
-                                            </label>
-                                            {imageUrl && (
-                                                <button
-                                                    onClick={() => setImageUrl('')}
-                                                    className="text-[11px] text-rose-400 hover:text-rose-300 font-semibold cursor-pointer"
-                                                >
-                                                    Remove Artwork
-                                                </button>
-                                            )}
-                                        </div>
-
-                                        {!imageUrl ? (
-                                            <div className="flex flex-col gap-2">
-                                                <div 
-                                                    onClick={() => fileInputRef.current?.click()}
-                                                    className="w-full h-24 border-2 border-dashed border-slate-800 hover:border-amber-500/50 rounded-xl flex flex-col items-center justify-center text-slate-400 hover:text-amber-300 cursor-pointer bg-slate-950/60 transition-all group"
-                                                >
-                                                    {isUploading ? (
-                                                        <>
-                                                            <Icon name="loader" size={20} className="animate-spin mb-1 text-amber-500" />
-                                                            <span className="font-bold text-xs text-amber-400">Processing image...</span>
-                                                        </>
-                                                    ) : (
-                                                        <>
-                                                            <Icon name="upload-cloud" size={20} className="mb-1 text-slate-500 group-hover:text-amber-400 transition-colors" />
-                                                            <span className="font-semibold text-xs">Click to upload image (Map, Portrait, Painting)</span>
-                                                        </>
-                                                    )}
+                                                    <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
+                                                        <span className="hidden sm:inline bg-slate-800 px-1.5 py-0.5 rounded font-mono text-[9px] text-slate-300">
+                                                            Paste: Ctrl+V
+                                                        </span>
+                                                        {imageUrl && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setImageUrl('')}
+                                                                className="text-rose-400 hover:text-rose-300 font-semibold cursor-pointer ml-2"
+                                                            >
+                                                                Remove
+                                                            </button>
+                                                        )}
+                                                    </div>
                                                 </div>
-                                                <div className="flex items-center gap-2">
+
+                                                {!imageUrl ? (
+                                                    <div className="space-y-2.5">
+                                                        {/* Drag & Drop Dropzone */}
+                                                        <div
+                                                            onDragOver={handleDragOver}
+                                                            onDragLeave={handleDragLeave}
+                                                            onDrop={handleDrop}
+                                                            onClick={() => fileInputRef.current?.click()}
+                                                            className={`w-full py-6 px-4 border-2 border-dashed rounded-xl flex flex-col items-center justify-center text-center cursor-pointer transition-all group ${
+                                                                isDragging 
+                                                                    ? 'border-amber-400 bg-amber-500/20 text-amber-200 scale-[1.01]' 
+                                                                    : 'border-slate-700 hover:border-amber-500/60 bg-slate-950/60 text-slate-400 hover:text-slate-200'
+                                                            }`}
+                                                        >
+                                                            {isUploading ? (
+                                                                <>
+                                                                    <Icon name="loader" size={24} className="animate-spin mb-1.5 text-amber-500" />
+                                                                    <span className="font-bold text-xs text-amber-400">Optimizing & Processing artwork...</span>
+                                                                    <span className="text-[10px] text-slate-500 mt-0.5">Creating high-res WebP for instant player load</span>
+                                                                </>
+                                                            ) : (
+                                                                <>
+                                                                    <div className="flex items-center gap-2 mb-1.5 text-amber-400 group-hover:scale-110 transition-transform">
+                                                                        <Icon name="map" size={18} />
+                                                                        <span className="text-slate-600">•</span>
+                                                                        <Icon name="user" size={18} />
+                                                                        <span className="text-slate-600">•</span>
+                                                                        <Icon name="image" size={18} />
+                                                                    </div>
+                                                                    <span className="font-bold text-xs text-slate-200 group-hover:text-amber-300 transition-colors">
+                                                                        Drop Battlemap, World Map, or Character Art Here
+                                                                    </span>
+                                                                    <span className="text-[10px] text-slate-500 mt-0.5">
+                                                                        or click to browse from device • High-res WebP (up to 2560px)
+                                                                    </span>
+                                                                </>
+                                                            )}
+                                                        </div>
+
+                                                        {/* Direct URL input */}
+                                                        <div className="flex items-center gap-2">
+                                                            <input
+                                                                type="text"
+                                                                value={customUrlInput}
+                                                                onChange={e => setCustomUrlInput(e.target.value)}
+                                                                onKeyDown={e => { if (e.key === 'Enter') handleAttachUrl(); }}
+                                                                placeholder="Or paste direct image URL (https://...)"
+                                                                className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-slate-200 outline-none focus:border-amber-500 placeholder:text-slate-600"
+                                                            />
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleAttachUrl()}
+                                                                disabled={!customUrlInput.trim()}
+                                                                className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-amber-600 disabled:opacity-40 text-slate-200 hover:text-white text-xs font-bold transition-all cursor-pointer"
+                                                            >
+                                                                Attach
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                ) : (
+                                                    <div className="space-y-3">
+                                                        {/* Attached Artwork Preview Card */}
+                                                        <div className="w-full rounded-xl overflow-hidden border border-slate-700 bg-slate-950 relative group">
+                                                            <div className="w-full h-44 sm:h-52 flex items-center justify-center p-2 relative bg-black/40">
+                                                                {resolvedImageUrl && (
+                                                                    <img 
+                                                                        src={resolvedImageUrl} 
+                                                                        alt="Handout Artwork" 
+                                                                        className="w-full h-full object-contain cursor-zoom-in drop-shadow-md"
+                                                                        onClick={() => setIsFullscreenPreviewImg(true)}
+                                                                    />
+                                                                )}
+                                                                <div className="absolute top-2 right-2 flex items-center gap-1.5">
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => setIsFullscreenPreviewImg(true)}
+                                                                        className="bg-black/70 hover:bg-black/90 text-white p-1.5 rounded-lg text-xs backdrop-blur-sm border border-white/10 shadow transition-colors cursor-pointer"
+                                                                        title="Inspect Fullscreen"
+                                                                    >
+                                                                        <Icon name="maximize" size={13} />
+                                                                    </button>
+                                                                </div>
+                                                            </div>
+
+                                                            <div className="p-2.5 bg-slate-900 border-t border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs">
+                                                                <span className="text-[11px] text-emerald-400 font-bold flex items-center gap-1">
+                                                                    <Icon name="check-circle" size={13} />
+                                                                    <span>Artwork Attached</span>
+                                                                </span>
+                                                                <div className="flex items-center gap-1.5">
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => fileInputRef.current?.click()}
+                                                                        className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-semibold transition-colors cursor-pointer"
+                                                                    >
+                                                                        Change
+                                                                    </button>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => setImageUrl('')}
+                                                                        className="px-2.5 py-1 rounded-lg bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 text-[11px] font-semibold transition-colors cursor-pointer border border-rose-800/40"
+                                                                    >
+                                                                        Remove
+                                                                    </button>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+
+                                                        {/* Layout Style Selector */}
+                                                        <div>
+                                                            <label className="text-[10px] uppercase font-bold text-slate-400 mb-1.5 block tracking-wider">
+                                                                Presentation Layout (Optimized for VTT)
+                                                            </label>
+                                                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                                                                {[
+                                                                    { id: 'map', label: 'Battlemap / World Map', icon: 'map', desc: 'Full-width, uncropped, tactical zoom' },
+                                                                    { id: 'portrait', label: 'Character / Creature', icon: 'user', desc: 'Framed card, uncropped portrait' },
+                                                                    { id: 'contained', label: 'Contained Art', icon: 'image', desc: 'Clean uncropped illustration' },
+                                                                    { id: 'hero', label: 'Header Banner', icon: 'layout', desc: 'Wide scenic header' },
+                                                                    { id: 'frame', label: 'Classic Frame', icon: 'square', desc: 'Antique double border' }
+                                                                ].map(l => (
+                                                                    <button
+                                                                        key={l.id}
+                                                                        type="button"
+                                                                        onClick={() => setImageLayout(l.id)}
+                                                                        className={`p-2 rounded-xl border text-left flex flex-col gap-0.5 transition-all cursor-pointer ${
+                                                                            imageLayout === l.id
+                                                                                ? 'bg-amber-500/20 border-amber-500 text-amber-200 shadow-sm ring-1 ring-amber-500/40'
+                                                                                : 'bg-slate-950/80 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
+                                                                        }`}
+                                                                    >
+                                                                        <span className="flex items-center gap-1.5 text-xs font-bold">
+                                                                            <Icon name={l.icon} size={12} className={imageLayout === l.id ? 'text-amber-400' : 'text-slate-400'} />
+                                                                            <span>{l.label}</span>
+                                                                        </span>
+                                                                        <span className="text-[9px] text-slate-500 leading-tight">
+                                                                            {l.desc}
+                                                                        </span>
+                                                                    </button>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+
+                                                        {/* Instant 1-Click Reveal Button */}
+                                                        {role === 'dm' && (
+                                                            <div className="pt-1 flex items-center justify-between bg-amber-950/20 border border-amber-500/30 rounded-xl p-2.5">
+                                                                <div className="text-[11px] text-amber-300 font-medium leading-tight">
+                                                                    Ready to share this {imageLayout === 'map' ? 'map' : imageLayout === 'portrait' ? 'character visual' : 'handout'}?
+                                                                </div>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleSubmit(true)}
+                                                                    className="px-3 py-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs rounded-lg shadow-md transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer shrink-0"
+                                                                >
+                                                                    <Icon name="eye" size={13} />
+                                                                    <span>Instant Reveal</span>
+                                                                </button>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                )}
+                                                <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileUpload} />
+                                            </div>
+
+                                            {/* 2. Document Title & Subtitle */}
+                                            <div className="space-y-3">
+                                                <div>
+                                                    <label className="text-[11px] uppercase font-bold text-slate-400 mb-1 block">
+                                                        Document Title / Header
+                                                    </label>
                                                     <input
-                                                        type="text"
-                                                        placeholder="Or paste direct image URL (https://...)"
-                                                        className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 outline-none focus:border-amber-500 placeholder:text-slate-600"
-                                                        onKeyDown={(e) => {
-                                                            if (e.key === 'Enter' && e.target.value.trim()) {
-                                                                setImageUrl(e.target.value.trim());
-                                                                e.target.value = '';
-                                                            }
-                                                        }}
+                                                        value={title}
+                                                        onChange={e => setTitle(e.target.value)}
+                                                        className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-white font-serif text-sm focus:border-amber-500 focus:ring-1 focus:ring-amber-500 outline-none transition-all placeholder:text-slate-600"
+                                                        placeholder="e.g. Castle Ravenloft Lower Dungeons Map, or Sir Gareth"
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="text-[11px] uppercase font-bold text-slate-400 mb-1 block">
+                                                        Subtitle / Caption (Optional)
+                                                    </label>
+                                                    <input
+                                                        value={subtitle}
+                                                        onChange={e => setSubtitle(e.target.value)}
+                                                        className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 text-white text-xs focus:border-amber-500 outline-none transition-all placeholder:text-slate-600"
+                                                        placeholder="e.g. Discovered in the catacombs, or Captain of the City Watch"
                                                     />
                                                 </div>
                                             </div>
-                                        ) : (
-                                            <div className="flex flex-col gap-2">
-                                                <div className="w-full h-36 rounded-xl overflow-hidden border border-slate-700 relative group bg-black/60 flex items-center justify-center">
-                                                    {resolvedImageUrl && (
-                                                        <img src={resolvedImageUrl} alt="Handout Artwork" className="w-full h-full object-contain" />
-                                                    )}
-                                                    <div className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 flex items-center justify-center gap-2 transition-opacity">
-                                                        <button
-                                                            onClick={() => fileInputRef.current?.click()}
-                                                            className="bg-amber-600 hover:bg-amber-500 text-white font-bold py-1 px-3 rounded-lg text-xs shadow-md cursor-pointer"
-                                                        >
-                                                            Change Image
-                                                        </button>
-                                                        <button
-                                                            onClick={() => setImageUrl('')}
-                                                            className="bg-rose-600 hover:bg-rose-500 text-white font-bold py-1 px-3 rounded-lg text-xs shadow-md cursor-pointer"
-                                                        >
-                                                            Remove
-                                                        </button>
-                                                    </div>
-                                                </div>
 
-                                                {/* Image Layout Selector */}
-                                                <div className="flex items-center gap-2 text-xs">
-                                                    <span className="text-[10px] uppercase font-bold text-slate-500">Presentation:</span>
-                                                    {[
-                                                        { id: 'hero', label: 'Hero Banner' },
-                                                        { id: 'contained', label: 'Contained Art' },
-                                                        { id: 'frame', label: 'Framed Portrait' },
-                                                    ].map(l => (
-                                                        <button
-                                                            key={l.id}
-                                                            onClick={() => setImageLayout(l.id)}
-                                                            className={`px-2 py-0.5 rounded-lg border text-[11px] font-semibold transition-all cursor-pointer ${
-                                                                imageLayout === l.id
-                                                                    ? 'bg-amber-500/20 border-amber-500 text-amber-300'
-                                                                    : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
-                                                            }`}
-                                                        >
-                                                            {l.label}
-                                                        </button>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        )}
-                                        <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileUpload} />
-                                    </div>
+                                            {/* 3. Visual Theme Picker */}
+                                            <div>
+                                                <label className="text-[11px] uppercase font-bold text-slate-400 mb-2 block">
+                                                    Handout Theme & Texture
+                                                </label>
+                                                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                                                    {THEMES.map(t => (
+                                                         <button
+                                                             key={t.id}
+                                                             type="button"
+                                                             onClick={() => setTheme(t.id)}
+                                                             className={`p-2 rounded-xl border text-left flex flex-col gap-1 transition-all cursor-pointer ${
+                                                                 theme === t.id
+                                                                     ? 'border-amber-500 bg-amber-500/10 text-amber-200 shadow-md ring-1 ring-amber-500/40'
+                                                                     : 'border-slate-800 bg-slate-900/80 text-slate-400 hover:border-slate-700 hover:text-slate-200'
+                                                             }`}
+                                                         >
+                                                             <div className="flex items-center gap-1.5 font-bold text-xs">
+                                                                 <Icon name={t.icon} size={14} className={theme === t.id ? 'text-amber-400' : 'text-slate-400'} />
+                                                                 <span>{t.name}</span>
+                                                             </div>
+                                                             <span className="text-[10px] text-slate-500 leading-tight">
+                                                                 {t.description}
+                                                             </span>
+                                                         </button>
+                                                     ))}
+                                                 </div>
+                                             </div>
+
+                                             {/* 4. Quick Starter Templates */}
+                                             <div>
+                                                 <div className="text-[11px] uppercase font-bold text-slate-400 mb-2 flex items-center justify-between">
+                                                     <span className="flex items-center gap-1.5">
+                                                         <Icon name="sparkles" size={13} className="text-amber-400" />
+                                                         Starter Templates (Optional Text Presets)
+                                                     </span>
+                                                     {id && (
+                                                         <button
+                                                             type="button"
+                                                             onClick={handleNewHandout}
+                                                             className="text-[10px] text-amber-400 hover:text-amber-300 underline font-semibold cursor-pointer"
+                                                         >
+                                                             + New Blank
+                                                         </button>
+                                                     )}
+                                                 </div>
+                                                 <div className="flex flex-wrap gap-1.5">
+                                                     {STARTER_TEMPLATES.map(tpl => (
+                                                         <button
+                                                             key={tpl.name}
+                                                             type="button"
+                                                             onClick={() => handleApplyTemplate(tpl)}
+                                                             className="px-2.5 py-1.5 rounded-lg bg-slate-800/90 hover:bg-slate-700 text-slate-200 hover:text-amber-300 border border-slate-700/80 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer active:scale-95 shadow-sm"
+                                                         >
+                                                             <Icon name={tpl.icon} size={13} className="text-amber-400" />
+                                                             <span>{tpl.name}</span>
+                                                         </button>
+                                                     ))}
+                                                 </div>
+                                             </div>
+
+                                             {/* 5. DM's Eyes Only (Secret Notes & Clues) */}
+                                             <div ref={secretNotesSectionRef} className="border-2 border-amber-500/50 rounded-xl overflow-hidden bg-amber-950/20 shadow-md transition-all">
+                                                 <button
+                                                     type="button"
+                                                     onClick={() => setIsSecretNotesOpen(o => !o)}
+                                                     className="w-full p-3 flex items-center justify-between text-left cursor-pointer hover:bg-amber-950/30 transition-colors"
+                                                 >
+                                                     <div className="flex items-center gap-2 font-bold text-xs text-amber-400">
+                                                         <span className="p-1 rounded bg-amber-500/20 border border-amber-500/40 text-amber-300">
+                                                             <Icon name="lock" size={13} />
+                                                         </span>
+                                                         <span>DM's Eyes Only (Secret Notes & Clues)</span>
+                                                         {secretNotes.trim() ? (
+                                                             <span className="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono px-1.5 py-0.5 rounded font-bold">
+                                                                 ✓ Active Note
+                                                             </span>
+                                                         ) : (
+                                                             <span className="text-[10px] text-amber-400/60 font-normal">
+                                                                 (Click to add secret DC checks / puzzle clues)
+                                                             </span>
+                                                         )}
+                                                     </div>
+                                                     <div className="flex items-center gap-2">
+                                                         <span className="text-[10px] text-amber-400/80 font-mono uppercase font-semibold">
+                                                             {isSecretNotesOpen ? 'Hide' : 'Expand'}
+                                                         </span>
+                                                         <Icon name={isSecretNotesOpen ? 'chevron-up' : 'chevron-down'} size={14} className="text-amber-400" />
+                                                     </div>
+                                                 </button>
+
+                                                 {isSecretNotesOpen && (
+                                                     <div className="p-3.5 pt-0 space-y-2 border-t border-amber-500/25 animate-in fade-in duration-150">
+                                                         <p className="text-[11px] text-amber-300/80 italic">
+                                                             These notes are <strong>strictly hidden from players</strong> when revealed. Use for puzzle solutions, check DCs, or NPC motivations.
+                                                         </p>
+                                                         <textarea
+                                                             ref={secretNotesInputRef}
+                                                             value={secretNotes}
+                                                             onChange={e => setSecretNotes(e.target.value)}
+                                                             rows={3}
+                                                             placeholder="e.g. DC 14 History reveals the seal is from an extinct house. Hidden cache is under the floorboards."
+                                                             className="w-full bg-slate-950 border border-amber-500/40 rounded-lg p-2.5 text-xs text-amber-200 outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400/40 placeholder:text-amber-900/60 leading-relaxed font-sans"
+                                                         />
+                                                     </div>
+                                                 )}
+                                             </div>
 
                                     {/* 5. Rich Text Editor */}
                                     <div className="space-y-2">
@@ -1098,13 +1308,60 @@ export default function HandoutEditor({ onCancel, onLocalReveal }) {
 
                                             {/* Header Image Presentation */}
                                             {resolvedImageUrl && (
-                                                <div className="mb-5 flex justify-center">
-                                                    {imageLayout === 'frame' ? (
-                                                        <div className="p-2 bg-black/10 border-2 border-current/40 rounded-xl shadow-lg relative group max-w-xs w-full">
+                                                <div className="mb-5 flex justify-center w-full">
+                                                    {imageLayout === 'map' ? (
+                                                        <div className="w-full relative group rounded-xl overflow-hidden border border-slate-700/80 shadow-2xl bg-slate-950/90 flex flex-col items-center">
+                                                            <div className="w-full flex items-center justify-between px-3 py-1.5 bg-slate-900/90 border-b border-slate-800 text-[11px] text-slate-300 font-bold">
+                                                                <span className="flex items-center gap-1.5 text-amber-400">
+                                                                    <Icon name="map" size={13} />
+                                                                    <span>Tactical Map / Location</span>
+                                                                </span>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => setIsFullscreenPreviewImg(true)}
+                                                                    className="text-xs text-amber-400 hover:text-amber-300 font-semibold flex items-center gap-1 cursor-pointer"
+                                                                >
+                                                                    <Icon name="maximize" size={12} />
+                                                                    <span>Inspect Fullscreen</span>
+                                                                </button>
+                                                            </div>
+                                                            <img
+                                                                src={resolvedImageUrl}
+                                                                alt="Map Handout"
+                                                                className="w-full max-h-[55vh] object-contain cursor-zoom-in p-1"
+                                                                onClick={() => setIsFullscreenPreviewImg(true)}
+                                                            />
+                                                        </div>
+                                                    ) : imageLayout === 'portrait' ? (
+                                                        <div className="max-w-xs sm:max-w-sm w-full relative group rounded-2xl overflow-hidden border-2 border-amber-500/50 shadow-2xl bg-slate-950/90 flex flex-col items-center">
+                                                            <div className="w-full flex items-center justify-between px-3 py-1.5 bg-amber-950/40 border-b border-amber-500/30 text-[11px] text-amber-300 font-bold">
+                                                                <span className="flex items-center gap-1.5">
+                                                                    <Icon name="user" size={13} />
+                                                                    <span>Character / Creature Portrait</span>
+                                                                </span>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => setIsFullscreenPreviewImg(true)}
+                                                                    className="text-xs text-amber-400 hover:text-amber-300 font-semibold flex items-center gap-1 cursor-pointer"
+                                                                >
+                                                                    <Icon name="maximize" size={12} />
+                                                                    <span>Enlarge</span>
+                                                                </button>
+                                                            </div>
+                                                            <img
+                                                                src={resolvedImageUrl}
+                                                                alt="Character Portrait"
+                                                                className="w-full max-h-[50vh] object-contain cursor-zoom-in p-2"
+                                                                onClick={() => setIsFullscreenPreviewImg(true)}
+                                                            />
+                                                        </div>
+                                                    ) : imageLayout === 'frame' ? (
+                                                        <div className="p-2 bg-black/10 border-2 border-current/40 rounded-xl shadow-lg relative group max-w-sm w-full">
                                                             <img
                                                                 src={resolvedImageUrl}
                                                                 alt="Handout"
-                                                                className="w-full h-48 object-cover rounded-lg"
+                                                                className="w-full max-h-56 object-contain rounded-lg cursor-zoom-in"
+                                                                onClick={() => setIsFullscreenPreviewImg(true)}
                                                             />
                                                             <button
                                                                 onClick={() => setIsFullscreenPreviewImg(true)}
@@ -1119,7 +1376,8 @@ export default function HandoutEditor({ onCancel, onLocalReveal }) {
                                                             <img
                                                                 src={resolvedImageUrl}
                                                                 alt="Handout"
-                                                                className="w-full max-h-64 object-contain rounded-lg drop-shadow-md"
+                                                                className="w-full max-h-72 object-contain rounded-lg drop-shadow-md cursor-zoom-in"
+                                                                onClick={() => setIsFullscreenPreviewImg(true)}
                                                             />
                                                             <button
                                                                 onClick={() => setIsFullscreenPreviewImg(true)}
@@ -1130,12 +1388,13 @@ export default function HandoutEditor({ onCancel, onLocalReveal }) {
                                                             </button>
                                                         </div>
                                                     ) : (
-                                                        // Hero banner
-                                                        <div className="w-full relative group rounded-xl overflow-hidden shadow-md">
+                                                        // Hero banner (uncropped high-res presentation)
+                                                        <div className="w-full relative group rounded-xl overflow-hidden shadow-md bg-black/30">
                                                             <img
                                                                 src={resolvedImageUrl}
                                                                 alt="Handout"
-                                                                className="w-full max-h-72 object-cover"
+                                                                className="w-full max-h-72 object-contain cursor-zoom-in"
+                                                                onClick={() => setIsFullscreenPreviewImg(true)}
                                                             />
                                                             <button
                                                                 onClick={() => setIsFullscreenPreviewImg(true)}
@@ -1295,13 +1554,26 @@ export default function HandoutEditor({ onCancel, onLocalReveal }) {
                                                         )}
 
                                                         {/* Mini Thematic Preview Window */}
-                                                        <div className={`h-24 rounded-xl p-2.5 text-[10px] overflow-hidden relative shadow-inner border border-black/20 ${hTheme.class}`}>
-                                                            {h.imageUrl && (
-                                                                <div className="absolute inset-0 z-0 pointer-events-none opacity-30">
-                                                                    <ResolvedImage id={h.imageUrl} className="w-full h-full object-cover" />
-                                                                </div>
+                                                        <div className={`h-28 rounded-xl overflow-hidden relative shadow-inner border border-black/20 bg-slate-950 flex flex-col justify-center ${hTheme.class}`}>
+                                                            {h.imageUrl ? (
+                                                                h.content && h.content !== '<p><br></p>' ? (
+                                                                    <>
+                                                                        <div className="absolute inset-0 z-0 pointer-events-none opacity-25">
+                                                                            <ResolvedImage id={h.imageUrl} className="w-full h-full object-cover" />
+                                                                        </div>
+                                                                        <div className="relative z-10 p-2.5 text-[10px] line-clamp-4 leading-relaxed" dangerouslySetInnerHTML={{ __html: h.content }} />
+                                                                    </>
+                                                                ) : (
+                                                                    <div className="w-full h-full relative group">
+                                                                        <ResolvedImage id={h.imageUrl} className="w-full h-full object-contain p-1" />
+                                                                        <div className="absolute bottom-1 right-1 bg-black/70 px-1.5 py-0.5 rounded text-[9px] font-bold text-amber-300">
+                                                                            {h.imageLayout === 'map' ? '🗺️ Map' : h.imageLayout === 'portrait' ? '👤 Portrait' : '🖼️ Art'}
+                                                                        </div>
+                                                                    </div>
+                                                                )
+                                                            ) : (
+                                                                <div className="p-2.5 text-[10px] line-clamp-4 leading-relaxed" dangerouslySetInnerHTML={{ __html: h.content || '' }} />
                                                             )}
-                                                            <div className="relative z-10 line-clamp-4 leading-relaxed" dangerouslySetInnerHTML={{ __html: h.content || '' }} />
                                                         </div>
                                                     </div>
 

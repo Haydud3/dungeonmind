@@ -12,6 +12,11 @@ const ResolvedImage = ({ id, className, alt }) => {
 
         const load = async () => {
             try {
+                if (!id) return;
+                if (typeof id === 'string' && !id.startsWith('chunked:')) {
+                    if (active) setUrl(id);
+                    return;
+                }
                 const asset = await retrieveChunkedMap(id);
                 if (!active || !asset) return;
                 

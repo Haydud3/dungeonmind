@@ -49,7 +49,7 @@ const CharacterBuilder = ({ onClose, onComplete }) => {
     };
 
     return (
-        <div className="fixed inset-0 z-50 bg-slate-950 flex flex-col">
+        <div className="fixed inset-0 z-[70] bg-slate-950 flex flex-col">
             {/* Header / Navigation Tabs */}
             <div className="bg-slate-900 border-b border-slate-800 px-6 py-4 flex items-center justify-between shrink-0">
                 <div className="flex items-center gap-4">

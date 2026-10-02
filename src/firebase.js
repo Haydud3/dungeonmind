@@ -1,5 +1,20 @@
 import { initializeApp } from "firebase/app";
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "firebase/auth";
+import { 
+  getAuth, 
+  GoogleAuthProvider, 
+  EmailAuthProvider,
+  signInWithPopup, 
+  signOut, 
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  sendPasswordResetEmail,
+  signInAnonymously,
+  updateProfile,
+  linkWithPopup,
+  linkWithCredential,
+  unlink
+} from "firebase/auth";
 import { 
   getFirestore,
   initializeFirestore,
@@ -51,6 +66,15 @@ export {
   signInWithPopup, 
   signOut, 
   onAuthStateChanged, 
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  sendPasswordResetEmail,
+  signInAnonymously,
+  updateProfile,
+  linkWithPopup,
+  linkWithCredential,
+  unlink,
+  EmailAuthProvider, 
   doc, 
   getDocs,
   setDoc, 

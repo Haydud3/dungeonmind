@@ -15,7 +15,7 @@ const SECONDARY_NAV_ITEMS = [
     { id: 'settings', icon: 'settings', label: 'Preferences', subtitle: 'Settings & Audio' }
 ];
 
-const MobileNav = ({ view, setView, compact, className = "" }) => {
+const MobileNav = ({ view, setView, compact, onOpenHandouts, handoutsCount = 0, gameCode = '', className = "" }) => {
     const [showMore, setShowMore] = useState(false);
     const isSecondaryActive = SECONDARY_NAV_ITEMS.some(item => item.id === view);
     const activeSecondary = SECONDARY_NAV_ITEMS.find(item => item.id === view);
@@ -49,14 +49,63 @@ const MobileNav = ({ view, setView, compact, className = "" }) => {
                                 Realm Codex & Tools
                             </span>
                         </div>
-                        <button 
-                            onClick={() => setShowMore(false)}
-                            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-                            title="Close Menu"
-                        >
-                            <Icon name="x" size={16} />
-                        </button>
+                        <div className="flex items-center gap-2">
+                            {gameCode && (
+                                <button
+                                    type="button"
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        navigator.clipboard?.writeText(gameCode);
+                                    }}
+                                    className="flex items-center gap-1.5 px-2 py-1 rounded-xl bg-slate-900 hover:bg-slate-850 border border-slate-700/80 text-[11px] font-mono font-bold text-amber-300 shadow-sm transition-all active:scale-95 cursor-pointer"
+                                    title="Click to copy Realm Code"
+                                >
+                                    <span className="text-[9px] uppercase font-bold text-slate-400">Code:</span>
+                                    <span>{gameCode}</span>
+                                    <Icon name="copy" size={11} className="text-slate-400" />
+                                </button>
+                            )}
+                            <button 
+                                onClick={() => setShowMore(false)}
+                                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+                                title="Close Menu"
+                            >
+                                <Icon name="x" size={16} />
+                            </button>
+                        </div>
                     </div>
+
+                    {/* Featured Codex Action: Handouts Library */}
+                    {onOpenHandouts && (
+                        <div className="mb-2.5">
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    onOpenHandouts();
+                                    setShowMore(false);
+                                }}
+                                className="w-full flex items-center justify-between p-3 rounded-2xl border bg-gradient-to-r from-amber-500/20 via-amber-600/10 to-slate-900 border-amber-500/50 hover:border-amber-400 text-amber-200 hover:text-white transition-all shadow-md active:scale-98 cursor-pointer group"
+                            >
+                                <div className="flex items-center gap-3">
+                                    <div className="w-10 h-10 rounded-xl bg-amber-500/25 border border-amber-500/50 flex items-center justify-center text-amber-300 group-hover:scale-105 transition-transform shadow-inner">
+                                        <Icon name="scroll" size={18} />
+                                    </div>
+                                    <div className="text-left">
+                                        <div className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                                            <span>Handouts Library</span>
+                                            <span className="text-[9px] font-mono bg-amber-500/20 text-amber-300 px-1.5 py-0.2 rounded font-bold uppercase border border-amber-500/30">Codex</span>
+                                        </div>
+                                        <div className="text-[10px] text-slate-400">Player letters, scrolls, maps & secrets</div>
+                                    </div>
+                                </div>
+                                {(handoutsCount > 0) && (
+                                    <span className="bg-amber-950/90 text-amber-300 text-xs font-black px-2 py-0.5 rounded-lg border border-amber-500/40">
+                                        {handoutsCount}
+                                    </span>
+                                )}
+                            </button>
+                        </div>
+                    )}
 
                     <div className="grid grid-cols-2 gap-2.5">
                         {SECONDARY_NAV_ITEMS.map(item => {
